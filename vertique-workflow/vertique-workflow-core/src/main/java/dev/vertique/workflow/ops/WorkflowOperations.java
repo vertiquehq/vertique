@@ -46,6 +46,28 @@ public interface WorkflowOperations {
     Future<Void> signal(WorkflowInstanceId id, String signalName, Object payload, String signalDedupKey);
 
     /**
+     * Delivers an external signal on behalf of a client of the named contract.
+     *
+     * <p>A binding that checks contracts compares {@code contractName} with the contract of the
+     * definition version the instance is pinned to and refuses the signal, changing nothing, when they
+     * differ. The default implementation performs no check and delegates to
+     * {@link #signal(WorkflowInstanceId, String, Object, String)}.
+     *
+     * @param id id of the workflow instance to signal
+     * @param contractName logical name of the contract of the client that sends the signal
+     * @param signalName name of the signal to deliver
+     * @param payload signal payload; coerced to the declared payload type if necessary
+     * @param signalDedupKey caller-supplied dedup key; no random fallback
+     * @return a {@link Future} that completes when the signal has been applied; it fails with a
+     *     {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException} when a
+     *     contract-checking binding finds the instance pinned to a definition of another contract
+     */
+    default Future<Void> signal(
+            WorkflowInstanceId id, String contractName, String signalName, Object payload, String signalDedupKey) {
+        return signal(id, signalName, payload, signalDedupKey);
+    }
+
+    /**
      * Cancels a running or waiting workflow instance.
      *
      * @param id id of the workflow instance to cancel
@@ -75,6 +97,24 @@ public interface WorkflowOperations {
      *     snapshot and recent history
      */
     Future<WorkflowView> query(WorkflowInstanceId id);
+
+    /**
+     * Returns a read-only view of the workflow instance on behalf of a client of the named contract.
+     *
+     * <p>A binding that checks contracts compares {@code contractName} with the contract of the
+     * definition version the instance is pinned to, when that version is registered, and refuses the
+     * query when they differ. The default implementation performs no check and delegates to
+     * {@link #query(WorkflowInstanceId)}.
+     *
+     * @param id id of the workflow instance to query
+     * @param contractName logical name of the contract of the client that sends the query
+     * @return a {@link Future} that resolves to a {@link WorkflowView}; it fails with a
+     *     {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException} when a
+     *     contract-checking binding finds the instance pinned to a definition of another contract
+     */
+    default Future<WorkflowView> query(WorkflowInstanceId id, String contractName) {
+        return query(id);
+    }
 
     /**
      * Migrates a workflow instance from its current definition version to {@code targetVersion}

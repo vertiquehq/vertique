@@ -174,14 +174,17 @@ public final class WorkflowClientFactory {
 
         // Prefer the generated static proxy when present (zero reflection); fall back to the JDK dynamic
         // proxy otherwise. A present-but-broken generated class fails loudly.
+        // Both proxy kinds receive the operations wrapped with the contract the client was created for, so a
+        // signal or query reaches the engine together with the contract it is sent for.
+        WorkflowOperations boundOps = new ContractBoundOperations(ops, binding.contractName());
         return GeneratedCompanions.instantiate(
                         contract,
                         PROXY_SUFFIX,
                         new Class<?>[] {WorkflowOperations.class, WorkflowClientBinding.class},
-                        new Object[] {ops, binding},
+                        new Object[] {boundOps, binding},
                         (fqn, e) -> new WorkflowClientProxyLinkageException(
                                 "Generated proxy %s is present but could not be instantiated".formatted(fqn), e))
-                .orElseGet(() -> buildJdkProxy(contract, binding));
+                .orElseGet(() -> buildJdkProxy(contract, boundOps, binding));
     }
 
     /**
@@ -190,11 +193,12 @@ public final class WorkflowClientFactory {
      *
      * @param <C>      the contract interface type
      * @param contract the contract interface class; already validated by the caller
+     * @param boundOps the operations the proxy's handlers call, bound to the contract
      * @param binding the binding the proxy's start handler builds its commands from
      * @return a JDK dynamic proxy implementing {@code contract}
      */
-    private <C> C buildJdkProxy(Class<C> contract, WorkflowClientBinding binding) {
-        Map<Method, OperationHandler> handlers = WorkflowProxyValidator.precompileHandlers(contract, ops, binding);
+    private <C> C buildJdkProxy(Class<C> contract, WorkflowOperations boundOps, WorkflowClientBinding binding) {
+        Map<Method, OperationHandler> handlers = WorkflowProxyValidator.precompileHandlers(contract, boundOps, binding);
         return contract.cast(
                 Proxy.newProxyInstance(contract.getClassLoader(), new Class<?>[] {contract}, (proxy, method, args) -> {
                     if (method.getDeclaringClass() == Object.class) {

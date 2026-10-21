@@ -20,6 +20,7 @@ import dev.vertique.workflow.contract.WorkflowStart;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -57,10 +58,10 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration tests for signals sent to instances pinned to a definition version: a signal the
- * pinned version does not wait for is refused naming that version, and an awaited signal is
- * delivered on every pinned version of a contract. A refusal changes nothing the instance or the
- * database holds.
+ * Integration tests for signals and queries sent to instances pinned to a definition version:
+ * a signal the pinned version does not wait for is refused naming that version, an awaited signal
+ * is delivered on every pinned version of a contract, and a client of another contract cannot
+ * signal or query the instance. A refusal changes nothing the instance or the database holds.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -102,6 +103,20 @@ public class SignalByPinIT {
 
         @WorkflowSignal("escalate")
         Future<Void> escalate(WorkflowInstanceId id, ApprovalSignal payload);
+
+        @WorkflowQuery("view")
+        Future<WorkflowView> view(WorkflowInstanceId id);
+    }
+
+    /** Contract {@code other}: declares {@code approve} with the same payload type as {@code approval}. */
+    @WorkflowContract(value = "other", definitionId = "refund-flow", definitionVersion = 1)
+    interface OtherContract {
+
+        @WorkflowStart
+        Future<WorkflowInstanceId> start(ApprovalStart payload);
+
+        @WorkflowSignal("approve")
+        Future<Void> approve(WorkflowInstanceId id, ApprovalSignal payload);
 
         @WorkflowQuery("view")
         Future<WorkflowView> view(WorkflowInstanceId id);
@@ -165,6 +180,13 @@ public class SignalByPinIT {
     static final class PurchaseApprovalV2 extends SingleWaitDefinition<ApprovalContract> {
         PurchaseApprovalV2() {
             super(ApprovalContract.class, "purchase-approval", 2L, "escalate");
+        }
+    }
+
+    /** {@code refund-flow} v1 of the {@code other} contract waits for {@code approve}. */
+    static final class RefundFlowV1 extends SingleWaitDefinition<OtherContract> {
+        RefundFlowV1() {
+            super(OtherContract.class, "refund-flow", 1L, "approve");
         }
     }
 
@@ -267,7 +289,61 @@ public class SignalByPinIT {
         assertThat(signalHistory(v2)).singleElement().asString().contains("escalate", "v2-decision");
     }
 
+    @Test
+    @DisplayName("a client of another contract can neither signal nor query the instance")
+    void signalAndQueryThroughAnotherContractsClientAreRefused() throws Exception {
+        // Given: purchase-approval v1 of contract approval with one waiting instance, and refund-flow
+        // v1 of contract other, which declares approve with the same payload type
+        Harness harness = open(new PurchaseApprovalV1(), new RefundFlowV1());
+        WorkflowInstanceId id = startPinned(harness, "purchase-approval", "approval", 1L, "state-marker-7");
+        Snapshot before = snapshot(harness, id);
+        OtherContract foreign = harness.factory().create(OtherContract.class, "refund-flow");
+        ApprovalContract own = harness.factory().create(ApprovalContract.class, "purchase-approval");
+
+        // When: the foreign client sends approve to the purchase-approval instance
+        Throwable signalFailure = failureOf(foreign.approve(id, new ApprovalSignal("payload-marker-7")));
+
+        // Then: it is refused naming the instance's version and both contracts, and nothing changes
+        assertContractMismatch(signalFailure, "payload-marker-7", "state-marker-7");
+        assertThat(snapshot(harness, id)).as("after the refused signal").isEqualTo(before);
+
+        // When: the foreign client queries the instance
+        Throwable queryFailure = failureOf(foreign.view(id));
+
+        // Then: it is refused the same way and nothing changes
+        assertContractMismatch(queryFailure, "payload-marker-7", "state-marker-7");
+        assertThat(snapshot(harness, id)).as("after the refused query").isEqualTo(before);
+
+        // When: the instance's own client queries and then signals it
+        WorkflowView viaOwnClient = await(own.view(id));
+        await(own.approve(id, new ApprovalSignal("own-decision")));
+
+        // Then: both succeed
+        assertThat(viaOwnClient.instance().id()).isEqualTo(id);
+        assertThat(viaOwnClient.instance().status()).isEqualTo(WorkflowStatus.WAITING);
+        assertThat(snapshot(harness, id).status()).isEqualTo(WorkflowStatus.COMPLETED);
+
+        // and: the contract-less query on the engine handle still returns the view
+        WorkflowView viaEngine = await(harness.engine().query(id));
+        assertThat(viaEngine.instance().id()).isEqualTo(id);
+        assertThat(viaEngine.instance().status()).isEqualTo(WorkflowStatus.COMPLETED);
+    }
+
     // --- Helpers ---
+
+    private static void assertContractMismatch(Throwable failure, String... forbiddenInMessage) {
+        assertThat(failure)
+                .isInstanceOf(WorkflowDefinitionContractMismatchException.class)
+                .hasMessageContaining("'purchase-approval' v1")
+                .hasMessageContaining("approval")
+                .hasMessageContaining("other");
+        WorkflowDefinitionContractMismatchException mismatch = (WorkflowDefinitionContractMismatchException) failure;
+        assertThat(mismatch.definitionKey().definitionId()).isEqualTo("purchase-approval");
+        assertThat(mismatch.definitionKey().definitionVersion()).isEqualTo(1L);
+        for (String forbidden : forbiddenInMessage) {
+            assertThat(mismatch.getMessage()).doesNotContain(forbidden);
+        }
+    }
 
     /** Builds an engine over the shared pool with the given definitions registered. */
     private static Harness open(WorkflowDefinition<?, ?>... definitions) {

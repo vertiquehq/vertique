@@ -82,6 +82,9 @@ class WorkflowClientFactoryTest {
 
     // --- Contract fixtures (one @WorkflowStart each) ---
 
+    /** The logical name of {@link SampleContract}: the client sends it with every signal and query. */
+    private static final String SAMPLE_CONTRACT = SampleContract.class.getName();
+
     /**
      * Primary contract: start with {@code IdempotencyKeyed} payload, two signals, one query.
      * Used by signal, query, and object-method tests.
@@ -526,28 +529,28 @@ class WorkflowClientFactoryTest {
         @DisplayName("confirm() with SignalDedupKeyed payload uses dedupKey() from interface")
         void signalWithDedupKeyedPayload() {
             WorkflowInstanceId instanceId = new WorkflowInstanceId(UUID.randomUUID());
-            when(ops.signal(instanceId, "order.confirmed", null, "dedup-data-1"))
+            when(ops.signal(instanceId, SAMPLE_CONTRACT, "order.confirmed", null, "dedup-data-1"))
                     .thenReturn(Future.succeededFuture());
 
             SampleContract proxy = factory.create(SampleContract.class, "order-saga");
             SignalPayloadWithInterface signalPayload = new SignalPayloadWithInterface("data-1");
             proxy.confirm(instanceId, signalPayload);
 
-            verify(ops).signal(instanceId, "order.confirmed", signalPayload, "dedup-data-1");
+            verify(ops).signal(instanceId, SAMPLE_CONTRACT, "order.confirmed", signalPayload, "dedup-data-1");
         }
 
         @Test
         @DisplayName("ship() @SignalDedupKey parameter wins over SignalDedupKeyed interface")
         void signalWithAnnotationDedupKey() {
             WorkflowInstanceId instanceId = new WorkflowInstanceId(UUID.randomUUID());
-            when(ops.signal(instanceId, "order.shipped", null, "explicit-dedup"))
+            when(ops.signal(instanceId, SAMPLE_CONTRACT, "order.shipped", null, "explicit-dedup"))
                     .thenReturn(Future.succeededFuture());
 
             SampleContract proxy = factory.create(SampleContract.class, "order-saga");
             SignalPayloadWithInterface signalPayload = new SignalPayloadWithInterface("data-2");
             proxy.ship(instanceId, signalPayload, "explicit-dedup");
 
-            verify(ops).signal(instanceId, "order.shipped", signalPayload, "explicit-dedup");
+            verify(ops).signal(instanceId, SAMPLE_CONTRACT, "order.shipped", signalPayload, "explicit-dedup");
         }
     }
 
@@ -556,17 +559,17 @@ class WorkflowClientFactoryTest {
     class QueryRouting {
 
         @Test
-        @DisplayName("getView() delegates to ops.query() with the correct WorkflowInstanceId")
+        @DisplayName("getView() delegates to ops.query() with the correct WorkflowInstanceId and the contract name")
         void queryDelegatesToOps() {
             WorkflowInstanceId instanceId = new WorkflowInstanceId(UUID.randomUUID());
             WorkflowView view = mock(WorkflowView.class);
-            when(ops.query(instanceId)).thenReturn(Future.succeededFuture(view));
+            when(ops.query(instanceId, SAMPLE_CONTRACT)).thenReturn(Future.succeededFuture(view));
 
             SampleContract proxy = factory.create(SampleContract.class, "order-saga");
             Future<WorkflowView> result = proxy.getView(instanceId);
 
             assertThat(result.result()).isSameAs(view);
-            verify(ops).query(instanceId);
+            verify(ops).query(instanceId, SAMPLE_CONTRACT);
         }
     }
 

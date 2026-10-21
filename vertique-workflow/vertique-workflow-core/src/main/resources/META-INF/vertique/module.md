@@ -147,6 +147,8 @@ Future<WorkflowView> query(WorkflowInstanceId id);
 Future<Void> migrate(WorkflowInstanceId id, long targetVersion);
 ```
 
+Two default methods carry the contract of the caller: `signal(id, contractName, signalName, payload, signalDedupKey)` and `query(id, contractName)`. A binding that checks contracts compares the name with the contract of the definition version the instance is pinned to and fails a mismatch with `WorkflowDefinitionContractMismatchException`; the defaults delegate to the contract-less methods, which perform no check. Typed clients send their contract name through these overloads; direct callers of the four-argument `signal` and of `query(id)` keep today's behavior.
+
 The Postgres implementation opens its own transaction for each call. Code that already owns a transaction should use `TransactionalWorkflowOperations<TX>`.
 
 Instance state is modeled as a single current snapshot plus an append-only history: `query` returns the latest snapshot, and each transition that produced it is recorded as a separate history entry.
@@ -244,7 +246,7 @@ OrderFulfillmentWorkflow byId = factory.create(OrderFulfillmentWorkflow.class, "
 - **Many definitions per contract.** Any number of definition ids and versions may name one contract. The registry reads a definition's id, version, state type and contract from the definition, never from the `@WorkflowContract` annotation, and keeps no map from a contract to one definition. The registry no longer offers a lookup from a contract class to its definition; look a definition up with `resolvePinned(id, version)`, `registeredDefinition(id, version)`, `allRegistered()` or `definitionClass(definitionClass)`.
 - **One contract per definition id.** Every version of a definition id must name the same contract. Registering a version whose contract name differs from that of an earlier version of the same id fails with `WorkflowDefinitionException` naming `'<id>' v<version>` and both contract names; nothing is registered.
 - **Declared signals.** A definition that waits for a signal must declare it on its contract, as a `@WorkflowSignal` method of the contract interface or of an interface it extends. Registration fails with `WorkflowDefinitionException` naming the definition and the undeclared signals in sorted order; waits inside fork branches and waits guarded by a timeout count. Marker contracts are not exempt: an empty contract can only back a definition that waits for no signal. A contract may declare signals that some of its versions do not wait for, and it may grow: add the `@WorkflowSignal` method before registering a version that waits for the new signal.
-- **Signal sent to an older version.** A signal for an instance whose pinned version does not wait for it fails with `WorkflowSignalRejectedException` naming the instance, the signal and `'<id>' v<version>`, and changes nothing.
+- **Signal sent to an older version.** A signal for an instance whose pinned version does not wait for it fails with `WorkflowSignalRejectedException` naming the instance, the signal and `'<id>' v<version>`, and changes nothing. A client of another contract than the instance's pinned contract is refused with `WorkflowDefinitionContractMismatchException`.
 
 The `definitionId` and `definitionVersion` attributes of `@WorkflowContract` are not read by clients. `WorkflowClientFactory.create(Contract.class)` no longer exists, and the annotation processor no longer generates Dagger providers of typed clients: obtain a client from the factory, for example in your own `@Provides` method.
 

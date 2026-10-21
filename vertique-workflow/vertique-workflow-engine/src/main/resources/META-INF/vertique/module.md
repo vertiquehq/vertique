@@ -69,7 +69,11 @@ transaction use `TransactionalWorkflowOperations<SqlClient>` directly.
 A signal is refused, with nothing changed (no state, history, dedup row or timer), when the version the instance is pinned to
 does not wait for it: the future fails with `WorkflowSignalRejectedException` naming the instance, the signal and the
 pinned definition id and version. The check reads the pinned plan, so it applies after the pin is resolved and its plan hash
-verified and before the instance's waiting state is examined.
+verified and before the instance's waiting state is examined. `WorkflowEngine` also overrides the contract-aware
+`signal(id, contractName, signalName, payload, signalDedupKey)` and `query(id, contractName)`: a caller whose contract
+differs from the pinned definition's contract is refused with `WorkflowDefinitionContractMismatchException`, naming the
+definition id and version and both contract names and never a payload or state. `query` skips the comparison when the
+pinned version is not registered on the node. The contract-less `signal` and `query(id)` perform no contract check.
 
 Task completion validates the caller's decision and payload inside the completion transaction and
 rejects caller-caused problems with `WorkflowInvalidPayloadException` (HTTP 400 class, structured

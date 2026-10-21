@@ -18,8 +18,10 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
+import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
+import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
@@ -63,6 +65,7 @@ import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -542,6 +545,31 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
+     * <p>Opens a new database transaction and delivers the signal like
+     * {@link #signal(WorkflowInstanceId, String, Object, String)}, after comparing {@code contractName}
+     * with the contract of the definition version the instance is pinned to. A different contract fails
+     * the future with
+     * {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException}; the
+     * transaction rolls back, so the instance, its history and the signal's dedup row are unchanged.
+     *
+     * @param id the workflow instance id; must not be null
+     * @param contractName the contract name of the sending client; must not be null
+     * @param signalName the name of the signal to deliver; must not be null
+     * @param payload the signal payload; coerced to the declared payload type
+     * @param signalDedupKey caller-supplied dedup key; must not be null
+     * @return a {@link Future} that completes when the signal has been applied
+     */
+    @Override
+    public Future<Void> signal(
+            WorkflowInstanceId id, String contractName, String signalName, Object payload, String signalDedupKey) {
+        Objects.requireNonNull(contractName, "contractName");
+        return txRunner.inTransaction(
+                null, tx -> deliverSignal(id, contractName, signalName, payload, signalDedupKey, tx));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * <p>Opens a new database transaction and transitions the instance to {@code CANCELLED},
      * appending a history entry with the given reason.
      *
@@ -581,13 +609,60 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     @Override
     public Future<WorkflowView> query(WorkflowInstanceId id) {
+        return readView(id, null);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Reads like {@link #query(WorkflowInstanceId)}, after comparing {@code contractName} with the
+     * contract of the definition version the instance is pinned to. The comparison is skipped when that
+     * version is not registered on this node, and the query then behaves as the contract-less one. A
+     * different contract fails the future with
+     * {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException} before the
+     * history is read.
+     *
+     * @param id the workflow instance id; must not be null
+     * @param contractName the contract name of the querying client; must not be null
+     * @return a {@link Future} resolving to a {@link WorkflowView} for the instance
+     */
+    @Override
+    public Future<WorkflowView> query(WorkflowInstanceId id, String contractName) {
+        Objects.requireNonNull(contractName, "contractName");
+        return readView(id, contractName);
+    }
+
+    private Future<WorkflowView> readView(WorkflowInstanceId id, @Nullable String callerContractName) {
         return txRunner.inTransaction(
                 IsolationLevel.REPEATABLE_READ, tx -> instances.findById(id, tx).compose(optInst -> {
                     if (optInst.isEmpty()) {
                         return Future.<WorkflowView>failedFuture(new WorkflowInstanceNotFoundException(id));
                     }
-                    return history.listByInstance(id, tx).map(entries -> new WorkflowView(optInst.get(), entries));
+                    WorkflowInstance inst = optInst.get();
+                    if (callerContractName != null) {
+                        WorkflowDefinitionContractMismatchException refusal =
+                                pinnedContractRefusal(inst, callerContractName);
+                        if (refusal != null) {
+                            return Future.<WorkflowView>failedFuture(refusal);
+                        }
+                    }
+                    return history.listByInstance(id, tx).map(entries -> new WorkflowView(inst, entries));
                 }));
+    }
+
+    /**
+     * Compares the caller's contract with the contract of the version the instance is pinned to. A pin
+     * that is not registered on this node skips the comparison.
+     */
+    private @Nullable WorkflowDefinitionContractMismatchException pinnedContractRefusal(
+            WorkflowInstance inst, String callerContractName) {
+        RuntimeWorkflow pinned;
+        try {
+            pinned = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+        } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException e) {
+            return null;
+        }
+        return ContractMismatch.refusal(inst, pinned, callerContractName, "query");
     }
 
     // --- TransactionalWorkflowOperations ---
@@ -845,6 +920,20 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     @Override
     public Future<Void> signal(
             WorkflowInstanceId id, String signalName, Object payload, String signalDedupKey, SqlClient tx) {
+        return deliverSignal(id, null, signalName, payload, signalDedupKey, tx);
+    }
+
+    /**
+     * Delivers an instance-level signal inside {@code tx}. A non-null {@code callerContractName} makes the
+     * delivery refuse an instance pinned to a definition of another contract.
+     */
+    private Future<Void> deliverSignal(
+            WorkflowInstanceId id,
+            @Nullable String callerContractName,
+            String signalName,
+            Object payload,
+            String signalDedupKey,
+            SqlClient tx) {
         Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("signal", tx);
         if (invalidClient != null) {
             return invalidClient;
@@ -881,7 +970,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         inst,
                         null,
                         () -> signalHandler.doApplySignal(
-                                inst, new SignalDeliveryContext(signalName, payload, signalDedupKey), tx));
+                                inst,
+                                new SignalDeliveryContext(signalName, payload, signalDedupKey, callerContractName),
+                                tx));
             });
         });
     }

@@ -8,6 +8,7 @@ import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.exception.WorkflowConflictException;
+import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
@@ -250,8 +251,9 @@ final class SignalHandler {
 
     /**
      * Applies a validated signal to the given instance after dedup check. Resolves the pinned
-     * runtime workflow, refuses a signal the pinned plan never waits for, validates the waiting
-     * state, coerces the payload, updates state, persists, and drives transitions.
+     * runtime workflow, refuses a caller of another contract and a signal the pinned plan never waits
+     * for, validates the waiting state, coerces the payload, updates state, persists, and drives
+     * transitions.
      *
      * @param inst the locked instance
      * @param ctx the bundled signal name, payload, and dedup key
@@ -273,6 +275,13 @@ final class SignalHandler {
             WorkflowPayloads.requirePlanHashMatches(inst, rw);
         } catch (WorkflowPlanHashDriftException e) {
             return Future.failedFuture(e);
+        }
+
+        // A client of another contract than the pinned definition's is refused before anything else.
+        WorkflowDefinitionContractMismatchException contractRefusal =
+                ContractMismatch.refusal(inst, rw, ctx.callerContractName(), "signal");
+        if (contractRefusal != null) {
+            return Future.failedFuture(contractRefusal);
         }
 
         // A signal the pinned plan never waits for is refused naming the pinned version.
