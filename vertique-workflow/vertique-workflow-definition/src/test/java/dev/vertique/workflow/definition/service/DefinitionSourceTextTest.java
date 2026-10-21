@@ -69,70 +69,70 @@ public class DefinitionSourceTextTest {
 
     record ReaderStart(String value) {}
 
-    @WorkflowContract(definitionId = "reader-static-yaml", definitionVersion = 1)
+    @WorkflowContract
     interface StaticYamlV1 {}
 
-    @WorkflowContract(definitionId = "reader-static-json", definitionVersion = 1)
+    @WorkflowContract
     interface StaticJsonV1 {}
 
-    @WorkflowContract(definitionId = "reader-static-json-large", definitionVersion = 1)
+    @WorkflowContract
     interface StaticJsonLargeV1 {}
 
-    @WorkflowContract(definitionId = "reader-valid-trailing-json", definitionVersion = 1)
+    @WorkflowContract
     interface StaticTrailingJsonV1 {}
 
-    @WorkflowContract(definitionId = "reader-encoding", definitionVersion = 1)
+    @WorkflowContract
     interface ReaderEncodingV1 {}
 
-    @WorkflowContract(definitionId = "reader-encoding-😀", definitionVersion = 1)
+    @WorkflowContract
     interface ReaderEncodingUnicodeV1 {}
 
-    @WorkflowContract(definitionId = "reader-exact-limit", definitionVersion = 1)
+    @WorkflowContract
     interface ExactLimitV1 {}
 
-    @WorkflowContract(definitionId = "reader-over-limit", definitionVersion = 1)
+    @WorkflowContract
     interface OverLimitV1 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 1)
+    @WorkflowContract
     interface PersistedJsonV1 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 2)
+    @WorkflowContract
     interface PersistedJsonV2 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 3)
+    @WorkflowContract
     interface PersistedJsonV3 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 4)
+    @WorkflowContract
     interface PersistedJsonV4 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 5)
+    @WorkflowContract
     interface PersistedJsonV5 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 6)
+    @WorkflowContract
     interface PersistedJsonV6 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 7)
+    @WorkflowContract
     interface PersistedJsonV7 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 8)
+    @WorkflowContract
     interface PersistedJsonV8 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 9)
+    @WorkflowContract
     interface PersistedJsonV9 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 10)
+    @WorkflowContract
     interface PersistedJsonV10 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-yaml", definitionVersion = 1)
+    @WorkflowContract
     interface PersistedYamlV1 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-invalid-tail", definitionVersion = 1)
+    @WorkflowContract
     interface PersistedInvalidTailV1 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-nul", definitionVersion = 1)
+    @WorkflowContract
     interface PersistedNulV1 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-unpaired", definitionVersion = 1)
+    @WorkflowContract
     interface PersistedUnpairedV1 {}
 
     @Singleton

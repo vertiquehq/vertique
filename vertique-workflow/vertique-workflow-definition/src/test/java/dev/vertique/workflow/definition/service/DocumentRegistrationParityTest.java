@@ -97,7 +97,7 @@ class DocumentRegistrationParityTest {
      * The contract of every definition in this test. Its annotation attributes name an id and a version that
      * no definition has, and it declares one signal.
      */
-    @WorkflowContract(value = "parity-orders", definitionId = "unused", definitionVersion = 9)
+    @WorkflowContract("parity-orders")
     interface ParityOrders {
 
         @WorkflowSignal("approve")

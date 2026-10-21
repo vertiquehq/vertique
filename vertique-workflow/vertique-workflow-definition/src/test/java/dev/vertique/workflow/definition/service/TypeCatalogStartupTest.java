@@ -52,7 +52,7 @@ class TypeCatalogStartupTest {
     /** An unannotated state that no catalog lists. */
     record LegacyState(String id) {}
 
-    @WorkflowContract(definitionId = "legacy", definitionVersion = 1)
+    @WorkflowContract
     interface LegacyContract {}
 
     /** An annotated state that only the catalog and the document mention. */
@@ -61,7 +61,7 @@ class TypeCatalogStartupTest {
 
     record AcmeStart(String id) {}
 
-    @WorkflowContract(definitionId = "acme", definitionVersion = 1)
+    @WorkflowContract
     interface AcmeContract {}
 
     @WorkflowType("order")
@@ -70,7 +70,7 @@ class TypeCatalogStartupTest {
     @WorkflowType("order")
     record OrderFromSecondModule(String id) {}
 
-    @WorkflowContract(value = "shared", definitionId = "shared", definitionVersion = 1)
+    @WorkflowContract("shared")
     interface SharedNameContract {}
 
     @WorkflowType("shared")

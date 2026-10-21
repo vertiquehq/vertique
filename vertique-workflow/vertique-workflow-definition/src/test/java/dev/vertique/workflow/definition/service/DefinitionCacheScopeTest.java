@@ -64,10 +64,10 @@ class DefinitionCacheScopeTest {
 
     record PlaceOrder(String id) {}
 
-    @WorkflowContract(definitionId = "scope-order", definitionVersion = 1)
+    @WorkflowContract
     interface ScopeOrderV1 {}
 
-    @WorkflowContract(definitionId = "scope-order", definitionVersion = 2)
+    @WorkflowContract
     interface ScopeOrderV2 {}
 
     private static final String ID = "scope-order";

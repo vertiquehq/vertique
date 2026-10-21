@@ -52,7 +52,7 @@ class CatalogOnlyDocumentLoadTest {
     @WorkflowType("never.start")
     record NeverStart(String id) {}
 
-    @WorkflowContract(value = "never.contract", definitionId = "never", definitionVersion = 1)
+    @WorkflowContract("never.contract")
     interface NeverContract {}
 
     @WorkflowType("acme.state")
@@ -60,10 +60,10 @@ class CatalogOnlyDocumentLoadTest {
 
     record AcmeStart(String id) {}
 
-    @WorkflowContract(value = "acme.contract.a", definitionId = "acme-a", definitionVersion = 1)
+    @WorkflowContract("acme.contract.a")
     interface AcmeContractA {}
 
-    @WorkflowContract(value = "acme.contract.b", definitionId = "acme-b", definitionVersion = 1)
+    @WorkflowContract("acme.contract.b")
     interface AcmeContractB {}
 
     // --- Fixture modules and component ---

@@ -59,10 +59,10 @@ class WorkflowDefinitionStoreTest {
 
     record StartOrder(String id) {}
 
-    @WorkflowContract(definitionId = "order", definitionVersion = 1)
+    @WorkflowContract
     interface OrderV1Contract {}
 
-    @WorkflowContract(definitionId = "order", definitionVersion = 2)
+    @WorkflowContract
     interface OrderV2Contract {}
 
     // --- Helpers ---

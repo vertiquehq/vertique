@@ -69,17 +69,17 @@ class WorkflowDefinitionBootstrapTest {
 
     record StartTask(String id) {}
 
-    @WorkflowContract(definitionId = "boot-alpha", definitionVersion = 1)
+    @WorkflowContract
     interface BootAlphaV1Contract {}
 
-    @WorkflowContract(definitionId = "boot-beta", definitionVersion = 1)
+    @WorkflowContract
     interface BootBetaV1Contract {}
 
-    @WorkflowContract(definitionId = "boot-gamma", definitionVersion = 1)
+    @WorkflowContract
     interface BootGammaV1Contract {}
 
     /** One contract shared by several documents; its annotation attributes name an id and version nobody has. */
-    @WorkflowContract(definitionId = "unused", definitionVersion = 9)
+    @WorkflowContract
     interface ParityContract {}
 
     private static final String SIXTY_FOUR_CODE_POINTS =
@@ -87,7 +87,7 @@ class WorkflowDefinitionBootstrapTest {
     private static final String OVER_LONG_ID =
             SIXTY_FOUR_CODE_POINTS + SIXTY_FOUR_CODE_POINTS + SIXTY_FOUR_CODE_POINTS + SIXTY_FOUR_CODE_POINTS;
 
-    @WorkflowContract(definitionId = OVER_LONG_ID, definitionVersion = 1)
+    @WorkflowContract
     interface OverLongIdContract {}
 
     // --- Infrastructure ---
@@ -220,7 +220,7 @@ class WorkflowDefinitionBootstrapTest {
         void duplicateWithinSourceThrows() {
             // Same contract for the duplicate (store collision happens at storeCandidate)
             // Use different contract but same (id, version) → store collision
-            @WorkflowContract(definitionId = "boot-alpha", definitionVersion = 1)
+            @WorkflowContract
             interface BootAlphaDupContract {}
 
             WorkflowDefinitionBootstrap bs = bootstrap(Set.of(() -> List.of(
@@ -368,7 +368,7 @@ class WorkflowDefinitionBootstrapTest {
             WorkflowDefinitionSource sourceA = () -> List.of(resourceFor("boot-alpha", 1, BootAlphaV1Contract.class));
 
             // Source B also contributes boot-alpha v1 — must be detected as duplicate
-            @WorkflowContract(definitionId = "boot-alpha", definitionVersion = 1)
+            @WorkflowContract
             interface BootAlphaSource2Contract {}
 
             WorkflowDefinitionSource sourceB = () -> List.of(new DefinitionResource(

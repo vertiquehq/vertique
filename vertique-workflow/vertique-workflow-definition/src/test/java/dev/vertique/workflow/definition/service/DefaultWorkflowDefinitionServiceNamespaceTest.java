@@ -61,22 +61,22 @@ class DefaultWorkflowDefinitionServiceNamespaceTest {
 
     record PlaceOrder(String id) {}
 
-    @WorkflowContract(definitionId = "X", definitionVersion = 1)
+    @WorkflowContract
     interface PlainContract {}
 
-    @WorkflowContract(definitionId = "t2:X", definitionVersion = 1)
+    @WorkflowContract
     interface ForeignPrefixContract {}
 
-    @WorkflowContract(definitionId = "t1:", definitionVersion = 1)
+    @WorkflowContract
     interface BlankNameContract {}
 
-    @WorkflowContract(definitionId = "t1:X", definitionVersion = 1)
+    @WorkflowContract
     interface NamespacedContract {}
 
-    @WorkflowContract(definitionId = "a:b:X", definitionVersion = 1)
+    @WorkflowContract
     interface ColonTenantContract {}
 
-    @WorkflowContract(definitionId = "global:X", definitionVersion = 1)
+    @WorkflowContract
     interface GlobalColonContract {}
 
     @Test

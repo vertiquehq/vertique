@@ -49,7 +49,7 @@ class UnknownNameEchoTest {
 
     record EchoStart(String id) {}
 
-    @WorkflowContract(value = "echo.contract", definitionId = "echo", definitionVersion = 1)
+    @WorkflowContract("echo.contract")
     interface EchoContract {}
 
     @Module

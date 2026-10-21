@@ -92,19 +92,19 @@ class WorkflowDefinitionDocumentValidatorTest {
     record TestPayload(String raw) {}
 
     /** Valid contract annotation that matches the test document id/version. */
-    @WorkflowContract(definitionId = "test-wf", definitionVersion = 1)
+    @WorkflowContract
     interface TestWorkflowContract {}
 
     /** Contract with a WRONG definitionId — used for mismatch tests. */
-    @WorkflowContract(definitionId = "wrong-id", definitionVersion = 1)
+    @WorkflowContract
     interface WrongIdContract {}
 
     /** Contract with a WRONG definitionVersion. */
-    @WorkflowContract(definitionId = "test-wf", definitionVersion = 99)
+    @WorkflowContract
     interface WrongVersionContract {}
 
     /** Contract named by the index; its annotation attributes differ from the header of the documents using it. */
-    @WorkflowContract(value = "parity-orders", definitionId = "unused", definitionVersion = 9)
+    @WorkflowContract("parity-orders")
     interface ParityOrdersContract {}
 
     /** Contract interface with no @WorkflowContract annotation. */

@@ -78,7 +78,7 @@ class WorkflowDefinitionPipelineTest {
 
     record StartTask(String id) {}
 
-    @WorkflowContract(definitionId = "task-pipeline", definitionVersion = 1)
+    @WorkflowContract
     interface TaskPipelineContract {}
 
     /** An annotated state class, reachable through the index only by its logical name. */
@@ -89,7 +89,7 @@ class WorkflowDefinitionPipelineTest {
     record ParityStart(String id) {}
 
     /** A contract named by the index; the annotation attributes name an id and version nobody has. */
-    @WorkflowContract(value = "parity-orders", definitionId = "unused", definitionVersion = 9)
+    @WorkflowContract("parity-orders")
     interface ParityOrders {}
 
     // --- Infrastructure ---
@@ -459,7 +459,7 @@ class WorkflowDefinitionPipelineTest {
             byte[] contentA = minimalYaml();
 
             // Version B: two steps (dispatch + done) — structurally different plan
-            @WorkflowContract(definitionId = "task-pipeline", definitionVersion = 2)
+            @WorkflowContract
             interface TaskPipelineV2Contract {}
 
             byte[] contentB = yamlFor(

@@ -51,7 +51,7 @@ class DocumentRestorePlanHashTest {
 
     record RestoreStart(String id) {}
 
-    @WorkflowContract(value = "restore.contract", definitionId = "restore-saga", definitionVersion = 1)
+    @WorkflowContract("restore.contract")
     interface RestoreContract {}
 
     // --- Fixture modules and component ---

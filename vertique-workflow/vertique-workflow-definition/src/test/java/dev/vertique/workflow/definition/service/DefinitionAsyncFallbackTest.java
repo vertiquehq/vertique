@@ -48,10 +48,10 @@ class DefinitionAsyncFallbackTest {
 
     record PlaceOrder(String orderId) {}
 
-    @WorkflowContract(definitionId = "fallback-order", definitionVersion = 1)
+    @WorkflowContract
     interface FallbackOrderV1 {}
 
-    @WorkflowContract(definitionId = "second-fallback-order", definitionVersion = 1)
+    @WorkflowContract
     interface FallbackOrderV2 {}
 
     @Singleton

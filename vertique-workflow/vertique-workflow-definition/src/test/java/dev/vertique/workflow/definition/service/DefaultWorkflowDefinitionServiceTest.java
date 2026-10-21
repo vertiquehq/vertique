@@ -78,10 +78,10 @@ class DefaultWorkflowDefinitionServiceTest {
 
     record PlaceOrder(String id) {}
 
-    @WorkflowContract(definitionId = "svc-order", definitionVersion = 1)
+    @WorkflowContract
     interface SvcOrderContract {}
 
-    @WorkflowContract(definitionId = "svc-item", definitionVersion = 1)
+    @WorkflowContract
     interface SvcItemV1Contract {}
 
     // --- Infrastructure ---
