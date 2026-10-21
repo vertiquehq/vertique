@@ -176,6 +176,24 @@ public class ScopeMigrationIT {
             assertThat(catalog.columnShape("workflow_definitions", "state_type_name"))
                     .isEqualTo("character varying|255|NO|null");
 
+            // And activation records are keyed by scope and definition id, and name a version of the default scope or
+            // of their own scope
+            assertThat(catalog.columnNames("workflow_definition_activations"))
+                    .containsExactly(
+                            "scope_key", "definition_id", "target_scope_key", "definition_version", "activated_at");
+            assertThat(catalog.primaryKey("workflow_definition_activations"))
+                    .isEqualTo("PRIMARY KEY (scope_key, definition_id)");
+            assertThat(catalog.columnShape("workflow_definition_activations", "target_scope_key"))
+                    .isEqualTo("character varying|255|NO|null");
+            assertThat(catalog.rows("""
+                            SELECT column_name || '|' || data_type || '|' || is_nullable
+                            FROM information_schema.columns
+                            WHERE table_schema = current_schema() AND table_name = 'workflow_definition_activations'
+                              AND column_name IN ('definition_version', 'activated_at')
+                            ORDER BY column_name
+                            """))
+                    .containsExactly("activated_at|timestamp with time zone|NO", "definition_version|bigint|NO");
+
             // And exactly versions 1 and 2 are applied, and the location holds no other script
             assertThat(latest.info().applied())
                     .extracting(MigrationInfo::getVersion)

@@ -55,6 +55,25 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_definitions_id ON workflow_definitions (definition_id);
 
+-- The current version of a definition id in a scope. A scope without a row follows the default scope. A scope names a
+-- version of its own or of the default scope, and the default scope names only itself. The foreign key keeps a
+-- definition row that a record names from being deleted.
+CREATE TABLE IF NOT EXISTS workflow_definition_activations (
+    scope_key VARCHAR(255) NOT NULL,
+    definition_id VARCHAR(255) NOT NULL,
+    target_scope_key VARCHAR(255) NOT NULL,
+    definition_version BIGINT NOT NULL,
+    activated_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT pk_workflow_definition_activations PRIMARY KEY (scope_key, definition_id),
+    CONSTRAINT ck_workflow_definition_activations_version CHECK (definition_version > 0),
+    CONSTRAINT ck_workflow_definition_activations_target CHECK (
+        (target_scope_key = scope_key OR target_scope_key = 'default')
+        AND (scope_key <> 'default' OR target_scope_key = 'default')),
+    CONSTRAINT fk_workflow_definition_activations_target
+        FOREIGN KEY (target_scope_key, definition_id, definition_version)
+        REFERENCES workflow_definitions (scope_key, definition_id, definition_version) ON DELETE RESTRICT
+);
+
 -- Tasks first, matching the engine's lock order (tasks before instances).
 ALTER TABLE workflow_tasks ADD COLUMN IF NOT EXISTS scope_key VARCHAR(255) NOT NULL DEFAULT 'default';
 ALTER TABLE workflow_instances

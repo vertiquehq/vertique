@@ -12,6 +12,7 @@ import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.registry.store.ActivationClaim;
+import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -30,6 +31,7 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Tuple;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.nio.charset.StandardCharsets;
@@ -46,8 +48,8 @@ import java.util.function.Supplier;
 /**
  * PostgreSQL registry with transaction-owned id locking and fenced publication claims.
  *
- * <p>Every reference to the {@code workflow_definitions} and {@code workflow_instances} tables is qualified with the schema mapped to
- * the {@code workflow} instance when the {@link DbSchemas} given at construction holds one; otherwise
+ * <p>Every reference to the {@code workflow_definitions}, {@code workflow_definition_activations} and {@code workflow_instances}
+ * tables is qualified with the schema mapped to the {@code workflow} instance when the {@link DbSchemas} given at construction holds one; otherwise
  * the tables resolve through the connection's default schema. The statements are built once at
  * construction.
  */
@@ -79,6 +81,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private final String sqlCooling;
     private final String sqlCountNonTerminal;
     private final String sqlLockRows;
+    private final String sqlPutActivation;
+    private final String sqlRemoveActivation;
+    private final String sqlListActivations;
     private final WorkflowDefinitionsConfig config;
     private final WorkflowExceptionMapper workflowMapper = new WorkflowExceptionMapper();
     private volatile boolean utf8Confirmed;
@@ -116,6 +121,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
         String definitions = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_definitions");
         String instances = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_instances");
+        String activations = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_definition_activations");
 
         this.sqlFind = "SELECT " + COLUMNS + " FROM " + definitions + " WHERE " + KEY;
 
@@ -175,6 +181,18 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + ", publish_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM "
                 + definitions
                 + " WHERE definition_id=$1 ORDER BY scope_key, definition_version FOR UPDATE";
+
+        this.sqlPutActivation = "INSERT INTO " + activations
+                + " (scope_key, definition_id, target_scope_key, definition_version, activated_at) VALUES ($1,$2,$3,$4,$5)"
+                + " ON CONFLICT (scope_key, definition_id) DO UPDATE SET target_scope_key=EXCLUDED.target_scope_key,"
+                + " definition_version=EXCLUDED.definition_version, activated_at=EXCLUDED.activated_at";
+
+        this.sqlRemoveActivation = "DELETE FROM " + activations + " WHERE scope_key=$1 AND definition_id=$2";
+
+        this.sqlListActivations =
+                "SELECT scope_key, definition_id, target_scope_key, definition_version, activated_at FROM "
+                        + activations
+                        + " WHERE ($1::varchar IS NULL OR scope_key=$1) ORDER BY definition_id, scope_key";
     }
 
     @Override
@@ -409,6 +427,52 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         });
     }
 
+    @Override
+    public Future<Void> putActivation(DefinitionActivation activation) {
+        return attempt(() -> {
+            Objects.requireNonNull(activation, "activation");
+            DefinitionKey target =
+                    new DefinitionKey(activation.targetScopeKey(), activation.definitionId(), activation.version());
+            return mutate(target, (tx, rows) -> {
+                Row current = row(rows, target).orElseThrow(() -> invalid(target, "definition not found"));
+                String status = current.getString("status");
+                if (!DefinitionStatus.AVAILABLE.name().equals(status))
+                    throw invalid(target, "cannot activate status " + status + ", only AVAILABLE can be activated");
+                return tx.preparedQuery(sqlPutActivation)
+                        .execute(Tuple.of(
+                                activation.scopeKey(),
+                                activation.definitionId(),
+                                activation.targetScopeKey(),
+                                activation.version(),
+                                activation.activatedAt().atOffset(java.time.ZoneOffset.UTC)))
+                        .mapEmpty();
+            });
+        });
+    }
+
+    @Override
+    public Future<Void> removeActivation(String scopeKey, String definitionId) {
+        return attempt(() -> {
+            // DefinitionKey enforces the scope and id constraints; the version is irrelevant here.
+            new DefinitionKey(scopeKey, definitionId, 1);
+            return mutate(definitionId, (tx, rows) -> tx.preparedQuery(sqlRemoveActivation)
+                    .execute(Tuple.of(scopeKey, definitionId))
+                    .mapEmpty());
+        });
+    }
+
+    @Override
+    public Future<List<DefinitionActivation>> listActivations(@Nullable String scopeKey) {
+        return attempt(() -> {
+            if (scopeKey != null) new DefinitionKey(scopeKey, WorkflowScopes.DEFAULT, 1);
+            return transaction("activations", tx -> tx.preparedQuery(sqlListActivations)
+                    .execute(Tuple.tuple().addValue(scopeKey))
+                    .map(rows -> java.util.stream.StreamSupport.stream(rows.spliterator(), false)
+                            .map(PgWorkflowDefinitionRegistryStore::activation)
+                            .toList()));
+        });
+    }
+
     /**
      * Refuses a deprecated row that is still cooling, then one that is still pinned. Both reads run after the
      * locks were acquired, so they see everything committed while the lock was awaited.
@@ -626,6 +690,15 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 r.getString("document_format"),
                 r.getOffsetDateTime("created_at").toInstant(),
                 r.getOffsetDateTime("status_changed_at").toInstant());
+    }
+
+    private static DefinitionActivation activation(Row r) {
+        return new DefinitionActivation(
+                r.getString("scope_key"),
+                r.getString("definition_id"),
+                r.getString("target_scope_key"),
+                r.getLong("definition_version"),
+                r.getOffsetDateTime("activated_at").toInstant());
     }
 
     private static WorkflowDefinitionLifecycleException invalid(DefinitionKey key, String detail) {

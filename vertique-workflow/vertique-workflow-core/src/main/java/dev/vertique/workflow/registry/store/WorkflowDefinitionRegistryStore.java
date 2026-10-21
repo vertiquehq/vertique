@@ -4,6 +4,7 @@
 package dev.vertique.workflow.registry.store;
 
 import io.vertx.core.Future;
+import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;
 
@@ -146,4 +147,34 @@ public interface WorkflowDefinitionRegistryStore {
      * @return a future completed after the store-owned transaction commits
      */
     Future<Void> resetStalePublishing(String definitionId);
+
+    /**
+     * Writes the scope's activation record of the definition id, replacing an earlier one. Under the definition id
+     * lock and in the same transaction as the write, the target row must exist and be {@code AVAILABLE};
+     * otherwise the returned future fails with a
+     * {@link dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException} reason
+     * {@code INVALID_TRANSITION} naming the target key, and nothing changes. No definition row changes.
+     *
+     * @param activation the record to write
+     * @return a future completed after the store-owned transaction commits
+     */
+    Future<Void> putActivation(DefinitionActivation activation);
+
+    /**
+     * Deletes the scope's activation record of the definition id under the definition id lock. An absent record is
+     * accepted without a change.
+     *
+     * @param scopeKey the scope whose record is deleted
+     * @param definitionId the definition id
+     * @return a future completed after the store-owned transaction commits
+     */
+    Future<Void> removeActivation(String scopeKey, String definitionId);
+
+    /**
+     * Lists activation records ordered by definition id and then scope key.
+     *
+     * @param scopeKey the exact scope whose records to list, or {@code null} for every scope
+     * @return a future containing the matching records
+     */
+    Future<List<DefinitionActivation>> listActivations(@Nullable String scopeKey);
 }

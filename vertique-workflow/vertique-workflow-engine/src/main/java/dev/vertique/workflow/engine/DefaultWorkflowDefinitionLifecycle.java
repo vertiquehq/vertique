@@ -5,11 +5,13 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition;
+import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
+import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
@@ -17,12 +19,14 @@ import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -172,6 +176,61 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
+    }
+
+    @Override
+    public Future<Void> activate(String scopeKey, String definitionId, String targetScopeKey, long version) {
+        try {
+            DefinitionActivation activation =
+                    new DefinitionActivation(scopeKey, definitionId, targetScopeKey, version, Instant.now());
+            if (store.isEmpty()) return Future.failedFuture(noRegistry());
+            WorkflowDefinitionRegistryStore durable = store.orElseThrow();
+            return queue.submit(definitionId, () -> durable.putActivation(activation));
+        } catch (RuntimeException e) {
+            return Future.failedFuture(e);
+        }
+    }
+
+    @Override
+    public Future<Void> deactivateDefault(String definitionId) {
+        try {
+            new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
+            if (store.isEmpty()) return Future.failedFuture(noRegistry());
+            WorkflowDefinitionRegistryStore durable = store.orElseThrow();
+            return queue.submit(definitionId, () -> durable.removeActivation(WorkflowScopes.DEFAULT, definitionId));
+        } catch (RuntimeException e) {
+            return Future.failedFuture(e);
+        }
+    }
+
+    @Override
+    public Future<Void> follow(String scopeKey, String definitionId) {
+        try {
+            new DefinitionKey(scopeKey, definitionId, 1);
+            if (WorkflowScopes.DEFAULT.equals(scopeKey))
+                throw new IllegalArgumentException(
+                        "the default scope cannot follow itself; clear its record with deactivateDefault");
+            if (store.isEmpty()) return Future.failedFuture(noRegistry());
+            WorkflowDefinitionRegistryStore durable = store.orElseThrow();
+            return queue.submit(definitionId, () -> durable.removeActivation(scopeKey, definitionId));
+        } catch (RuntimeException e) {
+            return Future.failedFuture(e);
+        }
+    }
+
+    @Override
+    public Future<List<DefinitionActivation>> activations(@Nullable String scopeKey) {
+        try {
+            if (scopeKey != null) new DefinitionKey(scopeKey, WorkflowScopes.DEFAULT, 1);
+            if (store.isEmpty()) return Future.failedFuture(noRegistry());
+            return store.orElseThrow().listActivations(scopeKey);
+        } catch (RuntimeException e) {
+            return Future.failedFuture(e);
+        }
+    }
+
+    private static WorkflowDefinitionException noRegistry() {
+        return new WorkflowDefinitionException("durable registry is unavailable");
     }
 
     /**

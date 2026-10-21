@@ -11,6 +11,7 @@ import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -24,6 +25,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
@@ -232,6 +234,32 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                         return (Void) null;
                     });
         });
+    }
+
+    @Override
+    public Future<Void> activate(String scopeKey, String definitionId, String targetScopeKey, long version) {
+        return attempt(() -> lifecycleOperation("activate").activate(scopeKey, definitionId, targetScopeKey, version));
+    }
+
+    @Override
+    public Future<Void> deactivateDefault(String definitionId) {
+        return attempt(() -> lifecycleOperation("deactivate the default").deactivateDefault(definitionId));
+    }
+
+    @Override
+    public Future<Void> follow(String scopeKey, String definitionId) {
+        return attempt(() -> lifecycleOperation("follow").follow(scopeKey, definitionId));
+    }
+
+    @Override
+    public Future<List<DefinitionActivation>> activations(@Nullable String scopeKey) {
+        return attempt(() -> lifecycleOperation("list activations").activations(scopeKey));
+    }
+
+    /** The lifecycle that carries the activation operations; the facade holds no activation state of its own. */
+    private WorkflowDefinitionLifecycle lifecycleOperation(String operation) {
+        return lifecycle.orElseThrow(
+                () -> new WorkflowDefinitionException("cannot " + operation + ": no lifecycle implementation"));
     }
 
     @Override

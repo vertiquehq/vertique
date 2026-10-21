@@ -213,7 +213,8 @@ public class PgWorkflowSchemaIT {
             "workflow_tasks",
             "workflow_branch_tokens",
             "workflow_join_states",
-            "workflow_definitions");
+            "workflow_definitions",
+            "workflow_definition_activations");
     private static final Set<String> TRANSACTION_DECOY_TABLES = with(WORKFLOW_TABLES, "outbox", "inbox", "orders");
 
     private static final Set<String> MIGRATED_INDEXES = Set.of(

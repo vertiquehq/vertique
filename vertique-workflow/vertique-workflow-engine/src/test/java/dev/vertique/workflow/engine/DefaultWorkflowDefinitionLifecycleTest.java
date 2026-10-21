@@ -15,6 +15,7 @@ import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
+import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -706,6 +707,21 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
+        public Future<Void> putActivation(DefinitionActivation activation) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> removeActivation(String scopeKey, String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Future<Void> retire(DefinitionKey key) {
             scenario.events.add("retire");
             Future<Void> next = scenario.retirements.poll();
@@ -1279,6 +1295,21 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
+        public Future<Void> putActivation(DefinitionActivation activation) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> removeActivation(String scopeKey, String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Future<Void> retire(DefinitionKey key) {
             throw new UnsupportedOperationException();
         }
@@ -1454,6 +1485,21 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
+        public Future<Void> putActivation(DefinitionActivation activation) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> removeActivation(String scopeKey, String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Future<Void> retire(DefinitionKey key) {
             throw new UnsupportedOperationException();
         }
@@ -1600,6 +1646,21 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         @Override
         public Future<Void> resetStalePublishing(String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> putActivation(DefinitionActivation activation) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> removeActivation(String scopeKey, String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
             throw new UnsupportedOperationException();
         }
 

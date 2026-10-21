@@ -565,6 +565,95 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         return new WorkflowDefinitionDocument(key(version), "{\"v\":" + version + "}", "JSON");
     }
 
+    @Test
+    @DisplayName("the activation table enforces its target rules and restricts deletes of referenced definitions")
+    void activationTableEnforcesTargetRulesAndRestrictsDeletes() throws Exception {
+        // Given a migrated database with an available default row and an available acme row of one id
+        Flyway.configure()
+                .dataSource(db.jdbcUrl(), db.username(), db.password())
+                .locations(WORKFLOW_LOCATION)
+                .load()
+                .migrate();
+        try (Connection connection = connection()) {
+            DefinitionTableRows.insertCode(connection, DEFINITION_ID, 1, "AVAILABLE");
+            insertAvailableDocument(connection, "acme", DEFINITION_ID, 1);
+
+            // When activations that name existing rows of their own scope or of the default are inserted
+            insertActivation(connection, "acme", "acme", 1);
+            insertActivation(connection, "qa", "default", 1);
+
+            // Then both are stored
+            assertEquals(2, activationCount(connection));
+
+            // When activations that name a third scope, or let the default name another scope, are inserted
+            // Then the target check rejects them
+            DefinitionTableRows.assertSqlState("23514", () -> insertActivation(connection, "acme", "globex", 1));
+            DefinitionTableRows.assertSqlState("23514", () -> insertActivation(connection, "default", "acme", 1));
+
+            // When an activation names a definition row that does not exist
+            // Then the foreign key rejects it
+            DefinitionTableRows.assertSqlState("23503", () -> insertActivation(connection, "delta", "delta", 1));
+
+            // When a definition row that an activation references is deleted
+            // Then the foreign key restricts the delete
+            DefinitionTableRows.assertSqlState("23503", () -> deleteDefinition(connection, "acme", 1));
+
+            // And nothing changed
+            assertEquals(2, activationCount(connection));
+        }
+    }
+
+    private static void insertAvailableDocument(Connection connection, String scopeKey, String id, long version)
+            throws Exception {
+        try (PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO workflow_definitions
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash,
+                     status, document, document_format, document_digest, source_type, loaded_at)
+                VALUES (?, ?, ?, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), 'AVAILABLE',
+                        '{}', 'YAML', ?, 'schema-test', now())
+                """)) {
+            insert.setString(1, scopeKey);
+            insert.setString(2, id);
+            insert.setLong(3, version);
+            insert.setString(4, DefinitionTableRows.sha256Hex("{}"));
+            insert.executeUpdate();
+        }
+    }
+
+    private static void insertActivation(Connection connection, String scopeKey, String targetScopeKey, long version)
+            throws SQLException {
+        try (PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO workflow_definition_activations
+                    (scope_key, definition_id, target_scope_key, definition_version, activated_at)
+                VALUES (?, ?, ?, ?, now())
+                """)) {
+            insert.setString(1, scopeKey);
+            insert.setString(2, DEFINITION_ID);
+            insert.setString(3, targetScopeKey);
+            insert.setLong(4, version);
+            insert.executeUpdate();
+        }
+    }
+
+    private static void deleteDefinition(Connection connection, String scopeKey, long version) throws SQLException {
+        try (PreparedStatement delete = connection.prepareStatement("""
+                DELETE FROM workflow_definitions WHERE scope_key = ? AND definition_id = ? AND definition_version = ?
+                """)) {
+            delete.setString(1, scopeKey);
+            delete.setString(2, DEFINITION_ID);
+            delete.setLong(3, version);
+            delete.executeUpdate();
+        }
+    }
+
+    private static long activationCount(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement();
+                ResultSet rows = statement.executeQuery("SELECT count(*) FROM workflow_definition_activations")) {
+            rows.next();
+            return rows.getLong(1);
+        }
+    }
+
     // --- Observation ---
 
     private static List<String> registrySql(WorkflowDefinitionSqlObserver observer) {
