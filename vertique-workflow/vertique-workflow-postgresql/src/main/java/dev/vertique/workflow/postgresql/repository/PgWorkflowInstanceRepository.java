@@ -14,6 +14,7 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.registry.DefinitionPinAdmission;
 import dev.vertique.workflow.query.WorkflowInstanceQuery;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
@@ -179,8 +180,9 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
 
         this.sqlUpdateOptimisticLive = sqlUpdateOptimistic + " AND status IN ('RUNNING','WAITING','COMPENSATING')";
 
-        this.sqlReadPin = "SELECT definition_id, definition_version, plan_hash, status, version FROM " + instances
-                + " WHERE id = $1";
+        this.sqlReadPin =
+                "SELECT definition_scope_key, definition_id, definition_version, plan_hash, status, version FROM "
+                        + instances + " WHERE id = $1";
 
         this.sqlMigratePinAndState = "UPDATE " + instances
                 + " SET definition_version = $2, plan_hash = $3, version = $4,"
@@ -238,8 +240,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
         return DefinitionPinAdmission.admitPin(
                         tx,
                         definitionsTable,
-                        inst.definitionId(),
-                        inst.definitionVersion(),
+                        new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()),
                         inst.planHash(),
                         exceptionMapper)
                 .compose(admitted -> tx.preparedQuery(sqlInsert)
@@ -315,8 +316,10 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                     return DefinitionPinAdmission.admitResurrection(
                                     tx,
                                     definitionsTable,
-                                    persisted.getString("definition_id"),
-                                    persisted.getLong("definition_version"),
+                                    new DefinitionKey(
+                                            persisted.getString("definition_scope_key"),
+                                            persisted.getString("definition_id"),
+                                            persisted.getLong("definition_version")),
                                     persisted.getString("plan_hash"),
                                     exceptionMapper)
                             .compose(admitted -> executeUpdate(sqlUpdateOptimistic, params, tx));
@@ -372,8 +375,8 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
         return DefinitionPinAdmission.admitPin(
                         tx,
                         definitionsTable,
-                        updated.definitionId(),
-                        updated.definitionVersion(),
+                        new DefinitionKey(
+                                updated.definitionScopeKey(), updated.definitionId(), updated.definitionVersion()),
                         updated.planHash(),
                         exceptionMapper)
                 .compose(admitted -> tx.preparedQuery(sqlMigratePinAndState)

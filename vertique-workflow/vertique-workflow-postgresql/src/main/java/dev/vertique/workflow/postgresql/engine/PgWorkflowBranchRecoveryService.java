@@ -14,6 +14,7 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -429,7 +430,8 @@ public final class PgWorkflowBranchRecoveryService {
         return instances.findById(token.workflowId(), tx).compose(opt -> {
             if (opt.isEmpty()) return Future.succeededFuture(Optional.empty());
             WorkflowInstance inst = opt.get();
-            RuntimeWorkflow rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+            RuntimeWorkflow rw = registry.resolve(
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
             try {
                 recoveryBridge.validateRecoveryPlan(inst, rw);
             } catch (Exception e) {

@@ -92,7 +92,7 @@ Each workflow operation opens a Postgres transaction via the `WorkflowTransactio
 
 The engine stores serialized workflow state as JSON. The Java state type comes from the registered workflow plan.
 
-In-flight instances are pinned to the definition version and plan hash recorded at start. They do not silently move to a newer definition.
+In-flight instances are pinned to the definition version and plan hash recorded at start. They do not silently move to a newer definition. The pin includes the definition scope, and branch recovery resolves the plan of the pinned definition scope, id and version.
 
 The `WorkflowTransactionRunner` in this module delegates to `vertique-db-core`'s `TransactionBuilder`. Write paths run at the connection's default isolation (0 `SET TRANSACTION` statements); the `query()` read path uses `REPEATABLE READ` (1 statement, no `READ ONLY`).
 
@@ -192,7 +192,7 @@ statement. Starts share the lock, so they do not serialize each other, but a que
 PostgreSQL queues later admissions behind that waiting writer, so long caller transactions can delay lifecycle and startup
 mutations. The caller's pin transaction must therefore end before it awaits any store-owned lifecycle call for the same
 id. At READ COMMITTED an id with no definition rows is admitted (a definition registered only by direct runtime registration after startup, or an engine built without the registry bootstrap, has none); otherwise the sole
-holding owner must have the exact version and plan hash ACTIVE or SUPERSEDED, and a resurrection also accepts DEPRECATED.
+holding owner must hold the pin's exact definition scope, id and version with the plan hash, ACTIVE or SUPERSEDED, and a resurrection also accepts DEPRECATED. The pin is the instance's definition scope, definition id and definition version, so an instance pinned to a definition scope is admitted only against the row of that scope.
 Under REPEATABLE READ or SERIALIZABLE the rows are read `FOR SHARE`, a changed row raises a serialization failure, and an id
 with no visible row is refused with `INVALID_TRANSITION` (a snapshot taken before the first row cannot tell absence from a
 newly managed id; this includes engines built by hand that skip the registry bootstrap). Every admission sets
