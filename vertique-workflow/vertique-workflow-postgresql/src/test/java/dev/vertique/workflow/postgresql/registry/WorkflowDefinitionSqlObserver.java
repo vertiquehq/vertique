@@ -201,11 +201,11 @@ final class WorkflowDefinitionSqlObserver {
             return future.map(rows -> {
                 String normalized =
                         sql.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").stripLeading();
-                if (normalized.startsWith("update workflow_definitions set status='activating'")) {
+                if (normalized.startsWith("update workflow_definitions set status='publishing'")) {
                     completionLockArmed.set(true);
                 }
-                if (normalized.startsWith("update workflow_definitions set status=$4, activation_token=null")
-                        && normalized.contains("and status='activating' and activation_token=$5")
+                if (normalized.startsWith("update workflow_definitions set status='available', publish_token=null")
+                        && normalized.contains("and status='publishing' and publish_token=$4")
                         && rows instanceof RowSet<?> rowSet
                         && rowSet.rowCount() > 0) {
                     completionResponseArmed.set(true);

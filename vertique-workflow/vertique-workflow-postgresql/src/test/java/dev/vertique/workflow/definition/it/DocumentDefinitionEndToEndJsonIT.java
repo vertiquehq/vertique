@@ -482,7 +482,7 @@ public class DocumentDefinitionEndToEndJsonIT {
 
     /**
      * Verifies that the JSON-compiled {@code planHash} is non-blank and the definition is listed
-     * as {@link DefinitionStatus#ACTIVE} by the service after bootstrap (AC #10, AC #12).
+     * as {@link DefinitionStatus#AVAILABLE} by the service after bootstrap (AC #10, AC #12).
      */
     @Test
     @DisplayName("JSON planHash is non-blank and definition is active in the service after bootstrap")
@@ -496,7 +496,7 @@ public class DocumentDefinitionEndToEndJsonIT {
                     WorkflowDefinitionRecord ref = refs.get(0);
                     assertEquals("order-fulfillment-doc", ref.key().definitionId());
                     assertEquals(2L, ref.key().definitionVersion());
-                    assertEquals(DefinitionStatus.ACTIVE, ref.status());
+                    assertEquals(DefinitionStatus.AVAILABLE, ref.status());
                     assertNotNull(ref.planHash(), "planHash must not be null");
                     assertTrue(!ref.planHash().isBlank(), "planHash must not be blank");
                     ctx.completeNow();

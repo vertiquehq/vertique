@@ -644,7 +644,7 @@ public class DocumentDefinitionFanOutIT {
                     WorkflowDefinitionRecord ref = refs.get(0);
                     assertEquals("order-fulfillment-fanout-doc", ref.key().definitionId());
                     assertEquals(1L, ref.key().definitionVersion());
-                    assertEquals(DefinitionStatus.ACTIVE, ref.status());
+                    assertEquals(DefinitionStatus.AVAILABLE, ref.status());
                     assertNotNull(ref.planHash(), "planHash must not be null");
                     assertTrue(!ref.planHash().isBlank(), "planHash must not be blank");
                     ctx.completeNow();

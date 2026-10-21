@@ -41,20 +41,18 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     loaded_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    activation_token UUID,
+    publish_token UUID,
     CONSTRAINT pk_workflow_definitions PRIMARY KEY (scope_key, definition_id, definition_version),
     CONSTRAINT ck_workflow_definitions_version CHECK (definition_version > 0),
     CONSTRAINT ck_workflow_definitions_kind CHECK (kind IN ('CODE','DOCUMENT')),
-    CONSTRAINT ck_workflow_definitions_status CHECK (status IN ('CANDIDATE','ACTIVATING','ACTIVE','SUPERSEDED','DEPRECATED','RETIRED')),
-    CONSTRAINT ck_workflow_definitions_claim CHECK ((status = 'ACTIVATING') = (activation_token IS NOT NULL)),
+    CONSTRAINT ck_workflow_definitions_status CHECK (status IN ('CANDIDATE','PUBLISHING','AVAILABLE','DEPRECATED','RETIRED')),
+    CONSTRAINT ck_workflow_definitions_claim CHECK ((status = 'PUBLISHING') = (publish_token IS NOT NULL)),
     CONSTRAINT ck_workflow_definitions_document CHECK (
         (kind = 'DOCUMENT' AND document IS NOT NULL AND document_format IS NOT NULL)
         OR (kind = 'CODE' AND document IS NULL AND document_format IS NULL AND scope_key = 'default')),
     CONSTRAINT ck_workflow_definitions_digest
         CHECK ((kind = 'DOCUMENT') = (document_digest IS NOT NULL) AND (document_digest IS NULL OR document_digest ~ '^[0-9a-f]{64}$'))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_definitions_one_active
-    ON workflow_definitions (scope_key, definition_id) WHERE status = 'ACTIVE';
 CREATE INDEX IF NOT EXISTS idx_workflow_definitions_id ON workflow_definitions (definition_id);
 
 -- Tasks first, matching the engine's lock order (tasks before instances).

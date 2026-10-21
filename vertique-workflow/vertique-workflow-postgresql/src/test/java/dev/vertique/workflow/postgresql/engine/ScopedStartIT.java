@@ -268,7 +268,7 @@ public class ScopedStartIT {
             DefinitionKey activeVersion = new DefinitionKey(DEFAULT, documentId, 1);
             await(app.definitionService()
                     .load(DEFAULT, ManagedDefinitionDatabase.yamlFixture(), DocumentFormat.YAML, metadata));
-            await(app.definitionService().activate(activeVersion));
+            await(app.definitionService().publish(activeVersion));
             await(app.definitionService()
                     .load(ACME, ManagedDefinitionDatabase.jsonFixture(), DocumentFormat.JSON, metadata));
             String contractName = app.workflowRegistry().resolve(activeVersion).contractName();

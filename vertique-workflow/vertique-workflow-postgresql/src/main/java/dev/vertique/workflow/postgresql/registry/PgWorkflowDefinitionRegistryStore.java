@@ -45,7 +45,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * PostgreSQL registry with transaction-owned id locking and fenced activation claims.
+ * PostgreSQL registry with transaction-owned id locking and fenced publication claims.
  *
  * <p>Every reference to the {@code workflow_definitions} and {@code workflow_instances} tables is qualified with the schema mapped to
  * the {@code workflow} instance when the {@link DbSchemas} given at construction holds one; otherwise
@@ -73,17 +73,13 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private final String sqlResetStale;
     private final String sqlUpdateProvenance;
     private final String sqlClaim;
-    private final String sqlDemoteOlder;
     private final String sqlComplete;
     private final String sqlRelease;
     private final String sqlTransition;
-    private final String sqlReinstate;
     private final String sqlRetire;
     private final String sqlCooling;
     private final String sqlCountNonTerminal;
     private final String sqlLockRows;
-    private final String sqlRecomputeDemote;
-    private final String sqlRecomputePromote;
     private final WorkflowDefinitionsConfig config;
     private final WorkflowExceptionMapper workflowMapper = new WorkflowExceptionMapper();
     private volatile boolean utf8Confirmed;
@@ -146,32 +142,25 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + KEY + " AND kind='CODE'";
 
         this.sqlResetStale = "UPDATE " + definitions
-                + " SET status='CANDIDATE', activation_token=NULL, status_changed_at=clock_timestamp() WHERE definition_id=$1 AND status='ACTIVATING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2)";
+                + " SET status='CANDIDATE', publish_token=NULL, status_changed_at=clock_timestamp() WHERE definition_id=$1 AND status='PUBLISHING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2)";
 
         this.sqlUpdateProvenance = "UPDATE " + definitions
                 + " SET source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$9 WHERE "
                 + KEY;
 
         this.sqlClaim = "UPDATE " + definitions
-                + " SET status='ACTIVATING', activation_token=$4, status_changed_at=clock_timestamp() WHERE " + KEY;
-
-        this.sqlDemoteOlder = "UPDATE " + definitions
-                + " SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE scope_key=$1 AND definition_id=$2 AND definition_version<$3 AND status='ACTIVE'";
+                + " SET status='PUBLISHING', publish_token=$4, status_changed_at=clock_timestamp() WHERE " + KEY;
 
         this.sqlComplete = "UPDATE " + definitions
-                + " SET status=$4, activation_token=NULL, status_changed_at=clock_timestamp() WHERE " + KEY
-                + " AND status='ACTIVATING' AND activation_token=$5";
+                + " SET status='AVAILABLE', publish_token=NULL, status_changed_at=clock_timestamp() WHERE " + KEY
+                + " AND status='PUBLISHING' AND publish_token=$4";
 
         this.sqlRelease = "UPDATE " + definitions
-                + " SET status='CANDIDATE', activation_token=NULL, status_changed_at=clock_timestamp() WHERE " + KEY
-                + " AND status='ACTIVATING' AND activation_token=$4";
+                + " SET status='CANDIDATE', publish_token=NULL, status_changed_at=clock_timestamp() WHERE " + KEY
+                + " AND status='PUBLISHING' AND publish_token=$4";
 
         this.sqlTransition = "UPDATE " + definitions + " SET status=$5, status_changed_at=clock_timestamp() WHERE "
                 + KEY + " AND status=$4";
-
-        this.sqlReinstate =
-                "UPDATE " + definitions + " SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE " + KEY
-                        + " AND status='RETIRED'";
 
         this.sqlRetire = "UPDATE " + definitions + " SET status='RETIRED', status_changed_at=clock_timestamp() WHERE "
                 + KEY + " AND status=$4";
@@ -184,15 +173,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " WHERE definition_id = $1 AND definition_version = $2 AND definition_scope_key = $3 AND status IN ('RUNNING','WAITING','COMPENSATING')";
 
         this.sqlLockRows = "SELECT " + LOCKED_COLUMNS
-                + ", activation_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM "
+                + ", publish_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM "
                 + definitions
                 + " WHERE definition_id=$1 ORDER BY scope_key, definition_version FOR UPDATE";
-
-        this.sqlRecomputeDemote = "UPDATE " + definitions
-                + " SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE scope_key=$1 AND definition_id=$2 AND definition_version<>$3 AND status='ACTIVE'";
-
-        this.sqlRecomputePromote = "UPDATE " + definitions
-                + " SET status='ACTIVE', status_changed_at=clock_timestamp() WHERE " + KEY + " AND status='SUPERSEDED'";
     }
 
     @Override
@@ -274,10 +257,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         return attempt(() -> {
             validateDocument(record, document);
             return mutate(record.key(), (tx, rows) -> encoding(tx).compose(ignored -> {
-                if (ownerConflict(rows, record.key())) return Future.succeededFuture(ReconcileOutcome.OWNER_CONFLICT);
                 Optional<Row> current = row(rows, record.key());
                 if (current.isEmpty())
-                    return insert(tx, record, document, DefinitionStatus.SUPERSEDED)
+                    return insert(tx, record, document, DefinitionStatus.AVAILABLE)
                             .map(ReconcileOutcome.INSERTED);
                 Row old = current.orElseThrow();
                 if (!"DOCUMENT".equals(old.getString("kind")))
@@ -307,10 +289,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             DefinitionKey key = record.key();
             // Read committed, so that the pinned count taken after the lock wait sees everything committed meanwhile.
             return mutate(key.definitionId(), (tx, rows) -> {
-                if (ownerConflict(rows, key)) return Future.succeededFuture(ReconcileOutcome.OWNER_CONFLICT);
                 Optional<Row> current = row(rows, key);
                 if (current.isEmpty())
-                    return insertCode(tx, record, DefinitionStatus.SUPERSEDED).map(ReconcileOutcome.INSERTED);
+                    return insertCode(tx, record, DefinitionStatus.AVAILABLE).map(ReconcileOutcome.INSERTED);
                 Row old = current.orElseThrow();
                 if (!"CODE".equals(old.getString("kind")))
                     return Future.succeededFuture(ReconcileOutcome.KIND_CONFLICT);
@@ -326,10 +307,10 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
-    public Future<Void> resetStaleActivating(String definitionId) {
+    public Future<Void> resetStalePublishing(String definitionId) {
         return attempt(() -> {
             Objects.requireNonNull(definitionId, "definitionId");
-            // DefinitionKey enforces the id constraints; the owner and version are irrelevant here.
+            // DefinitionKey enforces the id constraints; the scope and version are irrelevant here.
             new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
             return mutate(definitionId, (tx, rows) -> tx.preparedQuery(sqlResetStale)
                     .execute(Tuple.of(definitionId, config.maxStalenessSeconds()))
@@ -338,18 +319,18 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
+    public Future<Void> resetStaleActivating(String definitionId) {
+        return resetStalePublishing(definitionId);
+    }
+
+    @Override
     public Future<ActivationClaim> claim(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
             return mutate(key, (tx, rows) -> {
-                if (ownerConflict(rows, key))
-                    throw conflict(
-                            Reason.OWNER_CONFLICT,
-                            key,
-                            "another owner holds this definition id: " + heldOwners(rows, key));
                 Row current = row(rows, key).orElseThrow(() -> invalid(key, "definition not found"));
                 String status = current.getString("status");
-                if (!"CANDIDATE".equals(status) && !("ACTIVATING".equals(status) && current.getBoolean("stale")))
+                if (!"CANDIDATE".equals(status) && !("PUBLISHING".equals(status) && current.getBoolean("stale")))
                     throw invalid(key, "cannot claim status " + status);
                 ActivationClaim claim = new ActivationClaim(key, UUID.randomUUID());
                 return tx.preparedQuery(sqlClaim)
@@ -367,28 +348,12 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             return mutate(key, (tx, rows) -> {
                 Row current =
                         row(rows, key).orElseThrow(() -> conflict(Reason.STALE_CLAIM, key, "claim no longer exists"));
-                if (!"ACTIVATING".equals(current.getString("status"))
-                        || !claim.token().equals(current.getUUID("activation_token")))
-                    throw conflict(Reason.STALE_CLAIM, key, "activation token is obsolete");
-                if (ownerConflict(rows, key))
-                    throw conflict(
-                            Reason.OWNER_CONFLICT,
-                            key,
-                            "another owner holds this definition id: " + heldOwners(rows, key));
-                boolean higher = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
-                        .anyMatch(r -> Objects.equals(key.scopeKey(), r.getString("scope_key"))
-                                && ("ACTIVE".equals(r.getString("status"))
-                                        || "SUPERSEDED".equals(r.getString("status")))
-                                && r.getLong("definition_version") > key.definitionVersion());
-                Future<Void> demote = higher
-                        ? Future.succeededFuture()
-                        : tx.preparedQuery(sqlDemoteOlder)
-                                .execute(parameters(key))
-                                .mapEmpty();
-                ActivationOutcome outcome = higher ? ActivationOutcome.SUPERSEDED : ActivationOutcome.ACTIVE;
-                return demote.compose(ignored -> tx.preparedQuery(sqlComplete)
-                        .execute(parameters(key).addString(outcome.name()).addUUID(claim.token()))
-                        .map(outcome));
+                if (!"PUBLISHING".equals(current.getString("status"))
+                        || !claim.token().equals(current.getUUID("publish_token")))
+                    throw conflict(Reason.STALE_CLAIM, key, "publish token is obsolete");
+                return tx.preparedQuery(sqlComplete)
+                        .execute(parameters(key).addUUID(claim.token()))
+                        .map(ActivationOutcome.ACTIVE);
             });
         });
     }
@@ -409,17 +374,12 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(from, "from");
             Objects.requireNonNull(to, "to");
-            if (from == DefinitionStatus.RETIRED && to == DefinitionStatus.SUPERSEDED) return reinstate(key);
-            if (to != DefinitionStatus.DEPRECATED
-                    || (from != DefinitionStatus.ACTIVE && from != DefinitionStatus.SUPERSEDED))
-                throw invalid(key, "transition " + from + " to " + to + " is not supported");
+            boolean supported = (from == DefinitionStatus.AVAILABLE && to == DefinitionStatus.DEPRECATED)
+                    || (to == DefinitionStatus.AVAILABLE
+                            && (from == DefinitionStatus.DEPRECATED || from == DefinitionStatus.RETIRED));
+            if (!supported) throw invalid(key, "transition " + from + " to " + to + " is not supported");
             return mutate(key, (tx, rows) -> {
                 Row current = row(rows, key).orElseThrow(() -> invalid(key, "definition not found"));
-                if (ownerConflict(rows, key))
-                    throw conflict(
-                            Reason.OWNER_CONFLICT,
-                            key,
-                            "another owner holds this definition id: " + heldOwners(rows, key));
                 String status = current.getString("status");
                 if (!from.name().equals(status)) throw invalid(key, "expected status " + from + " but found " + status);
                 return tx.preparedQuery(sqlTransition)
@@ -429,35 +389,6 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                                 throw invalid(key, "expected status " + from + " but the row changed");
                             return (Void) null;
                         });
-            });
-        });
-    }
-
-    /**
-     * Returns a retired version to service in one exclusive transaction: it checks the row and the owner, marks
-     * the row superseded, then settles which version of this owner and id is active. Any failure rolls back the
-     * whole change. The transaction reads committed rows, so that the owner check after the lock wait sees every
-     * row another owner committed meanwhile, whatever the server default isolation is.
-     */
-    private Future<Void> reinstate(DefinitionKey key) {
-        return mutate(key.definitionId(), (tx, rows) -> {
-            Row current = row(rows, key).orElseThrow(() -> invalid(key, "definition not found"));
-            String status = current.getString("status");
-            if (!"RETIRED".equals(status)) throw invalid(key, "expected status RETIRED but found " + status);
-            if (ownerConflict(rows, key))
-                throw conflict(
-                        Reason.OWNER_CONFLICT, key, "another owner holds this definition id: " + heldOwners(rows, key));
-            return tx.preparedQuery(sqlReinstate).execute(parameters(key)).compose(updated -> {
-                if (updated.rowCount() != 1) throw invalid(key, "expected status RETIRED but the row changed");
-                List<Member> members = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
-                        .filter(r -> Objects.equals(key.scopeKey(), r.getString("scope_key")))
-                        .map(r -> new Member(
-                                r.getLong("definition_version"),
-                                r.getLong("definition_version") == key.definitionVersion()
-                                        ? "SUPERSEDED"
-                                        : r.getString("status")))
-                        .toList();
-                return recomputeMembership(tx, key.scopeKey(), key.definitionId(), members);
             });
         });
     }
@@ -525,49 +456,10 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             Objects.requireNonNull(definitionId, "definitionId");
             // DefinitionKey enforces the key constraints; the version is irrelevant here.
             new DefinitionKey(scopeKey, definitionId, 1);
-            return mutate(definitionId, (tx, rows) -> {
-                List<Member> members = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
-                        .filter(row -> Objects.equals(scopeKey, row.getString("scope_key")))
-                        .map(row -> new Member(row.getLong("definition_version"), row.getString("status")))
-                        .toList();
-                return recomputeMembership(tx, scopeKey, definitionId, members);
-            });
+            // Every available version of an id is available at once, so there is no membership to settle.
+            return Future.succeededFuture();
         });
     }
-
-    /**
-     * Settles which version of one owner and id is active, on the caller's locked transaction: the highest
-     * version among the active and superseded ones wins. Lower active versions are demoted first, then the
-     * winner is promoted, so the one-active-version rule holds at every statement. Rows that are already correct
-     * keep their timestamps.
-     */
-    private Future<Void> recomputeMembership(
-            SqlConnection tx, String scopeKey, String definitionId, List<Member> members) {
-        List<Member> eligible = members.stream()
-                .filter(member -> "ACTIVE".equals(member.status()) || "SUPERSEDED".equals(member.status()))
-                .toList();
-        if (eligible.isEmpty()) return Future.succeededFuture();
-
-        Member highest = eligible.stream()
-                .max(java.util.Comparator.comparingLong(Member::version))
-                .orElseThrow();
-        long highestVersion = highest.version();
-        Future<Void> demote = eligible.stream()
-                        .anyMatch(member -> "ACTIVE".equals(member.status()) && member.version() != highestVersion)
-                ? tx.preparedQuery(sqlRecomputeDemote)
-                        .execute(Tuple.of(scopeKey, definitionId, highestVersion))
-                        .mapEmpty()
-                : Future.succeededFuture();
-
-        if ("ACTIVE".equals(highest.status())) return demote;
-        DefinitionKey highestKey = new DefinitionKey(scopeKey, definitionId, highestVersion);
-        return demote.compose(ignored -> tx.preparedQuery(sqlRecomputePromote)
-                .execute(parameters(highestKey))
-                .mapEmpty());
-    }
-
-    /** One version of an owner and id, with the status it has at this point of the transaction. */
-    private record Member(long version, String status) {}
 
     private Future<Void> encoding(SqlConnection tx) {
         if (utf8Confirmed) return Future.succeededFuture();
@@ -683,7 +575,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     /**
      * Runs the operation under the exclusive lock of the id. The transaction is first pinned to READ COMMITTED, so
      * the rows read after a lock wait are current whatever the server default isolation is; a snapshot taken before
-     * the wait would miss a row that another owner committed meanwhile. The isolation statement must be the first
+     * the wait would miss a row that another transaction committed meanwhile. The isolation statement must be the first
      * statement of the transaction, before the lock bound and the advisory lock.
      */
     private <T> Future<T> mutate(String definitionId, LockedOperation<T> action) {
@@ -719,26 +611,6 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         return java.util.stream.StreamSupport.stream(rows.spliterator(), false)
                 .filter(r -> key.equals(key(r)))
                 .findFirst();
-    }
-
-    private static boolean ownerConflict(RowSet<Row> rows, DefinitionKey key) {
-        return java.util.stream.StreamSupport.stream(rows.spliterator(), false)
-                .anyMatch(r -> isHeldByAnotherOwner(r, key));
-    }
-
-    private static String heldOwners(RowSet<Row> rows, DefinitionKey key) {
-        return java.util.stream.StreamSupport.stream(rows.spliterator(), false)
-                .filter(r -> isHeldByAnotherOwner(r, key))
-                .map(r -> r.getString("scope_key"))
-                .distinct()
-                .sorted()
-                .collect(java.util.stream.Collectors.joining(", "));
-    }
-
-    private static boolean isHeldByAnotherOwner(Row row, DefinitionKey key) {
-        return !Objects.equals(key.scopeKey(), row.getString("scope_key"))
-                && (List.of("ACTIVE", "SUPERSEDED", "DEPRECATED").contains(row.getString("status"))
-                        || ("ACTIVATING".equals(row.getString("status")) && !row.getBoolean("stale")));
     }
 
     private static DefinitionKey key(Row r) {

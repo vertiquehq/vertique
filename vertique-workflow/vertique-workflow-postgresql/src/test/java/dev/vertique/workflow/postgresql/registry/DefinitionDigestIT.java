@@ -94,10 +94,10 @@ public class DefinitionDigestIT {
                     source("edited", Instant.parse("2026-10-18T12:01:00Z"))));
 
             // When the unedited candidate is activated
-            await(service.activate(activeKey));
+            await(service.publish(activeKey));
 
             // Then it is active and registered, and the guarded read returns exactly the text that was loaded
-            assertThat(scenario.stored(activeId, 1).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(activeId, 1).status()).isEqualTo("AVAILABLE");
             assertThat(app.workflowRegistry()
                             .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, activeId, 1))
                             .plan()
@@ -120,7 +120,7 @@ public class DefinitionDigestIT {
             assertThat(candidateBefore.document()).isEqualTo(editedStored);
 
             // When the edited candidate is activated
-            Throwable activation = failureOf(service.activate(editedKey));
+            Throwable activation = failureOf(service.publish(editedKey));
 
             // Then activation fails as drift naming the row, without echoing the document
             assertThat(activation)

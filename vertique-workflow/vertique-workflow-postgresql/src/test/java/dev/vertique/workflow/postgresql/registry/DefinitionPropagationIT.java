@@ -129,9 +129,9 @@ public class DefinitionPropagationIT {
                             DocumentFormat.YAML,
                             source("lifecycle", loadedAt)))
                     .planHash();
-            await(aService.activate(key));
+            await(aService.publish(key));
             Stored activated = scenario.stored(id, 1);
-            assertThat(activated.status()).isEqualTo("ACTIVE");
+            assertThat(activated.status()).isEqualTo("AVAILABLE");
 
             // When B reconciles while its registry holds the id under another contract
             await(b.app().definitionPropagationPoller().pollNow());
@@ -154,7 +154,7 @@ public class DefinitionPropagationIT {
             // Then the retry applies the row: nothing fails, and the view reports its key, status, hash and change time
             assertThat(b.app().definitionRegistryView().applyFailures()).isZero();
             assertThat(viewed(b, key)).hasValueSatisfying(record -> {
-                assertThat(record.status()).isEqualTo(DefinitionStatus.ACTIVE);
+                assertThat(record.status()).isEqualTo(DefinitionStatus.AVAILABLE);
                 assertThat(record.planHash()).isEqualTo(hash);
                 assertThat(record.statusChangedAt())
                         .isEqualTo(activated.changedAt().toInstant());
@@ -212,7 +212,7 @@ public class DefinitionPropagationIT {
                             DocumentFormat.YAML,
                             source("deprecated-first", loadedAt)))
                     .planHash();
-            await(aService.activate(deprecatedKey));
+            await(aService.publish(deprecatedKey));
             await(aService.deprecate(deprecatedKey));
             Stored deprecatedFirst = scenario.stored(deprecatedId, 1);
             assertThat(deprecatedFirst.status()).isEqualTo("DEPRECATED");
@@ -242,7 +242,7 @@ public class DefinitionPropagationIT {
                     INSERT INTO workflow_definitions
                         (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                          document, document_format, document_digest, source_type, loaded_at)
-                    VALUES ('default', $1, 1, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), 'ACTIVE', repeat('x', $2),
+                    VALUES ('default', $1, 1, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), 'AVAILABLE', repeat('x', $2),
                             'YAML', encode(sha256(convert_to(repeat('x', $2), 'UTF8')), 'hex'),
                             'propagation-test', now())
                     """, Tuple.of(oversizedId, oversizedBytes));
@@ -291,7 +291,7 @@ public class DefinitionPropagationIT {
             // Then the retry applies it and nothing is failing any more
             assertThat(b.app().definitionRegistryView().applyFailures()).isZero();
             assertThat(viewed(b, oversizedKey)).hasValueSatisfying(record -> {
-                assertThat(record.status()).isEqualTo(DefinitionStatus.ACTIVE);
+                assertThat(record.status()).isEqualTo(DefinitionStatus.AVAILABLE);
                 assertThat(record.planHash()).isEqualTo(oversizedHash);
             });
             assertThat(bRegistry
@@ -333,7 +333,7 @@ public class DefinitionPropagationIT {
                         documentBytes(id, 1, OwnerDocV1.class),
                         source("current-owner", loadedAt),
                         DefinitionStatus.CANDIDATE);
-                await(bService.activate(currentKey));
+                await(bService.publish(currentKey));
                 await(bService.deprecate(currentKey));
                 scenario.ageStatus(currentKey, coolingSeconds + 60);
                 await(bService.retire(currentKey));
@@ -354,7 +354,7 @@ public class DefinitionPropagationIT {
                             DocumentFormat.YAML,
                             source("retiring-owner", loadedAt)))
                     .planHash();
-            await(aService.activate(retiredKey));
+            await(aService.publish(retiredKey));
             RuntimeWorkflow staleRuntime = aRegistry.resolve(retiredKey);
 
             // And node B, which never held it, durably retired that version
@@ -373,10 +373,10 @@ public class DefinitionPropagationIT {
                         documentBytes(id, 1, OwnerDocV1.class),
                         source("current-owner", loadedAt),
                         DefinitionStatus.CANDIDATE);
-                await(bService.activate(currentKey));
+                await(bService.publish(currentKey));
             }
             Stored current = scenario.stored(currentTenant, id, 1);
-            assertThat(current.status()).isEqualTo("ACTIVE");
+            assertThat(current.status()).isEqualTo("AVAILABLE");
             assertThat(current.planHash()).isEqualTo(hash);
 
             // And before A reconciles it still serves the stale runtime of the retired owner
@@ -398,7 +398,7 @@ public class DefinitionPropagationIT {
                     .extracting(WorkflowDefinitionRecord::key)
                     .containsExactly(currentKey);
             assertThat(recordsOf(a, id)).singleElement().satisfies(record -> {
-                assertThat(record.status()).isEqualTo(DefinitionStatus.ACTIVE);
+                assertThat(record.status()).isEqualTo(DefinitionStatus.AVAILABLE);
                 assertThat(record.planHash()).isEqualTo(hash);
                 assertThat(record.statusChangedAt())
                         .isEqualTo(current.changedAt().toInstant());
@@ -431,8 +431,8 @@ public class DefinitionPropagationIT {
 
     /** What a peer meets when the code version was reinstated, named by the first status the peer observes. */
     enum PeerCase {
-        ACTIVE,
-        SUPERSEDED,
+        AVAILABLE_ALONE,
+        AVAILABLE_BESIDE_HIGHER,
         DEPRECATED_FIRST,
         MISSING_CODE,
         DRIFTED_CODE
@@ -444,7 +444,7 @@ public class DefinitionPropagationIT {
     void restoresReinstatedCodeOnPeer(PeerCase peerCase, Vertx vertx) {
         String id = "propagation-it-code";
         DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
-        boolean higherLive = peerCase == PeerCase.SUPERSEDED;
+        boolean higherLive = peerCase == PeerCase.AVAILABLE_BESIDE_HIGHER;
         WorkflowDefinition<?, ?> deployedOnA = code(id, 1, PeerCode.class, "done");
         WorkflowDefinition<?, ?> deployedOnB = peerCase == PeerCase.DRIFTED_CODE
                 ? code(id, 1, PeerCode.class, "drifted-done")
@@ -456,7 +456,7 @@ public class DefinitionPropagationIT {
         List<WorkflowDefinition<?, ?>> codeOnB =
                 switch (peerCase) {
                     case MISSING_CODE -> List.of();
-                    case SUPERSEDED -> List.of(deployedOnB, higherOnB);
+                    case AVAILABLE_BESIDE_HIGHER -> List.of(deployedOnB, higherOnB);
                     default -> List.of(deployedOnB);
                 };
 
@@ -464,9 +464,9 @@ public class DefinitionPropagationIT {
                 PollerLog log = new PollerLog()) {
             scenario.ownRows(id);
 
-            // Given a retired code version, with a higher active one when the peer is to see it superseded
+            // Given a retired code version, with a higher available one when the peer is to see it beside that version
             scenario.seedCode(id, 1, hash, "RETIRED");
-            if (higherLive) scenario.seedCode(id, 2, planHashOf(higherOnA), "ACTIVE");
+            if (higherLive) scenario.seedCode(id, 2, planHashOf(higherOnA), "AVAILABLE");
 
             // And node A, which deploys the code and has retired the version from its registry
             Boot a = scenario.node(none(), unobserved(), codeOnA);
@@ -503,7 +503,7 @@ public class DefinitionPropagationIT {
                                 "example.Contract",
                                 "example.State",
                                 hash,
-                                DefinitionStatus.SUPERSEDED,
+                                DefinitionStatus.AVAILABLE,
                                 new DefinitionProvenance("code", null, null, null, null, now),
                                 null,
                                 now,
@@ -513,8 +513,8 @@ public class DefinitionPropagationIT {
                 assertThat(scenario.stored(id, 1).planHash()).isEqualTo(hash);
             }
 
-            // And, for the matching active case, a valid runtime on B for version 2 of the id under another contract
-            if (peerCase == PeerCase.ACTIVE) {
+            // And, for the matching case, a valid runtime on B for version 2 of the id under another contract
+            if (peerCase == PeerCase.AVAILABLE_ALONE) {
                 bRegistry.register(code(id, 2, ForeignContractCode.class, "done"));
             }
 
@@ -522,12 +522,7 @@ public class DefinitionPropagationIT {
             await(aService.reinstate(key));
             if (peerCase == PeerCase.DEPRECATED_FIRST) await(aService.deprecate(key));
             Stored committed = scenario.stored(id, 1);
-            String expectedStatus =
-                    switch (peerCase) {
-                        case SUPERSEDED -> "SUPERSEDED";
-                        case DEPRECATED_FIRST -> "DEPRECATED";
-                        default -> "ACTIVE";
-                    };
+            String expectedStatus = peerCase == PeerCase.DEPRECATED_FIRST ? "DEPRECATED" : "AVAILABLE";
             assertThat(committed.status()).isEqualTo(expectedStatus);
             assertThat(committed.planHash()).isEqualTo(hash);
 
@@ -558,7 +553,7 @@ public class DefinitionPropagationIT {
                 return;
             }
 
-            if (peerCase == PeerCase.ACTIVE) {
+            if (peerCase == PeerCase.AVAILABLE_ALONE) {
                 // And B reconciles while its registry holds the id under another contract
                 await(b.app().definitionPropagationPoller().pollNow());
 
@@ -597,9 +592,9 @@ public class DefinitionPropagationIT {
             // And current and pinned resolution respect the higher version and the deprecation
             assertThat(bRegistry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isEqualTo(peerCase == PeerCase.DEPRECATED_FIRST);
-            if (peerCase == PeerCase.ACTIVE) {
+            if (peerCase == PeerCase.AVAILABLE_ALONE) {
                 assertThat(bRegistry.resolveCurrent(id)).isSameAs(restored);
-            } else if (peerCase == PeerCase.SUPERSEDED) {
+            } else if (peerCase == PeerCase.AVAILABLE_BESIDE_HIGHER) {
                 assertThat(bRegistry.resolveCurrent(id).plan().definitionVersion())
                         .isEqualTo(2);
             } else {

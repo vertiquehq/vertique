@@ -28,7 +28,7 @@ Install this module when workflows must survive process restarts, run across mor
 | Pg repo impls | `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository` — implement the engine SPIs; each is one scoped instance built with the optional `DbSchemas` placement |
 | `TaskStore<SqlClient>` | Human task persistence (`PgTaskStore`), one scoped instance built with the placement |
 | `TimerStore<SqlClient>` | Workflow timer persistence (`PgTimerStore`), one scoped instance built with the placement |
-| `WorkflowDefinitionRegistryStore` | Durable definition metadata, TEXT sources, and fenced activation (`PgWorkflowDefinitionRegistryStore`), one scoped instance built with the placement |
+| `WorkflowDefinitionRegistryStore` | Durable definition metadata, TEXT sources, and fenced publication (`PgWorkflowDefinitionRegistryStore`), one scoped instance built with the placement |
 | `WorkflowTransactionRunner<SqlClient>` | Pg implementation of the engine's transaction seam |
 | Query services | `PgWorkflowInstanceQueryService` — read model for workflow instances and branch state |
 | Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep; the application drives the batch loop and cadence, there is no built-in scheduler. It archives and purges through the scoped `PgWorkflowRetentionRepository`, so it follows the same placement |
@@ -136,8 +136,8 @@ The definition registry is built and tested against **PostgreSQL 15 or later**. 
 from compiled plans. DOCUMENT source uses TEXT with kind/nullability constraints and no fixed database
 size cap. The adapter enforces the shared `WorkflowDefinitionsConfig` policy at document boundaries.
 
-Runtime document load writes a CANDIDATE. Activation uses a fresh UUID claim, local registration, then
-a fenced completion; obsolete completions fail and obsolete releases are no-ops. Every definition
+Runtime document load writes a CANDIDATE. Publication uses a fresh UUID claim (`publish_token`, present exactly while the
+status is `PUBLISHING`), local registration, then a fenced completion that makes the row `AVAILABLE`; obsolete completions fail and obsolete releases are no-ops. Every definition
 mutation takes an id-derived transaction advisory lock followed by ordered locks on all rows of that
 id. Claim ages use PostgreSQL wall clock after lock acquisition, with twice `maxStalenessSeconds`
 (default 30 seconds) as the stale age. These locks serialize each store transaction, not the whole
@@ -148,47 +148,32 @@ reused. SQLSTATE `55P03` is surfaced as a retryable `WorkflowPersistenceExceptio
 definition id in its context and the pessimistic-locking database failure preserved as its cause. The
 store does not retry inside the aborted transaction.
 
-`recomputeActive` operates on one exact scope and id. It chooses the highest version whose status
-is ACTIVE or SUPERSEDED, demotes an older ACTIVE row before promotion to satisfy the immediate
-one-ACTIVE index, and leaves other statuses and owners untouched. Both status changes commit together;
-a failed promotion rolls back its preceding demotion. Rows whose status already matches the result keep
-their original `status_changed_at`.
+The status column allows exactly `CANDIDATE`, `PUBLISHING`, `AVAILABLE`, `DEPRECATED` and `RETIRED`. No unique index limits
+the available rows of a scope and id, so any number of versions and scopes of one id are `AVAILABLE` at once, and `complete`
+changes only the row of its claim. Rows for the same id and version may coexist under different scope keys in every status, and
+`list` returns them by optional scope, id and status set without reading document bodies. A claim, a completion and a
+static document or code reconciliation look only at their own row; there is no per-id holder and no conflict between scopes.
 
-Candidates for the same id and version may coexist under different scope keys, and
-`list` returns them by optional scope, id and status set without reading document bodies. Executable
-membership is stricter: one owner at a time holds a definition id. Rows of another owner in ACTIVE,
-SUPERSEDED or DEPRECATED, or holding a fresh ACTIVATING claim, hold the id; a stale claim does not.
-`claim` and `complete` (with a current token; an obsolete token fails as a stale claim first) for a
-different owner fail with `OWNER_CONFLICT` naming the holders, and `upsertDocument` reports `OWNER_CONFLICT`. The check runs under the id lock, so concurrent activations
-by different owners, including for an id with no rows yet, admit exactly one. Within one owner,
-completion demotes lower ACTIVE versions before promotion, and a lower version completing after a higher
-one becomes SUPERSEDED, so the one-ACTIVE index is never violated.
-
-`transition(key, from, to)` is a conditional status change under the same id lock: it checks the row,
-the owner and the expected current status, and updates only a row still in that status. The store
-accepts ACTIVE to DEPRECATED and SUPERSEDED to DEPRECATED (which do not recompute or promote other versions) and RETIRED
-to SUPERSEDED (which does); any other pair, a missing row or a changed status fails with `INVALID_TRANSITION`.
-
-`transition(key, RETIRED, SUPERSEDED)` is the atomic reinstatement: in one transaction under the id lock it checks the row is RETIRED
-and that no other owner holds the id, sets it SUPERSEDED, demotes lower ACTIVE versions of the owner and then promotes the highest
-eligible version; any failure rolls back everything. Like every registry mutation (see `retire` below), its transaction runs at READ COMMITTED whatever the server
-default, so the owner check sees every row another owner committed while the call waited for the id lock. The store does not check
-that an executable source exists or that its hash matches; the lifecycle does that before it calls the store.
+`transition(key, from, to)` is a conditional status change under the id lock: it checks the row and the expected current status,
+and updates only a row still in that status. The store accepts `AVAILABLE` to `DEPRECATED`, `DEPRECATED` to `AVAILABLE` and
+`RETIRED` to `AVAILABLE` and no other pair; an unsupported pair, a missing row or a changed status fails with
+`INVALID_TRANSITION`. A pair outside those three is refused before any statement is issued. The last two are the
+reinstatement: the store does not check that an executable source exists or that its hash matches; the lifecycle does that
+before it calls the store. Like every registry mutation (see `retire` below), the transaction runs at READ COMMITTED whatever the
+server default.
 
 `retire(key)` moves a CANDIDATE row, or a DEPRECATED row past the cooling window (`maxStalenessSeconds`, database
-clock), to RETIRED. Every registry mutation runs at READ COMMITTED, whatever the server default, so the owner checks and the pin count see
+clock), to RETIRED. Every registry mutation runs at READ COMMITTED, whatever the server default, so the pin count sees
 every row and pin committed while the mutation waited for the id lock. Under the id lock it checks the row, the status, and for a
 DEPRECATED row the cooling age and then the exact-version count of RUNNING, WAITING and COMPENSATING instances (archived
 rows included), in that order; a CANDIDATE row is retired without the pin check because a candidate is not admitted for
-pinning (a runtime registered directly for the same version is outside the guard). ACTIVE and SUPERSEDED rows cannot retire. The count scans `workflow_instances` by definition id and version while
+pinning (a runtime registered directly for the same version is outside the guard). AVAILABLE rows cannot retire. The count scans `workflow_instances` by definition id and version while
 retirement holds the exclusive id lock and no index covers that predicate, so on a very large live instance table a
 retirement can delay new starts of that id. `PgWorkflowInstanceQueryService.countNonTerminal(DefinitionKey)` exposes the same
 scope-aware informational count (`countNonTerminal(definitionId, version)` counts the default scope); it is not the
 retirement guard. The count and the retirement guard include only instances pinned to the definition's own scope.
 
-Registry refusal messages can name other scopes, owners and plan hashes: do not forward them to tenants. Cross-scope
-ownership of a definition id is enforced only with this registry store; without it (in-memory mode) the local registry
-shadows instead.
+Registry refusal messages can name other scopes and plan hashes: do not forward them to tenants.
 
 Pin admission: before `insert` creates an instance pin, `migratePinAndState` changes one, or `updateOptimistic`
 resurrects a terminal instance (FAILED retry or FAILED to COMPENSATING), the repository takes
@@ -196,8 +181,7 @@ resurrects a terminal instance (FAILED retry or FAILED to COMPENSATING), the rep
 statement. Starts share the lock, so they do not serialize each other, but a queued deprecate or retire waits for them and
 PostgreSQL queues later admissions behind that waiting writer, so long caller transactions can delay lifecycle and startup
 mutations. The caller's pin transaction must therefore end before it awaits any store-owned lifecycle call for the same
-id. At READ COMMITTED an id with no definition rows is admitted (a definition registered only by direct runtime registration after startup, or an engine built without the registry bootstrap, has none); otherwise the sole
-holding owner must hold the pin's exact definition scope, id and version with the plan hash, ACTIVE or SUPERSEDED, and a resurrection also accepts DEPRECATED. The pin is the instance's definition scope, definition id and definition version, so an instance pinned to a definition scope is admitted only against the row of that scope.
+id. At READ COMMITTED an id with no definition rows is admitted (a definition registered only by direct runtime registration after startup, or an engine built without the registry bootstrap, has none); otherwise the row of the pin's exact definition scope, id and version must exist with the plan hash and be `AVAILABLE`, and a resurrection also accepts `DEPRECATED`; the rows of other scopes and versions of the id play no part, so a plan hash of another scope's row is a drift against this scope's row. The pin is the instance's definition scope, definition id and definition version, so an instance pinned to a definition scope is admitted only against the row of that scope.
 Under REPEATABLE READ or SERIALIZABLE the rows are read `FOR SHARE`, a changed row raises a serialization failure, and an id
 with no visible row is refused with `INVALID_TRANSITION` (a snapshot taken before the first row cannot tell absence from a
 newly managed id; this includes engines built by hand that skip the registry bootstrap). Every admission sets
@@ -223,8 +207,8 @@ size-envelope check): altered stored text is never returned and fails as drift. 
 concurrent change of stored text; it does not authenticate the writer, so restrict write access to the table.
 Any other writer of DOCUMENT rows must supply the digest. On first boot after upgrading, every application that uses the PostgreSQL module writes a global CODE row per code-first definition even if it never touches documents; the `V002__` migration must have run.
 
-With a durable registry store bound (the PostgreSQL module binds one), the engine records every code definition, and with `WorkflowDefinitionModule` installed also the packaged documents, and restores activated documents of every owner after
-Flyway migration, recomputes active membership per owner, and refreshes verified definition-cache entries
+With a durable registry store bound (the PostgreSQL module binds one), the engine records every code definition, and with `WorkflowDefinitionModule` installed also the packaged documents, and restores available documents of every scope after
+Flyway migration, and refreshes verified definition-cache entries
 from committed metadata before BOOTSTRAP verticle deployment. Every node sharing live document rows must
 carry their loaders and callback/type catalogs. Source locations are attribution, never remote fetch
 instructions. Configure the same policy on every node; raising the input limit increases memory and

@@ -76,12 +76,14 @@ public class DefinitionMigrationIT {
             assertEquals(v1WorkflowRows, workflowRows(connection), "V1 workflow rows must be untouched");
             assertEquals("text", columnType(connection, "workflow_definitions", "document"));
 
-            insertCode(connection, "orders", 1, "SUPERSEDED");
-            insertCode(connection, "orders", 2, "ACTIVE");
+            insertCode(connection, "orders", 1, "AVAILABLE");
+            insertCode(connection, "orders", 2, "AVAILABLE");
             assertEquals(2, count(connection, "workflow_definitions"), "valid CODE rows remain supported");
 
             assertSqlState("23505", () -> insertCode(connection, "orders", 1, "CANDIDATE"));
-            assertSqlState("23505", () -> insertCode(connection, "orders", 3, "ACTIVE"));
+            insertCode(connection, "orders", 3, "AVAILABLE");
+            assertEquals(
+                    3, count(connection, "workflow_definitions"), "any number of versions of one id are available");
             assertSqlState("23514", () -> insertScopedCode(connection, "tenant-a", "tenant-code", 1));
             assertSqlState("23514", () -> insertCodeWithDocumentFields(connection, "code-with-body", "{}", null));
             assertSqlState("23514", () -> insertCodeWithDocumentFields(connection, "code-with-format", null, "JSON"));

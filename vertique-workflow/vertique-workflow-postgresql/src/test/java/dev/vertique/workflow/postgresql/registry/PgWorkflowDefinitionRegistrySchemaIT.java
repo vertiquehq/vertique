@@ -17,7 +17,6 @@ import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reas
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.registry.store.ActivationClaim;
-import dev.vertique.workflow.registry.store.ActivationOutcome;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -36,6 +35,7 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Pool;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -79,7 +79,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
     private static final String DEFINITION_ID = "schema-placement-order";
     private static final String PLAN_HASH = "a".repeat(64);
     private static final String OTHER_PLAN_HASH = "b".repeat(64);
-    private static final int REGISTRY_STATEMENT_KINDS = 13;
+    private static final int REGISTRY_STATEMENT_KINDS = 10;
 
     static final PostgresContainer db = new PostgresContainer().withDatabaseName("wf_definition_schema_it");
 
@@ -184,16 +184,15 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
             // live-update, terminal-update and resume paths
             assertEquals(
                     ReconcileOutcome.INSERTED,
-                    await(store.upsertCode(codeRecord(key, PLAN_HASH, DefinitionStatus.SUPERSEDED))));
+                    await(store.upsertCode(codeRecord(key, PLAN_HASH, DefinitionStatus.AVAILABLE))));
             assertEquals(
                     ReconcileOutcome.UNCHANGED,
-                    await(store.upsertCode(codeRecord(key, PLAN_HASH, DefinitionStatus.SUPERSEDED))));
+                    await(store.upsertCode(codeRecord(key, PLAN_HASH, DefinitionStatus.AVAILABLE))));
             assertEquals(
                     ReconcileOutcome.REHASHED,
-                    await(store.upsertCode(codeRecord(key, OTHER_PLAN_HASH, DefinitionStatus.SUPERSEDED))));
-            await(store.recomputeActive(WorkflowScopes.DEFAULT, CODE_ID));
+                    await(store.upsertCode(codeRecord(key, OTHER_PLAN_HASH, DefinitionStatus.AVAILABLE))));
             assertEquals(
-                    DefinitionStatus.ACTIVE,
+                    DefinitionStatus.AVAILABLE,
                     await(store.find(key)).orElseThrow().status());
 
             WorkflowInstance running = instance(OTHER_PLAN_HASH, WorkflowStatus.RUNNING, 0);
@@ -216,7 +215,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
             assertEquals("RUNNING", instanceStatus(running.id()));
 
             // When: the code version is deprecated, past cooling, and retirement is tried while the pin is live
-            await(store.transition(key, DefinitionStatus.ACTIVE, DefinitionStatus.DEPRECATED));
+            await(store.transition(key, DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
             backdateStatusChange();
             assertEquals(Reason.PINNED_INSTANCES, failureReason(store.retire(key)));
             assertEquals(Long.valueOf(1), await(instances.countNonTerminal(CODE_ID, 1)));
@@ -233,9 +232,9 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
             assertEquals(
                     DefinitionStatus.RETIRED,
                     await(store.find(key)).orElseThrow().status());
-            await(store.transition(key, DefinitionStatus.RETIRED, DefinitionStatus.SUPERSEDED));
+            await(store.transition(key, DefinitionStatus.RETIRED, DefinitionStatus.AVAILABLE));
             assertEquals(
-                    DefinitionStatus.ACTIVE,
+                    DefinitionStatus.AVAILABLE,
                     await(store.find(key)).orElseThrow().status());
             await(store.resetStaleActivating(CODE_ID));
 
@@ -325,13 +324,112 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         }
     }
 
+    private record StatusRow(String label, String status, boolean withToken, String expectedSqlState) {}
+
+    @Test
+    @DisplayName("the status constraint allows only the publication statuses and a claim token only while publishing")
+    void statusConstraintAllowsOnlyPublicationStatuses() throws Exception {
+        // Given: a migrated database
+        Flyway.configure()
+                .dataSource(db.jdbcUrl(), db.username(), db.password())
+                .locations(WORKFLOW_LOCATION)
+                .load()
+                .migrate();
+        List<StatusRow> rows = List.of(
+                new StatusRow("candidate", "CANDIDATE", false, null),
+                new StatusRow("publishing with its claim token", "PUBLISHING", true, null),
+                new StatusRow("available", "AVAILABLE", false, null),
+                new StatusRow("deprecated", "DEPRECATED", false, null),
+                new StatusRow("retired", "RETIRED", false, null),
+                new StatusRow("the removed active status", "ACTIVE", false, "23514"),
+                new StatusRow("the removed superseded status", "SUPERSEDED", false, "23514"),
+                new StatusRow("the removed activating status with a token", "ACTIVATING", true, "23514"),
+                new StatusRow("publishing without a token", "PUBLISHING", false, "23514"),
+                new StatusRow("available with a token", "AVAILABLE", true, "23514"),
+                new StatusRow("candidate with a token", "CANDIDATE", true, "23514"));
+
+        try (Connection connection = connection()) {
+            // When: one raw document row is inserted per case
+            for (int index = 0; index < rows.size(); index++) {
+                StatusRow row = rows.get(index);
+                String id = "status-case-" + index;
+                if (row.expectedSqlState() == null) {
+                    insertStatusRow(connection, id, 1, row.status(), row.withToken());
+                } else {
+                    // Then: a row outside the status and claim rules is rejected by the check constraints
+                    DefinitionTableRows.assertSqlState(
+                            row.expectedSqlState(),
+                            () -> insertStatusRow(connection, id, 1, row.status(), row.withToken()));
+                }
+            }
+
+            // Then: exactly the five statuses were stored
+            assertEquals(
+                    List.of("AVAILABLE", "CANDIDATE", "DEPRECATED", "PUBLISHING", "RETIRED"),
+                    queryStrings(connection, "SELECT DISTINCT status FROM workflow_definitions ORDER BY status"));
+
+            // When: two versions of one scope and id are both available
+            insertStatusRow(connection, "available-pair", 1, "AVAILABLE", false);
+            insertStatusRow(connection, "available-pair", 2, "AVAILABLE", false);
+
+            // Then: both are stored, because no unique index restricts available rows
+            assertEquals(
+                    List.of("1:AVAILABLE", "2:AVAILABLE"),
+                    queryStrings(
+                            connection,
+                            "SELECT definition_version || ':' || status FROM workflow_definitions"
+                                    + " WHERE definition_id = 'available-pair' ORDER BY definition_version"));
+            assertEquals(
+                    List.of(),
+                    queryStrings(
+                            connection,
+                            "SELECT indexname FROM pg_indexes WHERE indexname = 'uq_workflow_definitions_one_active'"));
+
+            // Then: the claim column is named for publication
+            assertEquals(
+                    List.of("publish_token"),
+                    queryStrings(
+                            connection,
+                            "SELECT column_name FROM information_schema.columns WHERE table_name = 'workflow_definitions'"
+                                    + " AND column_name IN ('publish_token', 'activation_token')"));
+        }
+    }
+
+    private static void insertStatusRow(
+            Connection connection, String definitionId, long version, String status, boolean withToken)
+            throws SQLException {
+        try (PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO workflow_definitions
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
+                     document, document_format, document_digest, source_type, loaded_at, publish_token)
+                VALUES ('default', ?, ?, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), ?,
+                        '{}', 'YAML', encode(sha256(convert_to('{}', 'UTF8')), 'hex'), 'schema-test', now(),
+                        CASE WHEN ? THEN gen_random_uuid() ELSE NULL END)
+                """)) {
+            insert.setString(1, definitionId);
+            insert.setLong(2, version);
+            insert.setString(3, status);
+            insert.setBoolean(4, withToken);
+            insert.executeUpdate();
+        }
+    }
+
+    private static List<String> queryStrings(Connection connection, String sql) throws SQLException {
+        List<String> values = new ArrayList<>();
+        try (Statement statement = connection.createStatement();
+                ResultSet rows = statement.executeQuery(sql)) {
+            while (rows.next()) values.add(rows.getString(1));
+        }
+        return values;
+    }
+
     // --- Scenario ---
 
     private static Map<Long, String> expectedStatuses() {
-        return Map.of(1L, "DEPRECATED", 2L, "SUPERSEDED", 3L, "ACTIVE", 4L, "CANDIDATE");
+        return Map.of(1L, "DEPRECATED", 2L, "AVAILABLE", 3L, "AVAILABLE", 4L, "CANDIDATE");
     }
 
-    /** Exercises insert, find, document read, list, claim, complete, release, reconcile, transition and recompute. */
+    /** Exercises insert, find, document read, list, claim, complete, release, reconcile, transition and reinstatement. */
     private static void runLifecycle(WorkflowDefinitionRegistryStore store) throws Exception {
         await(store.insertCandidate(record(1, PLAN_HASH, DefinitionStatus.CANDIDATE), document(1)));
         assertEquals(
@@ -341,7 +439,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         await(store.insertCandidate(record(2, PLAN_HASH, DefinitionStatus.CANDIDATE), document(2)));
         activate(store, 2);
         assertEquals(
-                DefinitionStatus.SUPERSEDED,
+                DefinitionStatus.AVAILABLE,
                 await(store.find(key(1))).orElseThrow().status());
 
         assertEquals(
@@ -351,18 +449,18 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
 
         assertEquals(
                 ReconcileOutcome.INSERTED,
-                await(store.upsertDocument(record(3, PLAN_HASH, DefinitionStatus.SUPERSEDED), document(3))));
+                await(store.upsertDocument(record(3, PLAN_HASH, DefinitionStatus.AVAILABLE), document(3))));
         assertEquals(
                 ReconcileOutcome.UNCHANGED,
-                await(store.upsertDocument(record(3, PLAN_HASH, DefinitionStatus.SUPERSEDED), document(3))));
+                await(store.upsertDocument(record(3, PLAN_HASH, DefinitionStatus.AVAILABLE), document(3))));
         assertEquals(
                 ReconcileOutcome.DRIFT,
-                await(store.upsertDocument(record(3, OTHER_PLAN_HASH, DefinitionStatus.SUPERSEDED), document(3))));
-        await(store.recomputeActive(WorkflowScopes.DEFAULT, DEFINITION_ID));
+                await(store.upsertDocument(record(3, OTHER_PLAN_HASH, DefinitionStatus.AVAILABLE), document(3))));
         assertEquals(
-                DefinitionStatus.ACTIVE, await(store.find(key(3))).orElseThrow().status());
+                DefinitionStatus.AVAILABLE,
+                await(store.find(key(3))).orElseThrow().status());
 
-        await(store.transition(key(1), DefinitionStatus.SUPERSEDED, DefinitionStatus.DEPRECATED));
+        await(store.transition(key(1), DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
 
         await(store.insertCandidate(record(4, PLAN_HASH, DefinitionStatus.CANDIDATE), document(4)));
         ActivationClaim claim = await(store.claim(key(4)));
@@ -441,7 +539,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
 
     private static void activate(WorkflowDefinitionRegistryStore store, long version) throws Exception {
         ActivationClaim claim = await(store.claim(key(version)));
-        assertEquals(ActivationOutcome.ACTIVE, await(store.complete(claim)));
+        await(store.complete(claim));
     }
 
     private static DefinitionKey key(long version) {

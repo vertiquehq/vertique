@@ -188,7 +188,7 @@ public class DefinitionDocumentPolicyIT {
                                             return (Void) null;
                                         });
                             })
-                            .compose(ignored -> first.definitionService().activate(jsonKey))
+                            .compose(ignored -> first.definitionService().publish(jsonKey))
                             .compose(ignored -> assertStoredSource(
                                     first, jsonKey, jsonSource, DocumentFormat.JSON, jsonPlanHash.get(), observer))
                             .compose(ignored -> assertSqlTextShape(observedMainPool, jsonKey, jsonSource))
@@ -282,14 +282,14 @@ public class DefinitionDocumentPolicyIT {
                                                                                 .findFirst())
                                                                         .get()
                                                                         .extracting(WorkflowDefinitionRecord::status)
-                                                                        .isEqualTo(DefinitionStatus.SUPERSEDED);
+                                                                        .isEqualTo(DefinitionStatus.AVAILABLE);
                                                                 assertThat(records.stream()
                                                                                 .filter(record -> record.key()
                                                                                         .equals(jsonKey))
                                                                                 .findFirst())
                                                                         .get()
                                                                         .extracting(WorkflowDefinitionRecord::status)
-                                                                        .isEqualTo(DefinitionStatus.ACTIVE);
+                                                                        .isEqualTo(DefinitionStatus.AVAILABLE);
                                                                 return (Void) null;
                                                             }))
                                                     .compose(ignoredRestore -> restoredHandle.shutdown())
@@ -311,7 +311,8 @@ public class DefinitionDocumentPolicyIT {
                             List::of,
                             false,
                             true);
-                    return insertOversizedRow(startupPool, "oversized-codepoints-active", "ACTIVE", DOCUMENT_LIMIT + 1)
+                    return insertOversizedRow(
+                                    startupPool, "oversized-codepoints-active", "AVAILABLE", DOCUMENT_LIMIT + 1)
                             .compose(ignoredInsert -> VertiqueApplicationBootstrap.start(
                                     VertiqueRuntime.of(vertx, raisedConfig), ignoredRuntime -> restarted))
                             .transform(started -> {
@@ -669,7 +670,7 @@ public class DefinitionDocumentPolicyIT {
                     return initial.definitionService()
                             .load(WorkflowScopes.DEFAULT, source, DocumentFormat.JSON, metadata)
                             .compose(compiled ->
-                                    initial.definitionService().activate(key).map(compiled))
+                                    initial.definitionService().publish(key).map(compiled))
                             .compose(compiled -> initial.definitionRegistryStore()
                                     .findDocument(key)
                                     .map(document -> {
@@ -775,7 +776,7 @@ public class DefinitionDocumentPolicyIT {
                                 -- SHA-256 of the two-character text {}, spelled out because this database is SQL_ASCII
                                 '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
                                 'non-utf8-test', now()),
-                               ('default', 'definition-policy-code', 1, 'CODE', 'example.Contract', 'example.State', repeat('b', 64), 'ACTIVE',
+                               ('default', 'definition-policy-code', 1, 'CODE', 'example.Contract', 'example.State', repeat('b', 64), 'AVAILABLE',
                                 NULL, NULL, NULL, 'fixture-code', now())
                         """)
                 .execute(Tuple.of(documentKey.definitionId()))

@@ -189,7 +189,7 @@ public class MixedDefinitionBootstrapIT {
                     new BootObservation(id, 1, "unused", false));
             Stored deployed = scenario.stored(id, 1);
             assertThat(deployed.kind()).isEqualTo("DOCUMENT");
-            assertThat(deployed.status()).isEqualTo("ACTIVE");
+            assertThat(deployed.status()).isEqualTo("AVAILABLE");
             assertThat(deployed.document()).isEqualTo(original);
             String planHash = deployed.planHash();
 
@@ -327,8 +327,8 @@ public class MixedDefinitionBootstrapIT {
             assertThat(rowV2.sourceType()).isEqualTo("code");
 
             // And the highest version is active, the lower one superseded
-            assertThat(rowV2.status()).isEqualTo("ACTIVE");
-            assertThat(rowV1.status()).isEqualTo("SUPERSEDED");
+            assertThat(rowV2.status()).isEqualTo("AVAILABLE");
+            assertThat(rowV1.status()).isEqualTo("AVAILABLE");
 
             // When version 1 is deprecated and the application restarts
             await(first.app().definitionService().deprecate(v1Key));
@@ -337,7 +337,7 @@ public class MixedDefinitionBootstrapIT {
             Boot second = scenario.node(none(), observed(id, 2, hashV2), List.of(codeV1, codeV2));
 
             // Then version 2 stays active, version 1 stays deprecated and no row was added
-            assertThat(scenario.stored(id, 2).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(id, 2).status()).isEqualTo("AVAILABLE");
             assertThat(scenario.stored(id, 2).planHash()).isEqualTo(hashV2);
             assertThat(scenario.stored(id, 1).status()).isEqualTo("DEPRECATED");
             assertThat(scenario.stored(id, 1).planHash()).isEqualTo(hashV1);
@@ -377,8 +377,8 @@ public class MixedDefinitionBootstrapIT {
             // Given code rows whose hash differs from the deployed code
             assertThat(storedPinnedHash).isNotEqualTo(pinnedHash);
             assertThat(storedFreeHash).isNotEqualTo(freeHash);
-            scenario.seedCode(pinnedId, 1, storedPinnedHash, "ACTIVE");
-            scenario.seedCode(freeId, 1, storedFreeHash, "ACTIVE");
+            scenario.seedCode(pinnedId, 1, storedPinnedHash, "AVAILABLE");
+            scenario.seedCode(freeId, 1, storedFreeHash, "AVAILABLE");
 
             // And a live instance pinned to the exact version of the first
             scenario.insertInstance(pinnedId, 1, storedPinnedHash, "RUNNING");
@@ -427,7 +427,7 @@ public class MixedDefinitionBootstrapIT {
             // Then the row carries the new hash and stays active
             Stored rehashed = scenario.stored(freeId, 1);
             assertThat(rehashed.planHash()).isEqualTo(freeHash);
-            assertThat(rehashed.status()).isEqualTo("ACTIVE");
+            assertThat(rehashed.status()).isEqualTo("AVAILABLE");
             assertThat(rehashed.kind()).isEqualTo("CODE");
 
             // And a warning names both hashes
@@ -447,7 +447,7 @@ public class MixedDefinitionBootstrapIT {
 
             // Given a stored document row with a different hash, and a packaged label that tries to forge a log line
             String text = documentText(id, 1, StaticDriftV1.class);
-            scenario.seedDocument(WorkflowScopes.DEFAULT, id, 1, "f".repeat(64), "SUPERSEDED", text);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, id, 1, "f".repeat(64), "AVAILABLE", text);
             String label = "forged\r\nERROR injected line";
 
             // When the application starts with that packaged document
@@ -468,19 +468,17 @@ public class MixedDefinitionBootstrapIT {
     }
 
     @Test
-    @DisplayName("static documents stay document rows, and drift, kind, missing code and held owners fail precisely")
+    @DisplayName("static documents stay document rows, and drift, kind and missing code fail precisely")
     void reconcilesStaticDocumentsAndFailsConflicts(Vertx vertx) {
         String equalId = "mixed-bootstrap-static-equal";
         String driftId = "mixed-bootstrap-static-drift";
         String kindId = "mixed-bootstrap-static-kind";
-        String heldId = "mixed-bootstrap-static-held";
-        String codeHeldId = "mixed-bootstrap-code-held";
         String missingActiveId = "mixed-bootstrap-missing-code-active";
         String missingDeprecatedId = "mixed-bootstrap-missing-code-deprecated";
         Instant firstLoad = Instant.parse("2026-10-18T12:00:00Z");
 
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
-            scenario.ownRows(equalId, driftId, kindId, heldId, codeHeldId, missingActiveId, missingDeprecatedId);
+            scenario.ownRows(equalId, driftId, kindId, missingActiveId, missingDeprecatedId);
 
             // Given a packaged static document and an empty table
             String equalText = documentText(equalId, 1, StaticEqualV1.class);
@@ -494,7 +492,7 @@ public class MixedDefinitionBootstrapIT {
             assertThat(equalRow.sourceType()).isEqualTo("digest-test");
             assertThat(equalRow.sourceUri()).isEqualTo("memory:classpath-first");
             assertThat(equalRow.sourceRevision()).isEqualTo("revision-classpath-first");
-            assertThat(equalRow.status()).isEqualTo("ACTIVE");
+            assertThat(equalRow.status()).isEqualTo("AVAILABLE");
             String staticHash = deployed.app()
                     .definitionPipeline()
                     .load(new DefinitionResource(
@@ -522,7 +520,7 @@ public class MixedDefinitionBootstrapIT {
             // Given a stored document row with a different hash for the same id and version
             String driftText = documentText(driftId, 1, StaticDriftV1.class);
             String storedDriftHash = "f".repeat(64);
-            scenario.seedDocument(WorkflowScopes.DEFAULT, driftId, 1, storedDriftHash, "SUPERSEDED", driftText);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, driftId, 1, storedDriftHash, "AVAILABLE", driftText);
             Stored driftBefore = scenario.stored(driftId, 1);
 
             // When the application starts with the static document
@@ -548,7 +546,7 @@ public class MixedDefinitionBootstrapIT {
             scenario.removeRows(driftId);
 
             // Given a code row for the id and version of a static document
-            scenario.seedCode(kindId, 1, "9".repeat(64), "SUPERSEDED");
+            scenario.seedCode(kindId, 1, "9".repeat(64), "AVAILABLE");
             Stored kindBefore = scenario.stored(kindId, 1);
 
             // When the application starts with the static document
@@ -572,7 +570,7 @@ public class MixedDefinitionBootstrapIT {
             scenario.removeRows(kindId);
 
             // Given live code rows that no code registers any more
-            scenario.seedCode(missingActiveId, 1, "8".repeat(64), "ACTIVE");
+            scenario.seedCode(missingActiveId, 1, "8".repeat(64), "AVAILABLE");
             scenario.seedCode(missingDeprecatedId, 1, "7".repeat(64), "DEPRECATED");
             for (String missingId : List.of(missingActiveId, missingDeprecatedId)) {
                 Stored missingBefore = scenario.stored(missingId, 1);
@@ -594,55 +592,6 @@ public class MixedDefinitionBootstrapIT {
                 missing.close();
                 scenario.removeRows(missingId);
             }
-
-            // Given a tenant that holds the id and version of a static document
-            String heldText = documentText(heldId, 1, StaticHeldV1.class);
-            scenario.seedDocument("tenant-holder", heldId, 1, "7".repeat(64), "ACTIVE", heldText);
-
-            // When the application starts with the global static document
-            Boot staticHeld =
-                    scenario.attempt(packaged(heldText, "classpath-held", firstLoad.plusSeconds(180)), unobserved());
-
-            // Then startup fails naming both owners and inserts no global row
-            assertThat(staticHeld.failure())
-                    .as("startup with a static document over a tenant-held id")
-                    .isNotNull()
-                    .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                        assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                        assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, heldId, 1));
-                        assertThat(failure.getMessage())
-                                .contains("tenant-holder")
-                                .containsIgnoringCase("default");
-                    });
-            assertThat(scenario.findStored(heldId, 1)).isEmpty();
-            staticHeld.close();
-            scenario.removeRows(heldId);
-
-            // Given a tenant that holds version 1 of an id for which code registers global version 2
-            scenario.seedDocument(
-                    "tenant-holder",
-                    codeHeldId,
-                    1,
-                    "6".repeat(64),
-                    "ACTIVE",
-                    documentText(codeHeldId, 1, CodeHeld.class));
-            WorkflowDefinition<?, ?> heldCode = code(codeHeldId, 2, CodeHeld.class, "done");
-
-            // When the application starts with that code
-            Boot codeHeld = scenario.attempt(none(), unobserved(), List.of(heldCode), null, 10);
-
-            // Then startup fails naming both owners and inserts no global row
-            assertThat(codeHeld.failure())
-                    .as("startup with code over a tenant-held id")
-                    .isNotNull()
-                    .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                        assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                        assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, codeHeldId, 2));
-                        assertThat(failure.getMessage())
-                                .contains("tenant-holder")
-                                .containsIgnoringCase("default");
-                    });
-            assertThat(scenario.findStored(codeHeldId, 2)).isEmpty();
         }
     }
 
@@ -676,7 +625,7 @@ public class MixedDefinitionBootstrapIT {
                     documentBytes(docId, 1, StaleDoc.class),
                     DocumentFormat.YAML,
                     source("stale-v1", loadedAt)));
-            await(service.activate(v1));
+            await(service.publish(v1));
             WorkflowInstanceId pinned = await(first.app()
                     .workflowOperations()
                     .start(new StartCommand(
@@ -694,7 +643,7 @@ public class MixedDefinitionBootstrapIT {
                     documentBytes(docId, 2, StaleDoc.class),
                     DocumentFormat.YAML,
                     source("stale-v2", loadedAt)));
-            await(service.activate(v2));
+            await(service.publish(v2));
 
             // And version 1 deprecated, an untouched candidate version 3, and a candidate of another global id
             await(service.deprecate(v1));
@@ -724,24 +673,24 @@ public class MixedDefinitionBootstrapIT {
             scenario.claimWithoutCompleting(claimedKey);
             scenario.ageStatus(claimedKey, staleAgeSeconds);
             scenario.seedDocument(
-                    staleTenant, codeId, 1, "5".repeat(64), "ACTIVATING", documentText(codeId, 1, StaleCodeV1.class));
+                    staleTenant, codeId, 1, "5".repeat(64), "PUBLISHING", documentText(codeId, 1, StaleCodeV1.class));
             scenario.ageStatus(tenantClaimKey, staleAgeSeconds);
 
             // And a global claim just younger than twice the bound, and a tenant claim made just now
             scenario.claimWithoutCompleting(nearKey);
             scenario.ageStatus(nearKey, nearlyStaleAgeSeconds);
-            scenario.seedDocument("tenant-fresh", freshId, 1, "3".repeat(64), "ACTIVATING", "workflow: {}\n");
+            scenario.seedDocument("tenant-fresh", freshId, 1, "3".repeat(64), "PUBLISHING", "workflow: {}\n");
             Stored nearBefore = scenario.stored(nearId, 1);
             Stored freshBefore = scenario.stored("tenant-fresh", freshId, 1);
-            assertThat(nearBefore.status()).isEqualTo("ACTIVATING");
-            assertThat(nearBefore.activationToken()).isNotNull();
-            assertThat(freshBefore.status()).isEqualTo("ACTIVATING");
-            assertThat(freshBefore.activationToken()).isNotNull();
+            assertThat(nearBefore.status()).isEqualTo("PUBLISHING");
+            assertThat(nearBefore.publishToken()).isNotNull();
+            assertThat(freshBefore.status()).isEqualTo("PUBLISHING");
+            assertThat(freshBefore.publishToken()).isNotNull();
             assertThat(scenario.stored(v1.definitionId(), 1).status()).isEqualTo("DEPRECATED");
-            assertThat(scenario.stored(v2.definitionId(), 2).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(v2.definitionId(), 2).status()).isEqualTo("AVAILABLE");
             assertThat(scenario.stored(v3.definitionId(), 3).status()).isEqualTo("CANDIDATE");
-            assertThat(scenario.stored(claimedId, 1).status()).isEqualTo("ACTIVATING");
-            assertThat(scenario.stored(staleTenant, codeId, 1).status()).isEqualTo("ACTIVATING");
+            assertThat(scenario.stored(claimedId, 1).status()).isEqualTo("PUBLISHING");
+            assertThat(scenario.stored(staleTenant, codeId, 1).status()).isEqualTo("PUBLISHING");
 
             // When the application restarts
             BootObservation observation = observed(codeId, 1, codeHash);
@@ -750,10 +699,10 @@ public class MixedDefinitionBootstrapIT {
             // Then the stale claims are back to candidates with no token
             Stored claimedAfter = scenario.stored(claimedId, 1);
             assertThat(claimedAfter.status()).isEqualTo("CANDIDATE");
-            assertThat(claimedAfter.activationToken()).isNull();
+            assertThat(claimedAfter.publishToken()).isNull();
             Stored tenantAfter = scenario.stored(staleTenant, codeId, 1);
             assertThat(tenantAfter.status()).isEqualTo("CANDIDATE");
-            assertThat(tenantAfter.activationToken()).isNull();
+            assertThat(tenantAfter.publishToken()).isNull();
 
             // And the claim just younger than twice the bound and the fresh claim are left exactly as they were,
             // with their tokens and change times
@@ -764,11 +713,11 @@ public class MixedDefinitionBootstrapIT {
             Stored codeRow = scenario.stored(codeId, 1);
             assertThat(codeRow.kind()).isEqualTo("CODE");
             assertThat(codeRow.planHash()).isEqualTo(codeHash);
-            assertThat(codeRow.status()).isEqualTo("ACTIVE");
+            assertThat(codeRow.status()).isEqualTo("AVAILABLE");
 
             // And the untouched candidate stays a candidate and the active version stays active
             assertThat(scenario.stored(docId, 3).status()).isEqualTo("CANDIDATE");
-            assertThat(scenario.stored(docId, 2).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(docId, 2).status()).isEqualTo("AVAILABLE");
 
             // And the caches hold the persisted statuses, including the rows that were just reset
             assertThat(second.app().workflowDefinitionStore().currentStatus(claimedId, 1))
@@ -776,7 +725,7 @@ public class MixedDefinitionBootstrapIT {
             assertThat(second.app().workflowDefinitionStore().currentStatus(docId, 3))
                     .isEqualTo(ActivationStatus.CANDIDATE);
             assertThat(second.app().workflowDefinitionStore().currentStatus(docId, 2))
-                    .isEqualTo(ActivationStatus.ACTIVE);
+                    .isEqualTo(ActivationStatus.AVAILABLE);
             assertThat(second.app().workflowDefinitionStore().currentStatus(docId, 1))
                     .isEqualTo(ActivationStatus.DEPRECATED);
 
@@ -842,8 +791,8 @@ public class MixedDefinitionBootstrapIT {
     }
 
     @Test
-    @DisplayName("a tenant cannot activate an id that code already holds globally")
-    void refusesTenantActivationAgainstGlobalCode(Vertx vertx) {
+    @DisplayName("a tenant publishes the id and version that code holds globally, beside the code")
+    void tenantPublishesTheIdOfGlobalCodeBesideIt(Vertx vertx) {
         String id = "mixed-bootstrap-tenant-vs-code";
         String tenant = "tenant-conflict";
         DefinitionKey scopeKey = new DefinitionKey(tenant, id, 1);
@@ -874,24 +823,22 @@ public class MixedDefinitionBootstrapIT {
                     .workflowRegistry()
                     .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
 
-            // When the tenant activates its candidate through the real lifecycle
-            Throwable refusal = failureOf(node.app().definitionService().activate(scopeKey));
+            // When the tenant publishes its candidate through the real lifecycle
+            await(node.app().definitionService().publish(scopeKey));
 
-            // Then it fails as an ownership conflict naming both owners
-            assertThat(refusal)
+            // Then the tenant's row is available and registered under the tenant's own key
+            assertThat(scenario.stored(tenant, id, 1).status()).isEqualTo("AVAILABLE");
+            assertThat(node.app().workflowRegistry().resolve(scopeKey))
                     .isNotNull()
-                    .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                        assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                        assertThat(failure.key()).isEqualTo(scopeKey);
-                        assertThat(failure.getMessage()).contains(tenant).containsIgnoringCase("default");
-                    });
+                    .isNotSameAs(runtimeBefore);
 
-            // And the executable registry and both rows are unchanged
+            // And the code's executable registration and row are unchanged
             assertThat(node.app().workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isSameAs(runtimeBefore);
             assertThat(node.app().workflowRegistry().allRegistered())
                     .filteredOn(runtime -> runtime.plan().definitionId().equals(id))
-                    .containsExactly(runtimeBefore);
+                    .hasSize(2)
+                    .contains(runtimeBefore);
             assertThat(node.app()
                             .workflowRegistry()
                             .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
@@ -899,14 +846,14 @@ public class MixedDefinitionBootstrapIT {
             assertThat(scenario.stored(id, 1)).isEqualTo(globalBefore);
             assertThat(scenario.stored(tenant, id, 1))
                     .usingRecursiveComparison()
-                    .ignoringFields("changedAt")
+                    .ignoringFields("status", "changedAt")
                     .isEqualTo(candidateBefore);
         }
     }
 
     @Test
-    @DisplayName("a foreign-scope row still collides with code at startup and keeps its lifecycle")
-    void foreignScopeRowStillCollidesWithCodeAndKeepsItsLifecycle(Vertx vertx) {
+    @DisplayName("a foreign-scope row coexists with code at startup and keeps its lifecycle")
+    void foreignScopeRowCoexistsWithCodeAndKeepsItsLifecycle(Vertx vertx) {
         String squatterId = "mixed-bootstrap-foreign-squatter";
         String candidateId = "mixed-bootstrap-foreign-candidate";
         String activeId = "mixed-bootstrap-foreign-active";
@@ -917,32 +864,27 @@ public class MixedDefinitionBootstrapIT {
             scenario.ownRows(squatterId, candidateId, activeId, deprecatedId);
             Instant loadedAt = Instant.parse("2026-10-19T12:00:00Z");
 
-            // Given an ACTIVE row of a non-default scope for an id that carries no scope prefix
+            // Given an AVAILABLE row of a non-default scope for an id that carries no scope prefix
             Boot seeder = scenario.node(none(), unobserved());
             TenantRowSeed.seed(
                     seeder.app(),
                     scope,
                     documentBytes(squatterId, 1, ForeignSquatterV1.class),
                     source("foreign-squatter", loadedAt),
-                    DefinitionStatus.ACTIVE);
+                    DefinitionStatus.AVAILABLE);
             seeder.close();
-            assertThat(scenario.stored(scope, squatterId, 1).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(scope, squatterId, 1).status()).isEqualTo("AVAILABLE");
 
             // When the application starts with code that registers the same id in the default scope
             Boot collided = scenario.attempt(
                     none(), unobserved(), List.of(code(squatterId, 1, ForeignSquatterV1.class, "done")), null, 10);
 
-            // Then startup fails naming both owners and stores no default-scope row
-            assertThat(collided.failure())
-                    .isNotNull()
-                    .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                        assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                        assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, squatterId, 1));
-                        assertThat(failure.getMessage()).contains(scope).containsIgnoringCase("default");
-                    });
+            // Then startup succeeds and records the default-scope code row beside the foreign scope's row
+            assertThat(collided.failure()).isNull();
             collided.close();
-            assertThat(scenario.findStored(squatterId, 1)).isEmpty();
-            assertThat(scenario.stored(scope, squatterId, 1).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(squatterId, 1).kind()).isEqualTo("CODE");
+            assertThat(scenario.stored(squatterId, 1).status()).isEqualTo("AVAILABLE");
+            assertThat(scenario.stored(scope, squatterId, 1).status()).isEqualTo("AVAILABLE");
 
             // Given rows of the non-default scope in the states candidate, active and deprecated
             scenario.removeRows(squatterId);
@@ -958,7 +900,7 @@ public class MixedDefinitionBootstrapIT {
                     scope,
                     documentBytes(activeId, 1, ForeignActiveV1.class),
                     source("foreign-active", loadedAt),
-                    DefinitionStatus.ACTIVE);
+                    DefinitionStatus.AVAILABLE);
             DefinitionKey deprecatedKey = TenantRowSeed.seed(
                     rowSeeder.app(),
                     scope,
@@ -967,16 +909,16 @@ public class MixedDefinitionBootstrapIT {
                     DefinitionStatus.DEPRECATED);
             rowSeeder.close();
             assertThat(scenario.stored(scope, candidateId, 1).status()).isEqualTo("CANDIDATE");
-            assertThat(scenario.stored(scope, activeId, 1).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(scope, activeId, 1).status()).isEqualTo("AVAILABLE");
             assertThat(scenario.stored(scope, deprecatedId, 1).status()).isEqualTo("DEPRECATED");
             Boot node = scenario.node(none(), unobserved());
             long coolingSeconds = node.app().workflowDefinitionsConfig().maxStalenessSeconds();
 
             // When the candidate is activated
-            await(node.app().definitionService().activate(candidateKey));
+            await(node.app().definitionService().publish(candidateKey));
 
-            // Then it is ACTIVE and registered
-            assertThat(scenario.stored(scope, candidateId, 1).status()).isEqualTo("ACTIVE");
+            // Then it is AVAILABLE and registered
+            assertThat(scenario.stored(scope, candidateId, 1).status()).isEqualTo("AVAILABLE");
             assertThat(node.app().workflowRegistry().resolve(candidateKey)).isNotNull();
 
             // When the active row is deprecated
@@ -996,8 +938,8 @@ public class MixedDefinitionBootstrapIT {
             // When the retired row is reinstated
             await(node.app().definitionService().reinstate(deprecatedKey));
 
-            // Then it is the only version of its owner, so it is ACTIVE and registered again
-            assertThat(scenario.stored(scope, deprecatedId, 1).status()).isEqualTo("ACTIVE");
+            // Then it is AVAILABLE and registered again
+            assertThat(scenario.stored(scope, deprecatedId, 1).status()).isEqualTo("AVAILABLE");
             assertThat(node.app().workflowRegistry().resolve(deprecatedKey)).isNotNull();
         }
     }
@@ -1020,8 +962,8 @@ public class MixedDefinitionBootstrapIT {
             // Given committed code rows of the old code, a live instance pinned to version 1 and a failed
             // instance pinned to version 2 (a finished pin does not count as live)
             assertThat(newHashV2).isNotEqualTo(oldHashV2);
-            scenario.seedCode(id, 1, hashV1, "SUPERSEDED");
-            scenario.seedCode(id, 2, oldHashV2, "ACTIVE");
+            scenario.seedCode(id, 1, hashV1, "AVAILABLE");
+            scenario.seedCode(id, 2, oldHashV2, "AVAILABLE");
             UUID live = scenario.insertInstance(id, 1, hashV1, "RUNNING");
             UUID failed = scenario.insertInstance(id, 2, oldHashV2, "FAILED");
 
@@ -1179,7 +1121,7 @@ public class MixedDefinitionBootstrapIT {
             started.close();
 
             // Given a tenant claim on another id left past twice the bound, and a shared admission holder on that id
-            scenario.seedDocument(resetTenant, resetId, 1, "4".repeat(64), "ACTIVATING", "workflow: {}\n");
+            scenario.seedDocument(resetTenant, resetId, 1, "4".repeat(64), "PUBLISHING", "workflow: {}\n");
             scenario.ageStatus(resetKey, staleAgeSeconds);
             Stored claimBefore = scenario.stored(resetTenant, resetId, 1);
             AdmissionHolder resetHolder = AdmissionHolder.hold(scenario, resetId);
@@ -1221,7 +1163,7 @@ public class MixedDefinitionBootstrapIT {
             // Then startup succeeds and the stale claim is a candidate again
             Stored claimAfter = scenario.stored(resetTenant, resetId, 1);
             assertThat(claimAfter.status()).isEqualTo("CANDIDATE");
-            assertThat(claimAfter.activationToken()).isNull();
+            assertThat(claimAfter.publishToken()).isNull();
         }
     }
 
@@ -1276,20 +1218,20 @@ public class MixedDefinitionBootstrapIT {
                     DefinitionStatus.CANDIDATE);
             String retiredPlanHash = documentPlanHash(first.app(), sharedDocument, source("shared-retired", loadedAt));
             String livePlanHash = documentPlanHash(first.app(), sharedDocument, source("shared-live", loadedAt));
-            await(service.activate(liveKey));
+            await(service.publish(liveKey));
             await(service.retire(retiredKey));
             assertThat(retiredPlanHash).isEqualTo(livePlanHash);
             first.close();
-            assertThat(scenario.stored("tenant-active", activeId, 1).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored("tenant-active", activeId, 1).status()).isEqualTo("AVAILABLE");
             assertThat(scenario.stored("tenant-superseded", supersededId, 1).status())
-                    .isEqualTo("SUPERSEDED");
+                    .isEqualTo("AVAILABLE");
             assertThat(scenario.stored("tenant-superseded", supersededId, 2).status())
-                    .isEqualTo("ACTIVE");
+                    .isEqualTo("AVAILABLE");
             assertThat(scenario.stored("tenant-deprecated", deprecatedId, 1).status())
                     .isEqualTo("DEPRECATED");
             assertThat(scenario.stored("tenant-deprecated", deprecatedId, 2).status())
-                    .isEqualTo("ACTIVE");
-            assertThat(scenario.stored(order.liveTenant, sharedId, 1).status()).isEqualTo("ACTIVE");
+                    .isEqualTo("AVAILABLE");
+            assertThat(scenario.stored(order.liveTenant, sharedId, 1).status()).isEqualTo("AVAILABLE");
             assertThat(scenario.stored(order.retiredTenant, sharedId, 1).status())
                     .isEqualTo("RETIRED");
             assertThat(scenario.stored("tenant-candidate", candidateId, 1).status())
@@ -1369,7 +1311,7 @@ public class MixedDefinitionBootstrapIT {
             assertThat(registry.find(retiredKey)).isEmpty();
             assertThat(scenario.stored(order.retiredTenant, sharedId, 1).status())
                     .isEqualTo("RETIRED");
-            assertThat(scenario.stored(order.liveTenant, sharedId, 1).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(order.liveTenant, sharedId, 1).status()).isEqualTo("AVAILABLE");
 
             // And the candidate stays metadata only
             assertThatThrownBy(() -> registry.resolve(new DefinitionKey("tenant-candidate", candidateId, 1)))
@@ -1379,7 +1321,7 @@ public class MixedDefinitionBootstrapIT {
             assertThat(scenario.stored("tenant-deprecated", deprecatedId, 1).status())
                     .isEqualTo("DEPRECATED");
             assertThat(scenario.stored("tenant-superseded", supersededId, 1).status())
-                    .isEqualTo("SUPERSEDED");
+                    .isEqualTo("AVAILABLE");
         }
     }
 
@@ -1403,8 +1345,8 @@ public class MixedDefinitionBootstrapIT {
 
             // Given two packaged versions registered at startup, version 2 active above version 1
             Boot first = scenario.node(packagedBoth, unobserved());
-            assertThat(scenario.stored(id, 1).status()).isEqualTo("SUPERSEDED");
-            assertThat(scenario.stored(id, 2).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(id, 1).status()).isEqualTo("AVAILABLE");
+            assertThat(scenario.stored(id, 2).status()).isEqualTo("AVAILABLE");
             String hashV1 = scenario.stored(id, 1).planHash();
             String hashV2 = scenario.stored(id, 2).planHash();
 
@@ -1433,7 +1375,7 @@ public class MixedDefinitionBootstrapIT {
 
             // Then the durable rows agree
             assertThat(scenario.stored(id, 1).status()).isEqualTo("DEPRECATED");
-            assertThat(scenario.stored(id, 2).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(id, 2).status()).isEqualTo("AVAILABLE");
 
             // And the deprecation mark is applied again, so current resolution serves version 2
             assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
@@ -1517,7 +1459,7 @@ public class MixedDefinitionBootstrapIT {
 
             // And a code row whose hash differs from the deployed code, with no instance pinned to it
             assertThat(storedHash).isNotEqualTo(deployedHash);
-            scenario.seedCode(id, 1, storedHash, "ACTIVE");
+            scenario.seedCode(id, 1, storedHash, "AVAILABLE");
 
             // And a shared admission held by a caller transaction
             AdmissionHolder holder = AdmissionHolder.hold(scenario, id);
@@ -1599,7 +1541,7 @@ public class MixedDefinitionBootstrapIT {
 
             // Given a retired code row and a live one of the same id, both still provided by the deployed code
             scenario.seedCode(id, 1, retiredHash, "RETIRED");
-            scenario.seedCode(id, 2, liveHash, "ACTIVE");
+            scenario.seedCode(id, 2, liveHash, "AVAILABLE");
 
             // When the application starts
             Boot started = scenario.node(none(), observed(id, 2, liveHash), List.of(retiredCode, liveCode));
@@ -1624,7 +1566,7 @@ public class MixedDefinitionBootstrapIT {
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
             assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
                     .isPresent();
-            assertThat(scenario.stored(id, 2).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(id, 2).status()).isEqualTo("AVAILABLE");
         }
     }
 
@@ -1677,7 +1619,7 @@ public class MixedDefinitionBootstrapIT {
                 documentBytes(definitionId, version, contract),
                 DocumentFormat.YAML,
                 source("published-" + tenant + "-" + version, Instant.parse("2026-10-18T12:00:00Z"))));
-        await(service.activate(new DefinitionKey(tenant, definitionId, version)));
+        await(service.publish(new DefinitionKey(tenant, definitionId, version)));
         return loaded;
     }
 

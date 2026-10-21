@@ -63,7 +63,7 @@ final class DefinitionScenario implements AutoCloseable {
             OffsetDateTime loadedAt,
             OffsetDateTime createdAt,
             OffsetDateTime changedAt,
-            UUID activationToken) {}
+            UUID publishToken) {}
 
     @FunctionalInterface
     interface Cleanup {
@@ -291,16 +291,16 @@ final class DefinitionScenario implements AutoCloseable {
 
     /**
      * Inserts a document row directly. Its digest is the SQL digest of its text, and a row seeded as {@code
-     * ACTIVATING} carries a claim token.
+     * PUBLISHING} carries a claim token.
      */
     void seedDocument(String scopeKey, String definitionId, long version, String planHash, String status, String text) {
         execute("""
                 INSERT INTO workflow_definitions
                     (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
-                     document, document_format, document_digest, source_type, loaded_at, activation_token)
+                     document, document_format, document_digest, source_type, loaded_at, publish_token)
                 VALUES ($1, $2, $3, 'DOCUMENT', 'example.Contract', 'example.State', $4, $5, $6, 'YAML',
                         encode(sha256(convert_to($6::text, 'UTF8')), 'hex'), 'seed-docs', now(),
-                        CASE WHEN $5 = 'ACTIVATING' THEN gen_random_uuid() ELSE NULL END)
+                        CASE WHEN $5 = 'PUBLISHING' THEN gen_random_uuid() ELSE NULL END)
                 """, Tuple.of(scopeKey, definitionId, version, planHash, status, text));
     }
 
@@ -317,7 +317,7 @@ final class DefinitionScenario implements AutoCloseable {
     void claimWithoutCompleting(DefinitionKey key) {
         execute("""
                 UPDATE workflow_definitions
-                SET status = 'ACTIVATING', activation_token = gen_random_uuid()
+                SET status = 'PUBLISHING', publish_token = gen_random_uuid()
                 WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
                 """, Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion()));
     }
@@ -394,7 +394,7 @@ final class DefinitionScenario implements AutoCloseable {
         for (Row row : await(admin().preparedQuery("""
                         SELECT scope_key, definition_version, kind, status, plan_hash, document, document_format,
                                source_type, source_uri, source_revision, source_author, loaded_at, created_at,
-                               status_changed_at, activation_token
+                               status_changed_at, publish_token
                         FROM workflow_definitions
                         WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
                         """).execute(Tuple.of(scopeKey, definitionId, version)))) {
@@ -413,7 +413,7 @@ final class DefinitionScenario implements AutoCloseable {
                     row.getOffsetDateTime("loaded_at"),
                     row.getOffsetDateTime("created_at"),
                     row.getOffsetDateTime("status_changed_at"),
-                    row.getUUID("activation_token")));
+                    row.getUUID("publish_token")));
         }
         assertThat(rows)
                 .as("rows of %s for %s v%s", scopeKey, definitionId, version)

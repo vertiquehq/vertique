@@ -50,7 +50,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Verifies that deprecating a loaded and activated document through the public service commits the
@@ -65,9 +65,6 @@ public class DefinitionDeprecationIT {
     public interface ActiveCase extends OrderDocumentSignals {}
 
     @WorkflowContract
-    public interface SupersededCase extends OrderDocumentSignals {}
-
-    @WorkflowContract
     public interface TransitionCase extends OrderDocumentSignals {}
 
     @WorkflowContract
@@ -77,19 +74,16 @@ public class DefinitionDeprecationIT {
             .withDatabaseName("workflow_definition_deprecation_it")
             .withMigration("classpath:db/migration/workflow");
 
-    @ParameterizedTest(name = "target is {0} before it is deprecated")
-    @EnumSource(
-            value = DefinitionStatus.class,
-            names = {"ACTIVE", "SUPERSEDED"})
-    void persistsDeprecationThroughService(DefinitionStatus targetStatusBefore, Vertx vertx) {
-        // Version 2 is activated last, so it is ACTIVE and version 1 is SUPERSEDED
-        String id = "deprecation-it-" + targetStatusBefore.name().toLowerCase() + "-doc";
-        boolean targetIsActive = targetStatusBefore == DefinitionStatus.ACTIVE;
-        long targetVersion = targetIsActive ? 2 : 1;
-        long otherVersion = targetIsActive ? 1 : 2;
-        DefinitionStatus otherStatusBefore = targetIsActive ? DefinitionStatus.SUPERSEDED : DefinitionStatus.ACTIVE;
-        Class<?> contractV1 = targetIsActive ? ActiveCase.class : SupersededCase.class;
-        Class<?> contractV2 = targetIsActive ? ActiveCase.class : SupersededCase.class;
+    @ParameterizedTest(name = "version {0} of two available versions is deprecated")
+    @ValueSource(longs = {1, 2})
+    void persistsDeprecationThroughService(long targetVersion, Vertx vertx) {
+        // Both versions are published, so both are AVAILABLE and either one can be deprecated
+        String id = "deprecation-it-version-" + targetVersion + "-doc";
+        long otherVersion = targetVersion == 1 ? 2 : 1;
+        DefinitionStatus targetStatusBefore = DefinitionStatus.AVAILABLE;
+        DefinitionStatus otherStatusBefore = DefinitionStatus.AVAILABLE;
+        Class<?> contractV1 = ActiveCase.class;
+        Class<?> contractV2 = ActiveCase.class;
         DefinitionKey targetKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion);
         byte[] documentV1 = document(id, 1, contractV1);
         byte[] documentV2 = document(id, 2, contractV2);
@@ -102,11 +96,11 @@ public class DefinitionDeprecationIT {
             // Given two versions loaded and activated through the service, so both are registered and cached
             CompiledDefinitionRef loadedV1 = await(app.definitionService()
                     .load(WorkflowScopes.DEFAULT, documentV1, DocumentFormat.YAML, source("deprecation-v1")));
-            await(app.definitionService().activate(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)));
+            await(app.definitionService().publish(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)));
             CompiledDefinitionRef loadedV2 = await(app.definitionService()
                     .load(WorkflowScopes.DEFAULT, documentV2, DocumentFormat.YAML, source("deprecation-v2")));
-            await(app.definitionService().activate(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)));
-            CompiledDefinitionRef loadedTarget = targetIsActive ? loadedV2 : loadedV1;
+            await(app.definitionService().publish(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)));
+            CompiledDefinitionRef loadedTarget = targetVersion == 2 ? loadedV2 : loadedV1;
 
             // And the committed predecessor status of the target and of the other version is the one under test
             Stored targetBefore = fixture.stored(id, targetVersion);
@@ -222,8 +216,8 @@ public class DefinitionDeprecationIT {
     @Test
     void rejectsUnsupportedOrMismatchedTransitions(Vertx vertx) {
         String id = "deprecation-it-transition-doc";
-        DefinitionKey supersededKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
-        DefinitionKey activeKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
+        DefinitionKey lowerKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+        DefinitionKey availableKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
         DefinitionKey missingKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 99);
 
         try (Fixture fixture = new Fixture(vertx)) {
@@ -232,33 +226,37 @@ public class DefinitionDeprecationIT {
             AppComponent app = node.app();
             WorkflowDefinitionRegistryStore store = app.definitionRegistryStore();
 
-            // Given version 1 SUPERSEDED and version 2 ACTIVE, committed through the service
+            // Given versions 1 and 2 AVAILABLE, committed through the service
             await(app.definitionService()
                     .load(
                             WorkflowScopes.DEFAULT,
                             document(id, 1, TransitionCase.class),
                             DocumentFormat.YAML,
                             source("transition-v1")));
-            await(app.definitionService().activate(supersededKey));
+            await(app.definitionService().publish(lowerKey));
             await(app.definitionService()
                     .load(
                             WorkflowScopes.DEFAULT,
                             document(id, 2, TransitionCase.class),
                             DocumentFormat.YAML,
                             source("transition-v2")));
-            await(app.definitionService().activate(activeKey));
-            Stored supersededBefore = fixture.stored(id, 1);
-            Stored activeBefore = fixture.stored(id, 2);
-            assertThat(supersededBefore.status()).isEqualTo("SUPERSEDED");
-            assertThat(activeBefore.status()).isEqualTo("ACTIVE");
+            await(app.definitionService().publish(availableKey));
+            Stored lowerBefore = fixture.stored(id, 1);
+            Stored availableBefore = fixture.stored(id, 2);
+            assertThat(lowerBefore.status()).isEqualTo("AVAILABLE");
+            assertThat(availableBefore.status()).isEqualTo("AVAILABLE");
 
-            // When each unsupported status pair is requested on the ACTIVE row
+            // When each status pair the store does not support is requested on the AVAILABLE row
             List<TransitionAttempt> unsupported = List.of(
-                    new TransitionAttempt(activeKey, DefinitionStatus.CANDIDATE, DefinitionStatus.DEPRECATED),
-                    new TransitionAttempt(activeKey, DefinitionStatus.ACTIVE, DefinitionStatus.ACTIVE),
-                    new TransitionAttempt(activeKey, DefinitionStatus.ACTIVE, DefinitionStatus.SUPERSEDED),
-                    new TransitionAttempt(activeKey, DefinitionStatus.DEPRECATED, DefinitionStatus.RETIRED),
-                    new TransitionAttempt(activeKey, DefinitionStatus.ACTIVE, DefinitionStatus.RETIRED));
+                    new TransitionAttempt(availableKey, DefinitionStatus.CANDIDATE, DefinitionStatus.DEPRECATED),
+                    new TransitionAttempt(availableKey, DefinitionStatus.CANDIDATE, DefinitionStatus.AVAILABLE),
+                    new TransitionAttempt(availableKey, DefinitionStatus.PUBLISHING, DefinitionStatus.AVAILABLE),
+                    new TransitionAttempt(availableKey, DefinitionStatus.AVAILABLE, DefinitionStatus.AVAILABLE),
+                    new TransitionAttempt(availableKey, DefinitionStatus.AVAILABLE, DefinitionStatus.CANDIDATE),
+                    new TransitionAttempt(availableKey, DefinitionStatus.AVAILABLE, DefinitionStatus.RETIRED),
+                    new TransitionAttempt(availableKey, DefinitionStatus.DEPRECATED, DefinitionStatus.DEPRECATED),
+                    new TransitionAttempt(availableKey, DefinitionStatus.DEPRECATED, DefinitionStatus.RETIRED),
+                    new TransitionAttempt(availableKey, DefinitionStatus.RETIRED, DefinitionStatus.DEPRECATED));
             for (TransitionAttempt attempt : unsupported) {
                 int before = node.observer().statements().size();
                 Throwable failure = failureOf(store.transition(attempt.key(), attempt.from(), attempt.to()));
@@ -275,31 +273,30 @@ public class DefinitionDeprecationIT {
                         .as("statements issued for %s to %s", attempt.from(), attempt.to())
                         .isZero();
             }
-            assertThat(fixture.stored(id, 2)).isEqualTo(activeBefore);
+            assertThat(fixture.stored(id, 2)).isEqualTo(availableBefore);
 
             // When the expected status does not match the committed status of the row
-            Throwable activeAsSuperseded =
-                    failureOf(store.transition(activeKey, DefinitionStatus.SUPERSEDED, DefinitionStatus.DEPRECATED));
-            Throwable supersededAsActive =
-                    failureOf(store.transition(supersededKey, DefinitionStatus.ACTIVE, DefinitionStatus.DEPRECATED));
+            Throwable availableAsDeprecated =
+                    failureOf(store.transition(availableKey, DefinitionStatus.DEPRECATED, DefinitionStatus.AVAILABLE));
+            Throwable lowerAsRetired =
+                    failureOf(store.transition(lowerKey, DefinitionStatus.RETIRED, DefinitionStatus.AVAILABLE));
 
             // Then both are refused and neither row changes, including its status change time
-            assertThat(activeAsSuperseded)
+            assertThat(availableAsDeprecated)
                     .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, refusal -> {
                         assertThat(refusal.reason()).isEqualTo(Reason.INVALID_TRANSITION);
-                        assertThat(refusal.key()).isEqualTo(activeKey);
+                        assertThat(refusal.key()).isEqualTo(availableKey);
                     });
-            assertThat(supersededAsActive)
-                    .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, refusal -> {
-                        assertThat(refusal.reason()).isEqualTo(Reason.INVALID_TRANSITION);
-                        assertThat(refusal.key()).isEqualTo(supersededKey);
-                    });
-            assertThat(fixture.stored(id, 1)).isEqualTo(supersededBefore);
-            assertThat(fixture.stored(id, 2)).isEqualTo(activeBefore);
+            assertThat(lowerAsRetired).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, refusal -> {
+                assertThat(refusal.reason()).isEqualTo(Reason.INVALID_TRANSITION);
+                assertThat(refusal.key()).isEqualTo(lowerKey);
+            });
+            assertThat(fixture.stored(id, 1)).isEqualTo(lowerBefore);
+            assertThat(fixture.stored(id, 2)).isEqualTo(availableBefore);
 
             // When a version without a row is transitioned
             Throwable missing =
-                    failureOf(store.transition(missingKey, DefinitionStatus.ACTIVE, DefinitionStatus.DEPRECATED));
+                    failureOf(store.transition(missingKey, DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
 
             // Then it is refused as an invalid transition and no row appears or changes
             assertThat(missing).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, refusal -> {
@@ -307,13 +304,13 @@ public class DefinitionDeprecationIT {
                 assertThat(refusal.key()).isEqualTo(missingKey);
             });
             assertThat(fixture.rowCount(id)).isEqualTo(2);
-            assertThat(fixture.stored(id, 1)).isEqualTo(supersededBefore);
-            assertThat(fixture.stored(id, 2)).isEqualTo(activeBefore);
+            assertThat(fixture.stored(id, 1)).isEqualTo(lowerBefore);
+            assertThat(fixture.stored(id, 2)).isEqualTo(availableBefore);
         }
     }
 
     @Test
-    void refusesTransitionWhileAnotherOwnerHoldsTheId(Vertx vertx) {
+    void deprecatesTheRowOfOneScopeWithoutTouchingTheSameIdInAnotherScope(Vertx vertx) {
         String id = "deprecation-it-owner-doc";
         DefinitionKey globalKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
         DefinitionKey scopeKey = new DefinitionKey("tenant-a", id, 1);
@@ -324,50 +321,35 @@ public class DefinitionDeprecationIT {
             AppComponent app = node.app();
             WorkflowDefinitionRegistryStore store = app.definitionRegistryStore();
 
-            // Given the global owner holds the id as ACTIVE and tenant-a has a candidate of the same version
+            // Given the id and version available in the global scope and in tenant-a
             await(app.definitionService()
                     .load(
                             WorkflowScopes.DEFAULT,
                             document(id, 1, OwnerCaseV1.class),
                             DocumentFormat.YAML,
                             source("owner-global")));
-            await(app.definitionService().activate(globalKey));
+            await(app.definitionService().publish(globalKey));
             TenantRowSeed.seed(
                     app,
                     "tenant-a",
                     document(id, 1, OwnerCaseV1.class),
                     source("owner-tenant"),
-                    DefinitionStatus.CANDIDATE);
-
-            // And tenant-a is also forced to ACTIVE by SQL, because the public operations never let two owners hold an
-            // id
-            fixture.forceStatus(scopeKey, DefinitionStatus.ACTIVE);
+                    DefinitionStatus.AVAILABLE);
             Stored globalBefore = fixture.stored(WorkflowScopes.DEFAULT, id, 1);
             Stored tenantBefore = fixture.stored("tenant-a", id, 1);
-            assertThat(globalBefore.status()).isEqualTo("ACTIVE");
-            assertThat(tenantBefore.status()).isEqualTo("ACTIVE");
+            assertThat(globalBefore.status()).isEqualTo("AVAILABLE");
+            assertThat(tenantBefore.status()).isEqualTo("AVAILABLE");
 
-            // When each owner's ACTIVE row is deprecated while the other owner holds the id
-            Throwable tenantFailure =
-                    failureOf(store.transition(scopeKey, DefinitionStatus.ACTIVE, DefinitionStatus.DEPRECATED));
-            Throwable globalFailure =
-                    failureOf(store.transition(globalKey, DefinitionStatus.ACTIVE, DefinitionStatus.DEPRECATED));
+            // When tenant-a's row is deprecated
+            await(store.transition(scopeKey, DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
 
-            // Then both are refused with an owner conflict naming the other holder
-            assertThat(tenantFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, refusal -> {
-                assertThat(refusal.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                assertThat(refusal.key()).isEqualTo(scopeKey);
-                assertThat(refusal.getMessage()).contains("default");
-            });
-            assertThat(globalFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, refusal -> {
-                assertThat(refusal.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                assertThat(refusal.key()).isEqualTo(globalKey);
-                assertThat(refusal.getMessage()).contains("tenant-a");
-            });
-
-            // And neither row changed
+            // Then only tenant-a's row changed
+            assertThat(fixture.stored("tenant-a", id, 1).status()).isEqualTo("DEPRECATED");
             assertThat(fixture.stored(WorkflowScopes.DEFAULT, id, 1)).isEqualTo(globalBefore);
-            assertThat(fixture.stored("tenant-a", id, 1)).isEqualTo(tenantBefore);
+
+            // And the global row is deprecated in turn without a refusal
+            await(store.transition(globalKey, DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
+            assertThat(fixture.stored(WorkflowScopes.DEFAULT, id, 1).status()).isEqualTo("DEPRECATED");
         }
     }
 

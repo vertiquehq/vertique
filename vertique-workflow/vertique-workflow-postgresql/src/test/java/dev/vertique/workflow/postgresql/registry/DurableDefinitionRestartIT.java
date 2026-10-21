@@ -85,7 +85,7 @@ public class DurableDefinitionRestartIT {
                     handles.add(firstHandle);
                     WorkflowDefinitionService service = first.definitionService();
                     return service.load(WorkflowScopes.DEFAULT, yaml, DocumentFormat.YAML, metadata)
-                            .compose(compiled -> service.activate(key).map(compiled))
+                            .compose(compiled -> service.publish(key).map(compiled))
                             .compose(compiled -> service.list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                                     .map(records -> {
                                         assertThat(compiled.planHash()).isNotBlank();
@@ -93,7 +93,7 @@ public class DurableDefinitionRestartIT {
                                                 .hasSize(1);
                                         assertThat(records).singleElement().satisfies(record -> {
                                             assertThat(record.key()).isEqualTo(key);
-                                            assertThat(record.status()).isEqualTo(DefinitionStatus.ACTIVE);
+                                            assertThat(record.status()).isEqualTo(DefinitionStatus.AVAILABLE);
                                             assertThat(record.planHash()).isEqualTo(compiled.planHash());
                                         });
                                         return compiled;
@@ -124,7 +124,7 @@ public class DurableDefinitionRestartIT {
                                         .map(records -> {
                                             assertThat(records).singleElement().satisfies(record -> {
                                                 assertThat(record.key()).isEqualTo(key);
-                                                assertThat(record.status()).isEqualTo(DefinitionStatus.ACTIVE);
+                                                assertThat(record.status()).isEqualTo(DefinitionStatus.AVAILABLE);
                                                 assertThat(record.planHash()).isEqualTo(compiled.planHash());
                                             });
                                             return (Void) null;
@@ -167,7 +167,7 @@ public class DurableDefinitionRestartIT {
                     return first.definitionService()
                             .load(WorkflowScopes.DEFAULT, original, DocumentFormat.YAML, metadata)
                             .compose(loaded ->
-                                    first.definitionService().activate(key).map(loaded))
+                                    first.definitionService().publish(key).map(loaded))
                             .compose(loaded -> {
                                 assertThat(first.workflowRegistry()
                                                 .resolve(new DefinitionKey(

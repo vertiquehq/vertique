@@ -4,7 +4,6 @@
 package dev.vertique.workflow.postgresql.registry;
 
 import static dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.await;
-import static dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.failureOf;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
@@ -17,15 +16,12 @@ import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
-import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
-import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.Fixture;
 import dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.IdLockBarrier;
 import dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.Node;
 import dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.Stored;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.ActivationClaim;
-import dev.vertique.workflow.registry.store.ActivationOutcome;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -50,8 +46,9 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Verifies that candidates of different owners coexist while exactly one owner of a definition id
- * holds executable membership, across independent application graphs sharing one database.
+ * Verifies that rows of different scopes and versions of one definition id coexist and are available together,
+ * and that one row's claim, completion or reconciliation never changes another, across independent application
+ * graphs sharing one database.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -95,8 +92,8 @@ public class DefinitionOwnershipIT {
             .withMigration("classpath:db/migration/workflow");
 
     @Test
-    @DisplayName("two owners racing for one id leave exactly one holder and a typed conflict for the other")
-    void oneOwnerWinsConcurrentTenantActivation(Vertx vertx) {
+    @DisplayName("two scopes publishing one id and version at once are both available, each with its own row")
+    void concurrentScopePublicationsOfOneIdAndVersionAreBothAvailable(Vertx vertx) {
         String raceId = "ownership-race-doc";
         String heldId = "ownership-held-doc";
         DefinitionKey raceA = new DefinitionKey("tenant-a", raceId, 1);
@@ -120,57 +117,33 @@ public class DefinitionOwnershipIT {
             loadBarrier.release();
             await(loadA);
             await(loadB);
-            String planHashA = planHash(nodeA, document(raceId, 1, RaceV1.class), "race-a");
-            String planHashB = planHash(nodeB, document(raceId, 1, RaceV1.class), "race-b");
+            String planHash = planHash(nodeA, document(raceId, 1, RaceV1.class), "race-a");
 
-            // Then both candidates coexist without either claiming the id
+            // Then both candidates coexist
             assertThat(fixture.stored(raceId))
                     .extracting(Stored::scopeKey, Stored::status, Stored::token)
                     .containsExactly(tuple("tenant-a", "CANDIDATE", null), tuple("tenant-b", "CANDIDATE", null));
 
-            // When both owners activate at the same time and both claims are queued behind the id lock
-            IdLockBarrier activationBarrier = fixture.holdIdLock(raceId);
-            Future<Void> activationA = nodeA.service().activate(raceA);
-            Future<Void> activationB = nodeB.service().activate(raceB);
-            activationBarrier.awaitQueued(2);
-            activationBarrier.release();
-            Throwable failureA = failureOf(activationA);
-            Throwable failureB = failureOf(activationB);
+            // When both scopes publish at the same time and both claims are queued behind the id lock
+            IdLockBarrier publicationBarrier = fixture.holdIdLock(raceId);
+            Future<Void> publicationA = nodeA.service().publish(raceA);
+            Future<Void> publicationB = nodeB.service().publish(raceB);
+            publicationBarrier.awaitQueued(2);
+            publicationBarrier.release();
+            await(publicationA);
+            await(publicationB);
 
-            // Then exactly one activation succeeds and the other fails with a conflict naming both owners
-            assertThat(failureA == null ^ failureB == null)
-                    .as("exactly one activation succeeds: tenant-a=%s tenant-b=%s", failureA, failureB)
-                    .isTrue();
-            boolean tenantAWon = failureA == null;
-            DefinitionKey winnerKey = tenantAWon ? raceA : raceB;
-            DefinitionKey loserKey = tenantAWon ? raceB : raceA;
-            Node winnerNode = tenantAWon ? nodeA : nodeB;
-            Node loserNode = tenantAWon ? nodeB : nodeA;
-            Throwable loserFailure = tenantAWon ? failureB : failureA;
-            String winnerPlanHash = tenantAWon ? planHashA : planHashB;
-            assertThat(loserFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                assertThat(failure.key()).isEqualTo(loserKey);
-                assertThat(failure.getMessage()).contains(loserKey.scopeKey()).contains(winnerKey.scopeKey());
-            });
-
-            // And the database has exactly one holder, with no lost update
+            // Then both publications succeed, both rows are available and no claim is left behind
             assertThat(fixture.stored(raceId))
                     .extracting(Stored::scopeKey, Stored::status, Stored::token)
-                    .containsExactlyInAnyOrder(
-                            tuple(winnerKey.scopeKey(), "ACTIVE", null), tuple(loserKey.scopeKey(), "CANDIDATE", null));
-            assertThat(fixture.stored(raceId))
-                    .filteredOn(row -> row.scopeKey().equals(winnerKey.scopeKey()))
-                    .singleElement()
-                    .satisfies(row -> assertThat(row.planHash()).isEqualTo(winnerPlanHash));
+                    .containsExactly(tuple("tenant-a", "AVAILABLE", null), tuple("tenant-b", "AVAILABLE", null));
+            assertThat(fixture.stored(raceId)).extracting(Stored::planHash).containsOnly(planHash);
 
-            // And only the winner holds an executable registration
-            assertThat(winnerNode.registry().resolve(winnerKey).plan().planHash())
-                    .isEqualTo(winnerPlanHash);
-            assertThat(loserNode.registry().allRegistered())
-                    .noneMatch(runtime -> runtime.plan().definitionId().equals(raceId));
-            assertThat(loserNode.registry().registeredDefinition(loserKey)).isEmpty();
-            assertThat(loserNode.registry().registeredDefinition(winnerKey)).isEmpty();
+            // And each node holds the executable registration of the scope it published
+            assertThat(nodeA.registry().resolve(raceA).plan().planHash()).isEqualTo(planHash);
+            assertThat(nodeB.registry().resolve(raceB).plan().planHash()).isEqualTo(planHash);
+            assertThat(nodeA.registry().registeredDefinition(raceB)).isEmpty();
+            assertThat(nodeB.registry().registeredDefinition(raceA)).isEmpty();
 
             // Given a second id where tenant-a's claim is committed and its completion is held back
             TenantRowSeed.seed(
@@ -188,35 +161,28 @@ public class DefinitionOwnershipIT {
             WorkflowDefinitionSqlObserver.CompletionLockGate gate =
                     nodeA.observer().holdNextCompletionLockAfterClaim();
             fixture.onClose(gate::release);
-            Future<Void> heldActivation = nodeA.service().activate(heldA);
+            Future<Void> heldPublication = nodeA.service().publish(heldA);
             await(gate.observed());
             assertThat(fixture.stored(heldId))
                     .extracting(Stored::scopeKey, Stored::status)
-                    .containsExactly(tuple("tenant-a", "ACTIVATING"), tuple("tenant-b", "CANDIDATE"));
+                    .containsExactly(tuple("tenant-a", "PUBLISHING"), tuple("tenant-b", "CANDIDATE"));
 
-            // When tenant-b activates the same id while tenant-a's fresh claim is outstanding
-            Throwable lateFailure = failureOf(nodeB.service().activate(heldB));
+            // When tenant-b publishes the same id while tenant-a's fresh claim is outstanding
+            await(nodeB.service().publish(heldB));
 
-            // Then it is refused with a conflict naming both owners and registers nothing
-            assertThat(lateFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                assertThat(failure.key()).isEqualTo(heldB);
-                assertThat(failure.getMessage()).contains("tenant-a").contains("tenant-b");
-            });
-            assertThat(nodeB.registry().allRegistered())
-                    .noneMatch(runtime -> runtime.plan().definitionId().equals(heldId));
+            // Then tenant-b is available at once and tenant-a's claim is untouched
+            assertThat(nodeB.registry().resolve(heldB)).isNotNull();
             assertThat(fixture.stored(heldId))
                     .extracting(Stored::scopeKey, Stored::status)
-                    .containsExactly(tuple("tenant-a", "ACTIVATING"), tuple("tenant-b", "CANDIDATE"));
+                    .containsExactly(tuple("tenant-a", "PUBLISHING"), tuple("tenant-b", "AVAILABLE"));
 
-            // And the held completion still finishes as the only owner
+            // And the held completion still finishes
             gate.release();
-            await(heldActivation);
+            await(heldPublication);
             assertThat(fixture.stored(heldId))
                     .extracting(Stored::scopeKey, Stored::status, Stored::token)
-                    .containsExactly(tuple("tenant-a", "ACTIVE", null), tuple("tenant-b", "CANDIDATE", null));
-            assertThat(nodeA.registry().resolve(new DefinitionKey("tenant-a", heldId, 1)))
-                    .isNotNull();
+                    .containsExactly(tuple("tenant-a", "AVAILABLE", null), tuple("tenant-b", "AVAILABLE", null));
+            assertThat(nodeA.registry().resolve(heldA)).isNotNull();
         }
     }
 
@@ -227,8 +193,8 @@ public class DefinitionOwnershipIT {
             boolean version3CompletesFirst) {}
 
     @Test
-    @DisplayName("concurrent activations of two versions of one owner end with the highest version active")
-    void highestVersionWinsWithoutUniqueIndexFailure(Vertx vertx) {
+    @DisplayName("concurrent publications of two versions of one scope leave both versions available")
+    void concurrentPublicationsOfTwoVersionsLeaveBothAvailable(Vertx vertx) {
         List<OrderScenario> scenarios = List.of(
                 new OrderScenario(
                         "tenant-a:ownership-v3-first-doc", V3FirstVersion3.class, V3FirstVersion4.class, true),
@@ -245,7 +211,7 @@ public class DefinitionOwnershipIT {
                 DefinitionKey version4 = new DefinitionKey("tenant-a", id, 4);
                 fixture.ownRows(id);
 
-                // Given two candidates of one owner, each activating on its own node with completion held back
+                // Given two candidates of one scope, each publishing on its own node with completion held back
                 CompiledDefinitionRef loaded3 = await(nodeA.service()
                         .load(
                                 "tenant-a",
@@ -264,45 +230,42 @@ public class DefinitionOwnershipIT {
                         nodeB.observer().holdNextCompletionLockAfterClaim();
                 fixture.onClose(gate3::release);
                 fixture.onClose(gate4::release);
-                Future<Void> activation3 = nodeA.service().activate(version3);
-                Future<Void> activation4 = nodeB.service().activate(version4);
+                Future<Void> publication3 = nodeA.service().publish(version3);
+                Future<Void> publication4 = nodeB.service().publish(version4);
                 await(gate3.observed());
                 await(gate4.observed());
                 assertThat(fixture.stored(id))
                         .extracting(Stored::version, Stored::status)
-                        .containsExactly(tuple(3L, "ACTIVATING"), tuple(4L, "ACTIVATING"));
+                        .containsExactly(tuple(3L, "PUBLISHING"), tuple(4L, "PUBLISHING"));
 
                 // When the barriers release the completions in the scenario's order
                 if (scenario.version3CompletesFirst()) {
                     gate3.release();
-                    await(activation3);
+                    await(publication3);
                     assertThat(fixture.stored(id))
                             .extracting(Stored::version, Stored::status)
-                            .containsExactly(tuple(3L, "ACTIVE"), tuple(4L, "ACTIVATING"));
+                            .containsExactly(tuple(3L, "AVAILABLE"), tuple(4L, "PUBLISHING"));
                     gate4.release();
-                    await(activation4);
+                    await(publication4);
                 } else {
                     gate4.release();
-                    await(activation4);
+                    await(publication4);
                     assertThat(fixture.stored(id))
                             .extracting(Stored::version, Stored::status)
-                            .containsExactly(tuple(3L, "ACTIVATING"), tuple(4L, "ACTIVE"));
+                            .containsExactly(tuple(3L, "PUBLISHING"), tuple(4L, "AVAILABLE"));
                     gate3.release();
-                    await(activation3);
+                    await(publication3);
                 }
 
-                // Then version 4 is the only active row and version 3 is superseded, with no claim left behind
+                // Then both versions are available, with no claim left behind
                 assertThat(fixture.stored(id))
                         .extracting(Stored::version, Stored::status, Stored::token)
-                        .containsExactly(tuple(3L, "SUPERSEDED", null), tuple(4L, "ACTIVE", null));
-                assertThat(fixture.stored(id))
-                        .filteredOn(row -> row.status().equals("ACTIVE"))
-                        .hasSize(1);
+                        .containsExactly(tuple(3L, "AVAILABLE", null), tuple(4L, "AVAILABLE", null));
                 assertThat(fixture.stored(id))
                         .extracting(Stored::version, Stored::planHash)
                         .containsExactly(tuple(3L, loaded3.planHash()), tuple(4L, loaded4.planHash()));
 
-                // And each version stays pinnable on the node that activated it
+                // And each version stays pinnable on the node that published it
                 RuntimeWorkflow pinned3 = nodeA.registry().resolve(new DefinitionKey("tenant-a", id, 3));
                 RuntimeWorkflow pinned4 = nodeB.registry().resolve(new DefinitionKey("tenant-a", id, 4));
                 assertThat(pinned3.plan().definitionVersion()).isEqualTo(3);
@@ -314,8 +277,8 @@ public class DefinitionOwnershipIT {
     }
 
     @Test
-    @DisplayName("a completion from an abandoned claim cannot overwrite the owner that replaced it")
-    void staleClaimCannotOverwriteReplacementOwner(Vertx vertx) {
+    @DisplayName("a completion from an abandoned claim of one scope never touches the row of another scope")
+    void staleClaimOfOneScopeNeverTouchesAnotherScopesRow(Vertx vertx) {
         String id = "ownership-stale-doc";
         DefinitionKey tenantA = new DefinitionKey("tenant-a", id, 1);
         DefinitionKey tenantB = new DefinitionKey("tenant-b", id, 1);
@@ -341,44 +304,37 @@ public class DefinitionOwnershipIT {
             WorkflowDefinitionSqlObserver.CompletionLockGate gate =
                     nodeA.observer().holdNextCompletionLockAfterClaim();
             fixture.onClose(gate::release);
-            Future<Void> staleActivation = nodeA.service().activate(tenantA);
+            Future<Void> staleActivation = nodeA.service().publish(tenantA);
             await(gate.observed());
             Stored claimed = fixture.stored(id).stream()
                     .filter(row -> "tenant-a".equals(row.scopeKey()))
                     .findFirst()
                     .orElseThrow();
-            assertThat(claimed.status()).isEqualTo("ACTIVATING");
+            assertThat(claimed.status()).isEqualTo("PUBLISHING");
             assertThat(claimed.token()).isNotBlank();
             assertThat(nodeA.registry().resolve(tenantA)).isNotNull();
 
-            // And that claim is older than twice the staleness bound when tenant-b then activates the same id and
+            // And that claim is older than twice the staleness bound when tenant-b then publishes the same id and
             // version
             fixture.ageClaim(nodeA.app().workflowDefinitionsConfig(), tenantA, claimed.token());
-            await(nodeB.service().activate(tenantB));
+            await(nodeB.service().publish(tenantB));
             RuntimeWorkflow replacement = nodeB.registry().resolve(tenantB);
             var replacementDefinition = nodeB.registry().registeredDefinition(tenantB);
             Stored replacementRow = fixture.stored(id).stream()
                     .filter(row -> "tenant-b".equals(row.scopeKey()))
                     .findFirst()
                     .orElseThrow();
-            assertThat(replacementRow.status()).isEqualTo("ACTIVE");
+            assertThat(replacementRow.status()).isEqualTo("AVAILABLE");
             assertThat(replacementRow.planHash()).isEqualTo(claimed.planHash());
 
-            // When tenant-a's old claim token completes and its local cleanup finishes
+            // When tenant-a's claim token completes
             gate.release();
-            Throwable failure = failureOf(staleActivation);
+            await(staleActivation);
 
-            // Then the completion is refused with a typed ownership conflict
-            assertThat(failure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, conflict -> {
-                assertThat(conflict.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                assertThat(conflict.key()).isEqualTo(tenantA);
-                assertThat(conflict.getMessage()).contains("tenant-b");
-            });
-
-            // And tenant-a's row returned to a candidate while tenant-b's row is untouched
+            // Then tenant-a's row is available and tenant-b's row is untouched
             assertThat(fixture.stored(id))
                     .extracting(Stored::scopeKey, Stored::status, Stored::token)
-                    .containsExactly(tuple("tenant-a", "CANDIDATE", null), tuple("tenant-b", "ACTIVE", null));
+                    .containsExactly(tuple("tenant-a", "AVAILABLE", null), tuple("tenant-b", "AVAILABLE", null));
             assertThat(fixture.stored(id))
                     .filteredOn(row -> "tenant-b".equals(row.scopeKey()))
                     .singleElement()
@@ -395,11 +351,10 @@ public class DefinitionOwnershipIT {
                     .singleElement()
                     .isSameAs(replacement);
 
-            // And nothing of tenant-a stays executable on its node
-            assertThat(nodeA.registry().allRegistered())
-                    .noneMatch(runtime -> runtime.plan().definitionId().equals(id));
-            assertThat(nodeA.registry().registeredDefinition(tenantA)).isEmpty();
+            // And each node holds only the registration of the scope it published
+            assertThat(nodeA.registry().resolve(tenantA)).isNotNull();
             assertThat(nodeA.registry().registeredDefinition(tenantB)).isEmpty();
+            assertThat(nodeB.registry().registeredDefinition(tenantA)).isEmpty();
         }
     }
 
@@ -418,13 +373,13 @@ public class DefinitionOwnershipIT {
         DefinitionKey tenantB3 = new DefinitionKey("tenant-b", mixId, 3);
         Map<DefinitionKey, DefinitionStatus> seeded = Map.of(
                 global1, DefinitionStatus.CANDIDATE,
-                global2, DefinitionStatus.SUPERSEDED,
+                global2, DefinitionStatus.AVAILABLE,
                 tenantA1, DefinitionStatus.CANDIDATE,
-                tenantA2, DefinitionStatus.ACTIVE,
+                tenantA2, DefinitionStatus.AVAILABLE,
                 tenantA3, DefinitionStatus.RETIRED,
                 tenantB1, DefinitionStatus.CANDIDATE,
                 tenantB2, DefinitionStatus.DEPRECATED,
-                tenantB3, DefinitionStatus.ACTIVATING);
+                tenantB3, DefinitionStatus.PUBLISHING);
 
         try (Fixture fixture = new Fixture(vertx, db)) {
             Node node = fixture.node();
@@ -471,7 +426,7 @@ public class DefinitionOwnershipIT {
             }
             await(node.store().claim(tenantB3));
             for (Map.Entry<DefinitionKey, DefinitionStatus> row : seeded.entrySet()) {
-                if (row.getValue() != DefinitionStatus.CANDIDATE && row.getValue() != DefinitionStatus.ACTIVATING) {
+                if (row.getValue() != DefinitionStatus.CANDIDATE && row.getValue() != DefinitionStatus.PUBLISHING) {
                     fixture.forceStatus(row.getKey(), row.getValue());
                 }
             }
@@ -503,17 +458,19 @@ public class DefinitionOwnershipIT {
                             new DefinitionFilter(
                                     WorkflowScopes.DEFAULT,
                                     null,
-                                    Set.of(DefinitionStatus.SUPERSEDED, DefinitionStatus.CANDIDATE)),
+                                    Set.of(DefinitionStatus.AVAILABLE, DefinitionStatus.CANDIDATE)),
                             Set.of(global1, global2)),
                     Map.entry(
                             new DefinitionFilter(
-                                    "tenant-a", null, Set.of(DefinitionStatus.ACTIVE, DefinitionStatus.RETIRED)),
+                                    "tenant-a", null, Set.of(DefinitionStatus.AVAILABLE, DefinitionStatus.RETIRED)),
                             Set.of(tenantA2, tenantA3)),
                     Map.entry(
                             new DefinitionFilter(
-                                    "tenant-b", null, Set.of(DefinitionStatus.DEPRECATED, DefinitionStatus.ACTIVATING)),
+                                    "tenant-b", null, Set.of(DefinitionStatus.DEPRECATED, DefinitionStatus.PUBLISHING)),
                             Set.of(tenantB2, tenantB3)),
-                    Map.entry(new DefinitionFilter(null, null, Set.of(DefinitionStatus.ACTIVE)), Set.of(tenantA2)),
+                    Map.entry(
+                            new DefinitionFilter(null, null, Set.of(DefinitionStatus.AVAILABLE)),
+                            Set.of(global2, tenantA2)),
                     Map.entry(new DefinitionFilter("tenant-a", null, Set.of(DefinitionStatus.DEPRECATED)), Set.of()));
             int statementsBefore = node.observer().statements().size();
             int queriesBefore = node.observer().queries().size();
@@ -593,12 +550,11 @@ public class DefinitionOwnershipIT {
     }
 
     @Test
-    @DisplayName("a global static document reconcile cannot take an id another owner holds or races into")
-    void rejectsForeignOwnerStaticDocumentReconcile(Vertx vertx) {
+    @DisplayName("a global static document reconcile does not depend on the rows other scopes hold for the id")
+    void staticDocumentReconcileIgnoresTheRowsOfOtherScopes(Vertx vertx) {
         String heldId = "ownership-reconcile-held-doc";
         String freshId = "ownership-reconcile-fresh-doc";
         String raceId = "ownership-reconcile-race-doc";
-        DefinitionKey heldTenant = new DefinitionKey("tenant-a", heldId, 1);
         DefinitionKey heldGlobal = new DefinitionKey(WorkflowScopes.DEFAULT, heldId, 1);
         DefinitionKey freshTenant = new DefinitionKey("tenant-a", freshId, 1);
         DefinitionKey freshGlobal = new DefinitionKey(WorkflowScopes.DEFAULT, freshId, 1);
@@ -610,27 +566,29 @@ public class DefinitionOwnershipIT {
             Node nodeB = fixture.node();
             fixture.ownRows(heldId, freshId, raceId);
 
-            // Given tenant-a holds an id through a real activation
+            // Given tenant-a has the id available through a real publication
             byte[] heldDocument = document(heldId, 1, ReconcileHeldV1.class);
             TenantRowSeed.seed(
-                    nodeB.app(), "tenant-a", heldDocument, source("reconcile-held"), DefinitionStatus.ACTIVE);
+                    nodeB.app(), "tenant-a", heldDocument, source("reconcile-held"), DefinitionStatus.AVAILABLE);
             String heldPlanHash = planHash(nodeB, heldDocument, "reconcile-held");
             Stored heldBefore = fixture.stored(heldId).getFirst();
-            assertThat(heldBefore.status()).isEqualTo("ACTIVE");
+            assertThat(heldBefore.status()).isEqualTo("AVAILABLE");
 
             // When a global static document with the same id and version is reconciled
             ReconcileOutcome heldOutcome = await(nodeA.store()
                     .upsertDocument(staticRecord(heldGlobal, heldPlanHash), staticDocument(heldGlobal, heldDocument)));
 
-            // Then it is refused, inserts no global row and leaves tenant-a's row untouched
-            assertThat(heldOutcome).isEqualTo(ReconcileOutcome.OWNER_CONFLICT);
-            assertThat(fixture.stored(heldId)).hasSize(1);
-            assertThat(fixture.stored(heldId).getFirst().scopeKey()).isEqualTo("tenant-a");
-            assertThat(fixture.stored(heldId).getFirst().status()).isEqualTo("ACTIVE");
-            assertThat(fixture.stored(heldId).getFirst().changedAt()).isEqualTo(heldBefore.changedAt());
-            assertThat(fixture.stored(heldId).getFirst().planHash()).isEqualTo(heldBefore.planHash());
+            // Then it is inserted as available beside tenant-a's untouched row
+            assertThat(heldOutcome).isEqualTo(ReconcileOutcome.INSERTED);
+            assertThat(fixture.stored(heldId))
+                    .extracting(Stored::scopeKey, Stored::status)
+                    .containsExactly(tuple(WorkflowScopes.DEFAULT, "AVAILABLE"), tuple("tenant-a", "AVAILABLE"));
+            Stored heldAfter = fixture.stored(heldId).get(1);
+            assertThat(heldAfter.changedAt()).isEqualTo(heldBefore.changedAt());
+            assertThat(heldAfter.planHash()).isEqualTo(heldBefore.planHash());
 
-            // Given an id without rows, and a global reconcile plus a tenant-a load queued behind the id lock
+            // Given an id without rows, and a global reconcile plus a tenant-a load and publication queued behind
+            // the id lock
             byte[] freshDocument = document(freshId, 1, ReconcileFreshV1.class);
             String freshHash = nodeA.app()
                     .definitionPipeline()
@@ -639,38 +597,24 @@ public class DefinitionOwnershipIT {
             IdLockBarrier freshBarrier = fixture.holdIdLock(freshId);
             Future<ReconcileOutcome> freshReconcile = nodeA.store()
                     .upsertDocument(staticRecord(freshGlobal, freshHash), staticDocument(freshGlobal, freshDocument));
-            Future<Void> freshActivation = TenantRowSeed.insertCandidate(
+            Future<Void> freshPublication = TenantRowSeed.insertCandidate(
                             nodeB.app(), "tenant-a", freshDocument, DocumentFormat.YAML, source("reconcile-fresh"))
-                    .compose(loaded -> nodeB.service().activate(freshTenant));
+                    .compose(loaded -> nodeB.service().publish(freshTenant));
             freshBarrier.awaitQueued(2);
             assertThat(fixture.stored(freshId)).isEmpty();
 
             // When the lock is released
             freshBarrier.release();
             ReconcileOutcome freshOutcome = await(freshReconcile);
-            Throwable freshFailure = failureOf(freshActivation);
+            await(freshPublication);
 
-            // Then exactly one owner holds the id and the other is refused
-            assertThat(freshOutcome == ReconcileOutcome.INSERTED ^ freshFailure == null)
-                    .as("exactly one owner wins: reconcile=%s activation=%s", freshOutcome, freshFailure)
-                    .isTrue();
-            if (freshOutcome == ReconcileOutcome.INSERTED) {
-                assertThat(freshFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                    assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                    assertThat(failure.key()).isEqualTo(freshTenant);
-                    assertThat(failure.getMessage()).contains("default");
-                });
-                assertThat(fixture.stored(freshId))
-                        .extracting(Stored::scopeKey, Stored::status)
-                        .containsExactly(tuple(WorkflowScopes.DEFAULT, "SUPERSEDED"), tuple("tenant-a", "CANDIDATE"));
-            } else {
-                assertThat(freshOutcome).isEqualTo(ReconcileOutcome.OWNER_CONFLICT);
-                assertThat(fixture.stored(freshId))
-                        .extracting(Stored::scopeKey, Stored::status)
-                        .containsExactly(tuple("tenant-a", "ACTIVE"));
-            }
+            // Then both scopes hold the id as available
+            assertThat(freshOutcome).isEqualTo(ReconcileOutcome.INSERTED);
+            assertThat(fixture.stored(freshId))
+                    .extracting(Stored::scopeKey, Stored::status)
+                    .containsExactly(tuple(WorkflowScopes.DEFAULT, "AVAILABLE"), tuple("tenant-a", "AVAILABLE"));
 
-            // Given tenant-a already has a candidate, and a global reconcile plus tenant-a's activation queue together
+            // Given tenant-a already has a candidate, and a global reconcile plus tenant-a's publication queue together
             byte[] raceDocument = document(raceId, 1, ReconcileRaceV1.class);
             String raceHash = nodeA.app()
                     .definitionPipeline()
@@ -681,145 +625,61 @@ public class DefinitionOwnershipIT {
             IdLockBarrier raceBarrier = fixture.holdIdLock(raceId);
             Future<ReconcileOutcome> raceReconcile = nodeA.store()
                     .upsertDocument(staticRecord(raceGlobal, raceHash), staticDocument(raceGlobal, raceDocument));
-            Future<Void> raceActivation = nodeB.service().activate(raceTenant);
+            Future<Void> racePublication = nodeB.service().publish(raceTenant);
             raceBarrier.awaitQueued(2);
 
             // When the lock is released
             raceBarrier.release();
             ReconcileOutcome raceOutcome = await(raceReconcile);
-            Throwable raceFailure = failureOf(raceActivation);
+            await(racePublication);
 
-            // Then exactly one owner holds the id and the other is refused, whichever arrived first
-            assertThat(raceOutcome == ReconcileOutcome.INSERTED ^ raceFailure == null)
-                    .as("exactly one owner wins: reconcile=%s activation=%s", raceOutcome, raceFailure)
-                    .isTrue();
-            if (raceOutcome == ReconcileOutcome.INSERTED) {
-                assertThat(raceFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                    assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                    assertThat(failure.key()).isEqualTo(raceTenant);
-                    assertThat(failure.getMessage()).contains("default");
-                });
-                assertThat(fixture.stored(raceId))
-                        .extracting(Stored::scopeKey, Stored::status)
-                        .containsExactly(tuple(WorkflowScopes.DEFAULT, "SUPERSEDED"), tuple("tenant-a", "CANDIDATE"));
-            } else {
-                assertThat(raceOutcome).isEqualTo(ReconcileOutcome.OWNER_CONFLICT);
-                assertThat(fixture.stored(raceId))
-                        .extracting(Stored::scopeKey, Stored::status)
-                        .containsExactly(tuple("tenant-a", "ACTIVE"));
-            }
+            // Then both scopes hold the id as available, whichever arrived first
+            assertThat(raceOutcome).isEqualTo(ReconcileOutcome.INSERTED);
+            assertThat(fixture.stored(raceId))
+                    .extracting(Stored::scopeKey, Stored::status)
+                    .containsExactly(tuple(WorkflowScopes.DEFAULT, "AVAILABLE"), tuple("tenant-a", "AVAILABLE"));
         }
     }
 
     @Test
-    @DisplayName("recomputing membership rejects malformed keys before issuing any SQL")
-    void rejectsMalformedKeysBeforeSql(Vertx vertx) {
-        String missingId = "ownership-recompute-missing-doc";
+    @DisplayName("completing a version changes no other row, whatever the status of the other versions")
+    void completingAVersionChangesNoOtherRow(Vertx vertx) {
+        String id = "ownership-complete-doc";
+        DefinitionKey candidateKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+        DefinitionKey availableKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
+        DefinitionKey deprecatedKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 3);
+        DefinitionKey otherScopeKey = new DefinitionKey("tenant-a", id, 1);
 
         try (Fixture fixture = new Fixture(vertx, db)) {
+            fixture.ownRows(id);
             Node node = fixture.node();
-            fixture.ownRows(missingId);
-            Map<String, Map.Entry<String, String>> malformed = new java.util.LinkedHashMap<>();
-            malformed.put("blank definition id", Map.entry("tenant-a", " "));
-            malformed.put("oversized definition id", Map.entry("tenant-a", "x".repeat(256)));
-            malformed.put("blank tenant key", Map.entry(" ", missingId));
-            malformed.put("oversized tenant key", Map.entry("x".repeat(256), missingId));
 
-            // Given a valid control that reaches the database as a no-op on a missing id
-            int controlBefore = node.observer().statements().size();
-            Throwable controlFailure = failureOf(node.store().recomputeActive("tenant-a", missingId));
-            assertThat(controlFailure).isNull();
-            assertThat(node.observer().statements().size()).isGreaterThan(controlBefore);
-            assertThat(fixture.stored(missingId)).isEmpty();
-
-            for (Map.Entry<String, Map.Entry<String, String>> entry : malformed.entrySet()) {
-                String scopeKey = entry.getValue().getKey();
-                String definitionId = entry.getValue().getValue();
-
-                // When recomputing with a malformed key
-                int before = node.observer().statements().size();
-                Throwable failure = failureOf(node.store().recomputeActive(scopeKey, definitionId));
-                int after = node.observer().statements().size();
-
-                // Then the call fails with an argument error and no statement was issued
-                assertThat(failure)
-                        .as("recomputeActive with a %s must fail", entry.getKey())
-                        .isInstanceOf(IllegalArgumentException.class);
-                assertThat(after - before)
-                        .as("statements issued for a %s", entry.getKey())
-                        .isZero();
+            // Given a version 1 candidate beside an available version 2, a deprecated version 3 and the same
+            // version 1 in another scope
+            // (the other statuses are seeded by SQL so that their change times are fixed)
+            for (DefinitionKey key : List.of(candidateKey, availableKey, deprecatedKey, otherScopeKey)) {
+                await(node.store().insertCandidate(candidate(key), documentCarrier(key)));
             }
-        }
-    }
-
-    @Test
-    @DisplayName("completing a lower version never becomes active while a higher version of the owner stays eligible")
-    void demotesCompletingVersionBelowSupersededHigherVersion(Vertx vertx) {
-        String supersededHigherId = "ownership-higher-superseded-doc";
-        String deprecatedHigherId = "ownership-higher-deprecated-doc";
-        String activeHigherId = "ownership-higher-active-doc";
-        DefinitionKey supersededV1 = new DefinitionKey(WorkflowScopes.DEFAULT, supersededHigherId, 1);
-        DefinitionKey supersededV2 = new DefinitionKey(WorkflowScopes.DEFAULT, supersededHigherId, 2);
-        DefinitionKey supersededV3 = new DefinitionKey(WorkflowScopes.DEFAULT, supersededHigherId, 3);
-        DefinitionKey deprecatedV1 = new DefinitionKey(WorkflowScopes.DEFAULT, deprecatedHigherId, 1);
-        DefinitionKey deprecatedV3 = new DefinitionKey(WorkflowScopes.DEFAULT, deprecatedHigherId, 3);
-        DefinitionKey activeV1 = new DefinitionKey(WorkflowScopes.DEFAULT, activeHigherId, 1);
-        DefinitionKey activeV2 = new DefinitionKey(WorkflowScopes.DEFAULT, activeHigherId, 2);
-
-        try (Fixture fixture = new Fixture(vertx, db)) {
-            fixture.ownRows(supersededHigherId, deprecatedHigherId, activeHigherId);
-            Node node = fixture.node();
-
-            // Given version 2 SUPERSEDED, version 3 DEPRECATED and a version 1 candidate of one owner
-            // (the higher statuses are seeded by SQL because the public operations cannot reach this state)
-            await(node.store().insertCandidate(candidate(supersededV1), documentCarrier(supersededV1)));
-            await(node.store().insertCandidate(candidate(supersededV2), documentCarrier(supersededV2)));
-            await(node.store().insertCandidate(candidate(supersededV3), documentCarrier(supersededV3)));
-            fixture.forceStatus(supersededV2, DefinitionStatus.SUPERSEDED);
-            fixture.forceStatus(supersededV3, DefinitionStatus.DEPRECATED);
+            fixture.forceStatus(availableKey, DefinitionStatus.AVAILABLE);
+            fixture.forceStatus(deprecatedKey, DefinitionStatus.DEPRECATED);
+            List<Stored> before = fixture.stored(id);
 
             // When version 1 is claimed and completed
-            ActivationClaim supersededClaim = await(node.store().claim(supersededV1));
-            ActivationOutcome supersededOutcome = await(node.store().complete(supersededClaim));
+            ActivationClaim claim = await(node.store().claim(candidateKey));
+            await(node.store().complete(claim));
 
-            // Then it is SUPERSEDED, the higher rows are untouched, and the owner has no ACTIVE row
-            assertThat(supersededOutcome).isEqualTo(ActivationOutcome.SUPERSEDED);
-            assertThat(fixture.stored(supersededHigherId))
-                    .extracting(Stored::version, Stored::status, Stored::token)
+            // Then version 1 is available without a claim, and every other row is exactly as it was
+            assertThat(fixture.stored(id))
+                    .extracting(Stored::scopeKey, Stored::version, Stored::status, Stored::token)
                     .containsExactly(
-                            tuple(1L, "SUPERSEDED", null),
-                            tuple(2L, "SUPERSEDED", null),
-                            tuple(3L, "DEPRECATED", null));
-
-            // Given only a DEPRECATED version 3 above a version 1 candidate
-            await(node.store().insertCandidate(candidate(deprecatedV1), documentCarrier(deprecatedV1)));
-            await(node.store().insertCandidate(candidate(deprecatedV3), documentCarrier(deprecatedV3)));
-            fixture.forceStatus(deprecatedV3, DefinitionStatus.DEPRECATED);
-
-            // When version 1 is claimed and completed
-            ActivationClaim deprecatedClaim = await(node.store().claim(deprecatedV1));
-            ActivationOutcome deprecatedOutcome = await(node.store().complete(deprecatedClaim));
-
-            // Then nothing eligible is higher, so version 1 becomes ACTIVE and version 3 stays DEPRECATED
-            assertThat(deprecatedOutcome).isEqualTo(ActivationOutcome.ACTIVE);
-            assertThat(fixture.stored(deprecatedHigherId))
-                    .extracting(Stored::version, Stored::status, Stored::token)
-                    .containsExactly(tuple(1L, "ACTIVE", null), tuple(3L, "DEPRECATED", null));
-
-            // Given an ACTIVE version 2 above a version 1 candidate
-            await(node.store().insertCandidate(candidate(activeV1), documentCarrier(activeV1)));
-            await(node.store().insertCandidate(candidate(activeV2), documentCarrier(activeV2)));
-            fixture.forceStatus(activeV2, DefinitionStatus.ACTIVE);
-
-            // When version 1 is claimed and completed
-            ActivationClaim activeClaim = await(node.store().claim(activeV1));
-            ActivationOutcome activeOutcome = await(node.store().complete(activeClaim));
-
-            // Then version 1 is SUPERSEDED and version 2 stays the only ACTIVE row
-            assertThat(activeOutcome).isEqualTo(ActivationOutcome.SUPERSEDED);
-            assertThat(fixture.stored(activeHigherId))
-                    .extracting(Stored::version, Stored::status, Stored::token)
-                    .containsExactly(tuple(1L, "SUPERSEDED", null), tuple(2L, "ACTIVE", null));
+                            tuple(WorkflowScopes.DEFAULT, 1L, "AVAILABLE", null),
+                            tuple(WorkflowScopes.DEFAULT, 2L, "AVAILABLE", null),
+                            tuple(WorkflowScopes.DEFAULT, 3L, "DEPRECATED", null),
+                            tuple("tenant-a", 1L, "CANDIDATE", null));
+            List<Stored> after = fixture.stored(id);
+            for (int index = 1; index < before.size(); index++) {
+                assertThat(after.get(index)).as("row %d", index).isEqualTo(before.get(index));
+            }
         }
     }
 
@@ -831,7 +691,7 @@ public class DefinitionOwnershipIT {
                 "example.Contract",
                 "example.State",
                 planHash,
-                DefinitionStatus.SUPERSEDED,
+                DefinitionStatus.AVAILABLE,
                 new DefinitionProvenance("static-source", "memory:static", "revision-static", null, null, now),
                 "YAML",
                 now,

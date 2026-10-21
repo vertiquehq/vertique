@@ -72,23 +72,23 @@ final class TenantRowSeed {
      * Seeds the YAML document as a tenant row and moves it to the target status through the registry store
      * contract, blocking until the row is committed.
      *
-     * <p>{@code CANDIDATE} stops after the insert, {@code ACTIVE} also claims and completes the activation, and
-     * {@code DEPRECATED} then moves the active row to deprecated. The row is not registered in the graph's
+     * <p>{@code CANDIDATE} stops after the insert, {@code AVAILABLE} also claims and completes the publication, and
+     * {@code DEPRECATED} then moves the available row to deprecated. The row is not registered in the graph's
      * executable registry; a graph started afterwards restores it from the table.
      */
     static DefinitionKey seed(
             AppComponent app, String scopeKey, byte[] document, SourceMetadata source, DefinitionStatus target) {
         if (target != DefinitionStatus.CANDIDATE
-                && target != DefinitionStatus.ACTIVE
+                && target != DefinitionStatus.AVAILABLE
                 && target != DefinitionStatus.DEPRECATED)
-            throw new IllegalArgumentException("A seeded row can be CANDIDATE, ACTIVE or DEPRECATED, not " + target);
+            throw new IllegalArgumentException("A seeded row can be CANDIDATE, AVAILABLE or DEPRECATED, not " + target);
         WorkflowDefinitionRegistryStore store = app.definitionRegistryStore();
         DefinitionKey key =
                 DefinitionScenario.await(insertCandidate(app, scopeKey, document, DocumentFormat.YAML, source));
         if (target == DefinitionStatus.CANDIDATE) return key;
         DefinitionScenario.await(store.claim(key).compose(store::complete));
         if (target == DefinitionStatus.DEPRECATED)
-            DefinitionScenario.await(store.transition(key, DefinitionStatus.ACTIVE, DefinitionStatus.DEPRECATED));
+            DefinitionScenario.await(store.transition(key, DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
         return key;
     }
 }

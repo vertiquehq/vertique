@@ -103,7 +103,7 @@ public class ScopeMigrationOperationsIT {
 
             // And a document row with a correct lowercase digest and a code row without one are accepted
             insertDocumentWithDigest(connection, "digest-accepted", "{}", validDigest);
-            insertCode(connection, "digest-code-accepted", 1, "SUPERSEDED");
+            insertCode(connection, "digest-code-accepted", 1, "AVAILABLE");
             assertThat(storedDigest(connection, "digest-accepted")).isEqualTo(validDigest);
             assertThat(storedDigest(connection, "digest-code-accepted")).isNull();
         }

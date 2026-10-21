@@ -15,7 +15,6 @@ import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Transaction;
 import io.vertx.sqlclient.Tuple;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -42,10 +41,11 @@ import java.util.Set;
  *
  * <p>The id is judged as follows. Under READ COMMITTED an id without any row is unmanaged and admitted, which
  * keeps definitions registered only in code working. Under stronger isolation an empty read cannot be told
- * from a newly managed id that the snapshot predates, so it is refused. Otherwise exactly one owner must hold
- * the id (rows ACTIVE, SUPERSEDED or DEPRECATED), and the row of the pin's scope for the pinned version must
- * carry the pinned plan hash and an allowed status. New pins accept ACTIVE and SUPERSEDED; the resurrection of a
- * finished instance additionally accepts DEPRECATED. Refusals fail the returned future with
+ * from a newly managed id that the snapshot predates, so it is refused. Otherwise the row of the pin's scope for
+ * the pinned version must exist and carry the pinned plan hash and an allowed status; the rows of other scopes
+ * and versions of the id play no part, so each scope admits the pins of its own version even when another
+ * scope holds the same id and version. New pins accept AVAILABLE; the resurrection of a finished instance
+ * additionally accepts DEPRECATED. Refusals fail the returned future with
  * {@link WorkflowDefinitionLifecycleException} so that the caller's transaction can be rolled back; they are
  * never swallowed. A pinned plan hash that differs from the stored one is reason {@code DRIFT}, because the
  * node's compiled definition no longer matches the committed one; every other refusal is reason
@@ -62,9 +62,8 @@ import java.util.Set;
  */
 public final class DefinitionPinAdmission {
 
-    private static final Set<String> NEW_PIN = Set.of("ACTIVE", "SUPERSEDED");
-    private static final Set<String> RESURRECTION = Set.of("ACTIVE", "SUPERSEDED", "DEPRECATED");
-    private static final Set<String> HOLDING = Set.of("ACTIVE", "SUPERSEDED", "DEPRECATED");
+    private static final Set<String> NEW_PIN = Set.of("AVAILABLE");
+    private static final Set<String> RESURRECTION = Set.of("AVAILABLE", "DEPRECATED");
 
     private DefinitionPinAdmission() {}
 
@@ -182,21 +181,6 @@ public final class DefinitionPinAdmission {
                             + " unmanaged id from a newly managed one, so the pin is not admitted under"
                             + " REPEATABLE READ or SERIALIZABLE isolation");
         }
-        Set<String> holders = new LinkedHashSet<>();
-        for (Row row : rows) {
-            if (HOLDING.contains(row.getString("status"))) holders.add(row.getString("scope_key"));
-        }
-        if (holders.size() != 1) {
-            return refused(
-                    Reason.INVALID_TRANSITION,
-                    WorkflowScopes.DEFAULT,
-                    definitionId,
-                    version,
-                    holders.isEmpty()
-                            ? "no version of the definition is held by an owner that admits instances"
-                            : "the definition is held by more than one owner");
-        }
-        String owner = holders.iterator().next();
         for (Row row : rows) {
             if (row.getLong("definition_version") != version || !key.scopeKey().equals(row.getString("scope_key"))) {
                 continue;
@@ -226,7 +210,7 @@ public final class DefinitionPinAdmission {
                 key.scopeKey(),
                 definitionId,
                 version,
-                "the version is not held by the owner of the definition");
+                "the definition has no row for this scope and version");
     }
 
     private static Future<Void> refused(

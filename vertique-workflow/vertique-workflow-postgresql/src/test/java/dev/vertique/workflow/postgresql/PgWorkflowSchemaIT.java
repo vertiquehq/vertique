@@ -84,7 +84,6 @@ import dev.vertique.workflow.query.WorkflowInstanceQuery;
 import dev.vertique.workflow.query.WorkflowInstanceQueryService;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.store.ActivationClaim;
-import dev.vertique.workflow.registry.store.ActivationOutcome;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -244,8 +243,7 @@ public class PgWorkflowSchemaIT {
             "idx_workflow_branch_tokens_recovery",
             "idx_workflow_branch_tokens_wait",
             "idx_workflow_join_states_status",
-            "idx_workflow_definitions_id",
-            "uq_workflow_definitions_one_active");
+            "idx_workflow_definitions_id");
     private static final Set<String> MIGRATED_CONSTRAINTS =
             Set.of("fk_workflow_dedup_workflow_id", "ck_workflow_timers_task_id_purpose");
 
@@ -1195,23 +1193,22 @@ public class PgWorkflowSchemaIT {
         await(registry.insertCandidate(
                 registryRecord(first, planHash, DefinitionStatus.CANDIDATE, now), registryDocument(first)));
         ActivationClaim claim = await(registry.claim(first));
-        assertEquals(ActivationOutcome.ACTIVE, await(registry.complete(claim)));
+        await(registry.complete(claim));
         assertEquals(
                 ReconcileOutcome.INSERTED,
                 await(registry.upsertDocument(
-                        registryRecord(second, planHash, DefinitionStatus.SUPERSEDED, now), registryDocument(second))));
-        await(registry.recomputeActive(WorkflowScopes.DEFAULT, REGISTRY_DEFINITION));
-        await(registry.transition(first, DefinitionStatus.SUPERSEDED, DefinitionStatus.DEPRECATED));
+                        registryRecord(second, planHash, DefinitionStatus.AVAILABLE, now), registryDocument(second))));
+        await(registry.transition(first, DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
 
         assertEquals(
-                DefinitionStatus.ACTIVE,
+                DefinitionStatus.AVAILABLE,
                 await(registry.find(second)).orElseThrow().status());
         assertEquals(
                 "{\"v\":1}", await(registry.findDocument(first)).orElseThrow().document());
         assertEquals(
                 2, await(registry.list(new DefinitionFilter(null, null, null))).size());
         assertEquals("DEPRECATED", mappedValue("workflow_definitions", "definition_version", 1, "status"));
-        assertEquals("ACTIVE", mappedValue("workflow_definitions", "definition_version", 2, "status"));
+        assertEquals("AVAILABLE", mappedValue("workflow_definitions", "definition_version", 2, "status"));
         assertEquals("{\"v\":2}", mappedValue("workflow_definitions", "definition_version", 2, "document"));
     }
 

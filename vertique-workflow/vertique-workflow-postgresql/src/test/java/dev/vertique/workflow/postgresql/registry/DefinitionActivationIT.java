@@ -81,7 +81,7 @@ public class DefinitionActivationIT {
                                     metadata)
                             .compose(loaded -> installCompletionFailure(pool).map(loaded))
                             .compose(loaded -> app.definitionService()
-                                    .activate(v1)
+                                    .publish(v1)
                                     .transform(result -> {
                                         assertThat(result.failed()).isTrue();
                                         assertThat(app.workflowRegistry().allRegistered())
@@ -102,13 +102,13 @@ public class DefinitionActivationIT {
                                         return loaded;
                                     }))
                             .compose(loaded ->
-                                    app.definitionService().activate(v1).map(loaded))
+                                    app.definitionService().publish(v1).map(loaded))
                             .compose(loaded -> app.definitionRegistryStore()
                                     .find(v1)
                                     .map(record -> {
                                         assertThat(record).isPresent();
                                         assertThat(record.orElseThrow().status())
-                                                .isEqualTo(DefinitionStatus.ACTIVE);
+                                                .isEqualTo(DefinitionStatus.AVAILABLE);
                                         assertThat(app.workflowRegistry()
                                                         .resolve(new DefinitionKey(
                                                                 WorkflowScopes.DEFAULT, definitionId, 1))
@@ -144,7 +144,7 @@ public class DefinitionActivationIT {
                                                     .map(loaded);
                                         })
                                         .compose(loaded -> app.definitionService()
-                                                .activate(v2)
+                                                .publish(v2)
                                                 .transform(result -> {
                                                     assertThat(result.failed()).isTrue();
                                                     assertThat(result.cause())
@@ -277,7 +277,7 @@ public class DefinitionActivationIT {
                                     .map(record -> {
                                         assertThat(record).isPresent();
                                         assertThat(record.orElseThrow().status())
-                                                .isEqualTo(DefinitionStatus.ACTIVE);
+                                                .isEqualTo(DefinitionStatus.AVAILABLE);
                                         assertThat(record.orElseThrow().planHash())
                                                 .isEqualTo(pair.loaded().planHash());
                                         assertThat(app.workflowRegistry()
@@ -336,41 +336,41 @@ public class DefinitionActivationIT {
                                 DocumentFormat.YAML,
                                 metadata)
                         .map(loaded -> new PendingActivation(
-                                loaded, appA.definitionService().activate(key))))
+                                loaded, appA.definitionService().publish(key))))
                 .compose(pending -> gateA.observed().map(pending))
                 .compose(pending -> readActivationState(poolA, key).map(state -> {
-                    assertThat(state.status()).isEqualTo(DefinitionStatus.ACTIVATING.name());
-                    assertThat(state.activationToken()).isNotBlank();
+                    assertThat(state.status()).isEqualTo(DefinitionStatus.PUBLISHING.name());
+                    assertThat(state.publishToken()).isNotBlank();
                     assertThat(state.planHash()).isEqualTo(pending.loaded().planHash());
                     RuntimeWorkflow publicationA = appA.workflowRegistry()
                             .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, key.definitionVersion()));
                     assertThat(publicationA).isNotNull();
                     assertThat(publicationA.plan().planHash()).isEqualTo(state.planHash());
                     return new HeldPublication(
-                            pending.activation(), publicationA, state.activationToken(), state.planHash());
+                            pending.activation(), publicationA, state.publishToken(), state.planHash());
                 }))
                 .compose(heldA -> poolB.preparedQuery("""
                                 UPDATE workflow_definitions
                                 SET status_changed_at = clock_timestamp() - interval '5 minutes'
                                 WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = $2
-                                  AND status = 'ACTIVATING' AND activation_token = $3::uuid
+                                  AND status = 'PUBLISHING' AND publish_token = $3::uuid
                                 """)
-                        .execute(Tuple.of(definitionId, key.definitionVersion(), heldA.activationToken()))
+                        .execute(Tuple.of(definitionId, key.definitionVersion(), heldA.publishToken()))
                         .map(heldA))
                 .compose(heldA -> readActivationState(poolB, key).map(state -> {
-                    assertThat(state.status()).isEqualTo(DefinitionStatus.ACTIVATING.name());
-                    assertThat(state.activationToken()).isEqualTo(heldA.activationToken());
+                    assertThat(state.status()).isEqualTo(DefinitionStatus.PUBLISHING.name());
+                    assertThat(state.publishToken()).isEqualTo(heldA.publishToken());
                     return heldA;
                 }))
                 .compose(heldA -> {
-                    Future<Void> activationB = appB.definitionService().activate(key);
+                    Future<Void> activationB = appB.definitionService().publish(key);
                     return gateB.observed().map(ignored -> new PendingReplacement(heldA, activationB));
                 })
                 .compose(pendingB -> readActivationState(poolB, key).map(state -> {
-                    assertThat(state.status()).isEqualTo(DefinitionStatus.ACTIVATING.name());
-                    assertThat(state.activationToken()).isNotBlank();
-                    assertThat(state.activationToken())
-                            .isNotEqualTo(pendingB.original().activationToken());
+                    assertThat(state.status()).isEqualTo(DefinitionStatus.PUBLISHING.name());
+                    assertThat(state.publishToken()).isNotBlank();
+                    assertThat(state.publishToken())
+                            .isNotEqualTo(pendingB.original().publishToken());
                     assertThat(state.planHash()).isEqualTo(pendingB.original().planHash());
                     RuntimeWorkflow publicationB = appB.workflowRegistry()
                             .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, key.definitionVersion()));
@@ -378,15 +378,15 @@ public class DefinitionActivationIT {
                     assertThat(publicationB).isNotSameAs(pendingB.original().publication());
                     assertThat(publicationB.plan().planHash()).isEqualTo(state.planHash());
                     return new HeldReplacement(
-                            pendingB.original(), pendingB.activation(), publicationB, state.activationToken());
+                            pendingB.original(), pendingB.activation(), publicationB, state.publishToken());
                 }))
                 .compose(heldB -> {
                     gateB.release();
                     return heldB.activation().map(ignored -> heldB);
                 })
                 .compose(heldB -> readActivationState(poolB, key).map(state -> {
-                    assertThat(state.status()).isEqualTo(DefinitionStatus.ACTIVE.name());
-                    assertThat(state.activationToken()).isNull();
+                    assertThat(state.status()).isEqualTo(DefinitionStatus.AVAILABLE.name());
+                    assertThat(state.publishToken()).isNull();
                     assertThat(state.planHash()).isEqualTo(heldB.original().planHash());
                     assertThat(appB.workflowRegistry()
                                     .resolve(new DefinitionKey(
@@ -407,8 +407,8 @@ public class DefinitionActivationIT {
                     });
                 })
                 .compose(heldB -> readActivationState(poolB, key).map(state -> {
-                    assertThat(state.status()).isEqualTo(DefinitionStatus.ACTIVE.name());
-                    assertThat(state.activationToken()).isNull();
+                    assertThat(state.status()).isEqualTo(DefinitionStatus.AVAILABLE.name());
+                    assertThat(state.publishToken()).isNull();
                     assertThat(state.planHash()).isEqualTo(heldB.original().planHash());
                     assertThat(appA.workflowRegistry().allRegistered())
                             .noneMatch(runtime -> runtime == heldB.original().publication());
@@ -466,7 +466,7 @@ public class DefinitionActivationIT {
                             assertThat(activation.workflowDefinitionStore().get(definitionId, key.definitionVersion()))
                                     .isEmpty();
                             Future<Void> publicActivation =
-                                    activation.definitionService().activate(key);
+                                    activation.definitionService().publish(key);
                             return responseLoss
                                     .injected()
                                     .compose(failure -> {
@@ -476,8 +476,8 @@ public class DefinitionActivationIT {
                                     })
                                     .compose(ignoredActivation -> readActivationState(verificationPool, key))
                                     .map(state -> {
-                                        assertThat(state.status()).isEqualTo(DefinitionStatus.ACTIVE.name());
-                                        assertThat(state.activationToken()).isNull();
+                                        assertThat(state.status()).isEqualTo(DefinitionStatus.AVAILABLE.name());
+                                        assertThat(state.publishToken()).isNull();
                                         assertThat(state.planHash()).isEqualTo(loaded.planHash());
                                         RuntimeWorkflow publication = activation
                                                 .workflowRegistry()
@@ -508,19 +508,19 @@ public class DefinitionActivationIT {
         return installCompletionFailure(pool).compose(ignored -> {
             WorkflowDefinitionSqlObserver.CompletionFailureGate gate =
                     transactionObserver.holdNextTransactionFailure(COMPLETION_FAILURE_MARKER);
-            Future<Void> oldAttempt = app.definitionService().activate(oldKey);
+            Future<Void> oldAttempt = app.definitionService().publish(oldKey);
             Future<Void> scenario = gate.observed()
                     .compose(failure -> {
                         assertThat(failure).hasMessageContaining(COMPLETION_FAILURE_MARKER);
                         return removeCompletionFailure(pool);
                     })
                     .compose(ignoredRemoval -> pool.preparedQuery("""
-                                    SELECT activation_token::text AS activation_token
+                                    SELECT publish_token::text AS publish_token
                                     FROM workflow_definitions
                                     WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = $2
                                     """)
                             .execute(Tuple.of(oldKey.definitionId(), oldKey.definitionVersion()))
-                            .map(rows -> rows.iterator().next().getString("activation_token")))
+                            .map(rows -> rows.iterator().next().getString("publish_token")))
                     .compose(oldToken -> pool.preparedQuery("""
                                     UPDATE workflow_definitions
                                     SET status_changed_at = clock_timestamp() - interval '5 minutes'
@@ -575,7 +575,7 @@ public class DefinitionActivationIT {
                                 .compose(loaded -> {
                                     assertThat(loaded.definitionVersion()).isEqualTo(3);
                                     Future<Void> activation =
-                                            app.definitionService().activate(queuedKey);
+                                            app.definitionService().publish(queuedKey);
                                     gate.release();
                                     return activation;
                                 });
@@ -591,11 +591,11 @@ public class DefinitionActivationIT {
                                         .map(record -> {
                                             assertThat(record).isPresent();
                                             assertThat(record.orElseThrow().status())
-                                                    .isEqualTo(DefinitionStatus.ACTIVATING);
+                                                    .isEqualTo(DefinitionStatus.PUBLISHING);
                                             return (Void) null;
                                         }))
                                 .compose(ignoredQueued -> pool.preparedQuery("""
-                                                SELECT status, activation_token::text AS activation_token
+                                                SELECT status, publish_token::text AS publish_token
                                                 FROM workflow_definitions
                                                 WHERE scope_key = 'default' AND definition_id = $1
                                                   AND definition_version = $2
@@ -603,8 +603,8 @@ public class DefinitionActivationIT {
                                         .execute(Tuple.of(oldKey.definitionId(), oldKey.definitionVersion()))
                                         .map(rows -> {
                                             Row row = rows.iterator().next();
-                                            assertThat(row.getString("status")).isEqualTo("ACTIVATING");
-                                            assertThat(row.getString("activation_token"))
+                                            assertThat(row.getString("status")).isEqualTo("PUBLISHING");
+                                            assertThat(row.getString("publish_token"))
                                                     .isEqualTo(newClaim.token().toString());
                                             assertThat(app.workflowRegistry()
                                                             .resolve(new DefinitionKey(
@@ -629,7 +629,7 @@ public class DefinitionActivationIT {
                                         .map(record -> {
                                             assertThat(record).isPresent();
                                             assertThat(record.orElseThrow().status())
-                                                    .isEqualTo(DefinitionStatus.SUPERSEDED);
+                                                    .isEqualTo(DefinitionStatus.AVAILABLE);
                                             assertThat(app.workflowRegistry()
                                                             .resolve(new DefinitionKey(
                                                                     WorkflowScopes.DEFAULT,
@@ -658,7 +658,7 @@ public class DefinitionActivationIT {
         return pool.query("""
                         CREATE FUNCTION fail_test_definition_completion() RETURNS trigger AS $$
                         BEGIN
-                            IF OLD.status = 'ACTIVATING' AND NEW.status = 'ACTIVE' THEN
+                            IF OLD.status = 'PUBLISHING' AND NEW.status = 'AVAILABLE' THEN
                             RAISE EXCEPTION 'definition-activation-completion-gate' USING ERRCODE = '23514';
                             END IF;
                             RETURN NEW;
@@ -684,7 +684,7 @@ public class DefinitionActivationIT {
 
     private static Future<ActivationState> readActivationState(Pool pool, DefinitionKey key) {
         return pool.preparedQuery("""
-                        SELECT status, activation_token::text AS activation_token, plan_hash
+                        SELECT status, publish_token::text AS publish_token, plan_hash
                         FROM workflow_definitions
                         WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
                         """)
@@ -694,7 +694,7 @@ public class DefinitionActivationIT {
                     assertThat(iterator.hasNext()).isTrue();
                     Row row = iterator.next();
                     return new ActivationState(
-                            row.getString("status"), row.getString("activation_token"), row.getString("plan_hash"));
+                            row.getString("status"), row.getString("publish_token"), row.getString("plan_hash"));
                 });
     }
 
@@ -747,17 +747,17 @@ public class DefinitionActivationIT {
 
     private record ReclaimedClaim(String oldToken, ActivationClaim newClaim) {}
 
-    private record ActivationState(String status, String activationToken, String planHash) {}
+    private record ActivationState(String status, String publishToken, String planHash) {}
 
     private record PendingActivation(CompiledDefinitionRef loaded, Future<Void> activation) {}
 
     private record HeldPublication(
-            Future<Void> activation, RuntimeWorkflow publication, String activationToken, String planHash) {}
+            Future<Void> activation, RuntimeWorkflow publication, String publishToken, String planHash) {}
 
     private record PendingReplacement(HeldPublication original, Future<Void> activation) {}
 
     private record HeldReplacement(
-            HeldPublication original, Future<Void> activation, RuntimeWorkflow publication, String activationToken) {}
+            HeldPublication original, Future<Void> activation, RuntimeWorkflow publication, String publishToken) {}
 
     private record ClaimPair(CompiledDefinitionRef loaded, ActivationClaim oldClaim, ActivationClaim newClaim) {
 

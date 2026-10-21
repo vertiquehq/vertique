@@ -223,7 +223,7 @@ final class DefinitionRaceFixtures {
         List<Stored> stored(String definitionId) {
             List<Stored> rows = new ArrayList<>();
             for (Row row : await(admin().preparedQuery("""
-                            SELECT scope_key, definition_version, status, activation_token::text AS activation_token,
+                            SELECT scope_key, definition_version, status, publish_token::text AS publish_token,
                                    plan_hash, status_changed_at
                             FROM workflow_definitions WHERE definition_id = $1
                             ORDER BY scope_key NULLS FIRST, definition_version
@@ -232,7 +232,7 @@ final class DefinitionRaceFixtures {
                         row.getString("scope_key"),
                         row.getLong("definition_version"),
                         row.getString("status"),
-                        row.getString("activation_token"),
+                        row.getString("publish_token"),
                         row.getString("plan_hash"),
                         row.getOffsetDateTime("status_changed_at")));
             }
@@ -247,7 +247,7 @@ final class DefinitionRaceFixtures {
                             UPDATE workflow_definitions
                             SET status_changed_at = clock_timestamp() - ($5::bigint * interval '1 second')
                             WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2
-                              AND definition_version = $3 AND status = 'ACTIVATING' AND activation_token = $4::uuid
+                              AND definition_version = $3 AND status = 'PUBLISHING' AND publish_token = $4::uuid
                             """)
                     .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion(), token, ageSeconds)));
         }
