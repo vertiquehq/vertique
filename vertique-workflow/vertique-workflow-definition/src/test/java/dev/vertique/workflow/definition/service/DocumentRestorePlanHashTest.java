@@ -113,10 +113,10 @@ class DocumentRestorePlanHashTest {
         ServiceTestHelpers.await(component
                 .workflowDefinitionService()
                 .load(
+                        WorkflowScopes.DEFAULT,
                         document().getBytes(StandardCharsets.UTF_8),
                         DocumentFormat.YAML,
-                        new SourceMetadata("test", "test://restore", null, null, null, Instant.now()),
-                        null));
+                        new SourceMetadata("test", "test://restore", null, null, null, Instant.now())));
         return component.workflowDefinitionStore().get(KEY).orElseThrow().compiled();
     }
 

@@ -366,7 +366,11 @@ public class DefinitionRegistryBootstrapIT {
                             null,
                             Instant.parse("2026-10-18T12:15:00.000001Z"));
                     return app.definitionService()
-                            .load(ManagedDefinitionDatabase.yamlFixture(), DocumentFormat.YAML, metadata, null)
+                            .load(
+                                    WorkflowScopes.DEFAULT,
+                                    ManagedDefinitionDatabase.yamlFixture(),
+                                    DocumentFormat.YAML,
+                                    metadata)
                             .map(loaded -> {
                                 assertThat(loaded.definitionId()).isEqualTo(definitionId);
                                 assertThat(loaded.definitionVersion()).isEqualTo(1L);

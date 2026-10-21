@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+definitionId: purchase-approval-scope-field
+definitionVersion: 1
+stateType: dev.vertique.workflow.definition.it.fixture.OrderDocState
+contract: dev.vertique.workflow.postgresql.registry.ScopedDefinitionLoadIT$ScopedPurchaseApprovalV1
+startPayloadType: dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc
+initialStateMapper: doc.order.fromPlaceOrder
+initialStep: done
+steps:
+  - id: done
+    type: complete
+scope: globex

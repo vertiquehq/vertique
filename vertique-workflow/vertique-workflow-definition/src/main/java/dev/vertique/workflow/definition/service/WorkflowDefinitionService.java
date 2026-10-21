@@ -9,22 +9,28 @@ import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import io.vertx.core.Future;
-import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;
 
 /** Asynchronous management of document candidates and their executable activation. */
 public interface WorkflowDefinitionService {
     /**
-     * Parses and compiles a candidate without publishing it; a null scope key denotes the default scope.
+     * Parses and compiles a candidate into the named scope without publishing it.
+     *
+     * <p>The scope argument is the only source of the document's scope: a document never names one, and a
+     * top-level {@code scope} property fails the parse like any other unknown property. The scope key is
+     * required, nonblank, at most 255 code points and free of control characters; a missing key fails the
+     * returned future with {@link NullPointerException} and any other invalid key with
+     * {@link IllegalArgumentException}, before the document is read. The definition id needs no scope prefix, and
+     * each scope numbers its own versions of an id. Which caller may load into which scope is for the application
+     * to authorize; the service does not check identity.
      *
      * <p>The document resolves its contract, state and payload type names through the type-name index
      * only, which holds the types of the contributed catalogs and registered definitions. A name the
      * index does not hold fails the returned future with {@code WorkflowUnknownTypeNameException},
      * naming the document field and the name when it is a valid name; no class is loaded by name.
      */
-    Future<CompiledDefinitionRef> load(
-            byte[] content, DocumentFormat format, SourceMetadata metadata, @Nullable String scopeKey);
+    Future<CompiledDefinitionRef> load(String scopeKey, byte[] content, DocumentFormat format, SourceMetadata metadata);
     /** Activates an existing candidate, preserving the prior publication when activation fails. */
     Future<Void> activate(DefinitionKey key);
     /**

@@ -129,7 +129,11 @@ public class DefinitionRetirementIT {
 
             // Given version 7 loaded, activated and then deprecated through the service
             CompiledDefinitionRef loaded = await(app.definitionService()
-                    .load(document(id, 7, PinnedCaseV7.class), DocumentFormat.YAML, source("pinned"), null));
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 7, PinnedCaseV7.class),
+                            DocumentFormat.YAML,
+                            source("pinned")));
             await(app.definitionService().activate(key));
             await(app.definitionService().deprecate(key));
             RuntimeWorkflow runtimeBefore =
@@ -251,10 +255,18 @@ public class DefinitionRetirementIT {
 
             // Given version 1 deprecated and version 2 ACTIVE, committed through the service
             CompiledDefinitionRef loaded1 = await(app.definitionService()
-                    .load(document(id, 1, CountCase.class), DocumentFormat.YAML, source("count-v1"), null));
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 1, CountCase.class),
+                            DocumentFormat.YAML,
+                            source("count-v1")));
             await(app.definitionService().activate(deprecatedKey));
             CompiledDefinitionRef loaded2 = await(app.definitionService()
-                    .load(document(id, 2, CountCase.class), DocumentFormat.YAML, source("count-v2"), null));
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 2, CountCase.class),
+                            DocumentFormat.YAML,
+                            source("count-v2")));
             await(app.definitionService().activate(activeKey));
             await(app.definitionService().deprecate(deprecatedKey));
             assertThat(fixture.stored(id, 1).status()).isEqualTo("DEPRECATED");
@@ -309,7 +321,11 @@ public class DefinitionRetirementIT {
 
             // When version 3 is activated, version 2 becomes SUPERSEDED, and both are retired
             await(app.definitionService()
-                    .load(document(id, 3, CountCase.class), DocumentFormat.YAML, source("count-v3"), null));
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 3, CountCase.class),
+                            DocumentFormat.YAML,
+                            source("count-v3")));
             await(app.definitionService().activate(nextKey));
             Stored supersededBefore = fixture.stored(id, 2);
             Stored nextBefore = fixture.stored(id, 3);
@@ -541,7 +557,11 @@ public class DefinitionRetirementIT {
 
                     // And a document of version 2 under the same id, published by the managed lifecycle
                     await(app.definitionService()
-                            .load(document(id, version, contract), DocumentFormat.YAML, source("code-sibling"), null));
+                            .load(
+                                    WorkflowScopes.DEFAULT,
+                                    document(id, version, contract),
+                                    DocumentFormat.YAML,
+                                    source("code-sibling")));
                     await(app.definitionService().activate(documentKey));
                     RuntimeWorkflow documentRuntime =
                             app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
@@ -592,7 +612,11 @@ public class DefinitionRetirementIT {
                     Node first = fixture.node();
                     CompiledDefinitionRef loaded = await(first.app()
                             .definitionService()
-                            .load(document(id, version, contract), DocumentFormat.YAML, source("restore"), null));
+                            .load(
+                                    WorkflowScopes.DEFAULT,
+                                    document(id, version, contract),
+                                    DocumentFormat.YAML,
+                                    source("restore")));
                     await(first.app().definitionService().activate(key));
                     first.close();
 
@@ -635,8 +659,8 @@ public class DefinitionRetirementIT {
                     long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
 
                     // Given a managed publication that was deprecated and cooled by the database clock
-                    CompiledDefinitionRef loaded =
-                            await(app.definitionService().load(bytes, DocumentFormat.YAML, source("replaced"), null));
+                    CompiledDefinitionRef loaded = await(app.definitionService()
+                            .load(WorkflowScopes.DEFAULT, bytes, DocumentFormat.YAML, source("replaced")));
                     await(app.definitionService().activate(key));
                     await(app.definitionService().deprecate(key));
                     fixture.ageStatus(key, coolingSeconds + 60);
@@ -682,8 +706,8 @@ public class DefinitionRetirementIT {
                     long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
 
                     // Given a stored global row that is deprecated and cooled, without any managed publication here
-                    CompiledDefinitionRef loaded =
-                            await(app.definitionService().load(bytes, DocumentFormat.YAML, source("unknown"), null));
+                    CompiledDefinitionRef loaded = await(app.definitionService()
+                            .load(WorkflowScopes.DEFAULT, bytes, DocumentFormat.YAML, source("unknown")));
                     fixture.forceStatus(key, DefinitionStatus.DEPRECATED);
                     fixture.ageStatus(key, coolingSeconds + 60);
                     Stored cooledBefore = fixture.stored(id, version);
@@ -780,10 +804,18 @@ public class DefinitionRetirementIT {
 
             // Given two ACTIVE definitions, committed through node A before node B starts
             await(nodeA.definitionService()
-                    .load(document(pinId, 1, StalePinCaseV1.class), DocumentFormat.YAML, source("stale-pin"), null));
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(pinId, 1, StalePinCaseV1.class),
+                            DocumentFormat.YAML,
+                            source("stale-pin")));
             await(nodeA.definitionService().activate(pinKey));
             await(nodeA.definitionService()
-                    .load(document(goneId, 1, StaleGoneCaseV1.class), DocumentFormat.YAML, source("stale-gone"), null));
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(goneId, 1, StaleGoneCaseV1.class),
+                            DocumentFormat.YAML,
+                            source("stale-gone")));
             await(nodeA.definitionService().activate(goneKey));
 
             // And node B, whose registry resolves both versions and receives no later change: it has applied
@@ -885,10 +917,10 @@ public class DefinitionRetirementIT {
             // admitted in READ COMMITTED while retirement is requested
             CompiledDefinitionRef retryFirst = await(app.definitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(retryFirstId, 1, RetryFirstCaseV1.class),
                             DocumentFormat.YAML,
-                            source("retry-first"),
-                            null));
+                            source("retry-first")));
             await(app.definitionService().activate(retryFirstKey));
             await(app.definitionService().deprecate(retryFirstKey));
             fixture.ageStatus(retryFirstKey, coolingSeconds + 60);
@@ -952,10 +984,10 @@ public class DefinitionRetirementIT {
             // Given a DEPRECATED, cooled version with a FAILED instance, and a REPEATABLE READ snapshot taken now
             CompiledDefinitionRef retrySnapshot = await(app.definitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(retrySnapshotId, 1, RetrySnapshotCaseV1.class),
                             DocumentFormat.YAML,
-                            source("retry-snapshot"),
-                            null));
+                            source("retry-snapshot")));
             await(app.definitionService().activate(retrySnapshotKey));
             await(app.definitionService().deprecate(retrySnapshotKey));
             fixture.ageStatus(retrySnapshotKey, coolingSeconds + 60);
@@ -983,10 +1015,10 @@ public class DefinitionRetirementIT {
             // Given a retry admitted in a caller transaction that is then rolled back
             CompiledDefinitionRef retryRollback = await(app.definitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(retryRollbackId, 1, RetryRollbackCaseV1.class),
                             DocumentFormat.YAML,
-                            source("retry-rollback"),
-                            null));
+                            source("retry-rollback")));
             await(app.definitionService().activate(retryRollbackKey));
             await(app.definitionService().deprecate(retryRollbackKey));
             fixture.ageStatus(retryRollbackKey, coolingSeconds + 60);
@@ -1012,10 +1044,10 @@ public class DefinitionRetirementIT {
             // Given an ACTIVE target version 2 and a RUNNING instance pinned to an unmanaged version 1
             CompiledDefinitionRef migrateAdmit = await(app.definitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(migrateAdmitId, 2, MigrateAdmitCaseV2.class),
                             DocumentFormat.YAML,
-                            source("migrate-admit"),
-                            null));
+                            source("migrate-admit")));
             await(app.definitionService().activate(migrateAdmitKey));
             UUID migrating = fixture.insertInstance(migrateAdmitId, 1, "old-hash", "RUNNING", false);
             Tx migration = fixture.begin(null);
@@ -1107,10 +1139,10 @@ public class DefinitionRetirementIT {
             // unmanaged version, both committed
             CompiledDefinitionRef eligibleLoaded = await(nodeA.definitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(eligibleId, 1, SnapshotEligibleCaseV1.class),
                             DocumentFormat.YAML,
-                            source("snapshot-eligible"),
-                            null));
+                            source("snapshot-eligible")));
             await(nodeA.definitionService().activate(new DefinitionKey(WorkflowScopes.DEFAULT, eligibleId, 1)));
             UUID sourcePin = fixture.insertInstance(migrateId, 1, "old-hash", "RUNNING", false);
             Instance sourceBefore = fixture.instance(sourcePin);
@@ -1124,17 +1156,17 @@ public class DefinitionRetirementIT {
             // And another connection then creates and activates both ids, and a second node propagates them
             await(nodeA.definitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(startId, 1, SnapshotStartCaseV1.class),
                             DocumentFormat.YAML,
-                            source("snapshot-start"),
-                            null));
+                            source("snapshot-start")));
             await(nodeA.definitionService().activate(startKey));
             CompiledDefinitionRef migrateLoaded = await(nodeA.definitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(migrateId, 2, SnapshotMigrateCaseV2.class),
                             DocumentFormat.YAML,
-                            source("snapshot-migrate"),
-                            null));
+                            source("snapshot-migrate")));
             await(nodeA.definitionService().activate(migrateKey));
             AppComponent nodeB = fixture.node().app();
             TransactionalWorkflowOperations<SqlClient> staleOps = nodeB.transactionalOperations();
@@ -1229,7 +1261,11 @@ public class DefinitionRetirementIT {
 
             // Given one ACTIVE definition and two caller transactions
             await(app.definitionService()
-                    .load(document(id, 1, ConcurrentCaseV1.class), DocumentFormat.YAML, source("concurrent"), null));
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 1, ConcurrentCaseV1.class),
+                            DocumentFormat.YAML,
+                            source("concurrent")));
             await(app.definitionService().activate(key));
             Tx first = fixture.begin(null);
             Tx second = fixture.begin(null);
@@ -1392,10 +1428,10 @@ public class DefinitionRetirementIT {
             // Given a DEPRECATED, cooled managed version and a FAILED instance retried into COMPENSATING
             CompiledDefinitionRef race = await(app.definitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(raceId, 1, ResurrectRaceCaseV1.class),
                             DocumentFormat.YAML,
-                            source("resurrect-race"),
-                            null));
+                            source("resurrect-race")));
             await(app.definitionService().activate(raceKey));
             await(app.definitionService().deprecate(raceKey));
             fixture.ageStatus(raceKey, coolingSeconds + 60);
@@ -1466,7 +1502,11 @@ public class DefinitionRetirementIT {
 
             // Given one ACTIVE definition and the five kinds of invalid client, built from real Vert.x objects
             CompiledDefinitionRef loaded = await(app.definitionService()
-                    .load(document(id, 1, AutocommitCaseV1.class), DocumentFormat.YAML, source("autocommit"), null));
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 1, AutocommitCaseV1.class),
+                            DocumentFormat.YAML,
+                            source("autocommit")));
             await(app.definitionService().activate(key));
             String hash = loaded.planHash();
 
@@ -1598,10 +1638,10 @@ public class DefinitionRetirementIT {
             // Given an ACTIVE definition and a shared admission holder from an actual start
             await(app.definitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(advisoryId, 1, TimeoutAdvisoryCaseV1.class),
                             DocumentFormat.YAML,
-                            source("timeout-advisory"),
-                            null));
+                            source("timeout-advisory")));
             await(app.definitionService().activate(advisoryKey));
             Stored activeBefore = fixture.stored(advisoryId, 1);
             Tx holder = fixture.begin(null);
@@ -1653,10 +1693,10 @@ public class DefinitionRetirementIT {
             // Given another ACTIVE definition whose row lock is held by another transaction, with the id lock free
             await(app.definitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(rowId, 1, TimeoutRowCaseV1.class),
                             DocumentFormat.YAML,
-                            source("timeout-row"),
-                            null));
+                            source("timeout-row")));
             await(app.definitionService().activate(rowKey));
             Stored rowBefore = fixture.stored(rowId, 1);
             Tx rowHolder = fixture.begin(null);
@@ -1882,10 +1922,10 @@ public class DefinitionRetirementIT {
             // And a DEPRECATED, cooled version with a FAILED instance whose retry holds the shared admission lock
             CompiledDefinitionRef loaded = await(app.definitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(id, 1, DefaultIsolationCaseV1.class),
                             DocumentFormat.YAML,
-                            source("default-isolation"),
-                            null));
+                            source("default-isolation")));
             await(app.definitionService().activate(key));
             await(app.definitionService().deprecate(key));
             fixture.ageStatus(key, coolingSeconds + 60);

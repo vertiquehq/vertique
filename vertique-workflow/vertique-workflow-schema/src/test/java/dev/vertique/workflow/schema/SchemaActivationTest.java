@@ -137,10 +137,10 @@ class SchemaActivationTest {
         Platform platform = DaggerSchemaActivationTest_Platform.create();
         WorkflowDefinitionService definitions = platform.definitions();
         await(definitions.load(
+                WorkflowScopes.DEFAULT,
                 document(StartReview.class.getName(), "review.init", String.class.getName()),
                 DocumentFormat.YAML,
-                metadata(),
-                null));
+                metadata()));
 
         // When: it is activated
         // Then: activation fails with the registration wording and the registry does not resolve the id
@@ -158,10 +158,10 @@ class SchemaActivationTest {
         Platform platform = DaggerSchemaActivationTest_Platform.create();
         WorkflowDefinitionService definitions = platform.definitions();
         await(definitions.load(
+                WorkflowScopes.DEFAULT,
                 document(StartReview.class.getName(), "review.init", String.class.getName()),
                 DocumentFormat.YAML,
-                metadata(),
-                null));
+                metadata()));
 
         // When: activation fails once
         assertThatThrownBy(() -> await(definitions.activate(REVIEW_NOTE_V1)))
@@ -183,10 +183,10 @@ class SchemaActivationTest {
         Platform platform = DaggerSchemaActivationTest_Platform.create();
         WorkflowDefinitionService definitions = platform.definitions();
         await(definitions.load(
+                WorkflowScopes.DEFAULT,
                 document(String.class.getName(), "review.initFromText", Payloads.PlainRecord.class.getName()),
                 DocumentFormat.YAML,
-                metadata(),
-                null));
+                metadata()));
 
         // When / Then: activation fails naming the start payload
         assertThatThrownBy(() -> await(definitions.activate(REVIEW_NOTE_V1)))
@@ -202,10 +202,10 @@ class SchemaActivationTest {
         Platform platform = DaggerSchemaActivationTest_Platform.create();
         WorkflowDefinitionService definitions = platform.definitions();
         await(definitions.load(
+                WorkflowScopes.DEFAULT,
                 document(StartReview.class.getName(), "review.init", Payloads.PlainRecord.class.getName()),
                 DocumentFormat.YAML,
-                metadata(),
-                null));
+                metadata()));
 
         // When: it is activated
         await(definitions.activate(REVIEW_NOTE_V1));

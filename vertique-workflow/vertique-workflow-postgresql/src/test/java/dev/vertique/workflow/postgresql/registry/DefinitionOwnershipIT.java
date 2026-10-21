@@ -267,16 +267,16 @@ public class DefinitionOwnershipIT {
                 // Given two candidates of one owner, each activating on its own node with completion held back
                 CompiledDefinitionRef loaded3 = await(nodeA.service()
                         .load(
+                                "tenant-a",
                                 document(id, 3, scenario.version3Contract()),
                                 DocumentFormat.YAML,
-                                source(id + "-3"),
-                                "tenant-a"));
+                                source(id + "-3")));
                 CompiledDefinitionRef loaded4 = await(nodeB.service()
                         .load(
+                                "tenant-a",
                                 document(id, 4, scenario.version4Contract()),
                                 DocumentFormat.YAML,
-                                source(id + "-4"),
-                                "tenant-a"));
+                                source(id + "-4")));
                 WorkflowDefinitionSqlObserver.CompletionLockGate gate3 =
                         nodeA.observer().holdNextCompletionLockAfterClaim();
                 WorkflowDefinitionSqlObserver.CompletionLockGate gate4 =
@@ -452,10 +452,10 @@ public class DefinitionOwnershipIT {
             // Given the same id and version loaded as candidates by the global scope and two tenants
             await(node.service()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             document(candidatesId, 1, CandidatesV1.class),
                             DocumentFormat.YAML,
-                            source("candidates-global"),
-                            null));
+                            source("candidates-global")));
             for (String tenant : new String[] {"tenant-a", "tenant-b"}) {
                 TenantRowSeed.seed(
                         node.app(),

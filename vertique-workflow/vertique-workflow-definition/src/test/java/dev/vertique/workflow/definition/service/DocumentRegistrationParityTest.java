@@ -527,7 +527,7 @@ class DocumentRegistrationParityTest {
 
         CompiledDefinitionRef loaded = ServiceTestHelpers.await(component
                 .workflowDefinitionService()
-                .load(bytes(document), DocumentFormat.YAML, metadata("test://parity/service"), null));
+                .load(WorkflowScopes.DEFAULT, bytes(document), DocumentFormat.YAML, metadata("test://parity/service")));
 
         CompiledDefinition compiled =
                 component.workflowDefinitionStore().get(KEY).orElseThrow().compiled();
@@ -675,7 +675,11 @@ class DocumentRegistrationParityTest {
         // When: A starts and provides its registry, and B loads the same bytes through the service
         RuntimeWorkflow registered = packaged.workflowRegistry().resolveCurrent("legacy-doc");
         Future<CompiledDefinitionRef> loading = recorder.callWithContextLoader(() -> service.workflowDefinitionService()
-                .load(bytes(LEGACY_DOCUMENT), DocumentFormat.YAML, metadata("test://parity/legacy-service"), null));
+                .load(
+                        WorkflowScopes.DEFAULT,
+                        bytes(LEGACY_DOCUMENT),
+                        DocumentFormat.YAML,
+                        metadata("test://parity/legacy-service")));
 
         // Then: A registered the document with the unannotated state class
         assertThat(registered.stateType()).isEqualTo(Legacy.class);

@@ -124,10 +124,10 @@ public class DefinitionPropagationIT {
 
             // And a document that A loaded and activated
             String hash = await(aService.load(
+                            WorkflowScopes.DEFAULT,
                             documentBytes(id, 1, LifecycleDocV1.class),
                             DocumentFormat.YAML,
-                            source("lifecycle", loadedAt),
-                            null))
+                            source("lifecycle", loadedAt)))
                     .planHash();
             await(aService.activate(key));
             Stored activated = scenario.stored(id, 1);
@@ -207,10 +207,10 @@ public class DefinitionPropagationIT {
 
             // Given a document that A loaded, activated and deprecated before B ever reconciled it
             String deprecatedHash = await(aService.load(
+                            WorkflowScopes.DEFAULT,
                             documentBytes(deprecatedId, 1, DeprecatedFirstDocV1.class),
                             DocumentFormat.YAML,
-                            source("deprecated-first", loadedAt),
-                            null))
+                            source("deprecated-first", loadedAt)))
                     .planHash();
             await(aService.activate(deprecatedKey));
             await(aService.deprecate(deprecatedKey));

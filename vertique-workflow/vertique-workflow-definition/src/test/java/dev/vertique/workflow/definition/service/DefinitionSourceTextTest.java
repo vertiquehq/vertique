@@ -373,17 +373,21 @@ public class DefinitionSourceTextTest {
 
         Future<CompiledDefinitionRef> exactLimit = graph.definitionService()
                 .load(
+                        WorkflowScopes.DEFAULT,
                         yamlAtByteLength("reader-exact-limit", 1, ExactLimitV1.class, DEFAULT_LIMIT),
                         DocumentFormat.YAML,
-                        metadata("exact-limit"),
-                        null);
+                        metadata("exact-limit"));
         exactLimit
                 .compose(exact -> {
                     assertThat(exact.definitionId()).isEqualTo("reader-exact-limit");
                     byte[] overLimitInvalid = new byte[DEFAULT_LIMIT + 1];
                     java.util.Arrays.fill(overLimitInvalid, (byte) '[');
                     Future<CompiledDefinitionRef> rejected = graph.definitionService()
-                            .load(overLimitInvalid, DocumentFormat.YAML, metadata("over-limit"), null);
+                            .load(
+                                    WorkflowScopes.DEFAULT,
+                                    overLimitInvalid,
+                                    DocumentFormat.YAML,
+                                    metadata("over-limit"));
                     return rejected.transform(result -> {
                         assertThat(result.failed()).isTrue();
                         assertThat(result.cause()).isNotInstanceOf(WorkflowDefinitionParseException.class);
@@ -406,7 +410,7 @@ public class DefinitionSourceTextTest {
         Future<Void> work = Future.succeededFuture();
         for (EncodedSource source : persistedJsonSources()) {
             work = work.compose(ignored -> graph.definitionService()
-                    .load(source.bytes(), DocumentFormat.JSON, metadata(source.uri()), null)
+                    .load(WorkflowScopes.DEFAULT, source.bytes(), DocumentFormat.JSON, metadata(source.uri()))
                     .map(compiled -> {
                         assertThat(compiled.planHash()).isNotBlank();
                         assertCapturedAndRecompiled(graph, capturingStore, source, DocumentFormat.JSON, compiled);
@@ -419,7 +423,7 @@ public class DefinitionSourceTextTest {
                 withBom(StandardCharsets.UTF_8, new byte[] {(byte) 0xef, (byte) 0xbb, (byte) 0xbf}, yamlSource);
         EncodedSource yaml = new EncodedSource("yaml", "reader-persisted-yaml", 1, "\uFEFF" + yamlSource, yamlBytes);
         work = work.compose(ignored -> graph.definitionService()
-                .load(yaml.bytes(), DocumentFormat.YAML, metadata(yaml.uri()), null)
+                .load(WorkflowScopes.DEFAULT, yaml.bytes(), DocumentFormat.YAML, metadata(yaml.uri()))
                 .map(compiled -> {
                     assertCapturedAndRecompiled(graph, capturingStore, yaml, DocumentFormat.YAML, compiled);
                     return (Void) null;
@@ -429,7 +433,7 @@ public class DefinitionSourceTextTest {
             work = work.compose(ignored -> {
                 int capturedBefore = capturingStore.documents.size();
                 Future<CompiledDefinitionRef> load = graph.definitionService()
-                        .load(invalid.bytes(), invalid.format(), metadata(invalid.uri()), null);
+                        .load(WorkflowScopes.DEFAULT, invalid.bytes(), invalid.format(), metadata(invalid.uri()));
                 return load.transform(result -> {
                     assertThat(result.failed()).isTrue();
                     assertThat(result.cause()).isInstanceOf(WorkflowDefinitionException.class);

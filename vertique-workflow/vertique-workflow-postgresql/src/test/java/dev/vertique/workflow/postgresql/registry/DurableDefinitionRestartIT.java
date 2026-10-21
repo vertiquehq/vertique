@@ -84,7 +84,7 @@ public class DurableDefinitionRestartIT {
                 .compose(firstHandle -> {
                     handles.add(firstHandle);
                     WorkflowDefinitionService service = first.definitionService();
-                    return service.load(yaml, DocumentFormat.YAML, metadata, null)
+                    return service.load(WorkflowScopes.DEFAULT, yaml, DocumentFormat.YAML, metadata)
                             .compose(compiled -> service.activate(key).map(compiled))
                             .compose(compiled -> service.list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                                     .map(records -> {
@@ -165,7 +165,7 @@ public class DurableDefinitionRestartIT {
                 .compose(firstHandle -> {
                     handles.add(firstHandle);
                     return first.definitionService()
-                            .load(original, DocumentFormat.YAML, metadata, null)
+                            .load(WorkflowScopes.DEFAULT, original, DocumentFormat.YAML, metadata)
                             .compose(loaded ->
                                     first.definitionService().activate(key).map(loaded))
                             .compose(loaded -> {

@@ -100,11 +100,11 @@ public class DefinitionDeprecationIT {
             AppComponent app = node.app();
 
             // Given two versions loaded and activated through the service, so both are registered and cached
-            CompiledDefinitionRef loadedV1 = await(
-                    app.definitionService().load(documentV1, DocumentFormat.YAML, source("deprecation-v1"), null));
+            CompiledDefinitionRef loadedV1 = await(app.definitionService()
+                    .load(WorkflowScopes.DEFAULT, documentV1, DocumentFormat.YAML, source("deprecation-v1")));
             await(app.definitionService().activate(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)));
-            CompiledDefinitionRef loadedV2 = await(
-                    app.definitionService().load(documentV2, DocumentFormat.YAML, source("deprecation-v2"), null));
+            CompiledDefinitionRef loadedV2 = await(app.definitionService()
+                    .load(WorkflowScopes.DEFAULT, documentV2, DocumentFormat.YAML, source("deprecation-v2")));
             await(app.definitionService().activate(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)));
             CompiledDefinitionRef loadedTarget = targetIsActive ? loadedV2 : loadedV1;
 
@@ -234,10 +234,18 @@ public class DefinitionDeprecationIT {
 
             // Given version 1 SUPERSEDED and version 2 ACTIVE, committed through the service
             await(app.definitionService()
-                    .load(document(id, 1, TransitionCase.class), DocumentFormat.YAML, source("transition-v1"), null));
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 1, TransitionCase.class),
+                            DocumentFormat.YAML,
+                            source("transition-v1")));
             await(app.definitionService().activate(supersededKey));
             await(app.definitionService()
-                    .load(document(id, 2, TransitionCase.class), DocumentFormat.YAML, source("transition-v2"), null));
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 2, TransitionCase.class),
+                            DocumentFormat.YAML,
+                            source("transition-v2")));
             await(app.definitionService().activate(activeKey));
             Stored supersededBefore = fixture.stored(id, 1);
             Stored activeBefore = fixture.stored(id, 2);
@@ -318,7 +326,11 @@ public class DefinitionDeprecationIT {
 
             // Given the global owner holds the id as ACTIVE and tenant-a has a candidate of the same version
             await(app.definitionService()
-                    .load(document(id, 1, OwnerCaseV1.class), DocumentFormat.YAML, source("owner-global"), null));
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 1, OwnerCaseV1.class),
+                            DocumentFormat.YAML,
+                            source("owner-global")));
             await(app.definitionService().activate(globalKey));
             TenantRowSeed.seed(
                     app,

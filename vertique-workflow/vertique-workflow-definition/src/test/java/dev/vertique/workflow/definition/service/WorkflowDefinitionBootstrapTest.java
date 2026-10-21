@@ -27,6 +27,7 @@ import dev.vertique.workflow.definition.compiler.WorkflowDefinitionCompiler;
 import dev.vertique.workflow.definition.expression.ExpressionProfile;
 import dev.vertique.workflow.definition.expression.cel.CelExpressionProfile;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
+import dev.vertique.workflow.definition.parser.ProductionParserFixture;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParser;
 import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
 import dev.vertique.workflow.definition.source.DefinitionResource;
@@ -95,6 +96,8 @@ class WorkflowDefinitionBootstrapTest {
     // --- Infrastructure ---
 
     private WorkflowDefinitionPipeline pipeline;
+    private WorkflowDefinitionDocumentValidator validator;
+    private WorkflowDefinitionCompiler compiler;
     private WorkflowDefinitionStore store;
 
     @BeforeEach
@@ -129,10 +132,10 @@ class WorkflowDefinitionBootstrapTest {
         DefaultNamedConditionRegistry conditionRegistry = new DefaultNamedConditionRegistry(Set.of());
         DecisionRouteCompiler decisionRouteCompiler =
                 new DecisionRouteCompiler(profile, conditionRegistry, mapperFactory);
-        WorkflowDefinitionCompiler compiler = new WorkflowDefinitionCompiler(lookup, profile, decisionRouteCompiler);
+        compiler = new WorkflowDefinitionCompiler(lookup, profile, decisionRouteCompiler);
 
         WorkflowDefinitionParser parser = ServiceTestHelpers.realParser();
-        WorkflowDefinitionDocumentValidator validator = new WorkflowDefinitionDocumentValidator(lookup);
+        validator = new WorkflowDefinitionDocumentValidator(lookup);
         pipeline = new WorkflowDefinitionPipeline(parser, validator, compiler);
         store = new WorkflowDefinitionStore();
     }
@@ -188,6 +191,54 @@ class WorkflowDefinitionBootstrapTest {
             assertThat(store.list()).hasSize(1);
             assertThat(store.list().iterator().next().status()).isEqualTo(ActivationStatus.ACTIVE);
         }
+    }
+
+    // --- Packaged documents and the default scope ---
+
+    @Test
+    @DisplayName("packaged documents load into the default scope and a scope field is rejected")
+    void packagedDocumentsLoadIntoTheDefaultScopeAndRejectAScopeField() {
+        // Given: the production parser, one valid packaged document and a second that also names a scope
+        WorkflowDefinitionPipeline strict =
+                new WorkflowDefinitionPipeline(ProductionParserFixture.parser(), validator, compiler);
+        DefinitionResource valid = resourceFor("boot-alpha", 1, BootAlphaV1Contract.class);
+        byte[] withScopeField = (new String(yamlFor("boot-alpha", 1, BootAlphaV1Contract.class), StandardCharsets.UTF_8)
+                        + "scope: acme\n")
+                .getBytes(StandardCharsets.UTF_8);
+        DefinitionResource scoped = new DefinitionResource(
+                withScopeField,
+                DocumentFormat.YAML,
+                new SourceMetadata("test", "test://boot-alpha/scoped", null, null, null, Instant.now()));
+
+        // When: the bootstrap contributes the valid document
+        WorkflowDefinitionStore acceptingStore = new WorkflowDefinitionStore();
+        DefaultWorkflowRegistry accepting = freshRegistry();
+        new WorkflowDefinitionBootstrap(strict, acceptingStore, Set.of(() -> List.of(valid))).contribute(accepting);
+
+        // Then: it is registered under the default scope and under no other
+        assertThat(accepting.find(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L)))
+                .isPresent();
+        assertThat(accepting.find(new DefinitionKey("acme", "boot-alpha", 1L))).isEmpty();
+        assertThat(accepting.allRegistered()).hasSize(1);
+
+        // When: the bootstrap contributes the document that carries a scope field
+        WorkflowDefinitionStore rejectingStore = new WorkflowDefinitionStore();
+        DefaultWorkflowRegistry rejecting = freshRegistry();
+        WorkflowDefinitionBootstrap withScope =
+                new WorkflowDefinitionBootstrap(strict, rejectingStore, Set.of(() -> List.of(scoped)));
+
+        // Then: it fails as a parse failure attributed to the resource, and nothing is registered or stored
+        assertThatThrownBy(() -> withScope.contribute(rejecting))
+                .isInstanceOf(WorkflowDefinitionLoadException.class)
+                .satisfies(ex -> {
+                    List<Violation> violations =
+                            ((WorkflowDefinitionLoadException) ex).violations().toList();
+                    assertThat(violations).extracting(Violation::code).containsExactly("DOCUMENT_PARSE_FAILURE");
+                    assertThat(violations.get(0).message()).contains("test://boot-alpha/scoped");
+                });
+        assertThat(rejecting.allRegistered()).isEmpty();
+        assertThat(rejecting.find(new DefinitionKey("acme", "boot-alpha", 1L))).isEmpty();
+        assertThat(rejectingStore.list()).isEmpty();
     }
 
     // --- Two good resources from one source ---

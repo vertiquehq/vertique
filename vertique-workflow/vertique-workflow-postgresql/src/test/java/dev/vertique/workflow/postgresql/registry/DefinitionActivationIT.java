@@ -74,7 +74,11 @@ public class DefinitionActivationIT {
                     SourceMetadata metadata =
                             new SourceMetadata("activation-test", "fixture-v1", "r1", null, null, Instant.now());
                     return app.definitionService()
-                            .load(ManagedDefinitionDatabase.yamlFixture(), DocumentFormat.YAML, metadata, null)
+                            .load(
+                                    WorkflowScopes.DEFAULT,
+                                    ManagedDefinitionDatabase.yamlFixture(),
+                                    DocumentFormat.YAML,
+                                    metadata)
                             .compose(loaded -> installCompletionFailure(pool).map(loaded))
                             .compose(loaded -> app.definitionService()
                                     .activate(v1)
@@ -118,7 +122,7 @@ public class DefinitionActivationIT {
                                         "activation-test", "fixture-v2", "r2", null, null, Instant.now());
                                 byte[] original = ManagedDefinitionDatabase.jsonFixture();
                                 return app.definitionService()
-                                        .load(original, DocumentFormat.JSON, v2Metadata, null)
+                                        .load(WorkflowScopes.DEFAULT, original, DocumentFormat.JSON, v2Metadata)
                                         .compose(loaded -> {
                                             String drifted = driftedJson(original);
                                             var driftedDefinition = app.definitionPipeline()
@@ -223,7 +227,11 @@ public class DefinitionActivationIT {
                     SourceMetadata metadata =
                             new SourceMetadata("claim-test", "fixture", "r1", null, null, Instant.now());
                     return app.definitionService()
-                            .load(ManagedDefinitionDatabase.yamlFixture(), DocumentFormat.YAML, metadata, null)
+                            .load(
+                                    WorkflowScopes.DEFAULT,
+                                    ManagedDefinitionDatabase.yamlFixture(),
+                                    DocumentFormat.YAML,
+                                    metadata)
                             .compose(loaded -> app.definitionRegistryStore()
                                     .claim(key)
                                     .map(oldClaim -> new ClaimPair(loaded, oldClaim)))
@@ -322,7 +330,11 @@ public class DefinitionActivationIT {
                             });
                 })
                 .compose(ignored -> appA.definitionService()
-                        .load(ManagedDefinitionDatabase.yamlFixture(), DocumentFormat.YAML, metadata, null)
+                        .load(
+                                WorkflowScopes.DEFAULT,
+                                ManagedDefinitionDatabase.yamlFixture(),
+                                DocumentFormat.YAML,
+                                metadata)
                         .map(loaded -> new PendingActivation(
                                 loaded, appA.definitionService().activate(key))))
                 .compose(pending -> gateA.observed().map(pending))
@@ -442,7 +454,11 @@ public class DefinitionActivationIT {
                 .execute(Tuple.of(definitionId))
                 .compose(ignored -> preparation
                         .definitionService()
-                        .load(ManagedDefinitionDatabase.yamlFixture(), DocumentFormat.YAML, metadata, null))
+                        .load(
+                                WorkflowScopes.DEFAULT,
+                                ManagedDefinitionDatabase.yamlFixture(),
+                                DocumentFormat.YAML,
+                                metadata))
                 .compose(loaded -> VertiqueApplicationBootstrap.start(
                                 VertiqueRuntime.of(vertx, new JsonObject()), ignoredRuntime -> activation)
                         .compose(handle -> {
@@ -552,10 +568,10 @@ public class DefinitionActivationIT {
                                 new SourceMetadata("activation-test", "fixture-v3", "r3", null, null, Instant.now());
                         Future<Void> queuedActivation = app.definitionService()
                                 .load(
+                                        WorkflowScopes.DEFAULT,
                                         queuedJson.getBytes(StandardCharsets.UTF_8),
                                         DocumentFormat.JSON,
-                                        queuedMetadata,
-                                        null)
+                                        queuedMetadata)
                                 .compose(loaded -> {
                                     assertThat(loaded.definitionVersion()).isEqualTo(3);
                                     Future<Void> activation =

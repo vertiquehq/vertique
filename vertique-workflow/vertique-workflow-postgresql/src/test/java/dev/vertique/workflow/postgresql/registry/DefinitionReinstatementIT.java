@@ -375,10 +375,10 @@ public class DefinitionReinstatementIT {
             WorkflowDefinitionService firstService = first.app().definitionService();
             long coolingSeconds = first.app().workflowDefinitionsConfig().maxStalenessSeconds();
             String loadedHash = await(firstService.load(
+                            WorkflowScopes.DEFAULT,
                             documentBytes(id, 1, ReinstatedDocV1.class),
                             DocumentFormat.YAML,
-                            source("retired-doc", loadedAt),
-                            null))
+                            source("retired-doc", loadedAt)))
                     .planHash();
             await(firstService.activate(key));
             await(firstService.deprecate(key));
@@ -1047,14 +1047,17 @@ public class DefinitionReinstatementIT {
 
             // Given version 1 retired and version 2 active, both documents
             String hash1 = await(service.load(
+                            WorkflowScopes.DEFAULT,
                             documentBytes(id, 1, LowerDoc.class),
                             DocumentFormat.YAML,
-                            source("lower-v1", loadedAt),
-                            null))
+                            source("lower-v1", loadedAt)))
                     .planHash();
             await(service.activate(v1));
             await(service.load(
-                    documentBytes(id, 2, LowerDoc.class), DocumentFormat.YAML, source("lower-v2", loadedAt), null));
+                    WorkflowScopes.DEFAULT,
+                    documentBytes(id, 2, LowerDoc.class),
+                    DocumentFormat.YAML,
+                    source("lower-v2", loadedAt)));
             await(service.activate(v2));
             await(service.deprecate(v1));
             scenario.ageStatus(v1, coolingSeconds + 60);

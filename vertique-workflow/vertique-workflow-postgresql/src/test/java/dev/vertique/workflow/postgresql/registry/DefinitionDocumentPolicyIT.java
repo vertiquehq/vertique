@@ -172,8 +172,8 @@ public class DefinitionDocumentPolicyIT {
                                         });
                             })
                             .compose(ignored -> assertRuntimeAdmissionLimit(vertx, observedMainPool))
-                            .compose(ignored ->
-                                    first.definitionService().load(jsonBytes, DocumentFormat.JSON, jsonMetadata, null))
+                            .compose(ignored -> first.definitionService()
+                                    .load(WorkflowScopes.DEFAULT, jsonBytes, DocumentFormat.JSON, jsonMetadata))
                             .compose(compiled -> {
                                 jsonPlanHash.set(compiled.planHash());
                                 assertThat(compiled.planHash()).isNotBlank();
@@ -473,7 +473,7 @@ public class DefinitionDocumentPolicyIT {
         java.util.Arrays.fill(oversized, (byte) ' ');
         Future<CompiledDefinitionRef> load = defaultPolicy
                 .definitionService()
-                .load(oversized, DocumentFormat.JSON, metadata("oversized-runtime"), null);
+                .load(WorkflowScopes.DEFAULT, oversized, DocumentFormat.JSON, metadata("oversized-runtime"));
         return load.transform(result -> {
             assertThat(result.failed()).isTrue();
             assertThat(result.cause()).isInstanceOf(WorkflowDefinitionException.class);
@@ -528,8 +528,9 @@ public class DefinitionDocumentPolicyIT {
         return VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, new JsonObject()), ignored -> component)
                 .compose(handle -> {
                     handles.add(handle);
-                    Future<CompiledDefinitionRef> malformed =
-                            component.definitionService().load(malformedTail, DocumentFormat.JSON, provenance, null);
+                    Future<CompiledDefinitionRef> malformed = component
+                            .definitionService()
+                            .load(WorkflowScopes.DEFAULT, malformedTail, DocumentFormat.JSON, provenance);
                     return malformed
                             .transform(result -> {
                                 assertThat(result.failed()).isTrue();
@@ -543,7 +544,7 @@ public class DefinitionDocumentPolicyIT {
                             .compose(ignoredMalformed -> {
                                 Future<CompiledDefinitionRef> nulSource = component
                                         .definitionService()
-                                        .load(nulTail, DocumentFormat.JSON, provenance, null);
+                                        .load(WorkflowScopes.DEFAULT, nulTail, DocumentFormat.JSON, provenance);
                                 return nulSource.transform(result -> {
                                     assertThat(result.failed()).isTrue();
                                     assertThat(result.cause()).isInstanceOf(WorkflowDefinitionException.class);
@@ -557,10 +558,10 @@ public class DefinitionDocumentPolicyIT {
                             .compose(ignoredNul -> component
                                     .definitionService()
                                     .load(
+                                            WorkflowScopes.DEFAULT,
                                             escapedSource.getBytes(StandardCharsets.UTF_8),
                                             DocumentFormat.JSON,
-                                            provenance,
-                                            null))
+                                            provenance))
                             .compose(ignoredLoaded -> component
                                     .definitionRegistryStore()
                                     .findDocument(key)
@@ -666,7 +667,7 @@ public class DefinitionDocumentPolicyIT {
                     handles.add(initialHandle);
                     SourceMetadata metadata = metadata("lower-limit-restore");
                     return initial.definitionService()
-                            .load(source, DocumentFormat.JSON, metadata, null)
+                            .load(WorkflowScopes.DEFAULT, source, DocumentFormat.JSON, metadata)
                             .compose(compiled ->
                                     initial.definitionService().activate(key).map(compiled))
                             .compose(compiled -> initial.definitionRegistryStore()

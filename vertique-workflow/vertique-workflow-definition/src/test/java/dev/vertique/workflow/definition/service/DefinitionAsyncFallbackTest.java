@@ -113,7 +113,10 @@ class DefinitionAsyncFallbackTest {
         assertThat(component.definitionsConfig()).isEmpty();
 
         CompiledDefinitionRef loaded = ServiceTestHelpers.await(service.load(
-                yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, provenance, null));
+                WorkflowScopes.DEFAULT,
+                yamlFor("fallback-order", 1, FallbackOrderV1.class),
+                DocumentFormat.YAML,
+                provenance));
         assertThat(loaded.status()).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(component.workflowRegistry().allRegistered()).isEmpty();
 
@@ -133,21 +136,31 @@ class DefinitionAsyncFallbackTest {
         assertThat(ServiceTestHelpers.await(service.sourceMetadata(key))).contains(provenance);
         assertThatThrownBy(records::clear).isInstanceOf(UnsupportedOperationException.class);
         ServiceTestHelpers.await(service.load(
-                yamlFor("second-fallback-order", 1, FallbackOrderV2.class), DocumentFormat.YAML, provenance, null));
+                WorkflowScopes.DEFAULT,
+                yamlFor("second-fallback-order", 1, FallbackOrderV2.class),
+                DocumentFormat.YAML,
+                provenance));
         assertThat(records).hasSize(1);
         assertThat(ServiceTestHelpers.await(service.list(global))).hasSize(2);
 
         DefinitionFilter none = new DefinitionFilter(null, null, Set.of());
         assertThat(ServiceTestHelpers.await(service.list(none))).isEmpty();
 
-        Future<CompiledDefinitionRef> malformed =
-                service.load("definitionId: [".getBytes(StandardCharsets.UTF_8), DocumentFormat.YAML, provenance, null);
+        Future<CompiledDefinitionRef> malformed = service.load(
+                WorkflowScopes.DEFAULT,
+                "definitionId: [".getBytes(StandardCharsets.UTF_8),
+                DocumentFormat.YAML,
+                provenance);
         assertThatThrownBy(() -> ServiceTestHelpers.await(malformed))
                 .isInstanceOf(WorkflowDefinitionParseException.class);
         Future<CompiledDefinitionRef> duplicate = service.load(
-                yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, provenance, null);
+                WorkflowScopes.DEFAULT,
+                yamlFor("fallback-order", 1, FallbackOrderV1.class),
+                DocumentFormat.YAML,
+                provenance);
         assertThatThrownBy(() -> ServiceTestHelpers.await(duplicate)).isInstanceOf(WorkflowDefinitionException.class);
-        Future<CompiledDefinitionRef> invalidArgument = service.load(null, DocumentFormat.YAML, provenance, null);
+        Future<CompiledDefinitionRef> invalidArgument =
+                service.load(WorkflowScopes.DEFAULT, null, DocumentFormat.YAML, provenance);
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidArgument)).isInstanceOf(NullPointerException.class);
         Future<Void> invalidActivation = service.activate(null);
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidActivation)).isInstanceOf(RuntimeException.class);
@@ -173,8 +186,11 @@ class DefinitionAsyncFallbackTest {
                 new SourceMetadata("test", "opaque:source", "r".repeat(300), null, null, Instant.now());
 
         // When the document is loaded
-        Future<CompiledDefinitionRef> loaded =
-                service.load(yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, overLong, null);
+        Future<CompiledDefinitionRef> loaded = service.load(
+                WorkflowScopes.DEFAULT,
+                yamlFor("fallback-order", 1, FallbackOrderV1.class),
+                DocumentFormat.YAML,
+                overLong);
 
         // Then the Future fails with IllegalArgumentException and nothing was stored or published
         assertThatThrownBy(() -> ServiceTestHelpers.await(loaded)).isInstanceOf(IllegalArgumentException.class);
@@ -192,8 +208,11 @@ class DefinitionAsyncFallbackTest {
         SourceMetadata overLong = new SourceMetadata("test", "u".repeat(2049), "rev-1", null, null, Instant.now());
 
         // When the document is loaded
-        Future<CompiledDefinitionRef> loaded =
-                service.load(yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, overLong, null);
+        Future<CompiledDefinitionRef> loaded = service.load(
+                WorkflowScopes.DEFAULT,
+                yamlFor("fallback-order", 1, FallbackOrderV1.class),
+                DocumentFormat.YAML,
+                overLong);
 
         // Then the Future fails with IllegalArgumentException and nothing was stored or published
         assertThatThrownBy(() -> ServiceTestHelpers.await(loaded)).isInstanceOf(IllegalArgumentException.class);
@@ -213,7 +232,10 @@ class DefinitionAsyncFallbackTest {
 
         // When the document is loaded
         CompiledDefinitionRef loaded = ServiceTestHelpers.await(service.load(
-                yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, provenance, null));
+                WorkflowScopes.DEFAULT,
+                yamlFor("fallback-order", 1, FallbackOrderV1.class),
+                DocumentFormat.YAML,
+                provenance));
 
         // Then it is a candidate that keeps the full uri, and it is listed but not published
         assertThat(loaded.status()).isEqualTo(ActivationStatus.CANDIDATE);

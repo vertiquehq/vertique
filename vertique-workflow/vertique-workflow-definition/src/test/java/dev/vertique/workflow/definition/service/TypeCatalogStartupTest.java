@@ -355,10 +355,10 @@ class TypeCatalogStartupTest {
             CompiledDefinitionRef loaded = ServiceTestHelpers.await(component
                     .workflowDefinitionService()
                     .load(
+                            "acme",
                             LEGACY_DOCUMENT.getBytes(StandardCharsets.UTF_8),
                             DocumentFormat.YAML,
-                            metadata("test://legacy/tenant"),
-                            "acme"));
+                            metadata("test://legacy/tenant")));
             assertThat(loaded.definitionId()).isEqualTo("legacy");
             assertThat(loaded.definitionVersion()).isEqualTo(1);
         }
@@ -372,10 +372,10 @@ class TypeCatalogStartupTest {
             var future = recorder.callWithContextLoader(() -> component
                     .workflowDefinitionService()
                     .load(
+                            WorkflowScopes.DEFAULT,
                             LEGACY_DOCUMENT.getBytes(StandardCharsets.UTF_8),
                             DocumentFormat.YAML,
-                            metadata("test://legacy/service"),
-                            null));
+                            metadata("test://legacy/service")));
 
             assertThatThrownBy(() -> ServiceTestHelpers.await(future))
                     .isInstanceOf(WorkflowUnknownTypeNameException.class)

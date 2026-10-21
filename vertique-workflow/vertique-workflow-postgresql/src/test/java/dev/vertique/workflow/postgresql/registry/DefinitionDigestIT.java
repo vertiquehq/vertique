@@ -83,15 +83,15 @@ public class DefinitionDigestIT {
             String activeText = documentText(activeId, 1, ActiveCaseV1.class);
             String editedText = documentText(editedId, 1, EditedCaseV1.class);
             CompiledDefinitionRef activeLoaded = await(service.load(
+                    WorkflowScopes.DEFAULT,
                     activeText.getBytes(StandardCharsets.UTF_8),
                     DocumentFormat.YAML,
-                    source("active", Instant.parse("2026-10-18T12:00:00Z")),
-                    null));
+                    source("active", Instant.parse("2026-10-18T12:00:00Z"))));
             CompiledDefinitionRef editedLoaded = await(service.load(
+                    WorkflowScopes.DEFAULT,
                     editedText.getBytes(StandardCharsets.UTF_8),
                     DocumentFormat.YAML,
-                    source("edited", Instant.parse("2026-10-18T12:01:00Z")),
-                    null));
+                    source("edited", Instant.parse("2026-10-18T12:01:00Z"))));
 
             // When the unedited candidate is activated
             await(service.activate(activeKey));

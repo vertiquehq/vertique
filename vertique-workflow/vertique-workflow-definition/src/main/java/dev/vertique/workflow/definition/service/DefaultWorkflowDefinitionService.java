@@ -24,7 +24,6 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
@@ -80,8 +79,10 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
 
     @Override
     public Future<CompiledDefinitionRef> load(
-            byte[] content, DocumentFormat format, SourceMetadata metadata, @Nullable String scopeKey) {
+            String scopeKey, byte[] content, DocumentFormat format, SourceMetadata metadata) {
         return attempt(() -> {
+            // The scope is checked before the document is read, so a bad scope costs no parsing work.
+            requireValidScope(scopeKey);
             Objects.requireNonNull(content, "content");
             Objects.requireNonNull(format, "format");
             Objects.requireNonNull(metadata, "metadata");
@@ -93,10 +94,9 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
             return work(() -> {
                         CompiledDefinition compiled = pipeline.load(resource);
                         DefinitionKey key = new DefinitionKey(
-                                scopeKey == null ? WorkflowScopes.DEFAULT : scopeKey,
+                                scopeKey,
                                 compiled.definition().definitionId(),
                                 compiled.definition().definitionVersion());
-                        if (durable.isPresent()) requireTenantNamespace(key);
                         WorkflowDefinitionDocument text = durable.isPresent()
                                 ? DefinitionSourceText.decode(key, resource.content(), format, config)
                                 : null;
@@ -121,22 +121,12 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     }
 
     /**
-     * With a durable store, a definition id outside the default scope is the scope key, a colon and a name, so one
-     * scope cannot hold an id that another owner needs. A scope key therefore must not contain the colon itself. The
-     * values were already bounded and stripped of control characters by {@link DefinitionKey}, so the rejection
-     * message cannot carry unbounded or forged text.
+     * Applies the scope-key rules of {@link DefinitionKey} to the caller's scope argument. The key rejects a missing
+     * scope with {@link NullPointerException} and any other invalid value with {@link IllegalArgumentException}; its
+     * messages name the field and the limit, never the scope value or any document content.
      */
-    private static void requireTenantNamespace(DefinitionKey key) {
-        String scopeKey = key.scopeKey();
-        if (WorkflowScopes.DEFAULT.equals(scopeKey)) return;
-        String definitionId = key.definitionId();
-        String prefix = scopeKey + ":";
-        if (scopeKey.indexOf(':') >= 0
-                || !definitionId.startsWith(prefix)
-                || definitionId.substring(prefix.length()).isBlank())
-            throw new WorkflowDefinitionException("tenant '" + scopeKey + "' may only load definitions whose id is '"
-                    + scopeKey.replace(':', '_') + ":<name>' (a tenant key must not contain ':'); rejected id '"
-                    + definitionId + "'");
+    private static void requireValidScope(String scopeKey) {
+        new DefinitionKey(scopeKey, WorkflowScopes.DEFAULT, 1);
     }
 
     @Override

@@ -281,9 +281,9 @@ class DefinitionCacheScopeTest {
         DefaultWorkflowDefinitionService service =
                 new DefaultWorkflowDefinitionService(buildPipeline(), serviceCache, () -> registry);
         byte[] document = yamlFor(ID, 1, ScopeOrderV1.class);
-        ServiceTestHelpers.await(service.load(document, DocumentFormat.YAML, GLOBAL_SOURCE, null));
-        ServiceTestHelpers.await(service.load(document, DocumentFormat.YAML, TENANT_A_SOURCE, "tenant-a"));
-        ServiceTestHelpers.await(service.load(document, DocumentFormat.YAML, TENANT_B_SOURCE, "tenant-b"));
+        ServiceTestHelpers.await(service.load(WorkflowScopes.DEFAULT, document, DocumentFormat.YAML, GLOBAL_SOURCE));
+        ServiceTestHelpers.await(service.load("tenant-a", document, DocumentFormat.YAML, TENANT_A_SOURCE));
+        ServiceTestHelpers.await(service.load("tenant-b", document, DocumentFormat.YAML, TENANT_B_SOURCE));
 
         // Then each scope lists and reports only its own row
         assertThat(ServiceTestHelpers.await(service.sourceMetadata(GLOBAL_V1))).contains(GLOBAL_SOURCE);

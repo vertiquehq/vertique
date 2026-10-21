@@ -255,11 +255,11 @@ static PayloadMapperContributor reserveInventoryPayload() {
 ## Runtime Loading And Activation
 
 `WorkflowDefinitionService` returns Futures for loading, activation, metadata listing, and source
-attribution. For a definition in the default scope, compose activation after the candidate load completes:
+attribution. `load` takes the scope key as its first argument; compose activation after the candidate load completes:
 
 ```java
 Future<CompiledDefinitionRef> activated = service
-        .load(content, DocumentFormat.YAML, metadata, null)
+        .load(WorkflowScopes.DEFAULT, content, DocumentFormat.YAML, metadata)
         .compose(ref -> service.activate(new DefinitionKey(
                 WorkflowScopes.DEFAULT, ref.definitionId(), ref.definitionVersion())).map(ref));
 
@@ -267,7 +267,12 @@ Future<List<WorkflowDefinitionRecord>> definitions = service.list(
         new DefinitionFilter(WorkflowScopes.DEFAULT, null, null));
 ```
 
-`load` parses, validates, and compiles a candidate without registering it. A document loaded this way, or restored from the store, can name only classes in the type-name index, so a class an application wants such a document to use must be listed in a contributed `WorkflowTypeCatalog` (the workflow annotation processor generates one for `@WorkflowContract` and `@WorkflowType` classes) or be used by a registered definition; a name outside the index fails the returned Future with `WorkflowUnknownTypeNameException` before any validation runs. `activate` publishes it;
+`load` parses, validates, and compiles a candidate into the named scope without registering it. The scope argument is the only
+source of the scope: a document never names one, and a top-level `scope` property is rejected as an unknown property with a
+parse failure and stores nothing. The scope key is required, nonblank, at most 255 code points and free of control characters;
+a `null` key fails the returned Future with `NullPointerException` and any other invalid key with `IllegalArgumentException`,
+before the document is read. A definition id needs no scope prefix, and each scope numbers its own versions of an id, so a
+scope's first `purchase-approval` is version 1 beside the default scope's own versions. A document loaded this way, or restored from the store, can name only classes in the type-name index, so a class an application wants such a document to use must be listed in a contributed `WorkflowTypeCatalog` (the workflow annotation processor generates one for `@WorkflowContract` and `@WorkflowType` classes) or be used by a registered definition; a name outside the index fails the returned Future with `WorkflowUnknownTypeNameException` before any validation runs. `activate` publishes it;
 a failed load leaves the prior active version untouched. With PostgreSQL installed, source and
 metadata are durable and activation recompiles the stored text rather than trusting a local cache.
 The managed application lifecycle restores activated documents of every owner before any BOOTSTRAP verticle
@@ -303,11 +308,10 @@ even when id, version and hash are equal.
 
 Startup restores the live documents of every owner scope. An id that deployed code registers is a
 default-scope CODE row, so activating a document of another scope under that id fails with `OWNER_CONFLICT` naming both owners.
-With the store bound, `load` for a non-default scope accepts only a document id of the form `<scopeKey>:<name>` and a scope key without `:`;
-otherwise it fails with `WorkflowDefinitionException` naming the scope key and id and stores nothing. A `null` scope argument loads into the default scope. Use the namespaced id
-everywhere the definition id is used (start, pinned resolution, migration targets). Default-scope loads and the in-memory service are
-unchanged; avoid `:` in default-scope ids, since such an id equal to another scope's namespaced id still collides at startup.
-`load`, `activate`, `deprecate`, `retire` and `reinstate` perform no authorization: restrict them to authorized callers. The
+A load into a scope writes only that scope's rows; it never touches the default scope's or another scope's rows. Until per-scope
+activation arrives, a durable store still refuses to activate an id in one scope while another scope's owner holds it. Documents
+packaged with the application are loaded into the default scope. The service does not check identity: the application decides who may load
+into which scope, so restrict `load`, `activate`, `deprecate`, `retire` and `reinstate` to authorized callers. The
 public `currentStatus` of a version that is only persisted metadata (a candidate or retired row that startup did
 not compile) reports the persisted status instead of returning `null`; it returns `null` only when nothing is known about the version. An equal plan hash no longer proves equal text: a
 packaged document whose text differs (even by a comment, whitespace or line endings) from the stored text of the

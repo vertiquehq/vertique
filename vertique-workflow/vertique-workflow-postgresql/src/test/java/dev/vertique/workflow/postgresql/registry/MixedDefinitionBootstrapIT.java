@@ -156,6 +156,18 @@ public class MixedDefinitionBootstrapIT {
     @WorkflowContract
     public interface KeyRulesCodeV7 {}
 
+    @WorkflowContract
+    public interface ForeignSquatterV1 extends OrderDocumentSignals {}
+
+    @WorkflowContract
+    public interface ForeignCandidateV1 extends OrderDocumentSignals {}
+
+    @WorkflowContract
+    public interface ForeignActiveV1 extends OrderDocumentSignals {}
+
+    @WorkflowContract
+    public interface ForeignDeprecatedV1 extends OrderDocumentSignals {}
+
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_definition_mixed_bootstrap_it")
             .withMigration("classpath:db/migration/workflow");
@@ -660,7 +672,10 @@ public class MixedDefinitionBootstrapIT {
             Boot first = scenario.node(none());
             WorkflowDefinitionService service = first.app().definitionService();
             CompiledDefinitionRef loadedV1 = await(service.load(
-                    documentBytes(docId, 1, StaleDoc.class), DocumentFormat.YAML, source("stale-v1", loadedAt), null));
+                    WorkflowScopes.DEFAULT,
+                    documentBytes(docId, 1, StaleDoc.class),
+                    DocumentFormat.YAML,
+                    source("stale-v1", loadedAt)));
             await(service.activate(v1));
             WorkflowInstanceId pinned = await(first.app()
                     .workflowOperations()
@@ -675,23 +690,29 @@ public class MixedDefinitionBootstrapIT {
                             null,
                             null)));
             CompiledDefinitionRef loadedV2 = await(service.load(
-                    documentBytes(docId, 2, StaleDoc.class), DocumentFormat.YAML, source("stale-v2", loadedAt), null));
+                    WorkflowScopes.DEFAULT,
+                    documentBytes(docId, 2, StaleDoc.class),
+                    DocumentFormat.YAML,
+                    source("stale-v2", loadedAt)));
             await(service.activate(v2));
 
             // And version 1 deprecated, an untouched candidate version 3, and a candidate of another global id
             await(service.deprecate(v1));
             CompiledDefinitionRef loadedV3 = await(service.load(
-                    documentBytes(docId, 3, StaleDoc.class), DocumentFormat.YAML, source("stale-v3", loadedAt), null));
+                    WorkflowScopes.DEFAULT,
+                    documentBytes(docId, 3, StaleDoc.class),
+                    DocumentFormat.YAML,
+                    source("stale-v3", loadedAt)));
             await(service.load(
+                    WorkflowScopes.DEFAULT,
                     documentBytes(claimedId, 1, StaleClaimedV1.class),
                     DocumentFormat.YAML,
-                    source("stale-claimed", loadedAt),
-                    null));
+                    source("stale-claimed", loadedAt)));
             await(service.load(
+                    WorkflowScopes.DEFAULT,
                     documentBytes(nearId, 1, StaleNearV1.class),
                     DocumentFormat.YAML,
-                    source("stale-near", loadedAt),
-                    null));
+                    source("stale-near", loadedAt)));
             long bound = first.app().workflowDefinitionsConfig().maxStalenessSeconds();
             long staleAgeSeconds = 2 * bound + 60;
             // Ten seconds short of twice the bound leaves the margin that the boot needs on the database clock
@@ -880,6 +901,104 @@ public class MixedDefinitionBootstrapIT {
                     .usingRecursiveComparison()
                     .ignoringFields("changedAt")
                     .isEqualTo(candidateBefore);
+        }
+    }
+
+    @Test
+    @DisplayName("a foreign-scope row still collides with code at startup and keeps its lifecycle")
+    void foreignScopeRowStillCollidesWithCodeAndKeepsItsLifecycle(Vertx vertx) {
+        String squatterId = "mixed-bootstrap-foreign-squatter";
+        String candidateId = "mixed-bootstrap-foreign-candidate";
+        String activeId = "mixed-bootstrap-foreign-active";
+        String deprecatedId = "mixed-bootstrap-foreign-deprecated";
+        String scope = "scope-a";
+
+        try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
+            scenario.ownRows(squatterId, candidateId, activeId, deprecatedId);
+            Instant loadedAt = Instant.parse("2026-10-19T12:00:00Z");
+
+            // Given an ACTIVE row of a non-default scope for an id that carries no scope prefix
+            Boot seeder = scenario.node(none(), unobserved());
+            TenantRowSeed.seed(
+                    seeder.app(),
+                    scope,
+                    documentBytes(squatterId, 1, ForeignSquatterV1.class),
+                    source("foreign-squatter", loadedAt),
+                    DefinitionStatus.ACTIVE);
+            seeder.close();
+            assertThat(scenario.stored(scope, squatterId, 1).status()).isEqualTo("ACTIVE");
+
+            // When the application starts with code that registers the same id in the default scope
+            Boot collided = scenario.attempt(
+                    none(), unobserved(), List.of(code(squatterId, 1, ForeignSquatterV1.class, "done")), null, 10);
+
+            // Then startup fails naming both owners and stores no default-scope row
+            assertThat(collided.failure())
+                    .isNotNull()
+                    .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
+                        assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
+                        assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, squatterId, 1));
+                        assertThat(failure.getMessage()).contains(scope).containsIgnoringCase("default");
+                    });
+            collided.close();
+            assertThat(scenario.findStored(squatterId, 1)).isEmpty();
+            assertThat(scenario.stored(scope, squatterId, 1).status()).isEqualTo("ACTIVE");
+
+            // Given rows of the non-default scope in the states candidate, active and deprecated
+            scenario.removeRows(squatterId);
+            Boot rowSeeder = scenario.node(none(), unobserved());
+            DefinitionKey candidateKey = TenantRowSeed.seed(
+                    rowSeeder.app(),
+                    scope,
+                    documentBytes(candidateId, 1, ForeignCandidateV1.class),
+                    source("foreign-candidate", loadedAt),
+                    DefinitionStatus.CANDIDATE);
+            DefinitionKey activeKey = TenantRowSeed.seed(
+                    rowSeeder.app(),
+                    scope,
+                    documentBytes(activeId, 1, ForeignActiveV1.class),
+                    source("foreign-active", loadedAt),
+                    DefinitionStatus.ACTIVE);
+            DefinitionKey deprecatedKey = TenantRowSeed.seed(
+                    rowSeeder.app(),
+                    scope,
+                    documentBytes(deprecatedId, 1, ForeignDeprecatedV1.class),
+                    source("foreign-deprecated", loadedAt),
+                    DefinitionStatus.DEPRECATED);
+            rowSeeder.close();
+            assertThat(scenario.stored(scope, candidateId, 1).status()).isEqualTo("CANDIDATE");
+            assertThat(scenario.stored(scope, activeId, 1).status()).isEqualTo("ACTIVE");
+            assertThat(scenario.stored(scope, deprecatedId, 1).status()).isEqualTo("DEPRECATED");
+            Boot node = scenario.node(none(), unobserved());
+            long coolingSeconds = node.app().workflowDefinitionsConfig().maxStalenessSeconds();
+
+            // When the candidate is activated
+            await(node.app().definitionService().activate(candidateKey));
+
+            // Then it is ACTIVE and registered
+            assertThat(scenario.stored(scope, candidateId, 1).status()).isEqualTo("ACTIVE");
+            assertThat(node.app().workflowRegistry().resolve(candidateKey)).isNotNull();
+
+            // When the active row is deprecated
+            await(node.app().definitionService().deprecate(activeKey));
+
+            // Then it is DEPRECATED and stays pinnable
+            assertThat(scenario.stored(scope, activeId, 1).status()).isEqualTo("DEPRECATED");
+            assertThat(node.app().workflowRegistry().resolve(activeKey)).isNotNull();
+
+            // When the deprecated row is retired after its cooling window
+            scenario.ageStatus(deprecatedKey, coolingSeconds + 60);
+            await(node.app().definitionService().retire(deprecatedKey));
+
+            // Then it is RETIRED
+            assertThat(scenario.stored(scope, deprecatedId, 1).status()).isEqualTo("RETIRED");
+
+            // When the retired row is reinstated
+            await(node.app().definitionService().reinstate(deprecatedKey));
+
+            // Then it is the only version of its owner, so it is ACTIVE and registered again
+            assertThat(scenario.stored(scope, deprecatedId, 1).status()).isEqualTo("ACTIVE");
+            assertThat(node.app().workflowRegistry().resolve(deprecatedKey)).isNotNull();
         }
     }
 
@@ -1134,10 +1253,10 @@ public class MixedDefinitionBootstrapIT {
                     publish(service, "tenant-deprecated", deprecatedId, 2, TenantDeprecated.class);
             await(service.deprecate(new DefinitionKey("tenant-deprecated", deprecatedId, 1)));
             await(service.load(
+                    "tenant-candidate",
                     documentBytes(candidateId, 1, TenantCandidateV1.class),
                     DocumentFormat.YAML,
-                    source("tenant-candidate", loadedAt),
-                    "tenant-candidate"));
+                    source("tenant-candidate", loadedAt)));
 
             // And one id retained for a retired owner and held by another owner at the identical version and hash
             DefinitionKey retiredKey = new DefinitionKey(order.retiredTenant, sharedId, 1);
@@ -1554,10 +1673,10 @@ public class MixedDefinitionBootstrapIT {
     private static CompiledDefinitionRef publish(
             WorkflowDefinitionService service, String tenant, String definitionId, long version, Class<?> contract) {
         CompiledDefinitionRef loaded = await(service.load(
+                tenant,
                 documentBytes(definitionId, version, contract),
                 DocumentFormat.YAML,
-                source("published-" + tenant + "-" + version, Instant.parse("2026-10-18T12:00:00Z")),
-                tenant));
+                source("published-" + tenant + "-" + version, Instant.parse("2026-10-18T12:00:00Z"))));
         await(service.activate(new DefinitionKey(tenant, definitionId, version)));
         return loaded;
     }

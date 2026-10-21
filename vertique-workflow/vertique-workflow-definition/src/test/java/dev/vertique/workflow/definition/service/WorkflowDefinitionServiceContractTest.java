@@ -28,7 +28,7 @@ class WorkflowDefinitionServiceContractTest {
         assertFutureMethod(
                 WorkflowDefinitionService.class,
                 "load",
-                new Class<?>[] {byte[].class, DocumentFormat.class, SourceMetadata.class, String.class},
+                new Class<?>[] {String.class, byte[].class, DocumentFormat.class, SourceMetadata.class},
                 CompiledDefinitionRef.class);
         assertFutureMethod(
                 WorkflowDefinitionService.class, "activate", new Class<?>[] {DefinitionKey.class}, Void.class);
@@ -43,7 +43,7 @@ class WorkflowDefinitionServiceContractTest {
         assertFutureMethod(
                 DefaultWorkflowDefinitionService.class,
                 "load",
-                new Class<?>[] {byte[].class, DocumentFormat.class, SourceMetadata.class, String.class},
+                new Class<?>[] {String.class, byte[].class, DocumentFormat.class, SourceMetadata.class},
                 CompiledDefinitionRef.class);
         assertFutureMethod(
                 DefaultWorkflowDefinitionService.class, "activate", new Class<?>[] {DefinitionKey.class}, Void.class);

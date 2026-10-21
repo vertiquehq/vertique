@@ -17,6 +17,7 @@ import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowType;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
@@ -95,10 +96,10 @@ class UnknownNameEchoTest {
         return component
                 .workflowDefinitionService()
                 .load(
+                        WorkflowScopes.DEFAULT,
                         document.getBytes(StandardCharsets.UTF_8),
                         DocumentFormat.YAML,
-                        new SourceMetadata("test", "test://echo", null, null, null, Instant.now()),
-                        null);
+                        new SourceMetadata("test", "test://echo", null, null, null, Instant.now()));
     }
 
     @Test

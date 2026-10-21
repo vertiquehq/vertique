@@ -38,22 +38,30 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 /**
@@ -91,6 +99,7 @@ class DefaultWorkflowDefinitionServiceTest {
     // --- Infrastructure ---
 
     private DefaultWorkflowRegistry registry;
+    private WorkflowDefinitionStore store;
     private DefaultWorkflowDefinitionService service;
 
     @BeforeEach
@@ -131,7 +140,7 @@ class DefaultWorkflowDefinitionServiceTest {
         WorkflowDefinitionDocumentValidator validator = new WorkflowDefinitionDocumentValidator(lookup);
         WorkflowDefinitionPipeline pipeline = new WorkflowDefinitionPipeline(parser, validator, compiler);
 
-        WorkflowDefinitionStore store = new WorkflowDefinitionStore();
+        store = new WorkflowDefinitionStore();
         registry = new DefaultWorkflowRegistry();
         service = new DefaultWorkflowDefinitionService(pipeline, store, () -> registry);
     }
@@ -207,7 +216,7 @@ class DefaultWorkflowDefinitionServiceTest {
         // Given: a valid document loaded into the acme scope, with an id inside the acme namespace
         DefinitionKey acmeKey = new DefinitionKey("acme", "acme:order", 1L);
         ServiceTestHelpers.await(service.load(
-                yamlFor("acme:order", 1, SvcScopedOrderContract.class), DocumentFormat.YAML, testMeta(), "acme"));
+                "acme", yamlFor("acme:order", 1, SvcScopedOrderContract.class), DocumentFormat.YAML, testMeta()));
 
         // When: the loaded key is activated
         ServiceTestHelpers.await(service.activate(acmeKey));
@@ -221,6 +230,103 @@ class DefaultWorkflowDefinitionServiceTest {
                 .isEmpty();
     }
 
+    static Stream<Arguments> invalidScopeKeys() {
+        return Stream.of(
+                Arguments.of("null", null, NullPointerException.class),
+                Arguments.of("blank", "  ", IllegalArgumentException.class),
+                Arguments.of("256 code points", "a".repeat(256), IllegalArgumentException.class),
+                Arguments.of("control character", "ac\tme", IllegalArgumentException.class));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("invalidScopeKeys")
+    @DisplayName("load rejects an invalid scope argument before it stores anything")
+    void loadRejectsAnInvalidScopeArgument(String label, String scopeKey, Class<? extends Throwable> expected) {
+        // Given: a store-less service with a real registry and a valid document
+        byte[] document = yamlFor("svc-scoped-order", 1, SvcScopedOrderContract.class);
+        DefinitionFilter everything = new DefinitionFilter(null, null, null);
+
+        // When: the document is loaded with an invalid scope key
+        // Then: the returned future fails as the key reports it, and the message carries no document content
+        assertThatThrownBy(() ->
+                        ServiceTestHelpers.await(service.load(scopeKey, document, DocumentFormat.YAML, testMeta())))
+                .isInstanceOf(expected)
+                .satisfies(failure -> assertThat(String.valueOf(failure.getMessage()))
+                        .doesNotContain("svc-scoped-order")
+                        .doesNotContain(SvcScopedOrderContract.class.getName()));
+
+        // And: nothing was stored or registered
+        assertThat(ServiceTestHelpers.await(service.list(everything))).isEmpty();
+        assertThat(store.records(everything)).isEmpty();
+        assertThat(registry.allRegistered()).isEmpty();
+
+        // And: the same document loads when the scope is valid
+        CompiledDefinitionRef loaded =
+                ServiceTestHelpers.await(service.load("acme", document, DocumentFormat.YAML, testMeta()));
+        assertThat(loaded.definitionId()).isEqualTo("svc-scoped-order");
+        assertThat(loaded.status()).isEqualTo(ActivationStatus.CANDIDATE);
+    }
+
+    @Test
+    @DisplayName("a store-less load keeps each scope's candidates apart, whatever the id looks like")
+    void storeLessLoadsKeepEachScopesCandidatesApart() {
+        // Given: one id and version loaded into two scopes, and an id that looks like another scope's prefix
+        ServiceTestHelpers.await(
+                service.load("acme", yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta()));
+        ServiceTestHelpers.await(service.load(
+                "globex", yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta()));
+        ServiceTestHelpers.await(service.load(
+                "acme", yamlFor("globex:svc-item", 1, SvcItemV1Contract.class), DocumentFormat.YAML, testMeta()));
+
+        // When: each scope is listed
+        List<WorkflowDefinitionRecord> acme =
+                ServiceTestHelpers.await(service.list(new DefinitionFilter("acme", null, null)));
+        List<WorkflowDefinitionRecord> globex =
+                ServiceTestHelpers.await(service.list(new DefinitionFilter("globex", null, null)));
+        List<WorkflowDefinitionRecord> defaults =
+                ServiceTestHelpers.await(service.list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null)));
+
+        // Then: every candidate sits in the scope that was named, and the default scope holds none
+        assertThat(acme)
+                .extracting(WorkflowDefinitionRecord::key)
+                .containsExactly(
+                        new DefinitionKey("acme", "globex:svc-item", 1L), new DefinitionKey("acme", "svc-order", 1L));
+        assertThat(globex)
+                .extracting(WorkflowDefinitionRecord::key)
+                .containsExactly(new DefinitionKey("globex", "svc-order", 1L));
+        assertThat(defaults).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a durable load stores the row under the named scope for any id and any valid scope key")
+    void durableLoadStoresTheRowUnderTheNamedScopeForAnyId() {
+        // Given: a service bound to a durable store
+        WorkflowDefinitionRegistryStore durable = Mockito.mock(WorkflowDefinitionRegistryStore.class);
+        Mockito.when(durable.insertCandidate(
+                        Mockito.any(WorkflowDefinitionRecord.class), Mockito.any(WorkflowDefinitionDocument.class)))
+                .thenReturn(io.vertx.core.Future.succeededFuture());
+        DefaultWorkflowDefinitionService durableService = new DefaultWorkflowDefinitionService(
+                buildPipeline(),
+                new WorkflowDefinitionStore(),
+                () -> new DefaultWorkflowRegistry(),
+                Optional.of(durable),
+                Optional.empty(),
+                Optional.empty());
+
+        // When: ids that name another scope, and a scope key that holds a colon, are loaded
+        ServiceTestHelpers.await(durableService.load(
+                "t1", yamlFor("t2:svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta()));
+        ServiceTestHelpers.await(durableService.load(
+                "a:b", yamlFor("svc-item", 1, SvcItemV1Contract.class), DocumentFormat.YAML, testMeta()));
+
+        // Then: each row is keyed by the scope argument and the id as the document declares it
+        ArgumentCaptor<WorkflowDefinitionRecord> stored = ArgumentCaptor.forClass(WorkflowDefinitionRecord.class);
+        Mockito.verify(durable, Mockito.times(2)).insertCandidate(stored.capture(), Mockito.any());
+        assertThat(stored.getAllValues())
+                .extracting(WorkflowDefinitionRecord::key)
+                .containsExactly(new DefinitionKey("t1", "t2:svc-order", 1L), new DefinitionKey("a:b", "svc-item", 1L));
+    }
+
     @Nested
     @DisplayName("load then activate")
     class LoadThenActivate {
@@ -229,7 +335,10 @@ class DefaultWorkflowDefinitionServiceTest {
         @DisplayName("load then activate makes the definition resolvable via the registry")
         void loadThenActivateSucceeds() {
             ServiceTestHelpers.await(service.load(
-                    yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
+                    WorkflowScopes.DEFAULT,
+                    yamlFor("svc-order", 1, SvcOrderContract.class),
+                    DocumentFormat.YAML,
+                    testMeta()));
             ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
 
             RuntimeWorkflow rw = registry.resolveCurrent("svc-order");
@@ -244,7 +353,10 @@ class DefaultWorkflowDefinitionServiceTest {
             assertThatThrownBy(records::clear).isInstanceOf(UnsupportedOperationException.class);
 
             ServiceTestHelpers.await(service.load(
-                    yamlFor("svc-item", 1, SvcItemV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+                    WorkflowScopes.DEFAULT,
+                    yamlFor("svc-item", 1, SvcItemV1Contract.class),
+                    DocumentFormat.YAML,
+                    testMeta()));
             assertThat(records)
                     .hasSize(1)
                     .extracting(WorkflowDefinitionRecord::key)
@@ -261,15 +373,18 @@ class DefaultWorkflowDefinitionServiceTest {
         void invalidYamlDoesNotAffectPriorActive() {
             // Establish v1 as active
             ServiceTestHelpers.await(service.load(
-                    yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
+                    WorkflowScopes.DEFAULT,
+                    yamlFor("svc-order", 1, SvcOrderContract.class),
+                    DocumentFormat.YAML,
+                    testMeta()));
             ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
             assertThat(registry.resolveCurrent("svc-order").plan().definitionVersion())
                     .isEqualTo(1L);
 
             // Attempt to load bad YAML for v2 — must fail
             byte[] badYaml = "this: is: not valid yaml: for: workflow".getBytes(StandardCharsets.UTF_8);
-            assertThatThrownBy(() ->
-                            ServiceTestHelpers.await(service.load(badYaml, DocumentFormat.YAML, testMeta(), null)))
+            assertThatThrownBy(() -> ServiceTestHelpers.await(
+                            service.load(WorkflowScopes.DEFAULT, badYaml, DocumentFormat.YAML, testMeta())))
                     .isInstanceOf(WorkflowDefinitionParseException.class);
 
             // v1 still active in registry
@@ -302,11 +417,17 @@ class DefaultWorkflowDefinitionServiceTest {
                 "load+activate v2, then load+activate v1 — registry resolves v2, store shows v2 ACTIVE v1 SUPERSEDED")
         void activateLowerVersionAfterHigherIsSuperseded() {
             ServiceTestHelpers.await(service.load(
-                    yamlFor("svc-order", 2, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
+                    WorkflowScopes.DEFAULT,
+                    yamlFor("svc-order", 2, SvcOrderContract.class),
+                    DocumentFormat.YAML,
+                    testMeta()));
             ServiceTestHelpers.await(service.activate(key("svc-order", 2)));
 
             ServiceTestHelpers.await(service.load(
-                    yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
+                    WorkflowScopes.DEFAULT,
+                    yamlFor("svc-order", 1, SvcOrderContract.class),
+                    DocumentFormat.YAML,
+                    testMeta()));
             ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
 
             // Registry must return the higher (v2) version
@@ -341,13 +462,19 @@ class DefaultWorkflowDefinitionServiceTest {
 
             futures.add(pool.submit(() -> {
                 ServiceTestHelpers.await(service.load(
-                        yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
+                        WorkflowScopes.DEFAULT,
+                        yamlFor("svc-order", 1, SvcOrderContract.class),
+                        DocumentFormat.YAML,
+                        testMeta()));
                 ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
                 return null;
             }));
             futures.add(pool.submit(() -> {
                 ServiceTestHelpers.await(service.load(
-                        yamlFor("svc-item", 1, SvcItemV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+                        WorkflowScopes.DEFAULT,
+                        yamlFor("svc-item", 1, SvcItemV1Contract.class),
+                        DocumentFormat.YAML,
+                        testMeta()));
                 ServiceTestHelpers.await(service.activate(key("svc-item", 1)));
                 return null;
             }));
@@ -377,7 +504,10 @@ class DefaultWorkflowDefinitionServiceTest {
         void concurrentActivateSameKeySerialized() throws Exception {
             // Load the candidate once
             ServiceTestHelpers.await(service.load(
-                    yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
+                    WorkflowScopes.DEFAULT,
+                    yamlFor("svc-order", 1, SvcOrderContract.class),
+                    DocumentFormat.YAML,
+                    testMeta()));
 
             int numThreads = 8;
             ExecutorService pool = Executors.newFixedThreadPool(numThreads);
@@ -486,8 +616,11 @@ class DefaultWorkflowDefinitionServiceTest {
             DefaultWorkflowDefinitionService svc =
                     new DefaultWorkflowDefinitionService(buildPipeline(), errorStore, () -> throwingRegistry);
 
-            ServiceTestHelpers.await(
-                    svc.load(yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
+            ServiceTestHelpers.await(svc.load(
+                    WorkflowScopes.DEFAULT,
+                    yamlFor("svc-order", 1, SvcOrderContract.class),
+                    DocumentFormat.YAML,
+                    testMeta()));
 
             // activate() must propagate the RuntimeException (not swallow it)
             assertThatThrownBy(() -> ServiceTestHelpers.await(svc.activate(key("svc-order", 1))))
@@ -510,8 +643,8 @@ class DefaultWorkflowDefinitionServiceTest {
         @DisplayName("document exceeding 256 KiB is rejected before parsing")
         void oversizedDocumentIsRejected() {
             byte[] oversized = new byte[WorkflowDefinitionsConfig.defaults().maxDocumentSizeBytes() + 1];
-            assertThatThrownBy(() ->
-                            ServiceTestHelpers.await(service.load(oversized, DocumentFormat.YAML, testMeta(), null)))
+            assertThatThrownBy(() -> ServiceTestHelpers.await(
+                            service.load(WorkflowScopes.DEFAULT, oversized, DocumentFormat.YAML, testMeta())))
                     .isInstanceOf(WorkflowDefinitionException.class)
                     .hasMessageContaining("maxDocumentSizeBytes");
         }
@@ -520,8 +653,8 @@ class DefaultWorkflowDefinitionServiceTest {
         @DisplayName("document exactly at the size cap is not rejected by the guard (may fail for other reasons)")
         void documentAtCapNotRejectedBySizeGuard() {
             byte[] atCap = new byte[WorkflowDefinitionsConfig.defaults().maxDocumentSizeBytes()];
-            assertThatThrownBy(
-                            () -> ServiceTestHelpers.await(service.load(atCap, DocumentFormat.YAML, testMeta(), null)))
+            assertThatThrownBy(() -> ServiceTestHelpers.await(
+                            service.load(WorkflowScopes.DEFAULT, atCap, DocumentFormat.YAML, testMeta())))
                     .isInstanceOf(WorkflowDefinitionParseException.class);
         }
     }

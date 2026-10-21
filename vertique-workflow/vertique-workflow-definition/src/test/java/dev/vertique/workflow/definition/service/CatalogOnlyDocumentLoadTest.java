@@ -155,10 +155,10 @@ class CatalogOnlyDocumentLoadTest {
         return component
                 .workflowDefinitionService()
                 .load(
+                        WorkflowScopes.DEFAULT,
                         document.getBytes(StandardCharsets.UTF_8),
                         DocumentFormat.YAML,
-                        new SourceMetadata("test", "test://document", null, null, null, Instant.now()),
-                        null);
+                        new SourceMetadata("test", "test://document", null, null, null, Instant.now()));
     }
 
     // --- Tests ---
