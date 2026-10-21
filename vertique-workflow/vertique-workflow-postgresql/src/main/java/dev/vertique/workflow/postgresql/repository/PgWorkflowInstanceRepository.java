@@ -266,7 +266,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * transaction. A missing row, a version other than {@code expectedVersion} or a persisted status that
      * is not terminal returns {@code 0}. A persisted terminal status means the update would resurrect a
      * finished instance: the pinned version is then admitted (see {@link DefinitionPinAdmission}; a
-     * deprecated version still admits it, a retired, candidate or activating one, or a different plan
+     * deprecated version still admits it, a retired, candidate or publishing one, or a different plan
      * hash, does not) and the original update is run again. A refusal fails the returned future.
      *
      * @param updated         the updated workflow instance snapshot to write

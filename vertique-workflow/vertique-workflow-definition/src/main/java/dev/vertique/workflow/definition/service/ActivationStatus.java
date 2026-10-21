@@ -44,24 +44,6 @@ public enum ActivationStatus {
      */
     AVAILABLE,
 
-    /**
-     * Superseded by {@link #PUBLISHING} and {@link #AVAILABLE}; nothing sets it any more.
-     * It is removed in the next breaking release.
-     */
-    ACTIVATING,
-
-    /**
-     * Superseded by {@link #AVAILABLE}; nothing sets it any more.
-     * It is removed in the next breaking release.
-     */
-    ACTIVE,
-
-    /**
-     * Superseded by {@link #AVAILABLE}; nothing sets it any more.
-     * It is removed in the next breaking release.
-     */
-    SUPERSEDED,
-
     /** New starts are refused while pinned resumes remain available. */
     DEPRECATED,
 

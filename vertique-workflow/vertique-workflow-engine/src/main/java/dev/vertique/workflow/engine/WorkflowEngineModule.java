@@ -173,7 +173,7 @@ public abstract class WorkflowEngineModule {
     static ComposeValidator reminderComposeValidator(WorkflowReminderComposeValidator impl) {
         return impl;
     }
-    /** Provides durable activation without changing standalone registry construction. */
+    /** Provides durable publication without changing standalone registry construction. */
     @Binds
     @Singleton
     abstract dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle(

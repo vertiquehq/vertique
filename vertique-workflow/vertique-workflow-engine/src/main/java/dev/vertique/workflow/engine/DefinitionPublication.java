@@ -21,7 +21,7 @@ import java.util.Set;
 /**
  * The mechanics that every managed publisher of an executable definition shares: reading what the registry holds
  * for a version, choosing the loader of a document format, checking a stored code row against the deployed code,
- * and registering a definition under the owner's attribution.
+ * and registering a definition under the key's attribution.
  *
  * <p>The methods are stateless. Callers make them under the {@link DefinitionApplyQueue} slot of the id.
  */

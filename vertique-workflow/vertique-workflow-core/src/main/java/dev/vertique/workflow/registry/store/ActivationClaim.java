@@ -6,7 +6,7 @@ package dev.vertique.workflow.registry.store;
 import java.util.Objects;
 import java.util.UUID;
 
-/** One fenced activation attempt; an obsolete token cannot complete or release another attempt. */
+/** One fenced publication attempt; an obsolete token cannot complete or release another attempt. */
 public record ActivationClaim(DefinitionKey key, UUID token) {
     public ActivationClaim {
         Objects.requireNonNull(key, "key");

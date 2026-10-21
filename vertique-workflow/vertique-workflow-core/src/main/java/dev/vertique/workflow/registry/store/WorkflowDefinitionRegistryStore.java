@@ -7,7 +7,7 @@ import io.vertx.core.Future;
 import java.util.List;
 import java.util.Optional;
 
-/** SQL-free transactional registry. Mutations serialize by definition id and fence activation tokens. */
+/** SQL-free transactional registry. Mutations serialize by definition id and fence publication tokens. */
 public interface WorkflowDefinitionRegistryStore {
     /**
      * Inserts a candidate definition and its source document together.
@@ -44,8 +44,8 @@ public interface WorkflowDefinitionRegistryStore {
 
     /**
      * Reconciles a document definition and its source text with the persisted registry. An absent key is
-     * inserted as a superseded definition. For an existing document definition with a matching plan hash,
-     * provenance is refreshed; hash drift, a kind mismatch, or an owner conflict is reported by the outcome.
+     * inserted as an available definition. For an existing document definition with a matching plan hash,
+     * provenance is refreshed; hash drift or a kind mismatch is reported by the outcome.
      *
      * @param record metadata and provenance for the document definition
      * @param document source text associated with the definition
@@ -55,16 +55,14 @@ public interface WorkflowDefinitionRegistryStore {
 
     /**
      * Reconciles a definition that the deployed code provides with the persisted registry, as startup does. The
-     * record must be a default-scope {@code CODE} record without document text. An absent key is inserted as a
-     * superseded definition, so that the active membership is decided afterwards by
-     * {@link #recomputeActive}. For an existing code definition with the same plan hash, provenance is refreshed
+     * record must be a default-scope {@code CODE} record without document text. An absent key is inserted as an
+     * available definition. For an existing code definition with the same plan hash, provenance is refreshed
      * and the outcome is {@code UNCHANGED}. When the plan hash differs, the store decides inside its own
      * transaction, under the definition id lock, whether any instance pinned to exactly this version is still
      * running, waiting or compensating, archived instances included: with none the stored hash is replaced
      * ({@code REHASHED}), otherwise the outcome is {@code DRIFT} and nothing changes. There is no way for the
      * caller to force a replacement. A row of the same key that is a document definition is reported as
-     * {@code KIND_CONFLICT}, and another owner that holds the definition id as {@code OWNER_CONFLICT}. The
-     * status of an existing row is never changed.
+     * {@code KIND_CONFLICT}. The status of an existing row is never changed.
      *
      * @param record metadata and provenance for the code definition
      * @return a future containing the reconciliation outcome after the transaction completes
@@ -72,53 +70,46 @@ public interface WorkflowDefinitionRegistryStore {
     Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record);
 
     /**
-     * Claims an eligible candidate for activation, or reclaims this key's stale activation attempt, and
+     * Claims an eligible candidate for publication, or reclaims this key's stale publication attempt, and
      * returns a unique token identifying the attempt.
      *
      * @param key scoped definition key to claim
-     * @return a future containing the token-fenced activation claim
+     * @return a future containing the token-fenced publication claim
      */
     Future<ActivationClaim> claim(DefinitionKey key);
 
     /**
-     * Completes the current activation claim when its token still matches and no other owner holds the
-     * definition id. The result is active unless a higher version for the same owner is already active,
-     * in which case the result is superseded.
+     * Completes the current publication claim when its token still matches: the claimed row becomes
+     * {@code AVAILABLE} and its token is cleared. No other row changes, so any number of versions and scopes of one
+     * id stay available together.
      *
-     * @param claim token-fenced activation claim to complete
-     * @return a future containing the resulting membership
+     * @param claim token-fenced publication claim to complete
+     * @return a future completed when the claimed row is available
      */
-    Future<ActivationOutcome> complete(ActivationClaim claim);
+    Future<Void> complete(ActivationClaim claim);
 
     /**
-     * Returns a matching activation attempt to candidate status. A claim with an obsolete or mismatched
+     * Returns a matching publication attempt to candidate status. A claim with an obsolete or mismatched
      * token has no effect.
      *
-     * @param claim token-fenced activation claim to release
+     * @param claim token-fenced publication claim to release
      * @return a future completed when the matching claim is released
      */
     Future<Void> release(ActivationClaim claim);
 
     /**
      * Conditionally moves one definition from an expected status to a new status under the definition id
-     * lock. The row must exist, be owned consistently with the other rows of the id, and currently have the
-     * expected {@code from} status; otherwise the returned future fails with a
-     * {@link dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException} naming the key and no row
-     * changes. Only the transitions the store supports are accepted: {@code ACTIVE} to {@code DEPRECATED},
-     * {@code SUPERSEDED} to {@code DEPRECATED} and {@code RETIRED} to {@code SUPERSEDED}. Any other pair is
-     * refused as an invalid transition, and activation changes use only the claim, complete and release
-     * operations. A change to {@code DEPRECATED} does not recompute or promote any other row, and every change
-     * refreshes the status change time.
+     * lock. The row must exist and currently have the expected {@code from} status; otherwise the returned future
+     * fails with a {@link dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException} naming the key and
+     * no row changes. Only the transitions the store supports are accepted: {@code AVAILABLE} to
+     * {@code DEPRECATED}, {@code DEPRECATED} to {@code AVAILABLE} and {@code RETIRED} to {@code AVAILABLE}. Any
+     * other pair is refused as an invalid transition before any statement is issued, and publication changes use
+     * only the claim, complete and release operations. A change affects only the addressed row and refreshes its
+     * status change time.
      *
-     * <p>{@code RETIRED} to {@code SUPERSEDED} is the reinstatement primitive; the {@link WorkflowDefinitionLifecycle}
-     * enforces the preconditions that an executable source is available and that its hash equals the recorded
-     * one, and the store does not. In one exclusive transaction the
-     * store checks that the row exists and is retired and that no other owner holds the id, marks the row
-     * superseded, and then settles the active version of that owner and id over its active and superseded rows:
-     * lower active rows are demoted before the highest version is promoted, so the reinstated row becomes
-     * active when it is the highest and stays superseded otherwise. Deprecated rows stay excluded. A failure at
-     * any point rolls back every change of the transaction, leaving the retired row and the previous active row
-     * as they were. The failure is typed as an owner conflict when another owner holds the id.
+     * <p>The last two are the reinstatement primitives; the {@link WorkflowDefinitionLifecycle} enforces the
+     * preconditions that an executable source is available and that its hash equals the recorded one, and the store
+     * does not.
      *
      * @param key scoped definition key to change
      * @param from the status the row is required to have
@@ -145,41 +136,14 @@ public interface WorkflowDefinitionRegistryStore {
     Future<Void> retire(DefinitionKey key);
 
     /**
-     * Resets the stale activation attempts of one definition id to candidate status, as startup does. Under the
-     * definition id lock, every row of the id, whatever its owner, that is {@code ACTIVATING} and whose last
-     * status change is older than twice the configured staleness bound, measured by the database clock after the
-     * lock is held, becomes {@code CANDIDATE} with its activation token cleared and its status change time
-     * refreshed. Younger activation attempts and rows in other statuses are not touched.
-     *
-     * @param definitionId the definition id whose stale activation attempts are reset
-     * @return a future completed after the store-owned transaction commits
-     */
-    Future<Void> resetStaleActivating(String definitionId);
-
-    /**
      * Resets the stale publication attempts of one definition id to candidate status, as startup does. Under the
-     * definition id lock, every row of the id that is being published and whose last status change is older than
+     * definition id lock, every row of the id that is {@code PUBLISHING} and whose last status change is older than
      * twice the configured staleness bound, measured by the database clock after the lock is held, becomes
-     * {@code CANDIDATE} with its claim token cleared and its status change time refreshed. Younger attempts and
-     * rows in other statuses are not touched.
+     * {@code CANDIDATE} with its claim token cleared and its status change time refreshed. Younger publication
+     * attempts and rows in other statuses are not touched.
      *
      * @param definitionId the definition id whose stale publication attempts are reset
      * @return a future completed after the store-owned transaction commits
      */
-    default Future<Void> resetStalePublishing(String definitionId) {
-        return resetStaleActivating(definitionId);
-    }
-
-    /**
-     * Recomputes active membership for one exact scope and definition id. Only ACTIVE and
-     * SUPERSEDED rows participate; the highest version becomes ACTIVE and lower eligible versions
-     * become SUPERSEDED. Other statuses, scopes, and definition ids are left unchanged. The
-     * returned future fails with {@link IllegalArgumentException} for an invalid scope key or
-     * definition id, before any storage access.
-     *
-     * @param scopeKey the exact scope; {@link WorkflowScopes#DEFAULT} for the default scope
-     * @param definitionId the definition id to recompute
-     * @return a future completed after the store-owned transaction commits
-     */
-    Future<Void> recomputeActive(String scopeKey, String definitionId);
+    Future<Void> resetStalePublishing(String definitionId);
 }

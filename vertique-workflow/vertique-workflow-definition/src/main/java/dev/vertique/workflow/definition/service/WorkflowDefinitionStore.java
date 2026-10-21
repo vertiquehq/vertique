@@ -168,7 +168,7 @@ public final class WorkflowDefinitionStore {
     public boolean tryClaimForActivation(String definitionId, long definitionVersion) {
         Optional<DefinitionKey> key = legacyKey(definitionId, definitionVersion);
         if (key.isEmpty()) {
-            throw new WorkflowDefinitionException("cannot activate definition '" + definitionId + "' v"
+            throw new WorkflowDefinitionException("cannot publish definition '" + definitionId + "' v"
                     + definitionVersion + ": not found in the store; call load() first");
         }
         return tryClaimForActivation(key.get());
@@ -180,7 +180,7 @@ public final class WorkflowDefinitionStore {
         Objects.requireNonNull(definitionId, "definitionId");
         StoredEntry entry = byKey.get(key);
         if (entry == null) {
-            throw new WorkflowDefinitionException("cannot activate definition '" + definitionId + "' v"
+            throw new WorkflowDefinitionException("cannot publish definition '" + definitionId + "' v"
                     + definitionVersion + ": not found in the store; call load() first");
         }
         // Attempt atomic CANDIDATE -> PUBLISHING flip; return true only if this caller won

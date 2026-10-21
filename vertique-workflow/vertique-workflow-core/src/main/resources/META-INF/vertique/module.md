@@ -134,7 +134,7 @@ A registered version is identified by a `DefinitionKey`: the scope that owns it,
 Registration runs the plan checks and the callback consistency check, indexes the definition's type names (see Logical Type Names), then every contributed
 `WorkflowDefinitionValidator`, and only then publishes the definition. The validator step applies to
 bootstrap and runtime registrations alike. A validator exception propagates unchanged to the caller
-of `register` or `activate` and leaves the `(definitionId, version)` pair unresolvable.
+of `register` or `publish` and leaves the `(definitionId, version)` pair unresolvable.
 
 ### Workflow Operations
 
@@ -368,8 +368,8 @@ a definition before it is published. Applications should not implement them.
   empty set.
 - **Unordered.** The validator set has no defined order; a validator must not depend on another one
   having run.
-- **Synchronous.** Validators run on the thread that calls `register` or `activate`, so call
-  `activate` off the event loop.
+- **Synchronous.** Validators run on the thread that calls `register` or `publish`, so call
+  `publish` off the event loop.
 
 ### WorkflowActorMapper
 
@@ -415,7 +415,7 @@ WorkflowActorMapper customActorMapper() {
 ## Durable Definition Registry
 
 `dev.vertique.workflow.registry.store` supplies SQL-free metadata and source values, the
-`WorkflowDefinitionRegistryStore` persistence SPI, and `WorkflowDefinitionLifecycle.activate(DefinitionKey)`.
+`WorkflowDefinitionRegistryStore` persistence SPI, and `WorkflowDefinitionLifecycle.publish(DefinitionKey)`.
 A `DefinitionKey` carries a required scope key (`WorkflowScopes.DEFAULT` for the default scope), definition id, and
 positive version; ids and scope keys are nonblank, at most 255 code points and free of control characters, and
 provenance text is bounded (source type 64, URI 2048, revision, author and upload id 255 code points). A
@@ -426,15 +426,24 @@ type name of the definition; a CODE record belongs to the default scope. Source 
 as `WorkflowDefinitionDocument`. Source URIs are opaque attribution and are never fetched on restore.
 
 The store provides candidate insertion, metadata lookup/list, guarded source lookup, static document
-reconciliation, fenced claim/complete/release operations, and
-`recomputeActive(String scopeKey, String definitionId)`. Recompute is scoped to that exact
-scope and id: the highest ACTIVE or SUPERSEDED version becomes ACTIVE and lower eligible versions
-become SUPERSEDED; CANDIDATE, ACTIVATING, DEPRECATED, and RETIRED rows remain unchanged.
+reconciliation, and fenced claim/complete/release operations. A definition row has one of five statuses:
+`CANDIDATE` (loaded, not published), `PUBLISHING` (a node holds the fenced claim), `AVAILABLE` (published: it can be
+started, pinned and resolved), `DEPRECATED` (new starts and migrations are refused while pinned instances keep running) and
+`RETIRED` (retained metadata without an executable). Any number of versions and scopes of one definition id are
+`AVAILABLE` at once; no store or lifecycle operation chooses one of them, and `complete(claim)` changes only the claimed row.
+Which version starts by default is decided separately from the status. The transitions are `CANDIDATE` to `PUBLISHING` (claim) to
+`AVAILABLE` (complete), or back to `CANDIDATE` (release, or the reset of a stale claim); `CANDIDATE` to `RETIRED`;
+`AVAILABLE` to `DEPRECATED`; `DEPRECATED` to `RETIRED` after the cooling window and with no live pinned instance; and
+`DEPRECATED` or `RETIRED` back to `AVAILABLE` (reinstate). Every other pair is refused with `INVALID_TRANSITION`, and a
+repeat of a completed transition (publishing an available version, deprecating a deprecated one, retiring a retired one) is
+accepted without a change.
 `WorkflowRegistry` gains `markDeprecated(DefinitionKey)` (default throws
-`UnsupportedOperationException`) and `isDeprecated(DefinitionKey)` (default `false`), which have defaults so
-they did not break implementations that existed then. `DefaultWorkflowRegistry` keeps the mark under its lock: current resolution skips deprecated
+`UnsupportedOperationException`), `unmarkDeprecated(DefinitionKey)` (default throws `UnsupportedOperationException`) and
+`isDeprecated(DefinitionKey)` (default `false`), which have defaults so
+they do not break implementations that exist. `DefaultWorkflowRegistry` keeps the mark under its lock: current resolution skips deprecated
 versions and fails with the same unknown-definition exception when all are deprecated, pinned resolution still serves them, and
-`unregister` clears the mark. Marking an unregistered version is a no-op. The store SPI adds the
+`unregister` clears the mark. Marking an unregistered version is a no-op, and `unmarkDeprecated` clears the mark of a
+reinstated deprecated version without touching its registration. The store SPI adds the
 conditional `transition(key, from, to)` operation and the lifecycle adds `deprecate(DefinitionKey)`.
 The store adds `retire(DefinitionKey)` and the lifecycle adds `retire(DefinitionKey)` (CANDIDATE, or DEPRECATED after the
 cooling window with no live pinned instance); `WorkflowInstanceQueryService.countNonTerminal(DefinitionKey)` (and the default-scope
@@ -444,19 +453,18 @@ implementations backed by the Vert.x SQL engine receive a `SqlConnection` with a
 a runtime directly through `WorkflowRegistry` is not seen as managed by the durable lifecycle: a managed deprecate or retire
 of such a version fails with `INVALID_TRANSITION` rather than taking it over.
 The lifecycle and the definition service also add `reinstate(DefinitionKey)`; the store performs it as `transition(key, RETIRED,
-SUPERSEDED)` with the membership recomputation inside the same transaction.
-The store also adds `upsertCode` (startup record of deployed code: rehash only while no live instance is pinned to
-that exact version, decided inside the store transaction) and `resetStaleActivating` (claims older than twice the
+AVAILABLE)` or `transition(key, DEPRECATED, AVAILABLE)`.
+The store also adds `upsertCode` (startup record of deployed code as `AVAILABLE`: rehash only while no live instance is pinned to
+that exact version, decided inside the store transaction) and `resetStalePublishing` (claims older than twice the
 staleness bound return to CANDIDATE). `WorkflowRegistry.registeredDefinition(key)` is an internal default-empty
 hook that the default registry fills with the source definition it registered; it is empty after `unregister`.
-Candidates of different owners (scope keys) may coexist for one id, but only one owner holds
-the id's executable membership; a claim, completion or static reconciliation by another owner fails with
-`OWNER_CONFLICT`.
+Rows of different scopes and versions of one id coexist and do not conflict: a claim, completion or static reconciliation
+looks only at its own row.
 `WorkflowCoreModule` declares optional
 store, lifecycle, and configuration bindings plus the loader multibinding. Without persistence, the
 standalone definition graph needs neither a database nor a configuration parser. `WorkflowRegistry.unregister(DefinitionKey)`
 removes a version; third-party registries must implement it to support durable
-activation compensation. Its default throws explicitly.
+publication compensation. Its default throws explicitly.
 
 ### Document Policy Configuration
 
@@ -467,7 +475,7 @@ the defaults and introduces no parser dependency into the graph.
 
 | Property | Default | Meaning |
 |---|---|---|
-| `workflow.definitions.maxStalenessSeconds` | `30` | Positive registry timing bound: the peer reconciliation period, the cooling window before a deprecated version may retire, and (doubled) the age at which an activation claim becomes reclaimable |
+| `workflow.definitions.maxStalenessSeconds` | `30` | Positive registry timing bound: the peer reconciliation period, the cooling window before a deprecated version may retire, and (doubled) the age at which a publication claim becomes reclaimable |
 | `workflow.definitions.maxDocumentSizeBytes` | `262144` | Positive runtime input-byte limit L; L + floor(L/2) must fit an integer |
 
 `maxStoredDocumentSizeBytes()` derives floor(3L/2). Durable source text must fit both that UTF-8 byte
@@ -477,7 +485,7 @@ raise it on every node before admitting larger documents. Before lowering it, en
 required for restoration fit the new envelope; otherwise startup fails explicitly and a periodic reconciliation counts and retries the row.
 
 `WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
-including stale claims, ownership conflicts, missing loaders, and plan drift. Asynchronous entrypoints
+including stale claims, unavailable code, missing loaders, and plan drift. Asynchronous entrypoints
 report invalid arguments through failed Futures.
 
 ---

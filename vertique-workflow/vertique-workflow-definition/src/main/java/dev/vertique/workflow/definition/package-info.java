@@ -23,7 +23,7 @@
  *       documents and adapts the result into a {@code WorkflowDefinition}.
  *   <li>{@code pipeline} — Parse + validate + compile chain shared between bootstrap and runtime.
  *   <li>{@code source} — Application-provided source SPIs.
- *   <li>{@code service} — Public runtime {@code WorkflowDefinitionService} (load + activate).
+ *   <li>{@code service} — Public runtime {@code WorkflowDefinitionService} (load + publish).
  *   <li>{@code di} — Dagger module wiring.
  * </ul>
  *

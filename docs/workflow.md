@@ -246,12 +246,12 @@ steps:
 
 Document definitions are not currently no-code object schemas. They still reference Java classes and named callbacks.
 
-Runtime management uses Futures. Load a candidate into a scope, then activate its durable key:
+Runtime management uses Futures. Load a candidate into a scope, then publish its durable key:
 
 ```java
-Future<CompiledDefinitionRef> activated = definitionService
+Future<CompiledDefinitionRef> published = definitionService
         .load("acme", content, DocumentFormat.YAML, sourceMetadata)
-        .compose(ref -> definitionService.activate(new DefinitionKey(
+        .compose(ref -> definitionService.publish(new DefinitionKey(
                 "acme", ref.definitionId(), ref.definitionVersion())).map(ref));
 ```
 
@@ -274,22 +274,20 @@ definitions, their lifecycle status and their document sources survive restarts 
   in memory, the service keeps its local outcomes behind the same `Future` signatures, the startup step does no I/O
   and no timer is scheduled. `deprecate`, `retire` and `reinstate` need the store and fail without one.
 - **Identity.** A row is identified by `DefinitionKey(scopeKey, definitionId, definitionVersion)`. The scope key is
-  required; `WorkflowScopes.DEFAULT` is the default scope, which code definitions always use. One owner at a time holds a definition id; a second owner's claim fails with `OWNER_CONFLICT`.
+  required; `WorkflowScopes.DEFAULT` is the default scope, which code definitions always use. Any number of versions and scopes of one id are available at once.
 - **Definition ids.** Ids are unprefixed: the document id is the definition id everywhere it is used
-  (`StartCommand.definitionId`, pinned resolution, migration targets). One owner scope holds an id at a time. A document
-  whose id a code definition or another scope already holds is refused with `OWNER_CONFLICT`; a code definition that
-  collides with a stored document id fails startup. Cross-scope ownership is enforced only with a registry store; in
-  memory the local registry shadows instead. `load` and `activate` take any scope key, so restrict them to trusted
-  callers and never forward their refusal messages to tenants: a refusal can name other scopes and plan hashes.
+  (`StartCommand.definitionId`, pinned resolution, migration targets). A document may use the id of a code definition or of
+  another scope's document, and each scope numbers its own versions. `load` and `publish` take any scope key, so restrict
+  them to trusted callers and never forward their refusal messages to tenants: a refusal can name other scopes and plan hashes.
 
 ### Code and document definitions
 
 | Kind | Where it comes from | Row |
 |---|---|---|
-| `CODE` | Definitions the application registers in Java, including contributors | Global owner, recorded at startup |
-| `DOCUMENT` | Packaged YAML/JSON sources and documents loaded at runtime | Any owner, with source text, format and provenance |
+| `CODE` | Definitions the application registers in Java, including contributors | Default scope, recorded at startup |
+| `DOCUMENT` | Packaged YAML/JSON sources and documents loaded at runtime | Any scope, with source text, format and provenance |
 
-Code registers itself from the deployed application, so `load` and `activate` apply to documents only.
+Code registers itself from the deployed application, so `load` and `publish` apply to documents only.
 `deprecate`, `retire` and `reinstate` apply to both kinds.
 
 ### Lifecycle
@@ -297,18 +295,20 @@ Code registers itself from the deployed application, so `load` and `activate` ap
 | Status | Meaning |
 |---|---|
 | `CANDIDATE` | Loaded and compiled, not published |
-| `ACTIVATING` | A node holds a short-lived activation claim; a claim older than twice the staleness bound counts as abandoned |
-| `ACTIVE` | The highest non-deprecated live version of an owner and id; new starts resolve to it |
-| `SUPERSEDED` | Live, but a higher version is active; pinned instances keep running |
+| `PUBLISHING` | A node holds a short-lived publication claim; a claim older than twice the staleness bound counts as abandoned |
+| `AVAILABLE` | Published: it can be started explicitly, pinned and resolved. Any number of versions and scopes of one id are available together; which version starts by default is selected separately |
 | `DEPRECATED` | Live for pinned instances; refused for new starts and migration targets |
 | `RETIRED` | Retained metadata only; no executable membership |
 
 | Operation | Moves | Typical failure reasons |
 |---|---|---|
-| `activate` | `CANDIDATE` to `ACTIVE` or `SUPERSEDED` | `OWNER_CONFLICT`, `STALE_CLAIM`, `DRIFT`, `LOADER_MISSING` |
-| `deprecate` | `ACTIVE` or `SUPERSEDED` to `DEPRECATED` | `INVALID_TRANSITION` |
+| `publish` | `CANDIDATE` to `AVAILABLE` through `PUBLISHING` | `STALE_CLAIM`, `DRIFT`, `LOADER_MISSING`, `INVALID_TRANSITION` |
+| `deprecate` | `AVAILABLE` to `DEPRECATED` | `INVALID_TRANSITION` |
 | `retire` | `CANDIDATE`, or a cooled `DEPRECATED` row, to `RETIRED` | `COOLING`, `PINNED_INSTANCES`, `INVALID_TRANSITION` |
-| `reinstate` | `RETIRED` to `ACTIVE` or `SUPERSEDED` | `CODE_UNAVAILABLE`, `OWNER_CONFLICT`, `DRIFT`, `LOADER_MISSING`, `INVALID_TRANSITION` |
+| `reinstate` | `DEPRECATED` or `RETIRED` to `AVAILABLE` | `CODE_UNAVAILABLE`, `DRIFT`, `LOADER_MISSING`, `INVALID_TRANSITION` |
+
+Every other status pair is refused with `INVALID_TRANSITION`. Repeating a completed operation (publishing an available
+version, deprecating a deprecated one, retiring a retired one) is accepted without a change.
 
 Refusals are `WorkflowDefinitionLifecycleException` instances with a `reason()` and the `key()`; other failures, such as
 no bound store, an invalid key or a lock timeout, use their own exception types. They arrive as failed `Future`s, never as
@@ -317,14 +317,15 @@ synchronous exceptions.
 - **Deprecation.** `resolveCurrent` skips a deprecated version, and fails with the unknown-definition exception when
   every version is deprecated. An explicit-version start and a `migrate` whose target is deprecated fail with
   reason `DEPRECATED`. Signals, timers and resumes of instances already pinned to the version keep working.
-  Deprecating the active version does not promote another one; current resolution already serves the next lower
-  version, and the durable listing shows no `ACTIVE` row until the next startup recomputation.
+  Deprecating a version leaves every other version available; current resolution already serves the next lower
+  version.
 - **Cooling window.** A deprecated version cannot retire until `workflow.definitions.maxStalenessSeconds` (default 30)
   has passed on the database clock. After that, retirement is refused with `PINNED_INSTANCES` while any `RUNNING`,
   `WAITING` or `COMPENSATING` instance, archived ones included, is pinned to the exact version.
-- **Reinstatement.** `reinstate` needs an executable source: the deployed code for a code version, the stored text for a
-  document. The version becomes `ACTIVE` if it is the highest eligible version of its owner and `SUPERSEDED` otherwise.
-- **No authorization.** `load`, `activate`, `deprecate`, `retire` and `reinstate` perform no access check. Restrict
+- **Reinstatement.** `reinstate` of a retired version needs an executable source: the deployed code for a code version, the
+  stored text for a document. A deprecated version is still registered, so its reinstatement only clears the deprecation
+  mark. Either way the version becomes `AVAILABLE`.
+- **No authorization.** `load`, `publish`, `deprecate`, `retire` and `reinstate` perform no access check. Restrict
   them to authorized callers in your application.
 
 ### Async usage
@@ -333,10 +334,10 @@ synchronous exceptions.
 DefinitionKey v1 = new DefinitionKey(WorkflowScopes.DEFAULT, "order-fulfillment", 1);
 SourceMetadata source = new SourceMetadata("upload", null, null, "ops", null, Instant.now());
 
-// Load a candidate from bytes and activate it.
+// Load a candidate from bytes and publish it.
 Future<Void> published = definitionService
         .load(yamlBytes, DocumentFormat.YAML, source, null)
-        .compose(ref -> definitionService.activate(
+        .compose(ref -> definitionService.publish(
                 new DefinitionKey(WorkflowScopes.DEFAULT, ref.definitionId(), ref.definitionVersion())));
 
 // The snippets below are separate steps: run each one when its turn comes, not all at once.
@@ -357,7 +358,7 @@ Future<Void> retired = definitionService.retire(v1)
 Future<Void> restored = definitionService.reinstate(v1);
 
 Future<List<WorkflowDefinitionRecord>> live = definitionService.list(new DefinitionFilter(
-        WorkflowScopes.DEFAULT, null, Set.of(DefinitionStatus.ACTIVE, DefinitionStatus.SUPERSEDED)));
+        WorkflowScopes.DEFAULT, null, Set.of(DefinitionStatus.AVAILABLE)));
 ```
 
 `list` returns immutable metadata rows without source text. `sourceMetadata(key)` returns the source attribution
@@ -367,11 +368,11 @@ without reading the source body.
 
 Before any `BOOTSTRAP` verticle deploys, the engine records and restores the registry, in this order:
 
-1. It records every code definition as a default-scope `CODE` row and every packaged document as a `DOCUMENT` row.
-2. It restores every live `DOCUMENT` row of every owner (`ACTIVE`, `SUPERSEDED`, `DEPRECATED`) from its stored text,
+1. It records every code definition as a default-scope `CODE` row and every packaged document as a `DOCUMENT` row, both `AVAILABLE`.
+2. It restores every live `DOCUMENT` row of every scope (`AVAILABLE`, `DEPRECATED`) from its stored text,
    checking the compiled plan hash and the stored text digest.
-3. It recomputes the active version per owner and id, applies deprecation marks, removes runtimes of `RETIRED` rows
-   that belong to the row's owner, and resets abandoned activation claims.
+3. It applies deprecation marks, removes runtimes of `RETIRED` rows that belong to the row's own key, and resets
+   abandoned publication claims.
 
 Startup fails, naming the definition, in these cases, among others (a loader or compile failure of a stored document, a failing
 loader callback, a stored document over the envelope after lowering the limit, a non-UTF8 database, a second loader for one
@@ -381,7 +382,6 @@ format, an unattributed direct registration, and a lock timeout):
 |---|---|
 | Code compiles to a different plan hash while instances are pinned to that exact version | `DRIFT`, both hashes named |
 | A stored row of the same id and version is of the other kind | `INVALID_TRANSITION` (kind conflict) |
-| Another owner holds the id | `OWNER_CONFLICT`, holders named |
 | A live `CODE` row whose version the deployed code no longer provides | `CODE_UNAVAILABLE` |
 | A code definition whose id or version breaks the key rules | `WorkflowDefinitionException` naming the definition |
 | A live document row with no loader, or whose compiled hash or text digest differs | `LOADER_MISSING` or `DRIFT` |
@@ -392,7 +392,7 @@ format, an unattributed direct registration, and a lock timeout):
   [Upgrading to 0.4.0](#upgrading-to-040); prefer a new version.
 - **Digest.** Each `DOCUMENT` row stores the SHA-256 of its stored UTF-8 text. It detects accidental or concurrent change
   of the stored text; it does not authenticate the writer, so restrict write access to the table.
-- **Compose validators** run in `VALIDATE` and do not re-run for restored, propagated or runtime-activated definitions.
+- **Compose validators** run in `VALIDATE` and do not re-run for restored, propagated or runtime-published definitions.
 
 ### Peer propagation
 
@@ -405,13 +405,13 @@ Each node polls the table and applies differences, so a change committed on one 
   A call while a pass runs returns that pass. The future succeeds even when some rows failed, and fails only when the
   table cannot be read.
 - **What a pass does.** It restores live rows the node does not hold, marks deprecated rows, and removes runtimes of
-  retired rows that the node holds for that row's owner. A `CODE` row needs the same version in the code deployed on that
+  retired rows that the node holds for that row's own key. A `CODE` row needs the same version in the code deployed on that
   node with an equal plan hash, otherwise the row fails with `CODE_UNAVAILABLE` or `DRIFT`. Polling never records a code
   hash, never reinstates and never changes a durable row.
 - **Failures.** A row that cannot be applied, or is not applied within twice the period, is logged with its key and
   reason (never source text; repeats of the same failure log at debug level), counted, and retried on the next pass.
 - **Observability.** The bound `WorkflowDefinitionRegistryView` reports `registered()`, the live records this node
-  has applied, and `applyFailures()`, the number of rows currently failing. It lists every owner's records, so it is an
+  has applied, and `applyFailures()`, the number of rows currently failing. It lists every scope's records, so it is an
   operator view: do not expose it to tenants unfiltered. It describes one node; another node can differ until its own
   pass has run.
 - **Do not rely on peers for safety.** Deprecation and retirement checks use each node's own registry until its pass
@@ -433,7 +433,7 @@ Each node polls the table and applies differences, so a change committed on one 
 - **Stronger isolation.** Under `REPEATABLE READ` or `SERIALIZABLE`, an id with no visible definition row is refused with
   `INVALID_TRANSITION`, because the snapshot cannot tell an unmanaged id from a newly managed one. This includes engines
   assembled by hand that skip the registry bootstrap. `READ COMMITTED` admits an id with no rows.
-- **Brief refusals.** For a short window between local publication and the durable commit of an activation, new starts of
+- **Brief refusals.** For a short window between local publication and the durable commit of a publication, new starts of
   that version are refused. After a same-version code rehash (below), nodes still running the old code refuse new pins.
 - **Registry writes** always run at `READ COMMITTED`, whatever the server default.
 - **Retirement cost.** `retire` counts the pinned instances while it holds the exclusive id lock, and no index covers that
@@ -441,7 +441,7 @@ Each node polls the table and applies differences, so a change committed on one 
 
 ### Registry mutation outside the lifecycle
 
-- **Direct registration.** The engine tracks which runtime it published for which owner. A runtime registered directly
+- **Direct registration.** The engine tracks which runtime it published for which key. A runtime registered directly
   through `WorkflowRegistry` is never adopted or removed by the lifecycle: `deprecate`, `retire` and `reinstate` of that
   version fail with `INVALID_TRANSITION`, and a startup or poll apply that needs the slot fails the same way and leaves the
   runtime in place. Do not register definitions directly at runtime and expect the lifecycle to manage them.
@@ -455,14 +455,14 @@ Each node polls the table and applies differences, so a change committed on one 
 
 | Key | Default | Meaning |
 |---|---|---|
-| `workflow.definitions.maxStalenessSeconds` | `30` | Poll period, cooling window before retirement, and (doubled) the age of an abandoned activation claim |
+| `workflow.definitions.maxStalenessSeconds` | `30` | Poll period, cooling window before retirement, and (doubled) the age of an abandoned publication claim |
 | `workflow.definitions.maxDocumentSizeBytes` | `262144` | Largest runtime `load` input, in bytes (L); the stored form is capped at floor(3L/2) UTF-8 bytes and L code points |
 
 Both keys are optional. To read them from configuration, install `WorkflowDefinitionsConfigModule` together with
 `ConfigParsingModule`; otherwise the defaults apply, or bind `WorkflowDefinitionsConfig` directly. Use the same values on
 every node sharing the table. Raise L on every node before admitting larger documents. Retire documents that exceed the
 new envelope before lowering L; a lower limit makes restoration fail startup, a poll counts and retries the row, and a later
-`activate` or `reinstate` of a retained row that exceeds the new envelope also fails.
+`publish` or `reinstate` of a retained row that exceeds the new envelope also fails.
 Non-positive values are rejected at startup with a configuration error, as is an L whose stored envelope would overflow an
 integer or a staleness period whose milliseconds would overflow a long.
 Raising L increases memory and parse cost; the parser's nesting and expression limits are independent. The
@@ -540,7 +540,7 @@ cycle. Eight old declarations are removed; constructors and all other members st
 | Before | After |
 |---|---|
 | `CompiledDefinitionRef load(byte[], DocumentFormat, SourceMetadata)` | `Future<CompiledDefinitionRef> load(byte[], DocumentFormat, SourceMetadata, @Nullable String scopeKey)` |
-| `void activate(String id, long version)` | `Future<Void> activate(DefinitionKey key)` |
+| `void activate(String id, long version)` | `Future<Void> publish(DefinitionKey key)` |
 | `Collection<CompiledDefinitionRef> list()` | `Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter)` |
 | `Optional<SourceMetadata> sourceMetadata(String id, long version)` | `Future<Optional<SourceMetadata>> sourceMetadata(DefinitionKey key)` |
 
@@ -549,7 +549,7 @@ cycle. Eight old declarations are removed; constructors and all other members st
 - **Custom implementations.** A class that implements `WorkflowDefinitionService` must now implement all seven operations.
   Classes that implement the new `WorkflowDefinitionRegistryStore`, `WorkflowDefinitionLifecycle` or
   `PersistedDefinitionLoader` types implement every method they declare.
-- **`ActivationStatus`** gains `DEPRECATED` and `RETIRED`. A `switch` over it without a default branch needs the new cases.
+- **`ActivationStatus`** is `CANDIDATE`, `PUBLISHING`, `AVAILABLE`, `DEPRECATED` and `RETIRED`: `ACTIVATING`, `ACTIVE` and `SUPERSEDED` are removed and `DEPRECATED` and `RETIRED` are new. A `switch` over it needs the new cases.
 - **Public `currentStatus`.** `WorkflowDefinitionStore.currentStatus(id, version)` now also reports the persisted status of a
   global version the node knows only as metadata (a candidate or retired row it did not compile); it returns `null` only when
   nothing is known about the version.
@@ -564,11 +564,9 @@ Every PostgreSQL application, including code-first ones that never touch documen
   until its instances finish, or bump the version. With no pinned instance the stored hash is replaced and a WARN logs it.
 - **Key rules.** A code definition with a blank, over-long or control-character id, or a non-positive version, fails
   startup with a message naming the definition. Definition ids and scope keys are at most 255 code points.
-- **Kind and owner conflicts** fail startup naming both rows or owners.
-- **Definition ids are unprefixed.** One owner scope holds an id; a document whose id a code definition or another
-  scope already holds is refused with `OWNER_CONFLICT`, and a code definition that collides with a stored document id
-  fails startup. Rename and reload a colliding document, then `retire` the old versions: until they are retired they
-  keep holding the id.
+- **Kind conflicts** fail startup naming both rows.
+- **Definition ids are unprefixed.** A document may use the id of a code definition or of another scope's document; each
+  scope holds its own versions of the id.
 
 Applications that combine the automatically bound PostgreSQL store with static document sources gain extra startup
 prerequisites. Each packaged document now must:
@@ -658,7 +656,7 @@ resurrection keep an instance's scopes for its life.
 - **Information, not isolation.** The scope is a label and a filter. Operations addressed by instance or task id (query,
   signal, cancel, retry, migrate, task complete or reassign) do not check it, and timers, branch tokens and definition
   resolution are global: before acting on a caller-supplied id, load the instance and compare its `scopeKey()` with the
-  caller's scope. Definition-lifecycle refusal messages can name another owner's scope, status and plan hashes: do not
+  caller's scope. Definition-lifecycle refusal messages can name another scope, status and plan hashes: do not
   forward them to tenants.
 
 ## Durable Context Propagation

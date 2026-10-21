@@ -210,10 +210,7 @@ ENUM_CONSTANT|dev.vertique.workflow.definition.expression.ExpressionType|NUMBER|
 ENUM_CONSTANT|dev.vertique.workflow.definition.expression.ExpressionType|STRING|public static final|dev.vertique.workflow.definition.expression.ExpressionType
 ENUM_CONSTANT|dev.vertique.workflow.definition.parser.DocumentFormat|JSON|public static final|dev.vertique.workflow.definition.parser.DocumentFormat
 ENUM_CONSTANT|dev.vertique.workflow.definition.parser.DocumentFormat|YAML|public static final|dev.vertique.workflow.definition.parser.DocumentFormat
-ENUM_CONSTANT|dev.vertique.workflow.definition.service.ActivationStatus|ACTIVATING|public static final|dev.vertique.workflow.definition.service.ActivationStatus
-ENUM_CONSTANT|dev.vertique.workflow.definition.service.ActivationStatus|ACTIVE|public static final|dev.vertique.workflow.definition.service.ActivationStatus
 ENUM_CONSTANT|dev.vertique.workflow.definition.service.ActivationStatus|CANDIDATE|public static final|dev.vertique.workflow.definition.service.ActivationStatus
-ENUM_CONSTANT|dev.vertique.workflow.definition.service.ActivationStatus|SUPERSEDED|public static final|dev.vertique.workflow.definition.service.ActivationStatus
 ENUM_CONSTANT|dev.vertique.workflow.events.WorkflowEventType|TASK_CANCELLED|public static final|dev.vertique.workflow.events.WorkflowEventType
 ENUM_CONSTANT|dev.vertique.workflow.events.WorkflowEventType|TASK_COMPLETED|public static final|dev.vertique.workflow.events.WorkflowEventType
 ENUM_CONSTANT|dev.vertique.workflow.events.WorkflowEventType|TASK_CREATED|public static final|dev.vertique.workflow.events.WorkflowEventType

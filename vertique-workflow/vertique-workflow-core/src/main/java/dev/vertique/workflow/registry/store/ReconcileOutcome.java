@@ -9,6 +9,5 @@ public enum ReconcileOutcome {
     UNCHANGED,
     REHASHED,
     DRIFT,
-    KIND_CONFLICT,
-    OWNER_CONFLICT
+    KIND_CONFLICT
 }

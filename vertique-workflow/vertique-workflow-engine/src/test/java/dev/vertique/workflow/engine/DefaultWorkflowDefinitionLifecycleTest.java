@@ -15,7 +15,6 @@ import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
-import dev.vertique.workflow.registry.store.ActivationOutcome;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -671,7 +670,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<ActivationOutcome> complete(ActivationClaim claim) {
+        public Future<Void> complete(ActivationClaim claim) {
             throw new UnsupportedOperationException();
         }
 
@@ -696,18 +695,13 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<Void> resetStaleActivating(String definitionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public Future<ReconcileOutcome> upsertDocument(
                 WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public Future<Void> recomputeActive(String scopeKey, String definitionId) {
+        public Future<Void> resetStalePublishing(String definitionId) {
             throw new UnsupportedOperationException();
         }
 
@@ -727,7 +721,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         ActivationStore store = new ActivationStore();
         store.completions.add(Future.failedFuture(new IllegalStateException("commit outcome unknown")));
         store.failReadsAfterFirstCompletion = true;
-        store.completions.add(Future.succeededFuture(ActivationOutcome.ACTIVE));
+        store.completions.add(Future.succeededFuture());
         RecordingRegistry registry = new RecordingRegistry();
         DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
                 Optional.of(store), () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
@@ -759,7 +753,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
     void doesNotAdoptForeignRegistration() {
         // Given a runtime for the key registered directly in the registry, and a lifecycle that never published it
         ActivationStore store = new ActivationStore();
-        store.completions.add(Future.succeededFuture(ActivationOutcome.ACTIVE));
+        store.completions.add(Future.succeededFuture());
         RecordingRegistry registry = new RecordingRegistry();
         WorkflowDefinition<?, ?> foreignDefinition = Mockito.mock(WorkflowDefinition.class);
         Mockito.when(foreignDefinition.definitionId()).thenReturn("wf");
@@ -786,7 +780,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
     void secondActivationOfActiveKeyIsANoOp() {
         // Given a key that was activated successfully
         ActivationStore store = new ActivationStore();
-        store.completions.add(Future.succeededFuture(ActivationOutcome.ACTIVE));
+        store.completions.add(Future.succeededFuture());
         RecordingRegistry registry = new RecordingRegistry();
         DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
                 Optional.of(store), () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
@@ -1254,7 +1248,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<ActivationOutcome> complete(ActivationClaim claim) {
+        public Future<Void> complete(ActivationClaim claim) {
             throw new UnsupportedOperationException();
         }
 
@@ -1274,18 +1268,13 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<Void> resetStaleActivating(String definitionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public Future<ReconcileOutcome> upsertDocument(
                 WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public Future<Void> recomputeActive(String scopeKey, String definitionId) {
+        public Future<Void> resetStalePublishing(String definitionId) {
             throw new UnsupportedOperationException();
         }
 
@@ -1397,7 +1386,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
     /** Behaves like a registry table for one key: reads reflect the committed status and can be made to fail. */
     private static final class ActivationStore implements WorkflowDefinitionRegistryStore {
-        final Deque<Future<ActivationOutcome>> completions = new ArrayDeque<>();
+        final Deque<Future<Void>> completions = new ArrayDeque<>();
         DefinitionStatus status = DefinitionStatus.CANDIDATE;
         boolean readsFail;
         boolean failReadsAfterFirstCompletion;
@@ -1423,10 +1412,10 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<ActivationOutcome> complete(ActivationClaim claim) {
+        public Future<Void> complete(ActivationClaim claim) {
             completes++;
             if (completes == 1 && failReadsAfterFirstCompletion) readsFail = true;
-            Future<ActivationOutcome> next = completions.poll();
+            Future<Void> next = completions.poll();
             if (next == null) return Future.failedFuture(new IllegalStateException("unscripted completion"));
             if (next.succeeded()) status = DefinitionStatus.AVAILABLE;
             return next;
@@ -1454,18 +1443,13 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<Void> resetStaleActivating(String definitionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public Future<ReconcileOutcome> upsertDocument(
                 WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public Future<Void> recomputeActive(String scopeKey, String definitionId) {
+        public Future<Void> resetStalePublishing(String definitionId) {
             throw new UnsupportedOperationException();
         }
 
@@ -1549,7 +1533,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
     private static final class FakeStore implements WorkflowDefinitionRegistryStore {
         final AtomicInteger releases = new AtomicInteger();
         private final AtomicInteger finds = new AtomicInteger();
-        Future<ActivationOutcome> completion = Future.succeededFuture(ActivationOutcome.ACTIVE);
+        Future<Void> completion = Future.succeededFuture();
 
         private static WorkflowDefinitionRecord candidate() {
             Instant now = Instant.parse("2026-01-01T00:00:00Z");
@@ -1583,7 +1567,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<ActivationOutcome> complete(ActivationClaim claim) {
+        public Future<Void> complete(ActivationClaim claim) {
             return completion;
         }
 
@@ -1609,18 +1593,13 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<Void> resetStaleActivating(String definitionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public Future<ReconcileOutcome> upsertDocument(
                 WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public Future<Void> recomputeActive(String scopeKey, String definitionId) {
+        public Future<Void> resetStalePublishing(String definitionId) {
             throw new UnsupportedOperationException();
         }
 

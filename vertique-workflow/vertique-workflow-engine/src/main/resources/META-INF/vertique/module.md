@@ -242,7 +242,7 @@ Dagger module owning the engine-internal bindings:
 - Binds `WorkflowEngine` as `WorkflowOperations`, `TransactionalWorkflowOperations<SqlClient>`,
   `TransactionalTimerCallbacks<SqlClient>`, and `TransactionalTaskCallbacks<SqlClient>`.
 - Binds `WorkflowRecoveryBridgeImpl` as `WorkflowRecoveryBridge`.
-- Binds `WorkflowDefinitionLifecycle` for durable document activation and contributes the document registry startup step.
+- Binds `WorkflowDefinitionLifecycle` for durable document publication and contributes the document registry startup step.
 - Binds `WorkflowDefinitionRegistryView` and contributes the startup and shutdown steps of
   `WorkflowDefinitionPropagationPoller`, which keeps the node's registry in step with the durable table.
 - Declares the `@WorkflowRecorders`-qualified `Set<WorkflowSideEffectRecorder<SqlClient>>` multibinding.
@@ -278,62 +278,61 @@ Every lookup of an instance's plan (signals, tasks, timers, retries, branch and 
 
 Every event and side-effect correlation the engine records, single-path and branch, takes both scopes from the owning instance row, so events and outbox records name the scopes the instance really holds rather than a default. A branch drive reads them from the instance; `WorkflowRecoveryBridge.driveRecoveredBranch` loads the owning instance to do so.
 
-### Document Activation And Startup Restoration
+### Document Publication And Startup Restoration
 
-The engine orchestrates `WorkflowDefinitionLifecycle.activate` through the optional SQL-free registry
-store and format-specific loaders. Parsing remains in the loader module. Activation claims a durable
+The engine orchestrates `WorkflowDefinitionLifecycle.publish` through the optional SQL-free registry
+store and format-specific loaders. Parsing remains in the loader module. Publication claims a durable
 candidate, recompiles its stored source, verifies its key and plan hash, registers it locally, and
-completes the fenced claim. JVM fatal errors are not ordinary recovery cases.
+completes the fenced claim, which makes the version `AVAILABLE`. Publishing a version that is already available
+succeeds without a change, and publishing does not touch any other version or scope of the id. JVM fatal errors
+are not ordinary recovery cases.
 
-Local publication and cleanup share a per-definition-id queue. A definitive stale-claim or ownership
+Local publication and cleanup share a per-definition-id queue. A definitive stale-claim
 refusal from completion preserves the original error, releases only its own claim token, and removes
 only the exact local runtime it published. A failed authoritative reread cannot prevent that known
 refusal's cleanup. For an uncertain completion response, the engine rereads committed metadata before
-compensation; a matching live row preserves the local publication. Loader cache-hook failures propagate
-without undoing a committed activation.
+compensation; a matching available row preserves the local publication. Loader cache-hook failures propagate
+without undoing a committed publication.
 
 `WorkflowDefinitionRegistryBootstrapStep` runs in `BOOTSTRAP` with priority `Integer.MIN_VALUE / 2`,
 after schema migration and before any `BOOTSTRAP` verticle deploys. With a store it works in this order, all
 through the shared per-definition queue, and fails startup (nothing deploys) on any violation:
 1. It attributes the registrations that already exist (packaged documents and application-contributed
-   definitions) to the global owner and snapshots the code definitions available in the deployed code.
-2. It records every definition: packaged document origins are DOCUMENT rows (an equal plan hash AND an equal
+   definitions) to the default scope and snapshots the code definitions available in the deployed code.
+2. It records every definition as `AVAILABLE`: packaged document origins are DOCUMENT rows (an equal plan hash AND an equal
    text digest reconcile; a different hash, or the same hash with different text, is drift), every other
    registered definition is a global CODE row. A changed code hash is rehashed only while no RUNNING, WAITING
    or COMPENSATING instance is pinned to that exact version (decided inside the store transaction, WARN logs both
-   hashes); with a live pin startup fails naming both hashes. A kind conflict, or an id held by another
-   owner, fails naming both rows or owners; a CODE row in ACTIVE, SUPERSEDED or DEPRECATED state whose code is no
-   longer deployed fails with `CODE_UNAVAILABLE`.
-3. It restores every live DOCUMENT row of every owner (ACTIVE, SUPERSEDED and DEPRECATED, in every scope)
+   hashes); with a live pin startup fails naming both hashes. A kind conflict fails naming both rows; a CODE row
+   in AVAILABLE or DEPRECATED state whose code is no longer deployed fails with `CODE_UNAVAILABLE`. Rows of other
+   scopes for the same id and version never conflict.
+3. It restores every live DOCUMENT row of every scope (AVAILABLE and DEPRECATED)
    through its loader, verifying the compiled hash and the stored text digest, before traffic.
-4. It recomputes active membership per owner and id.
-5. It marks DEPRECATED rows (CODE and DOCUMENT, including packaged documents deprecated in the database) and
-   removes RETIRED runtimes only when the runtime is attributed to that row's owner; another owner's runtime, or
+4. It marks DEPRECATED rows (CODE and DOCUMENT, including packaged documents deprecated in the database) and
+   removes RETIRED runtimes only when the runtime is attributed to that row's own key; another scope's runtime, or
    a replacement, is never removed because id, version and hash match, and an unattributed runtime fails startup.
-6. It resets stale ACTIVATING claims (older than twice the staleness bound) to CANDIDATE, then re-reads
+5. It resets stale PUBLISHING claims (older than twice the staleness bound) to CANDIDATE, then re-reads
    committed metadata and sends it through the loaders' `onRestored` and `onMetadata` callbacks so caches reflect
    persisted state.
 Required rows with no unique loader fail startup with the key and diagnostic. Callback failures remain fatal.
 Compose validators ran in VALIDATE and do not re-run for restored definitions.
 
-`WorkflowDefinitionLifecycle.reinstate` brings a RETIRED version back. It is accepted only when the executable source is
-available (a code definition from the code deployed with the node, captured before startup removed retired runtimes; a
-document through its loader and the stored text, whose compiled hash must equal the stored hash) and no other owner holds the
-id. It publishes the runtime locally first, then commits `RETIRED -> SUPERSEDED` and the membership recomputation in one store
-transaction (the version may become ACTIVE when it is the highest eligible one; a lower version stays SUPERSEDED under the
-current ACTIVE one). If the transaction fails, only the runtime this call published is removed; a registration that was already
-present and attributed to the owner is kept. Failures are typed: `CODE_UNAVAILABLE`, `OWNER_CONFLICT`, `DRIFT`,
-`LOADER_MISSING` or `INVALID_TRANSITION` (also for a runtime that was registered directly rather than by the lifecycle). Between
-the local publication and the commit, new pins on the version are still refused by the database. Reinstating code needs a
-registry that retains definition sources; with one that does not, the deployed code is reported as `CODE_UNAVAILABLE`. As with
-activation, a failure of the loader hand-off after the commit does not undo the reinstatement, and a retry then reports the
-row's current status rather than repeating the hand-off. `retire` and `reinstate` rely on every node running a release that
+`WorkflowDefinitionLifecycle.reinstate` brings a RETIRED or DEPRECATED version back to `AVAILABLE`. A RETIRED version is accepted
+only when the executable source is available (a code definition from the code deployed with the node, captured before startup
+removed retired runtimes; a document through its loader and the stored text, whose compiled hash must equal the stored hash).
+It publishes the runtime locally first, then commits `RETIRED -> AVAILABLE` in one store transaction. If the transaction
+fails, only the runtime this call published is removed; a registration that was already present and attributed to the key
+is kept. A DEPRECATED version is still registered, so the store commits `DEPRECATED -> AVAILABLE` first and the call then clears the
+deprecation mark of the registration it published, without publishing the source again; other nodes learn of it from their
+next periodic reconciliation. Failures are typed: `CODE_UNAVAILABLE`, `DRIFT`, `LOADER_MISSING` or `INVALID_TRANSITION` (also for a
+runtime that was registered directly rather than by the lifecycle). Between the local publication and the commit, new pins on the
+version are still refused by the database. Reinstating code needs a registry that retains definition sources; with one that
+does not, the deployed code is reported as `CODE_UNAVAILABLE`. As with publication, a failure of the loader hand-off after
+the commit does not undo the reinstatement, and a retry then reports the row's current status rather than repeating the hand-off. `retire` and `reinstate` rely on every node running a release that
 takes the shared id lock when admitting a pin, so finish a rolling upgrade before using them.
 
-A registration that already stands for the owner is checked by plan hash against the stored hash and is not recompiled; this
-is deliberate, because a runtime this lifecycle published for the owner already passed that check. The owner check before
-publication is advisory and only saves work: the store's check under its lock is authoritative, and an activating row of another
-owner is left to the store, which treats a stale claim as not holding the id and a fresh claim as a conflict. When the commit
+A registration that already stands for the key is checked by plan hash against the stored hash and is not recompiled; this
+is deliberate, because a runtime this lifecycle published for the key already passed that check. When the commit
 outcome cannot be read back, the published runtime is remembered. A retry that finds the row committed with that runtime's plan
 hash succeeds and hands the row over as after a first success; a retry that the store refuses removes the remembered runtime.
 Only a runtime this lifecycle published is ever remembered or removed.
@@ -346,11 +345,11 @@ code, including a rollback, then fails startup with `CODE_UNAVAILABLE` or drift 
 Prefer a new version over editing a deployed version; to remove a version, deprecate it, wait out the cooling window and
 retire it while no live instance is pinned, before removing its code. A packaged document registered over a CANDIDATE row of
 the same id, version, plan hash and text stays CANDIDATE while its runtime is registered. Starts of that version are refused, and
-`activate` fails because the registration already stands: retire the row and reinstate it, or publish the document under a new version.
+`publish` fails because the registration already stands: retire the row and reinstate it, or publish the document under a new version.
 Do not register definitions directly at runtime, from other threads or startup steps, while the bootstrap step runs; a
 runtime it did not attribute fails the apply with `INVALID_TRANSITION` for DEPRECATED and RETIRED rows.
 
-`WorkflowDefinitionLifecycle.deprecate` first commits ACTIVE or SUPERSEDED to DEPRECATED in the store,
+`WorkflowDefinitionLifecycle.deprecate` first commits AVAILABLE to DEPRECATED in the store,
 then marks the version deprecated in the local registry through the same per-id queue; a failed mark
 leaves the committed row, and repeating the call repairs the mark. A deprecated version is skipped by
 current resolution, and an explicit-version start or a migration whose target is deprecated fails with
@@ -366,17 +365,17 @@ committed status in place.
 `WorkflowDefinitionLifecycle.retire` retires a CANDIDATE version, or a DEPRECATED one after the cooling window (the
 configured staleness bound) once no RUNNING, WAITING or COMPENSATING instance, archived or not, is pinned to it; the
 store checks status, cooling and the pin count in one transaction, so a refusal is typed (`COOLING`, `PINNED_INSTANCES`,
-or `INVALID_TRANSITION` for ACTIVE/SUPERSEDED). Retirement removes the local runtime only when
-the engine's own managed publication attributed that exact runtime to the retiring owner: the engine records every
+or `INVALID_TRANSITION` for any other status). Retirement removes the local runtime only when
+the engine's own managed publication attributed that exact runtime to the retiring key: the engine records every
 registration it publishes or restores, and the registrations present when startup begins (packaged documents and
-application-contributed code) count as global. A runtime that was registered directly through `WorkflowRegistry`
+application-contributed code) count as default-scope ones. A runtime that was registered directly through `WorkflowRegistry`
 after startup, or replaced after a managed publication, is not attributed: deprecate and retire then fail with
 `INVALID_TRANSITION` before any durable change and leave the runtime alone. Do not register definitions directly
 at runtime and expect the lifecycle to manage them; managed operations also rely on the shared per-definition queue.
 Managed operations are serialized per definition id on the node. A direct `register` or `unregister` of the same id
 while a managed operation is in flight does not take part in that queue and is outside the lifecycle's compound
 guarantee; each individual registry operation stays thread safe.
-`activate` has no such preflight: activating a version that a foreign registration already occupies, or that names another contract than the id's registered versions, fails when it
+`publish` has no such preflight: publishing a version that a foreign registration already occupies, or that names another contract than the id's registered versions, fails when it
 registers, and the claim is released. If removing the local runtime fails after the durable retirement committed, the
 call fails but the row stays RETIRED and the runtime stays registered until the next restart; repeating the call is
 refused because the row is no longer retirable.
@@ -386,12 +385,12 @@ task and timer callbacks) requires a `SqlConnection` with a pending transaction 
 failed Future with `IllegalArgumentException`, before any SQL, for a pool, a bare or completed connection, a raw `BEGIN`
 or a wrapper; await the operation before committing or rolling back. New starts and migrations are admitted against the
 definition row in the caller's transaction (see the PostgreSQL reference), so for a short window between local
-publication and the durable commit of an activation, new starts of that version are refused.
+publication and the durable commit of a publication, new starts of that version are refused.
 
 Every node sharing live document rows must install the corresponding loader, normally
 `WorkflowDefinitionModule`. Loading and compilation use the Vert.x worker executor when startup runs
 on a Vert.x context. Compose validators already ran in VALIDATE and do not rerun for these restored
-registrations or runtime activation. With no registry store, this startup step performs no I/O and
+registrations or runtime publication. With no registry store, this startup step performs no I/O and
 creates no timer.
 
 ### Peer Propagation
@@ -421,7 +420,7 @@ A pass reads the table's metadata and does not read the bodies of rows that are 
 metadata in two rounds, each row under the shared per-definition queue after re-reading it, and the round is chosen
 by the re-read status: a row whose status moved between the listing and the re-read is left untouched for the next
 pass, and a row that vanished is forgotten. A row that is already settled on the node costs nothing: a retired,
-candidate or activating row whose status and change instant were settled by an earlier pass and whose owner has no
+candidate or publishing row whose status and change instant were settled by an earlier pass and whose key has no
 runtime in memory, and a live row whose runtime the node holds with the stored hash, whose recorded change instant and
 deprecation mark agree with the row and that is not failing, are skipped without taking a slot or reading the row.
 Anything else takes the full path again, so a runtime that was removed behind the pass is restored. A row that is
@@ -430,18 +429,17 @@ rows; its slot stays held until the action finishes. An error that is not fatal,
 contained to its row in the same way. A store error while re-reading a row fails the pass instead of counting the
 healthy rows as failing.
 
-1. Retired rows remove the runtime attributed to the row's own owner; a runtime of another
-   owner, or a replacement, is never removed because id, version and hash match, and a retired row whose runtime is
-   unattributed has nothing of its owner to remove and is settled without failing. Candidate and retired documents are
-   handed to their loader through `onMetadata`. Activating rows are left alone.
-2. Active, superseded and deprecated rows restore the runtime the node does not hold for the owner, then mark a
-   deprecated row. A DOCUMENT row needs exactly one loader that supports its format (normally
+1. Retired rows remove the runtime attributed to the row's own key; a runtime of another
+   scope, or a replacement, is never removed because id, version and hash match, and a retired row whose runtime is
+   unattributed has nothing of its own to remove and is settled without failing. Candidate and retired documents are
+   handed to their loader through `onMetadata`. Publishing rows are left alone.
+2. Available and deprecated rows restore the runtime the node does not hold for the key, then mark a
+   deprecated row, or clear the mark of a registration that an available row no longer calls deprecated (a reinstated
+   version). A DOCUMENT row needs exactly one loader that supports its format (normally
    `WorkflowDefinitionModule`); the stored text is read through the guarded projection, compiled by the loader, and
    its hash must equal the row's before the runtime is registered. A CODE row needs the same version in the code
-   deployed on this node, with a plan hash equal to the row's. A runtime the owner already holds is checked by plan
-   hash. A slot held by another owner's runtime fails the row, unless that owner has no live row any more, in
-   which case the stale registration is removed and the row is published. An unattributed runtime is preserved and
-   fails the row with `INVALID_TRANSITION`.
+   deployed on this node, with a plan hash equal to the row's. A runtime this lifecycle already published for the key is
+   checked by plan hash. An unattributed runtime is preserved and fails the row with `INVALID_TRANSITION`.
 
 Polling never deploys code, never records or accepts a code hash, never reinstates, and never changes a durable
 row. A node whose deployed code lacks a live CODE version, or compiles it to a different hash, reports
@@ -460,13 +458,13 @@ INFO.
 The bound `WorkflowDefinitionRegistryView` is a read-only view of one node:
 
 - `registered()` returns an immutable snapshot of the committed records, in a live status, whose runtime this
-  node holds, ordered by definition id, owner (global first) and version. It lists the applied records of every
-  owner, with their ids, versions and provenance, so it is an operator view: do not expose it to tenants
+  node holds, ordered by definition id, scope (default first) and version. It lists the applied records of every
+  scope, with their ids, versions and provenance, so it is an operator view: do not expose it to tenants
   unfiltered.
 - `applyFailures()` returns the number of rows that currently fail to apply, not a running total: a successful
   retry removes the row from the count, and so does a row that is no longer in the table.
 
-The startup step, the lifecycle operations of this node (`activate`, `deprecate`, `retire`, `reinstate`) and the
+The startup step, the lifecycle operations of this node (`publish`, `deprecate`, `retire`, `reinstate`) and the
 poller feed the view. The view reflects this node only; another node can differ until its own pass has run.
 
 ### WorkflowRecoveryBridge

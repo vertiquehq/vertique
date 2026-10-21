@@ -19,7 +19,6 @@ import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
-import dev.vertique.workflow.registry.store.ActivationOutcome;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -919,7 +918,7 @@ class DefinitionPropagationPassTest {
         }
 
         @Override
-        public Future<ActivationOutcome> complete(ActivationClaim claim) {
+        public Future<Void> complete(ActivationClaim claim) {
             throw new UnsupportedOperationException();
         }
 
@@ -934,17 +933,12 @@ class DefinitionPropagationPassTest {
         }
 
         @Override
+        public Future<Void> resetStalePublishing(String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Future<Void> retire(DefinitionKey key) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Future<Void> resetStaleActivating(String definitionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Future<Void> recomputeActive(String scopeKey, String definitionId) {
             throw new UnsupportedOperationException();
         }
     }

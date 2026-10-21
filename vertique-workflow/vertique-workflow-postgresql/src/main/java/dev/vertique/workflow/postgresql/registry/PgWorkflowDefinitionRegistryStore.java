@@ -12,7 +12,6 @@ import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.registry.store.ActivationClaim;
-import dev.vertique.workflow.registry.store.ActivationOutcome;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -319,11 +318,6 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
-    public Future<Void> resetStaleActivating(String definitionId) {
-        return resetStalePublishing(definitionId);
-    }
-
-    @Override
     public Future<ActivationClaim> claim(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
@@ -341,7 +335,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
-    public Future<ActivationOutcome> complete(ActivationClaim claim) {
+    public Future<Void> complete(ActivationClaim claim) {
         return attempt(() -> {
             Objects.requireNonNull(claim, "claim");
             DefinitionKey key = claim.key();
@@ -353,7 +347,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     throw conflict(Reason.STALE_CLAIM, key, "publish token is obsolete");
                 return tx.preparedQuery(sqlComplete)
                         .execute(parameters(key).addUUID(claim.token()))
-                        .map(ActivationOutcome.ACTIVE);
+                        .mapEmpty();
             });
         });
     }
@@ -448,17 +442,6 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         return tx.preparedQuery(sqlCountNonTerminal)
                 .execute(Tuple.of(key.definitionId(), key.definitionVersion(), key.scopeKey()))
                 .map(result -> result.iterator().next().getLong("total"));
-    }
-
-    @Override
-    public Future<Void> recomputeActive(String scopeKey, String definitionId) {
-        return attempt(() -> {
-            Objects.requireNonNull(definitionId, "definitionId");
-            // DefinitionKey enforces the key constraints; the version is irrelevant here.
-            new DefinitionKey(scopeKey, definitionId, 1);
-            // Every available version of an id is available at once, so there is no membership to settle.
-            return Future.succeededFuture();
-        });
     }
 
     private Future<Void> encoding(SqlConnection tx) {

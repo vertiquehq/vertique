@@ -236,7 +236,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
             assertEquals(
                     DefinitionStatus.AVAILABLE,
                     await(store.find(key)).orElseThrow().status());
-            await(store.resetStaleActivating(CODE_ID));
+            await(store.resetStalePublishing(CODE_ID));
 
             // Then: the decoys are exactly as before
             assertEquals(decoyBefore, decoyState(TABLE), "the definitions decoy keeps its shape and rows");

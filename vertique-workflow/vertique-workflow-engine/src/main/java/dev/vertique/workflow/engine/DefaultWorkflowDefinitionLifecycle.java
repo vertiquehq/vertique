@@ -131,11 +131,6 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     }
 
     @Override
-    public Future<Void> activate(DefinitionKey key) {
-        return publish(key);
-    }
-
-    @Override
     public Future<Void> deprecate(DefinitionKey key) {
         try {
             Objects.requireNonNull(key, "key");
@@ -429,7 +424,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /**
      * Refuses an unattributed or replaced registration, commits the retirement, and only then removes the local
-     * registration, when it is the very instance this lifecycle published for the same owner. A retirement that
+     * registration, when it is the very instance this lifecycle published for the same key. A retirement that
      * fails is read back: a row that is retired means the commit won, so the local removal still runs.
      */
     private Future<Void> retireQueued(DefinitionKey key) {
@@ -452,7 +447,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                 .compose(ignored -> removeRetired(key));
     }
 
-    /** Removes the runtime this lifecycle published for the retired key's owner; any other registration stays. */
+    /** Removes the runtime this lifecycle published for the retired key; any other registration stays. */
     private Future<Void> removeRetired(DefinitionKey key) {
         if (view != null) view.removed(key);
         WorkflowRegistry local = registry.get();

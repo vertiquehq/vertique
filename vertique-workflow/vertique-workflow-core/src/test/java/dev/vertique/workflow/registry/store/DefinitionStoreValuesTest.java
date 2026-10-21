@@ -46,7 +46,7 @@ class DefinitionStoreValuesTest {
     void validatesAndSnapshotsDefinitionFilter() {
         Set<DefinitionStatus> supplied = new HashSet<>(Set.of(DefinitionStatus.CANDIDATE));
         DefinitionFilter filter = new DefinitionFilter("tenant-a", "orders", supplied);
-        supplied.add(DefinitionStatus.ACTIVE);
+        supplied.add(DefinitionStatus.AVAILABLE);
 
         assertThat(filter.statuses()).containsExactly(DefinitionStatus.CANDIDATE);
         assertThatThrownBy(() -> filter.statuses().add(DefinitionStatus.RETIRED))
@@ -69,7 +69,7 @@ class DefinitionStoreValuesTest {
                 "example.Contract",
                 "example.State",
                 HASH,
-                DefinitionStatus.ACTIVE,
+                DefinitionStatus.AVAILABLE,
                 provenance,
                 null,
                 NOW,
@@ -94,7 +94,7 @@ class DefinitionStoreValuesTest {
                         "example.Contract",
                         "example.State",
                         HASH,
-                        DefinitionStatus.ACTIVE,
+                        DefinitionStatus.AVAILABLE,
                         provenance,
                         null,
                         NOW,
@@ -106,7 +106,7 @@ class DefinitionStoreValuesTest {
                         "example.Contract",
                         "example.State",
                         HASH,
-                        DefinitionStatus.ACTIVE,
+                        DefinitionStatus.AVAILABLE,
                         provenance,
                         null,
                         NOW,
@@ -130,7 +130,7 @@ class DefinitionStoreValuesTest {
                         "example.Contract",
                         "example.State",
                         HASH,
-                        DefinitionStatus.ACTIVE,
+                        DefinitionStatus.AVAILABLE,
                         null,
                         null,
                         NOW,
@@ -142,7 +142,7 @@ class DefinitionStoreValuesTest {
                         "example.Contract",
                         "example.State",
                         HASH,
-                        DefinitionStatus.ACTIVE,
+                        DefinitionStatus.AVAILABLE,
                         provenance,
                         null,
                         null,
@@ -154,7 +154,7 @@ class DefinitionStoreValuesTest {
                         "example.Contract",
                         "example.State",
                         "A".repeat(64),
-                        DefinitionStatus.ACTIVE,
+                        DefinitionStatus.AVAILABLE,
                         provenance,
                         null,
                         NOW,
@@ -166,7 +166,7 @@ class DefinitionStoreValuesTest {
                         "example.Contract",
                         "example.State",
                         "a".repeat(63),
-                        DefinitionStatus.ACTIVE,
+                        DefinitionStatus.AVAILABLE,
                         provenance,
                         null,
                         NOW,
@@ -178,7 +178,7 @@ class DefinitionStoreValuesTest {
                         "example.Contract",
                         "example.State",
                         "g".repeat(64),
-                        DefinitionStatus.ACTIVE,
+                        DefinitionStatus.AVAILABLE,
                         provenance,
                         null,
                         NOW,
@@ -190,7 +190,7 @@ class DefinitionStoreValuesTest {
                         "example.Contract",
                         "example.State",
                         HASH,
-                        DefinitionStatus.ACTIVE,
+                        DefinitionStatus.AVAILABLE,
                         provenance,
                         null,
                         NOW,
@@ -202,7 +202,7 @@ class DefinitionStoreValuesTest {
                         "example.Contract",
                         "example.State",
                         HASH,
-                        DefinitionStatus.ACTIVE,
+                        DefinitionStatus.AVAILABLE,
                         provenance,
                         "YAML",
                         NOW,
@@ -281,11 +281,10 @@ class DefinitionStoreValuesTest {
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new ActivationClaim(key, null)).isInstanceOf(RuntimeException.class);
         assertThat(EnumSet.allOf(DefinitionStatus.class))
-                .contains(
+                .containsExactly(
                         DefinitionStatus.CANDIDATE,
-                        DefinitionStatus.ACTIVATING,
-                        DefinitionStatus.ACTIVE,
-                        DefinitionStatus.SUPERSEDED,
+                        DefinitionStatus.PUBLISHING,
+                        DefinitionStatus.AVAILABLE,
                         DefinitionStatus.DEPRECATED,
                         DefinitionStatus.RETIRED);
     }
