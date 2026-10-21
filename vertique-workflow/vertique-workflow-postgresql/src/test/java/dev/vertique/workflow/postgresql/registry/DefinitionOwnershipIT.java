@@ -3,28 +3,27 @@
 
 package dev.vertique.workflow.postgresql.registry;
 
+import static dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.await;
+import static dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.failureOf;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
-import dev.vertique.application.VertiqueApplicationBootstrap;
-import dev.vertique.application.VertiqueApplicationHandle;
-import dev.vertique.core.VertiqueRuntime;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
-import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
-import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
-import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
+import dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.Fixture;
+import dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.IdLockBarrier;
+import dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.Node;
+import dev.vertique.workflow.postgresql.registry.DefinitionRaceFixtures.Stored;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
-import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.ActivationOutcome;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
@@ -35,34 +34,16 @@ import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.ReconcileOutcome;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
-import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
-import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
-import io.vertx.sqlclient.Pool;
-import io.vertx.sqlclient.Row;
-import io.vertx.sqlclient.SqlConnection;
-import io.vertx.sqlclient.Transaction;
-import io.vertx.sqlclient.Tuple;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -123,7 +104,7 @@ public class DefinitionOwnershipIT {
         DefinitionKey heldA = new DefinitionKey("tenant-a", heldId, 1);
         DefinitionKey heldB = new DefinitionKey("tenant-b", heldId, 1);
 
-        try (Fixture fixture = new Fixture(vertx)) {
+        try (Fixture fixture = new Fixture(vertx, db)) {
             Node nodeA = fixture.node();
             Node nodeB = fixture.node();
             fixture.ownRows(raceId, heldId);
@@ -254,7 +235,7 @@ public class DefinitionOwnershipIT {
                 new OrderScenario(
                         "tenant-a:ownership-v4-first-doc", V4FirstVersion3.class, V4FirstVersion4.class, false));
 
-        try (Fixture fixture = new Fixture(vertx)) {
+        try (Fixture fixture = new Fixture(vertx, db)) {
             Node nodeA = fixture.node();
             Node nodeB = fixture.node();
 
@@ -339,7 +320,7 @@ public class DefinitionOwnershipIT {
         DefinitionKey tenantA = new DefinitionKey("tenant-a", id, 1);
         DefinitionKey tenantB = new DefinitionKey("tenant-b", id, 1);
 
-        try (Fixture fixture = new Fixture(vertx)) {
+        try (Fixture fixture = new Fixture(vertx, db)) {
             Node nodeA = fixture.node();
             Node nodeB = fixture.node();
             fixture.ownRows(id);
@@ -445,7 +426,7 @@ public class DefinitionOwnershipIT {
                 tenantB2, DefinitionStatus.DEPRECATED,
                 tenantB3, DefinitionStatus.ACTIVATING);
 
-        try (Fixture fixture = new Fixture(vertx)) {
+        try (Fixture fixture = new Fixture(vertx, db)) {
             Node node = fixture.node();
             fixture.ownRows(candidatesId, mixId);
 
@@ -624,7 +605,7 @@ public class DefinitionOwnershipIT {
         DefinitionKey raceTenant = new DefinitionKey("tenant-a", raceId, 1);
         DefinitionKey raceGlobal = new DefinitionKey(WorkflowScopes.DEFAULT, raceId, 1);
 
-        try (Fixture fixture = new Fixture(vertx)) {
+        try (Fixture fixture = new Fixture(vertx, db)) {
             Node nodeA = fixture.node();
             Node nodeB = fixture.node();
             fixture.ownRows(heldId, freshId, raceId);
@@ -735,7 +716,7 @@ public class DefinitionOwnershipIT {
     void rejectsMalformedKeysBeforeSql(Vertx vertx) {
         String missingId = "ownership-recompute-missing-doc";
 
-        try (Fixture fixture = new Fixture(vertx)) {
+        try (Fixture fixture = new Fixture(vertx, db)) {
             Node node = fixture.node();
             fixture.ownRows(missingId);
             Map<String, Map.Entry<String, String>> malformed = new java.util.LinkedHashMap<>();
@@ -785,7 +766,7 @@ public class DefinitionOwnershipIT {
         DefinitionKey activeV1 = new DefinitionKey(WorkflowScopes.DEFAULT, activeHigherId, 1);
         DefinitionKey activeV2 = new DefinitionKey(WorkflowScopes.DEFAULT, activeHigherId, 2);
 
-        try (Fixture fixture = new Fixture(vertx)) {
+        try (Fixture fixture = new Fixture(vertx, db)) {
             fixture.ownRows(supersededHigherId, deprecatedHigherId, activeHigherId);
             Node node = fixture.node();
 
@@ -908,234 +889,5 @@ public class DefinitionOwnershipIT {
 
     private static SourceMetadata source(String label) {
         return new SourceMetadata("ownership-test", "memory:" + label, "revision-" + label, null, null, Instant.now());
-    }
-
-    private static <T> T await(Future<T> future) {
-        try {
-            return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new AssertionError("Interrupted while awaiting a future", e);
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof RuntimeException runtime) throw runtime;
-            if (cause instanceof Error error) throw error;
-            throw new IllegalStateException(cause);
-        } catch (TimeoutException e) {
-            throw new AssertionError("A future did not complete within ten seconds", e);
-        }
-    }
-
-    private static Throwable failureOf(Future<?> future) {
-        Future<Throwable> outcome =
-                future.transform(result -> Future.succeededFuture(result.failed() ? result.cause() : null));
-        return await(outcome);
-    }
-
-    private static long lockKey(String definitionId) {
-        try {
-            return ByteBuffer.wrap(MessageDigest.getInstance("SHA-256")
-                            .digest(("vertique.workflow.definition:" + definitionId).getBytes(StandardCharsets.UTF_8)))
-                    .getLong();
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
-    }
-
-    private record Stored(
-            String scopeKey, long version, String status, String token, String planHash, OffsetDateTime changedAt) {}
-
-    private record Node(Pool pool, WorkflowDefinitionSqlObserver observer, AppComponent app) {
-
-        WorkflowDefinitionService service() {
-            return app.definitionService();
-        }
-
-        WorkflowRegistry registry() {
-            return app.workflowRegistry();
-        }
-
-        WorkflowDefinitionRegistryStore store() {
-            return app.definitionRegistryStore();
-        }
-    }
-
-    @FunctionalInterface
-    private interface Cleanup {
-        void run() throws Exception;
-    }
-
-    /** Holds a definition id's advisory lock in a test-owned transaction so competing operations queue behind it. */
-    private static final class IdLockBarrier {
-        private final Pool pool;
-        private final long key;
-        private final SqlConnection connection;
-        private final Transaction transaction;
-        private boolean released;
-
-        private IdLockBarrier(Pool pool, long key, SqlConnection connection, Transaction transaction) {
-            this.pool = pool;
-            this.key = key;
-            this.connection = connection;
-            this.transaction = transaction;
-        }
-
-        static IdLockBarrier hold(Pool pool, String definitionId) {
-            SqlConnection connection = await(pool.getConnection());
-            try {
-                Transaction transaction = await(connection.begin());
-                long key = lockKey(definitionId);
-                await(connection
-                        .preparedQuery("SELECT pg_advisory_xact_lock($1)")
-                        .execute(Tuple.of(key)));
-                return new IdLockBarrier(pool, key, connection, transaction);
-            } catch (RuntimeException | Error failure) {
-                await(connection.close());
-                throw failure;
-            }
-        }
-
-        /** Proves the precondition that the expected number of operations is blocked on this lock. */
-        void awaitQueued(int expected) {
-            long high = (key >>> 32) & 0xFFFFFFFFL;
-            long low = key & 0xFFFFFFFFL;
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            long waiting = -1;
-            while (System.nanoTime() < deadline) {
-                waiting = await(pool.preparedQuery("""
-                                SELECT count(*) AS waiting FROM pg_locks
-                                WHERE locktype = 'advisory' AND NOT granted AND objsubid = 1
-                                  AND classid::bigint = $1 AND objid::bigint = $2
-                                """).execute(Tuple.of(high, low)))
-                        .iterator()
-                        .next()
-                        .getLong("waiting");
-                if (waiting == expected) return;
-                Thread.onSpinWait();
-            }
-            throw new AssertionError("Expected " + expected + " operations queued on the id lock but saw " + waiting);
-        }
-
-        void release() {
-            if (released) return;
-            released = true;
-            try {
-                await(transaction.rollback());
-            } finally {
-                await(connection.close());
-            }
-        }
-    }
-
-    /** Owns the application graphs, pools and barriers of one scenario and closes them in reverse order. */
-    private static final class Fixture implements AutoCloseable {
-        private final Vertx vertx;
-        private final Deque<Cleanup> cleanups = new ArrayDeque<>();
-        private Pool admin;
-
-        Fixture(Vertx vertx) {
-            this.vertx = vertx;
-        }
-
-        void onClose(Cleanup cleanup) {
-            cleanups.push(cleanup);
-        }
-
-        /** Starts an independent application graph with its own observed pool on the shared database. */
-        Node node() {
-            WorkflowDefinitionSqlObserver observer = new WorkflowDefinitionSqlObserver();
-            Pool pool = observer.observe(ManagedDefinitionDatabase.openPool(vertx, db));
-            onClose(() -> await(pool.close()));
-            AppComponent app = ManagedDefinitionDatabase.app(
-                    vertx, pool, new BootObservation("ownership-unused", 1, "unused", false));
-            VertiqueApplicationHandle<?> handle = await(VertiqueApplicationBootstrap.start(
-                    VertiqueRuntime.of(vertx, new JsonObject()), ignoredRuntime -> app));
-            onClose(() -> await(handle.shutdown()));
-            return new Node(pool, observer, app);
-        }
-
-        /** Returns the unobserved pool used for test-owned SQL, so application gates never see it. */
-        Pool admin() {
-            if (admin == null) {
-                admin = ManagedDefinitionDatabase.openPool(vertx, db);
-                Pool opened = admin;
-                onClose(() -> await(opened.close()));
-            }
-            return admin;
-        }
-
-        IdLockBarrier holdIdLock(String definitionId) {
-            IdLockBarrier barrier = IdLockBarrier.hold(admin(), definitionId);
-            onClose(barrier::release);
-            return barrier;
-        }
-
-        /** Clears the ids now and again on close, so rows with placeholder sources never reach a later start. */
-        void ownRows(String... definitionIds) {
-            deleteRows(definitionIds);
-            onClose(() -> deleteRows(definitionIds));
-        }
-
-        void deleteRows(String... definitionIds) {
-            for (String id : definitionIds) {
-                await(admin().preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
-                        .execute(Tuple.of(id)));
-            }
-        }
-
-        List<Stored> stored(String definitionId) {
-            List<Stored> rows = new ArrayList<>();
-            for (Row row : await(admin().preparedQuery("""
-                            SELECT scope_key, definition_version, status, activation_token::text AS activation_token,
-                                   plan_hash, status_changed_at
-                            FROM workflow_definitions WHERE definition_id = $1
-                            ORDER BY scope_key NULLS FIRST, definition_version
-                            """).execute(Tuple.of(definitionId)))) {
-                rows.add(new Stored(
-                        row.getString("scope_key"),
-                        row.getLong("definition_version"),
-                        row.getString("status"),
-                        row.getString("activation_token"),
-                        row.getString("plan_hash"),
-                        row.getOffsetDateTime("status_changed_at")));
-            }
-            rows.sort(Comparator.comparing(Stored::scopeKey).thenComparingLong(Stored::version));
-            return rows;
-        }
-
-        /** Ages one outstanding claim past twice the staleness bound without touching any other row. */
-        void ageClaim(WorkflowDefinitionsConfig config, DefinitionKey key, String token) {
-            long ageSeconds = 2 * config.maxStalenessSeconds() + 60;
-            await(admin().preparedQuery("""
-                            UPDATE workflow_definitions
-                            SET status_changed_at = clock_timestamp() - ($5::bigint * interval '1 second')
-                            WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2
-                              AND definition_version = $3 AND status = 'ACTIVATING' AND activation_token = $4::uuid
-                            """)
-                    .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion(), token, ageSeconds)));
-        }
-
-        /** Moves a row to a status that a candidate cannot reach through the public operations. */
-        void forceStatus(DefinitionKey key, DefinitionStatus status) {
-            await(admin().preparedQuery("""
-                            UPDATE workflow_definitions SET status = $4
-                            WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
-                            """)
-                    .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion(), status.name())));
-        }
-
-        @Override
-        public void close() {
-            AssertionError failure = null;
-            while (!cleanups.isEmpty()) {
-                try {
-                    cleanups.pop().run();
-                } catch (Throwable cleanupFailure) {
-                    if (failure == null) failure = new AssertionError("Scenario cleanup failed", cleanupFailure);
-                    else failure.addSuppressed(cleanupFailure);
-                }
-            }
-            if (failure != null) throw failure;
-        }
     }
 }

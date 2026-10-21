@@ -330,7 +330,9 @@ public final class ManagedDefinitionDatabase {
         return StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE)
                 .walk(frames -> frames.map(StackWalker.StackFrame::getDeclaringClass)
                         .map(Class::getNestHost)
-                        .filter(host -> host != ManagedDefinitionDatabase.class && host != DefinitionScenario.class)
+                        .filter(host -> host != ManagedDefinitionDatabase.class
+                                && host != DefinitionScenario.class
+                                && host != DefinitionRaceFixtures.class)
                         .findFirst()
                         .orElse(ManagedDefinitionDatabase.class));
     }
