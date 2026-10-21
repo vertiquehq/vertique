@@ -278,6 +278,31 @@ Every lookup of an instance's plan (signals, tasks, timers, retries, branch and 
 
 Every event and side-effect correlation the engine records, single-path and branch, takes both scopes from the owning instance row, so events and outbox records name the scopes the instance really holds rather than a default. A branch drive reads them from the instance; `WorkflowRecoveryBridge.driveRecoveredBranch` loads the owning instance to do so.
 
+### Activation Records And The Current Version
+
+A start without a version runs the version that activation records select. `WorkflowEngine.start` consults, in this order: the
+start scope's record of the definition id, the default scope's record, and, when the default scope has no record, the highest
+version of the default scope that is not deprecated (`WorkflowRegistry.resolveCurrent`). When none applies the start fails with
+`WorkflowNoCurrentVersionException(scopeKey, definitionId)`. Only the start scope, the default scope and the default scope's
+versions are ever consulted: the versions of another scope are never borrowed, and nothing in the start path weights, samples or
+splits traffic between versions. A record resolves its version like an explicit start of it, so a record whose target is
+deprecated fails with the `DEPRECATED` lifecycle reason and one whose target this node has no code for fails as an unavailable
+pin; a deprecated version is refused whether it was named or selected by a record.
+
+The records live in a package-private, node-local `DefinitionActivations` view, one per engine, keyed by scope and id. The
+lifecycle updates it after the durable write commits (`activate`, `deactivateDefault`, `follow`), and a refused or failed write
+leaves it as it was. Without a durable store the view is the only state: `activate`, `deactivateDefault`, `follow` and
+`activations` complete synchronously on it and are lost on restart, while `deprecate`, `retire` and `reinstate` stay
+store-only. With a store `activations` reads the store. The view is filled by the operations of this node only: it is not
+restored from the stored records at startup and not refreshed from changes that other nodes commit, so a node that did not
+write a record starts through the fallback until a record is written through it. An engine assembled by
+`WorkflowEngineFactory.create` has its own empty view and no lifecycle, so it always uses the fallback.
+
+To decommission an id: `deactivateDefault(id)`, then `deprecate` and `retire` of its versions. Following scopes then start only
+while the fallback still finds a non-deprecated default-scope version, and fail with `WorkflowNoCurrentVersionException` once
+the versions are deprecated or retired. See the durable registry section of `dev.vertique:vertique-workflow-core` for the
+record rules and the guard that refuses to deprecate or retire the default scope's current version.
+
 ### Document Publication And Startup Restoration
 
 The engine orchestrates `WorkflowDefinitionLifecycle.publish` through the optional SQL-free registry

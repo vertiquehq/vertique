@@ -114,10 +114,12 @@ The module owns workflow persistence tables, including:
 | `workflow_branch_tokens` | Active branch execution state; includes `metadata JSONB` for durable context |
 | `workflow_join_states` | Fan-in state for fork/join workflows |
 | `workflow_definitions` | Durable definition metadata and DOCUMENT source text, added by `V002__workflow_definitions_and_scopes.sql` (see [Definition Registry And Source Storage](#definition-registry-and-source-storage)) |
+| `workflow_definition_activations` | The current version of a definition id per scope, added by the same script (see [Definition Registry And Source Storage](#definition-registry-and-source-storage)) |
 
 The migration files live with the module under `db/migration/workflow`. The shipped `V1__create_workflow_tables.sql` contains the instance/runtime tables, including branch tokens and durable metadata. The single additive `V002__workflow_definitions_and_scopes.sql` creates the definition registry and converts the released tables to scope keys:
 
 - `workflow_definitions` is keyed by `(scope_key, definition_id, definition_version)`; it carries the logical `contract_name` and `state_type_name`, the `document_digest` column and `kind VARCHAR(16)`, `plan_hash VARCHAR(128)`; a `CODE` row must be in the `default` scope.
+- `workflow_definition_activations` is keyed by `(scope_key, definition_id)`, one record per scope and id, with `target_scope_key`, `definition_version` and `activated_at`. A check requires the target scope to be the scope itself or `default`, and `default` to name only itself; a foreign key from `(target_scope_key, definition_id, definition_version)` to `workflow_definitions` is `ON DELETE RESTRICT`, so a definition row that a record names cannot be deleted. No row means the scope follows the default scope.
 - `workflow_instances` gains `scope_key` (the start scope) and `definition_scope_key` (the scope of the pinned definition version), and `workflow_tasks` gains `scope_key`, each `VARCHAR(255) NOT NULL DEFAULT 'default'`. Existing rows read `default`; the script rewrites no row.
 - The business-key index `idx_workflow_instances_business_key` becomes unique per `(scope_key, definition_id, business_key)` where the business key is not null, and `idx_workflow_instances_scope_updated_at` and `idx_workflow_tasks_scope_updated_at` serve scope-filtered keyset queries on `(scope_key, updated_at DESC, <id>)`.
 - `workflow_dedup.scope` is renamed `dedup_namespace` (for start rows it still holds the definition id), a `scope_key` column is added, and the primary key becomes `(kind, scope_key, dedup_namespace, key)`. Stored fingerprints and namespaces are kept as they were.
@@ -173,6 +175,8 @@ retirement can delay new starts of that id. `PgWorkflowInstanceQueryService.coun
 scope-aware informational count (`countNonTerminal(definitionId, version)` counts the default scope); it is not the
 retirement guard. The count and the retirement guard include only instances pinned to the definition's own scope.
 
+`putActivation`, `removeActivation` and `listActivations` maintain `workflow_definition_activations`. A write runs like every registry mutation, under the id lock at READ COMMITTED: `putActivation` requires the target row `(target_scope_key, id, version)` to exist and be `AVAILABLE` (a refusal is `INVALID_TRANSITION` naming the target key) and then inserts or replaces the scope's record; `removeActivation` deletes it and accepts an absent record. The default-current guard lives in `transition` and `retire`: in the same transaction and after the lock was granted, a default-scope row is refused with `INVALID_TRANSITION` while the default scope's record of the id names its version, so a concurrent activation and deprecation serialize on the lock and the record never ends on a deprecated target. Rows of other scopes are not guarded. Delete a record with `removeActivation` (or `deactivateDefault` through the lifecycle) before deleting the definition rows it names, and note that tests or tools that delete definition rows directly must remove the id's records first because of the restricting foreign key.
+
 Registry refusal messages can name other scopes and plan hashes: do not forward them to tenants.
 
 Pin admission: before `insert` creates an instance pin, `migratePinAndState` changes one, or `updateOptimistic`
@@ -215,7 +219,7 @@ instructions. Configure the same policy on every node; raising the input limit i
 parse cost, and lowering it below required stored sources makes startup fail. The stored envelope is
 floor(3L/2) UTF-8 bytes and L code points for configured raw input limit L (default 262144 bytes).
 
-**Placement.** The migration script is unqualified, so the migration instance's default schema decides where the eight tables and their indexes land. In named Flyway mode with a `db.schemas.workflow` entry, that schema is the default, and the stores qualify every table with it, so both agree. In single mode the migration lands where the single-run configuration says (see [Flyway Configuration](#flyway-configuration)). The module creates no sequences, views, functions or triggers and uses no notification channel, so tables and indexes are everything a mapped schema receives.
+**Placement.** The migration script is unqualified, so the migration instance's default schema decides where the nine tables and their indexes land. In named Flyway mode with a `db.schemas.workflow` entry, that schema is the default, and the stores qualify every table with it, so both agree. In single mode the migration lands where the single-run configuration says (see [Flyway Configuration](#flyway-configuration)). The module creates no sequences, views, functions or triggers and uses no notification channel, so tables and indexes are everything a mapped schema receives.
 
 ---
 

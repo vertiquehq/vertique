@@ -42,7 +42,9 @@ public interface WorkflowDefinitionService {
     /**
      * Deprecates an available definition so it is skipped by current resolution and refused for new
      * explicit starts and migration targets, while instances already pinned to it keep running. The status is
-     * committed durably before it is projected into the local cache and registry. A durable registry is
+     * committed durably before it is projected into the local cache and registry. The version that the default
+     * scope's activation record of the id names is refused with {@code INVALID_TRANSITION} until another version is
+     * activated in the default scope or {@link #deactivateDefault(String)} clears the record. A durable registry is
      * required; without one the returned future fails.
      */
     Future<Void> deprecate(DefinitionKey key);
@@ -50,7 +52,8 @@ public interface WorkflowDefinitionService {
      * Retires a candidate, or a deprecated definition once it has cooled and no instance is pinned to it, so it
      * can no longer be published or resolved. The durable status is committed first, together with the cooling
      * and pin checks, and then projected into the local cache; a refused retirement fails typed and changes
-     * nothing. The local runtime is removed only when it is the registration published for this key. A
+     * nothing. The local runtime is removed only when it is the registration published for this key. The version
+     * that the default scope's activation record of the id names is refused like a deprecation of it. A
      * durable registry is required; without one the returned future fails.
      */
     Future<Void> retire(DefinitionKey key);

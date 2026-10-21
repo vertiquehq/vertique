@@ -24,6 +24,11 @@ public interface WorkflowDefinitionLifecycle {
      * The local mark is a no-op when the version is not registered on this node, and a registry that does
      * not support deprecation fails the call after the durable commit, leaving the committed status in
      * place. Deprecating a version does not change any other version.
+     *
+     * <p>The version that the default scope's activation record of the id names cannot be deprecated: the future
+     * fails with {@code INVALID_TRANSITION} until another version is activated in the default scope or
+     * {@link #deactivateDefault(String)} clears the record. A version that only a non-default scope's record names
+     * can be deprecated, and that scope's starts then fail as deprecated.
      */
     Future<Void> deprecate(DefinitionKey key);
 
@@ -34,7 +39,8 @@ public interface WorkflowDefinitionLifecycle {
      * version, and only when the registration there is the one this lifecycle published
      * for the same key. A registration that the lifecycle did not publish, or that a direct registry call has
      * since replaced, makes the call fail as an invalid transition before any durable change, and is never
-     * removed.
+     * removed. The version that the default scope's activation record of the id names is refused with
+     * {@code INVALID_TRANSITION} like a deprecation of it.
      */
     Future<Void> retire(DefinitionKey key);
 

@@ -84,6 +84,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private final String sqlPutActivation;
     private final String sqlRemoveActivation;
     private final String sqlListActivations;
+    private final String sqlDefaultCurrent;
     private final WorkflowDefinitionsConfig config;
     private final WorkflowExceptionMapper workflowMapper = new WorkflowExceptionMapper();
     private volatile boolean utf8Confirmed;
@@ -193,6 +194,10 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 "SELECT scope_key, definition_id, target_scope_key, definition_version, activated_at FROM "
                         + activations
                         + " WHERE ($1::varchar IS NULL OR scope_key=$1) ORDER BY definition_id, scope_key";
+
+        this.sqlDefaultCurrent = "SELECT 1 FROM " + activations + " WHERE scope_key='" + WorkflowScopes.DEFAULT
+                + "' AND definition_id=$1 AND target_scope_key='" + WorkflowScopes.DEFAULT
+                + "' AND definition_version=$2";
     }
 
     @Override
@@ -394,13 +399,15 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 Row current = row(rows, key).orElseThrow(() -> invalid(key, "definition not found"));
                 String status = current.getString("status");
                 if (!from.name().equals(status)) throw invalid(key, "expected status " + from + " but found " + status);
-                return tx.preparedQuery(sqlTransition)
+                Future<Void> guard =
+                        to == DefinitionStatus.DEPRECATED ? guardDefaultCurrent(tx, key) : Future.succeededFuture();
+                return guard.compose(ignored -> tx.preparedQuery(sqlTransition)
                         .execute(parameters(key).addString(from.name()).addString(to.name()))
                         .map(updated -> {
                             if (updated.rowCount() != 1)
                                 throw invalid(key, "expected status " + from + " but the row changed");
                             return (Void) null;
-                        });
+                        }));
             });
         });
     }
@@ -414,15 +421,18 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 String status = current.getString("status");
                 if (!"CANDIDATE".equals(status) && !"DEPRECATED".equals(status))
                     throw invalid(key, "cannot retire status " + status);
-                // Only a deprecated version can be pinned by instances, so a candidate skips cooling and the count.
-                Future<Void> guard = "DEPRECATED".equals(status) ? guardDeprecated(tx, key) : Future.succeededFuture();
-                return guard.compose(ignored -> tx.preparedQuery(sqlRetire)
-                        .execute(parameters(key).addString(status))
-                        .map(updated -> {
-                            if (updated.rowCount() != 1)
-                                throw invalid(key, "expected status " + status + " but the row changed");
-                            return (Void) null;
-                        }));
+                // The default-current guard comes first. Only a deprecated version can be pinned by instances, so a
+                // candidate skips cooling and the count.
+                return guardDefaultCurrent(tx, key)
+                        .compose(ignored ->
+                                "DEPRECATED".equals(status) ? guardDeprecated(tx, key) : Future.<Void>succeededFuture())
+                        .compose(ignored -> tx.preparedQuery(sqlRetire)
+                                .execute(parameters(key).addString(status))
+                                .map(updated -> {
+                                    if (updated.rowCount() != 1)
+                                        throw invalid(key, "expected status " + status + " but the row changed");
+                                    return (Void) null;
+                                }));
             });
         });
     }
@@ -471,6 +481,25 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                             .map(PgWorkflowDefinitionRegistryStore::activation)
                             .toList()));
         });
+    }
+
+    /**
+     * Refuses to take the default scope's current version out of service: while the default scope's activation record
+     * of the id names this version, deprecating or retiring it fails as an invalid transition. The record is read on
+     * the caller's locked transaction, after the lock was granted, so a record committed while the lock was awaited
+     * is seen and one written later waits for this transaction. Rows of other scopes are not guarded.
+     */
+    private Future<Void> guardDefaultCurrent(SqlConnection tx, DefinitionKey key) {
+        if (!WorkflowScopes.DEFAULT.equals(key.scopeKey())) return Future.succeededFuture();
+        return tx.preparedQuery(sqlDefaultCurrent)
+                .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
+                .map(rows -> {
+                    if (rows.iterator().hasNext())
+                        throw invalid(
+                                key,
+                                "is the current version of the default scope; activate another version or deactivate the default first");
+                    return (Void) null;
+                });
     }
 
     /**

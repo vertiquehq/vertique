@@ -460,6 +460,27 @@ staleness bound return to CANDIDATE). `WorkflowRegistry.registeredDefinition(key
 hook that the default registry fills with the source definition it registered; it is empty after `unregister`.
 Rows of different scopes and versions of one id coexist and do not conflict: a claim, completion or static reconciliation
 looks only at its own row.
+
+**Activation records.** The current version of an id in a scope is a `DefinitionActivation(scopeKey, definitionId,
+targetScopeKey, version, activatedAt)`. A scope with no record follows the default scope; a record names a version of the
+scope itself or of the default scope, and the default scope's record names only the default scope. The constructor rejects
+any other combination with `IllegalArgumentException`, so an invalid argument fails before storage is read. The store adds
+`putActivation(DefinitionActivation)`, `removeActivation(scopeKey, definitionId)` and `listActivations(scopeKey)` (a `null`
+scope lists every scope, ordered by id and scope). A write runs under the definition id lock and requires the target row to
+exist and be `AVAILABLE`, otherwise it fails with `INVALID_TRANSITION` naming the target key; activating changes no
+definition row. The lifecycle and the definition service add `activate(scopeKey, definitionId, targetScopeKey, version)`,
+which replaces the scope's record, `deactivateDefault(definitionId)`, which clears the default scope's record (an absent
+record is accepted, no definition row changes, other scopes' records stay), `follow(scopeKey, definitionId)`, which removes a
+non-default scope's record (`follow` on the default scope fails with `IllegalArgumentException`), and
+`activations(scopeKey)`. Without a durable store the same operations act on the node's in-memory view and are lost on
+restart; there `activate` checks that the target version is registered on the node and not deprecated.
+
+**Default-current guard.** While the default scope's record of an id names a version, `deprecate` and `retire` of that
+version fail with `INVALID_TRANSITION` naming the key; the check runs in the same store transaction as the status change.
+Activate another version in the default scope, or call `deactivateDefault(id)`, and the version can be deprecated and
+retired. Decommissioning an id is therefore `deactivateDefault`, `deprecate`, wait out the cooling window, `retire`. A
+version that only a non-default scope's record names can be deprecated, and that scope's starts then fail as deprecated
+until it is activated elsewhere or follows. `reinstate` returns a version to `AVAILABLE` and never makes it current.
 `WorkflowCoreModule` declares optional
 store, lifecycle, and configuration bindings plus the loader multibinding. Without persistence, the
 standalone definition graph needs neither a database nor a configuration parser. `WorkflowRegistry.unregister(DefinitionKey)`
@@ -504,6 +525,8 @@ report invalid arguments through failed Futures.
 | `WorkflowTechnicalException` | `TechnicalException` | 500 |
 | `WorkflowUnavailableException` | `UnavailableException` | 503 |
 | `WorkflowPersistenceException` | extends `WorkflowTechnicalException` (carries a `retryable` flag) | 500 |
+
+`WorkflowNoCurrentVersionException` extends `WorkflowDefinitionMissingException` and is thrown by a start without a version that finds no current version: neither the start scope nor the default scope has an activation record and the default scope holds no startable version of the id. It exposes `scopeKey()` (the start scope) and `definitionId()` and no version, because none is current, and it never selects a version from another scope.
 
 `WorkflowUnknownTypeNameException` (a name no indexed class has) and `WorkflowTypeNameConflictException` (two classes under one name in a namespace) extend `WorkflowDefinitionException`, so they are configuration failures and existing handlers for definition errors keep working.
 

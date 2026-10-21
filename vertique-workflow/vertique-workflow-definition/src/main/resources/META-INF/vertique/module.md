@@ -298,6 +298,17 @@ staleness cadence plus the time to apply, or when they restart. Deprecating a ve
 version available, and current resolution already serves the next lower version. It requires the durable registry:
 without one, the returned Future fails.
 
+`activate(scopeKey, definitionId, targetScopeKey, version)` makes a version the one a start without a version runs in a scope,
+replacing the scope's record; the target is the scope itself or the default scope (the default scope may target only itself),
+and it must be available in the target scope, otherwise the Future fails with `INVALID_TRANSITION` naming the target key or,
+for an invalid scope combination, with `IllegalArgumentException`. Publishing never activates anything. `follow(scopeKey,
+definitionId)` removes a non-default scope's record so it follows the default again, `deactivateDefault(definitionId)` clears
+the default scope's record (an absent record is accepted), and `activations(scopeKey)` lists the records of a scope or, with
+`null`, of every scope. The default scope's current version cannot be deprecated or retired until another version is activated
+or `deactivateDefault` clears the record; to decommission an id call `deactivateDefault`, `deprecate`, and `retire` after the
+cooling window. Without a durable registry these operations act on the node's in-memory view and are lost on restart. Like
+`load`, they take any scope, so restrict them to authorized callers.
+
 `reinstate(DefinitionKey)` brings a retired version back when its source is available (the deployed code for a code version,
 the stored text for a document), and a deprecated version back by clearing its deprecation mark; either becomes AVAILABLE.
 The returned Future fails with `CODE_UNAVAILABLE`, `DRIFT`,

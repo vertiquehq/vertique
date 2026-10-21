@@ -108,6 +108,9 @@ public interface WorkflowDefinitionRegistryStore {
      * only the claim, complete and release operations. A change affects only the addressed row and refreshes its
      * status change time.
      *
+     * <p>A transition to {@code DEPRECATED} of a default-scope row is refused, in the same transaction and with the
+     * same {@code INVALID_TRANSITION}, while the default scope's activation record of the id names that version.
+     *
      * <p>The last two are the reinstatement primitives; the {@link WorkflowDefinitionLifecycle} enforces the
      * preconditions that an executable source is available and that its hash equals the recorded one, and the store
      * does not.
@@ -128,8 +131,9 @@ public interface WorkflowDefinitionRegistryStore {
      * change: a missing or ineligible row fails with
      * {@link dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException} reason
      * {@code INVALID_TRANSITION}, a row that is still cooling fails with reason {@code COOLING}, and a row that
-     * is still pinned fails with reason {@code PINNED_INSTANCES}. A refusal changes no row, and a success changes
-     * only this row's status and status change time.
+     * is still pinned fails with reason {@code PINNED_INSTANCES}. A default-scope row that the default scope's
+     * activation record of the id names is refused as an invalid transition before those checks. A refusal changes
+     * no row, and a success changes only this row's status and status change time.
      *
      * @param key scoped definition key to retire
      * @return a future completed after the store-owned transaction commits
