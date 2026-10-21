@@ -82,7 +82,7 @@ public class DefinitionMigrationIT {
 
             assertSqlState("23505", () -> insertCode(connection, "orders", 1, "CANDIDATE"));
             assertSqlState("23505", () -> insertCode(connection, "orders", 3, "ACTIVE"));
-            assertSqlState("23514", () -> insertTenantCode(connection, "tenant-a", "tenant-code", 1));
+            assertSqlState("23514", () -> insertScopedCode(connection, "tenant-a", "tenant-code", 1));
             assertSqlState("23514", () -> insertCodeWithDocumentFields(connection, "code-with-body", "{}", null));
             assertSqlState("23514", () -> insertCodeWithDocumentFields(connection, "code-with-format", null, "JSON"));
 
@@ -171,15 +171,15 @@ public class DefinitionMigrationIT {
         }
     }
 
-    private static void insertTenantCode(Connection connection, String tenant, String definitionId, long version)
+    private static void insertScopedCode(Connection connection, String scopeKey, String definitionId, long version)
             throws SQLException {
         try (PreparedStatement insert = connection.prepareStatement("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                      source_type, loaded_at)
-                VALUES (?, ?, ?, 'CODE', repeat('a', 64), 'CANDIDATE', 'migration-test', now())
+                VALUES (?, ?, ?, 'CODE', 'example.Contract', 'example.State', repeat('a', 64), 'CANDIDATE', 'migration-test', now())
                 """)) {
-            insert.setString(1, tenant);
+            insert.setString(1, scopeKey);
             insert.setString(2, definitionId);
             insert.setLong(3, version);
             insert.executeUpdate();
@@ -190,9 +190,9 @@ public class DefinitionMigrationIT {
             Connection connection, String definitionId, String document, String format) throws SQLException {
         try (PreparedStatement insert = connection.prepareStatement("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                      document, document_format, source_type, loaded_at)
-                VALUES (NULL, ?, 1, 'CODE', repeat('a', 64), 'CANDIDATE', ?, ?, 'migration-test', now())
+                VALUES ('default', ?, 1, 'CODE', 'example.Contract', 'example.State', repeat('a', 64), 'CANDIDATE', ?, ?, 'migration-test', now())
                 """)) {
             insert.setString(1, definitionId);
             insert.setString(2, document);
@@ -209,9 +209,9 @@ public class DefinitionMigrationIT {
             throws SQLException {
         try (PreparedStatement insert = connection.prepareStatement("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                      document, document_format, document_digest, source_type, loaded_at)
-                VALUES (NULL, ?, 1, 'DOCUMENT', repeat('a', 64), 'CANDIDATE', ?, ?,
+                VALUES ('default', ?, 1, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), 'CANDIDATE', ?, ?,
                         encode(sha256(convert_to(COALESCE(?::text, ''), 'UTF8')), 'hex'), 'migration-test', now())
                 """)) {
             insert.setString(1, definitionId);

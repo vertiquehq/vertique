@@ -64,6 +64,7 @@ import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowType;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
@@ -131,7 +132,7 @@ class DocumentRegistrationParityTest {
     private static final String STATE_NAME = "parity.state";
     private static final String REFUSAL_FRAGMENT = "waits for signals that contract";
 
-    private static final DefinitionKey KEY = new DefinitionKey(null, DOCUMENT_DEFINITION, 1);
+    private static final DefinitionKey KEY = new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION, 1);
 
     // --- Fixture definitions ---
 
@@ -498,6 +499,8 @@ class DocumentRegistrationParityTest {
         WorkflowDefinitionRecord stored = new WorkflowDefinitionRecord(
                 KEY,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 "a".repeat(64),
                 DefinitionStatus.CANDIDATE,
                 new DefinitionProvenance("test", "test://parity/store", null, null, null, now),
@@ -678,7 +681,7 @@ class DocumentRegistrationParityTest {
                 .hasMessageContaining(Legacy.class.getName());
         assertThat(recorder.requested()).doesNotContain(Legacy.class.getName());
         assertThat(ServiceTestHelpers.await(service.workflowDefinitionService()
-                        .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))))
+                        .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))))
                 .isEmpty();
     }
 }

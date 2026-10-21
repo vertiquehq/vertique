@@ -18,7 +18,6 @@ import dev.vertique.db.query.PageCursor;
 import dev.vertique.db.query.PagedResult;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
-import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.query.WorkflowInstanceQuery;
@@ -32,8 +31,6 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -41,10 +38,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.List;
-import java.util.Locale;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 import org.flywaydb.core.Flyway;
@@ -56,101 +50,39 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Verifies the single migration that adds the definition registry, its digest and the tenant key columns with their
- * partial indexes, on databases that already hold workflow rows. Every scenario uses a database of its own.
+ * Verifies the operational properties of the scope migration that its structural test does not pin: the digest
+ * constraint of the definition table, the use of the scope keyset indexes by scope-filtered queries, and a migration
+ * over columns and indexes that an operator created ahead of the upgrade. Every scenario uses a database of its own.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-public class TenantKeyMigrationIT {
+public class ScopeMigrationOperationsIT {
 
-    private static final String PINNED_V1_SHA256 = "b444c9f5943de792243e7080d78531d9c1755d9413429980ac98322727889ae2";
-
-    private static final String V1_SCRIPT = "V1__create_workflow_tables.sql";
-    private static final String V002_SCRIPT = "V002__create_workflow_definitions_and_tenant_key.sql";
-
-    private static final String INSTANCE_INDEX = "idx_workflow_instances_tenant_updated_at";
-    private static final String TASK_INDEX = "idx_workflow_tasks_tenant_updated_at";
+    private static final String INSTANCE_INDEX = "idx_workflow_instances_scope_updated_at";
+    private static final String TASK_INDEX = "idx_workflow_tasks_scope_updated_at";
 
     private static final String INSTANCE_ID = "00000000-0000-0000-0000-0000000000a1";
     private static final String TASK_ID = "00000000-0000-0000-0000-0000000000b1";
 
-    /** Tenant whose rows the index scenario reads; each of the 40 tenants holds roughly one row in 41. */
-    private static final String QUERIED_TENANT = "tenant-7";
+    /** Scope whose rows the index scenario reads; each of the 40 scopes holds roughly one row in 41. */
+    private static final String QUERIED_SCOPE = "scope-7";
 
     private static final int SEEDED_ROWS = 3200;
     private static final int PAGE_SIZE = 10;
 
-    static final PostgresContainer upgradeDb = new PostgresContainer().withDatabaseName("wf_single_migration_it");
+    static final PostgresContainer digestDb = new PostgresContainer().withDatabaseName("wf_scope_digest_it");
 
-    static final PostgresContainer indexDb = new PostgresContainer().withDatabaseName("wf_tenant_index_it");
+    static final PostgresContainer indexDb = new PostgresContainer().withDatabaseName("wf_scope_index_it");
 
-    static final PostgresContainer aheadDb = new PostgresContainer().withDatabaseName("wf_ahead_of_time_it");
+    static final PostgresContainer aheadDb = new PostgresContainer().withDatabaseName("wf_scope_ahead_it");
 
     @Test
-    void upgradeFromV1AppliesOneMigrationWithDefinitionsDigestTenantColumnsAndIndexes(Vertx vertx) throws Exception {
-        // Given the first migration is shipped byte for byte as it was released
-        assertThat(shippedSha256(V1_SCRIPT)).isEqualTo(PINNED_V1_SHA256);
-        String shippedScript = shippedText(V002_SCRIPT);
+    void digestConstraintAcceptsOnlyDocumentRowsWithALowercaseHexDigest() throws Exception {
+        // Given a database migrated to the latest version
+        flyway(digestDb).load().migrate();
 
-        // And a database migrated to the first version only, holding one instance and one task
-        flyway(upgradeDb).target("1").load().migrate();
-        int v1ChecksumBefore;
-        try (Connection connection = connection(upgradeDb);
-                Statement statement = connection.createStatement()) {
-            statement.executeUpdate("""
-                    INSERT INTO workflow_instances
-                        (id, definition_id, definition_version, plan_hash, status, current_step_id, state_json,
-                         created_at, updated_at)
-                    VALUES ('%s', 'orders', 1, repeat('a', 64), 'WAITING', 'review', '{}'::jsonb,
-                            '2026-05-10T00:00:00Z', '2026-05-10T00:00:00Z')
-                    """.formatted(INSTANCE_ID));
-            statement.executeUpdate("""
-                    INSERT INTO workflow_tasks
-                        (task_id, workflow_id, step_id, status, assignee_type, assignee_key,
-                         decisions_snapshot_json, created_at, updated_at)
-                    VALUES ('%s', '%s', 'review', 'OPEN', 'ROLE', 'reviewers', '[]'::jsonb,
-                            '2026-05-10T00:00:00Z', '2026-05-10T00:00:00Z')
-                    """.formatted(TASK_ID, INSTANCE_ID));
-            v1ChecksumBefore = scriptChecksum(connection, V1_SCRIPT);
-            assertThat(columnCount(connection, "workflow_instances", "tenant_key"))
-                    .as("no tenant column before the migration")
-                    .isZero();
-            assertThat(columnCount(connection, "workflow_tasks", "tenant_key"))
-                    .as("no tenant column before the migration")
-                    .isZero();
-        }
-
-        // When the upgrade runs through the real Flyway run
-        Flyway latest = flyway(upgradeDb).load();
-        assertThat(latest.info().pending())
-                .extracting(MigrationInfo::getScript)
-                .as("only the single new migration is pending after the first one")
-                .containsExactly(V002_SCRIPT);
-        int resolvedChecksum = latest.info().pending()[0].getChecksum();
-        latest.migrate();
-
-        // Then the script bounds its lock wait with its very first statement
-        String statements = withoutComments(shippedScript);
-        assertThat(firstStatement(statements))
-                .as("the first statement must bound the lock wait")
-                .isEqualTo("SET LOCAL lock_timeout = '30s'");
-
-        // And the script holds nothing that cannot run inside the single migration transaction
-        assertThat(statements.toUpperCase(Locale.ROOT))
-                .doesNotContain("CONCURRENTLY", "VACUUM", "CREATE DATABASE", "ALTER SYSTEM");
-
-        // And exactly versions 1 and 2 are applied, and the location holds no other script
-        assertThat(latest.info().applied())
-                .extracting(MigrationInfo::getVersion)
-                .containsExactly(MigrationVersion.fromVersion("1"), MigrationVersion.fromVersion("2"));
-        assertThat(latest.info().all()).extracting(MigrationInfo::getScript).containsExactly(V1_SCRIPT, V002_SCRIPT);
-
-        try (Connection connection = connection(upgradeDb)) {
-            // And the first migration keeps its recorded checksum and the new one records the shipped file's
-            assertThat(scriptChecksum(connection, V1_SCRIPT)).isEqualTo(v1ChecksumBefore);
-            assertThat(scriptChecksum(connection, V002_SCRIPT)).isEqualTo(resolvedChecksum);
-
-            // And the digest column is a 64-character string guarded by the lowercase hex constraint
+        try (Connection connection = connection(digestDb)) {
+            // Then the digest column is a 64-character string guarded by the lowercase hex constraint
             assertThat(columnShape(connection, "workflow_definitions", "document_digest"))
                     .startsWith("character varying|64|");
             assertThat(scalar(connection, """
@@ -174,69 +106,11 @@ public class TenantKeyMigrationIT {
             insertCode(connection, "digest-code-accepted", 1, "SUPERSEDED");
             assertThat(storedDigest(connection, "digest-accepted")).isEqualTo(validDigest);
             assertThat(storedDigest(connection, "digest-code-accepted")).isNull();
-
-            // And both tables have a nullable tenant_key VARCHAR(255) without a default
-            for (String table : new String[] {"workflow_instances", "workflow_tasks"}) {
-                assertThat(columnShape(connection, table, "tenant_key"))
-                        .as("tenant_key on %s", table)
-                        .isEqualTo("character varying|255|YES|null");
-            }
-
-            // And the rows inserted before the upgrade are untouched and hold a null tenant
-            assertThat(scalar(connection, "SELECT count(*) FROM workflow_instances"))
-                    .isEqualTo("1");
-            assertThat(scalar(connection, "SELECT count(*) FROM workflow_tasks"))
-                    .isEqualTo("1");
-            assertThat(scalar(connection, "SELECT count(*) FROM workflow_instances WHERE tenant_key IS NULL"))
-                    .isEqualTo("1");
-            assertThat(scalar(connection, "SELECT count(*) FROM workflow_tasks WHERE tenant_key IS NULL"))
-                    .isEqualTo("1");
-
-            // And each tenant index exists once, is valid, is partial on the tenant and lists the keyset order
-            assertThat(indexes(connection, INSTANCE_INDEX)).singleElement().satisfies(index -> {
-                assertThat(index.valid()).isTrue();
-                assertThat(index.definition())
-                        .contains("workflow_instances USING btree (tenant_key, updated_at DESC, id)")
-                        .endsWith("WHERE (tenant_key IS NOT NULL)");
-            });
-            assertThat(indexes(connection, TASK_INDEX)).singleElement().satisfies(index -> {
-                assertThat(index.valid()).isTrue();
-                assertThat(index.definition())
-                        .contains("workflow_tasks USING btree (tenant_key, updated_at DESC, task_id)")
-                        .endsWith("WHERE (tenant_key IS NOT NULL)");
-            });
-        }
-
-        // And the repositories read the pre-existing rows with a null tenant
-        Pool pool = pool(vertx, upgradeDb);
-        try {
-            PgDbExceptionMapper mapper = new PgDbExceptionMapper();
-            PgWorkflowInstanceRepository instances = new PgWorkflowInstanceRepository(pool, mapper);
-            PgTaskStore tasks = new PgTaskStore(pool, mapper);
-
-            WorkflowInstance waiting = await(instances.findById(new WorkflowInstanceId(UUID.fromString(INSTANCE_ID))))
-                    .orElseThrow();
-            TaskRecord task =
-                    await(tasks.findById(UUID.fromString(TASK_ID), pool)).orElseThrow();
-
-            assertThat(waiting.tenantKey()).isNull();
-            assertThat(task.tenantKey()).isNull();
-            assertThat(await(instances.findFiltered(WorkflowInstanceQuery.none(), PageCursor.first(10)))
-                            .items())
-                    .extracting(WorkflowInstance::tenantKey)
-                    .containsOnlyNulls()
-                    .hasSize(1);
-            assertThat(await(instances.findFiltered(
-                                    WorkflowInstanceQuery.none().withTenantKey("t1"), PageCursor.first(10)))
-                            .items())
-                    .isEmpty();
-        } finally {
-            await(pool.close());
         }
     }
 
     @Test
-    void tenantFilteredKeysetQueriesCanUseTheTenantIndexes(Vertx vertx) throws Exception {
+    void scopeFilteredKeysetQueriesCanUseTheScopeIndexes(Vertx vertx) throws Exception {
         // Given a database upgraded to the latest version
         flyway(indexDb).load().migrate();
 
@@ -246,35 +120,35 @@ public class TenantKeyMigrationIT {
             String databaseName = scalar(connection, "SELECT current_database()");
             statement.execute("ALTER DATABASE \"" + databaseName + "\" SET enable_seqscan = off");
 
-            // And instances and tasks spread over 40 tenants and the null tenant, some of them archived
+            // And instances and tasks spread over 40 scopes and the default scope, some of them archived
             statement.executeUpdate("""
                     INSERT INTO workflow_instances
                         (id, definition_id, definition_version, plan_hash, status, current_step_id, state_json,
-                         created_at, updated_at, archived_at, tenant_key)
+                         created_at, updated_at, archived_at, scope_key)
                     SELECT md5('instance-' || g)::uuid, 'orders', 1, repeat('a', 64), 'RUNNING', 'start',
                            '{}'::jsonb,
                            timestamptz '2026-05-10T00:00:00Z' + g * interval '1 second',
                            timestamptz '2026-05-10T00:00:00Z' + g * interval '1 second',
                            CASE WHEN g %% 13 = 0 THEN timestamptz '2026-06-01T00:00:00Z' END,
-                           CASE WHEN g %% 41 = 0 THEN NULL ELSE 'tenant-' || (g %% 41) END
+                           CASE WHEN g %% 41 = 0 THEN 'default' ELSE 'scope-' || (g %% 41) END
                     FROM generate_series(1, %d) g
                     """.formatted(SEEDED_ROWS));
             statement.executeUpdate("""
                     INSERT INTO workflow_tasks
                         (task_id, workflow_id, step_id, status, assignee_type, assignee_key,
-                         decisions_snapshot_json, created_at, updated_at, tenant_key)
+                         decisions_snapshot_json, created_at, updated_at, scope_key)
                     SELECT md5('task-' || g)::uuid, md5('instance-' || g)::uuid, 'review', 'OPEN', 'ROLE',
                            'reviewers', '[]'::jsonb,
                            timestamptz '2026-05-10T00:00:00Z' + g * interval '1 second',
                            timestamptz '2026-05-10T00:00:00Z' + g * interval '1 second',
-                           CASE WHEN g %% 41 = 0 THEN NULL ELSE 'tenant-' || (g %% 41) END
+                           CASE WHEN g %% 41 = 0 THEN 'default' ELSE 'scope-' || (g %% 41) END
                     FROM generate_series(1, %d) g
                     """.formatted(SEEDED_ROWS));
             statement.execute("ANALYZE workflow_instances");
             statement.execute("ANALYZE workflow_tasks");
         }
 
-        // And the keyset pages the queried tenant must return, read without touching any index
+        // And the keyset pages the queried scope must return, read without touching any index
         List<String> expectedInstanceIds = new ArrayList<>();
         List<String> expectedTaskIds = new ArrayList<>();
         try (Connection reference = connection(indexDb);
@@ -285,21 +159,21 @@ public class TenantKeyMigrationIT {
             settings.execute("SET enable_bitmapscan = off");
             expectedInstanceIds.addAll(strings(reference, """
                     SELECT id::text FROM workflow_instances
-                    WHERE tenant_key = ? AND archived_at IS NULL
+                    WHERE scope_key = ? AND archived_at IS NULL
                     ORDER BY updated_at DESC, id ASC LIMIT 20
-                    """, QUERIED_TENANT));
+                    """, QUERIED_SCOPE));
             expectedTaskIds.addAll(strings(reference, """
                     SELECT t.task_id::text FROM workflow_tasks t
-                    WHERE t.tenant_key = ?
+                    WHERE t.scope_key = ?
                       AND NOT EXISTS (SELECT 1 FROM workflow_instances i
                                       WHERE i.id = t.workflow_id AND i.archived_at IS NOT NULL)
                     ORDER BY t.updated_at DESC, t.task_id ASC LIMIT 20
-                    """, QUERIED_TENANT));
+                    """, QUERIED_SCOPE));
         }
         assertThat(expectedInstanceIds).as("two full pages of live instances").hasSize(2 * PAGE_SIZE);
         assertThat(expectedTaskIds).as("two full pages of live tasks").hasSize(2 * PAGE_SIZE);
 
-        // And the scan counters of both tenant indexes before any query ran
+        // And the scan counters of both scope indexes before any query ran
         long instanceScansBefore;
         long taskScansBefore;
         try (Connection stats = connection(indexDb)) {
@@ -307,7 +181,7 @@ public class TenantKeyMigrationIT {
             taskScansBefore = indexScans(stats, TASK_INDEX);
         }
 
-        // When the real repositories read the first page and the keyset continuation for the tenant
+        // When the real repositories read the first page and the keyset continuation for the scope
         // (the pool is built after the planner setting, so its sessions carry it)
         Pool pool = pool(vertx, indexDb);
         try {
@@ -315,27 +189,27 @@ public class TenantKeyMigrationIT {
             PgWorkflowInstanceRepository instances = new PgWorkflowInstanceRepository(pool, mapper);
             PgTaskStore tasks = new PgTaskStore(pool, mapper);
 
-            WorkflowInstanceQuery instanceQuery = WorkflowInstanceQuery.none().withTenantKey(QUERIED_TENANT);
+            WorkflowInstanceQuery instanceQuery = WorkflowInstanceQuery.none().withScopeKey(QUERIED_SCOPE);
             PagedResult<WorkflowInstance> instancePage1 =
                     await(instances.findFiltered(instanceQuery, PageCursor.first(PAGE_SIZE)));
             PagedResult<WorkflowInstance> instancePage2 =
                     await(instances.findFiltered(instanceQuery, PageCursor.fromToken(instancePage1.nextCursorToken())));
 
-            TaskFilter taskFilter = TaskFilter.empty().withTenantKey(QUERIED_TENANT);
+            TaskFilter taskFilter = TaskFilter.empty().withScopeKey(QUERIED_SCOPE);
             PagedResult<TaskRecord> taskPage1 =
                     await(tasks.findByFilter(taskFilter, PageCursor.first(PAGE_SIZE), pool));
             PagedResult<TaskRecord> taskPage2 =
                     await(tasks.findByFilter(taskFilter, PageCursor.fromToken(taskPage1.nextCursorToken()), pool));
 
-            // Then the pages hold only the tenant's live rows, in keyset order across the page boundary
+            // Then the pages hold only the scope's live rows, in keyset order across the page boundary
             assertThat(instancePage1.hasMore()).isTrue();
             assertThat(taskPage1.hasMore()).isTrue();
             List<WorkflowInstance> instanceRows = new ArrayList<>(instancePage1.items());
             instanceRows.addAll(instancePage2.items());
             List<TaskRecord> taskRows = new ArrayList<>(taskPage1.items());
             taskRows.addAll(taskPage2.items());
-            assertThat(instanceRows).extracting(WorkflowInstance::tenantKey).containsOnly(QUERIED_TENANT);
-            assertThat(taskRows).extracting(TaskRecord::tenantKey).containsOnly(QUERIED_TENANT);
+            assertThat(instanceRows).extracting(WorkflowInstance::scopeKey).containsOnly(QUERIED_SCOPE);
+            assertThat(taskRows).extracting(TaskRecord::scopeKey).containsOnly(QUERIED_SCOPE);
             assertThat(instanceRows)
                     .extracting(row -> row.id().value().toString())
                     .containsExactlyElementsOf(expectedInstanceIds);
@@ -344,7 +218,7 @@ public class TenantKeyMigrationIT {
             await(pool.close());
         }
 
-        // And the scan counter of each tenant index rises
+        // And the scan counter of each scope index rises
         // (an idle backend publishes its statistics lazily but a closing backend publishes them at once, so the
         // pool is closed first and the counters are then polled until the deadline)
         try (Connection stats = connection(indexDb)) {
@@ -369,28 +243,30 @@ public class TenantKeyMigrationIT {
             assertThat(connection.getAutoCommit())
                     .as("concurrent index builds cannot run inside a transaction")
                     .isTrue();
-            statement.execute("ALTER TABLE workflow_tasks     ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255)");
-            statement.execute("ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255)");
+            statement.execute(
+                    "ALTER TABLE workflow_tasks ADD COLUMN IF NOT EXISTS scope_key VARCHAR(255) NOT NULL DEFAULT 'default'");
+            statement.execute(
+                    "ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS scope_key VARCHAR(255) NOT NULL DEFAULT 'default'");
 
-            // And an instance and a task carrying tenant t1
+            // And an instance and a task carrying scope acme
             statement.executeUpdate("""
                     INSERT INTO workflow_instances
                         (id, definition_id, definition_version, plan_hash, status, current_step_id, state_json,
-                         created_at, updated_at, tenant_key)
+                         created_at, updated_at, scope_key)
                     VALUES ('%s', 'orders', 1, repeat('a', 64), 'WAITING', 'review', '{}'::jsonb,
-                            '2026-05-10T00:00:00Z', '2026-05-10T00:00:00Z', 't1')
+                            '2026-05-10T00:00:00Z', '2026-05-10T00:00:00Z', 'acme')
                     """.formatted(INSTANCE_ID));
             statement.executeUpdate("""
                     INSERT INTO workflow_tasks
                         (task_id, workflow_id, step_id, status, assignee_type, assignee_key,
-                         decisions_snapshot_json, created_at, updated_at, tenant_key)
+                         decisions_snapshot_json, created_at, updated_at, scope_key)
                     VALUES ('%s', '%s', 'review', 'OPEN', 'ROLE', 'reviewers', '[]'::jsonb,
-                            '2026-05-10T00:00:00Z', '2026-05-10T00:00:00Z', 't1')
+                            '2026-05-10T00:00:00Z', '2026-05-10T00:00:00Z', 'acme')
                     """.formatted(TASK_ID, INSTANCE_ID));
-            statement.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_tasks_tenant_updated_at"
-                    + " ON workflow_tasks (tenant_key, updated_at DESC, task_id ASC) WHERE tenant_key IS NOT NULL");
-            statement.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_instances_tenant_updated_at"
-                    + " ON workflow_instances (tenant_key, updated_at DESC, id ASC) WHERE tenant_key IS NOT NULL");
+            statement.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_tasks_scope_updated_at"
+                    + " ON workflow_tasks (scope_key, updated_at DESC, task_id ASC)");
+            statement.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_instances_scope_updated_at"
+                    + " ON workflow_instances (scope_key, updated_at DESC, id ASC)");
             instanceIndexBefore = Long.parseLong(scalar(connection, "SELECT '" + INSTANCE_INDEX + "'::regclass::oid"));
             taskIndexBefore = Long.parseLong(scalar(connection, "SELECT '" + TASK_INDEX + "'::regclass::oid"));
         }
@@ -406,10 +282,12 @@ public class TenantKeyMigrationIT {
         assertThat(latest.info().pending()).isEmpty();
 
         try (Connection connection = connection(aheadDb)) {
-            // And each table still has exactly one tenant_key column
-            assertThat(columnCount(connection, "workflow_instances", "tenant_key"))
+            // And each table still has exactly one scope_key column, and the instances also have the definition scope
+            assertThat(columnCount(connection, "workflow_instances", "scope_key"))
                     .isEqualTo(1);
-            assertThat(columnCount(connection, "workflow_tasks", "tenant_key")).isEqualTo(1);
+            assertThat(columnCount(connection, "workflow_tasks", "scope_key")).isEqualTo(1);
+            assertThat(columnCount(connection, "workflow_instances", "definition_scope_key"))
+                    .isEqualTo(1);
 
             // And each index exists once, is valid and is the one built ahead of time
             assertThat(indexes(connection, INSTANCE_INDEX))
@@ -423,11 +301,15 @@ public class TenantKeyMigrationIT {
             assertThat(Long.parseLong(scalar(connection, "SELECT '" + TASK_INDEX + "'::regclass::oid")))
                     .isEqualTo(taskIndexBefore);
 
-            // And the seeded tenant values are unchanged
-            assertThat(scalar(connection, "SELECT tenant_key FROM workflow_instances WHERE id = '" + INSTANCE_ID + "'"))
-                    .isEqualTo("t1");
-            assertThat(scalar(connection, "SELECT tenant_key FROM workflow_tasks WHERE task_id = '" + TASK_ID + "'"))
-                    .isEqualTo("t1");
+            // And the seeded scope values are unchanged, and the definition scope of the seeded instance is the default
+            assertThat(scalar(connection, "SELECT scope_key FROM workflow_instances WHERE id = '" + INSTANCE_ID + "'"))
+                    .isEqualTo("acme");
+            assertThat(scalar(connection, "SELECT scope_key FROM workflow_tasks WHERE task_id = '" + TASK_ID + "'"))
+                    .isEqualTo("acme");
+            assertThat(scalar(
+                            connection,
+                            "SELECT definition_scope_key FROM workflow_instances WHERE id = '" + INSTANCE_ID + "'"))
+                    .isEqualTo("default");
         }
     }
 
@@ -459,52 +341,6 @@ public class TenantKeyMigrationIT {
                         .setPassword(config.password()))
                 .using(vertx)
                 .build();
-    }
-
-    private static String shippedText(String script) throws Exception {
-        try (var migration = TenantKeyMigrationIT.class.getResourceAsStream("/db/migration/workflow/" + script)) {
-            if (migration == null) {
-                throw new AssertionError("The shipped migration " + script + " is missing from the classpath");
-            }
-            return new String(migration.readAllBytes(), StandardCharsets.UTF_8);
-        }
-    }
-
-    private static String shippedSha256(String script) throws Exception {
-        try (var migration = TenantKeyMigrationIT.class.getResourceAsStream("/db/migration/workflow/" + script)) {
-            if (migration == null) {
-                throw new AssertionError("The shipped migration " + script + " is missing from the classpath");
-            }
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(migration.readAllBytes()));
-        }
-    }
-
-    /** Returns the script text with every line comment removed. */
-    private static String withoutComments(String script) {
-        StringBuilder statements = new StringBuilder();
-        script.lines()
-                .forEach(line -> statements.append(line.replaceAll("--.*$", "")).append('\n'));
-        return statements.toString();
-    }
-
-    /** Returns the first statement of comment-free script text, whitespace normalized and without its semicolon. */
-    private static String firstStatement(String statements) {
-        int end = statements.indexOf(';');
-        if (end < 0) {
-            throw new AssertionError("The shipped migration holds no statement");
-        }
-        return statements.substring(0, end).strip().replaceAll("\\s+", " ");
-    }
-
-    private static int scriptChecksum(Connection connection, String script) throws SQLException {
-        try (PreparedStatement query = connection.prepareStatement(
-                "SELECT checksum FROM flyway_schema_history WHERE script = ? AND success")) {
-            query.setString(1, script);
-            try (ResultSet rows = query.executeQuery()) {
-                assertThat(rows.next()).as("%s is recorded as applied", script).isTrue();
-                return rows.getInt(1);
-            }
-        }
     }
 
     private static int columnCount(Connection connection, String table, String column) throws SQLException {

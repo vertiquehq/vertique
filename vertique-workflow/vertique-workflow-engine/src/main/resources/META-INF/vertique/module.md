@@ -270,9 +270,9 @@ public interface AppComponent {
 }
 ```
 
-### Instance Tenant
+### Instance Scopes
 
-`WorkflowEngine.doCreateInstance` sets no tenant: a new instance has a `null` tenant unless another writer stamps it, and no engine setting exists yet. `MigrationExecutor` carries the instance's tenant into the re-pinned snapshot, and resurrection keeps it, so a tenant written by another writer stays with the instance. The tenant is information and a filter, not an isolation boundary.
+`WorkflowEngine.doCreateInstance` starts every instance in the default scope (`WorkflowScopes.DEFAULT`, for both the start scope and the definition scope); no engine setting selects another scope yet. `MigrationExecutor` carries both scopes of the instance into the re-pinned snapshot, and resurrection keeps them, so a scope written by another writer stays with the instance. The scopes are information and a filter, not an isolation boundary.
 
 ### Document Activation And Startup Restoration
 
@@ -300,7 +300,7 @@ through the shared per-definition queue, and fails startup (nothing deploys) on 
    hashes); with a live pin startup fails naming both hashes. A kind conflict, or an id held by another
    owner, fails naming both rows or owners; a CODE row in ACTIVE, SUPERSEDED or DEPRECATED state whose code is no
    longer deployed fails with `CODE_UNAVAILABLE`.
-3. It restores every live DOCUMENT row of every owner (ACTIVE, SUPERSEDED and DEPRECATED, global and tenant)
+3. It restores every live DOCUMENT row of every owner (ACTIVE, SUPERSEDED and DEPRECATED, in every scope)
    through its loader, verifying the compiled hash and the stored text digest, before traffic.
 4. It recomputes active membership per owner and id.
 5. It marks DEPRECATED rows (CODE and DOCUMENT, including packaged documents deprecated in the database) and

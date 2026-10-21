@@ -32,6 +32,7 @@ import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.tasks.TaskStore;
@@ -59,11 +60,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 
 /**
- * Start-time tenant tests for {@code WorkflowEngine#doCreateInstance}.
+ * Start-time scope tests for {@code WorkflowEngine#doCreateInstance}.
  *
  * <p>The engine is assembled through its package-private constructor over mocked repositories,
- * exactly as {@link WorkflowEngineFactory#create} does. The engine takes no tenant source of its
- * own, so an instance it starts carries no tenant whatever the ambient context holds.
+ * exactly as {@link WorkflowEngineFactory#create} does. The engine takes no scope source of its
+ * own, so an instance it starts is in the default scope whatever the ambient context holds.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -71,7 +72,7 @@ class WorkflowEngineStartTenantTest {
 
     private static final Instant FIXED_NOW = Instant.parse("2026-05-08T10:00:00Z");
     private static final Clock FIXED_CLOCK = Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
-    private static final String DEFINITION_ID = "wf-start-tenant-test";
+    private static final String DEFINITION_ID = "wf-start-scope-test";
     private static final String INITIAL_STEP_ID = "complete";
     private static final String FINGERPRINT = "definitionVersion=1";
 
@@ -213,8 +214,8 @@ class WorkflowEngineStartTenantTest {
     }
 
     @Test
-    @DisplayName("no tenant resolver type is shipped and every start leaves the tenant null")
-    void noResolverSeamIsShippedAndEveryStartLeavesTheTenantNull(Vertx vertx) throws Exception {
+    @DisplayName("no tenant resolver type is shipped and every start lands in the default scope")
+    void noResolverSeamIsShippedAndEveryStartLandsInTheDefaultScope(Vertx vertx) throws Exception {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
 
@@ -224,11 +225,12 @@ class WorkflowEngineStartTenantTest {
         // When a workflow starts
         AsyncResult<WorkflowInstanceId> propagatedStart = start(vertx, withPropagator, holder, "t1");
 
-        // Then the start succeeds and the stored instance carries no tenant
+        // Then the start succeeds and the stored instance is in the default scope
         assertThat(propagatedStart.succeeded())
                 .as("start with a propagator: %s", propagatedStart.cause())
                 .isTrue();
-        assertThat(insertedInstance(withPropagator).tenantKey()).isNull();
+        assertThat(insertedInstance(withPropagator).scopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
+        assertThat(insertedInstance(withPropagator).definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
 
         // Given an engine without a propagator and the same ambient context
         Rig withoutPropagator = rig(null, winner());
@@ -236,11 +238,12 @@ class WorkflowEngineStartTenantTest {
         // When a workflow starts
         AsyncResult<WorkflowInstanceId> plainStart = start(vertx, withoutPropagator, holder, "t1");
 
-        // Then the start succeeds and the stored instance carries no tenant
+        // Then the start succeeds and the stored instance is in the default scope
         assertThat(plainStart.succeeded())
                 .as("start without a propagator: %s", plainStart.cause())
                 .isTrue();
-        assertThat(insertedInstance(withoutPropagator).tenantKey()).isNull();
+        assertThat(insertedInstance(withoutPropagator).scopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
+        assertThat(insertedInstance(withoutPropagator).definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
 
         // When the former resolver type is looked up by name
         // Then it is not on the class path

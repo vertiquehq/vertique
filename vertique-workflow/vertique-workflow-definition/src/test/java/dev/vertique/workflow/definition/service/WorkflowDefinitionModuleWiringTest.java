@@ -16,6 +16,7 @@ import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import jakarta.inject.Singleton;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -131,6 +132,6 @@ class WorkflowDefinitionModuleWiringTest {
     }
 
     private static DefinitionFilter globalFilter() {
-        return new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null);
+        return new DefinitionFilter(WorkflowScopes.DEFAULT, null, null);
     }
 }

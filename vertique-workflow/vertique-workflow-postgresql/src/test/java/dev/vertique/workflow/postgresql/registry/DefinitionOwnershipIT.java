@@ -28,7 +28,6 @@ import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.ActivationOutcome;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
-import dev.vertique.workflow.registry.store.DefinitionFilter.TenantScope;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionProvenance;
@@ -38,6 +37,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -144,7 +144,7 @@ public class DefinitionOwnershipIT {
 
             // Then both candidates coexist without either claiming the id
             assertThat(fixture.stored(raceId))
-                    .extracting(Stored::tenant, Stored::status, Stored::token)
+                    .extracting(Stored::scopeKey, Stored::status, Stored::token)
                     .containsExactly(tuple("tenant-a", "CANDIDATE", null), tuple("tenant-b", "CANDIDATE", null));
 
             // When both owners activate at the same time and both claims are queued behind the id lock
@@ -170,17 +170,16 @@ public class DefinitionOwnershipIT {
             assertThat(loserFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
                 assertThat(failure.key()).isEqualTo(loserKey);
-                assertThat(failure.getMessage()).contains(loserKey.tenantKey()).contains(winnerKey.tenantKey());
+                assertThat(failure.getMessage()).contains(loserKey.scopeKey()).contains(winnerKey.scopeKey());
             });
 
             // And the database has exactly one holder, with no lost update
             assertThat(fixture.stored(raceId))
-                    .extracting(Stored::tenant, Stored::status, Stored::token)
+                    .extracting(Stored::scopeKey, Stored::status, Stored::token)
                     .containsExactlyInAnyOrder(
-                            tuple(winnerKey.tenantKey(), "ACTIVE", null),
-                            tuple(loserKey.tenantKey(), "CANDIDATE", null));
+                            tuple(winnerKey.scopeKey(), "ACTIVE", null), tuple(loserKey.scopeKey(), "CANDIDATE", null));
             assertThat(fixture.stored(raceId))
-                    .filteredOn(row -> row.tenant().equals(winnerKey.tenantKey()))
+                    .filteredOn(row -> row.scopeKey().equals(winnerKey.scopeKey()))
                     .singleElement()
                     .satisfies(row -> assertThat(row.planHash()).isEqualTo(winnerPlanHash));
 
@@ -210,7 +209,7 @@ public class DefinitionOwnershipIT {
             Future<Void> heldActivation = nodeA.service().activate(heldA);
             await(gate.observed());
             assertThat(fixture.stored(heldId))
-                    .extracting(Stored::tenant, Stored::status)
+                    .extracting(Stored::scopeKey, Stored::status)
                     .containsExactly(tuple("tenant-a", "ACTIVATING"), tuple("tenant-b", "CANDIDATE"));
 
             // When tenant-b activates the same id while tenant-a's fresh claim is outstanding
@@ -225,14 +224,14 @@ public class DefinitionOwnershipIT {
             assertThat(nodeB.registry().allRegistered())
                     .noneMatch(runtime -> runtime.plan().definitionId().equals(heldId));
             assertThat(fixture.stored(heldId))
-                    .extracting(Stored::tenant, Stored::status)
+                    .extracting(Stored::scopeKey, Stored::status)
                     .containsExactly(tuple("tenant-a", "ACTIVATING"), tuple("tenant-b", "CANDIDATE"));
 
             // And the held completion still finishes as the only owner
             gate.release();
             await(heldActivation);
             assertThat(fixture.stored(heldId))
-                    .extracting(Stored::tenant, Stored::status, Stored::token)
+                    .extracting(Stored::scopeKey, Stored::status, Stored::token)
                     .containsExactly(tuple("tenant-a", "ACTIVE", null), tuple("tenant-b", "CANDIDATE", null));
             assertThat(nodeA.registry().resolvePinned(heldId, 1)).isNotNull();
         }
@@ -362,7 +361,7 @@ public class DefinitionOwnershipIT {
             Future<Void> staleActivation = nodeA.service().activate(tenantA);
             await(gate.observed());
             Stored claimed = fixture.stored(id).stream()
-                    .filter(row -> "tenant-a".equals(row.tenant()))
+                    .filter(row -> "tenant-a".equals(row.scopeKey()))
                     .findFirst()
                     .orElseThrow();
             assertThat(claimed.status()).isEqualTo("ACTIVATING");
@@ -377,7 +376,7 @@ public class DefinitionOwnershipIT {
             RuntimeWorkflow replacementCurrent = nodeB.registry().resolveCurrent(id);
             var replacementDefinition = nodeB.registry().registeredDefinition(id, 1);
             Stored replacementRow = fixture.stored(id).stream()
-                    .filter(row -> "tenant-b".equals(row.tenant()))
+                    .filter(row -> "tenant-b".equals(row.scopeKey()))
                     .findFirst()
                     .orElseThrow();
             assertThat(replacementRow.status()).isEqualTo("ACTIVE");
@@ -396,10 +395,10 @@ public class DefinitionOwnershipIT {
 
             // And tenant-a's row returned to a candidate while tenant-b's row is untouched
             assertThat(fixture.stored(id))
-                    .extracting(Stored::tenant, Stored::status, Stored::token)
+                    .extracting(Stored::scopeKey, Stored::status, Stored::token)
                     .containsExactly(tuple("tenant-a", "CANDIDATE", null), tuple("tenant-b", "ACTIVE", null));
             assertThat(fixture.stored(id))
-                    .filteredOn(row -> "tenant-b".equals(row.tenant()))
+                    .filteredOn(row -> "tenant-b".equals(row.scopeKey()))
                     .singleElement()
                     .satisfies(row -> {
                         assertThat(row.changedAt()).isEqualTo(replacementRow.changedAt());
@@ -427,8 +426,8 @@ public class DefinitionOwnershipIT {
     void filtersMetadataWithoutDocumentBytes(Vertx vertx) {
         String candidatesId = "ownership-candidates-doc";
         String mixId = "ownership-listing-mix";
-        DefinitionKey global1 = new DefinitionKey(null, mixId, 1);
-        DefinitionKey global2 = new DefinitionKey(null, mixId, 2);
+        DefinitionKey global1 = new DefinitionKey(WorkflowScopes.DEFAULT, mixId, 1);
+        DefinitionKey global2 = new DefinitionKey(WorkflowScopes.DEFAULT, mixId, 2);
         DefinitionKey tenantA1 = new DefinitionKey("tenant-a", mixId, 1);
         DefinitionKey tenantA2 = new DefinitionKey("tenant-a", mixId, 2);
         DefinitionKey tenantA3 = new DefinitionKey("tenant-a", mixId, 3);
@@ -467,13 +466,13 @@ public class DefinitionOwnershipIT {
 
             // Then the candidates coexist, none of them claims the id, and each tenant lists only its own
             assertThat(fixture.stored(candidatesId))
-                    .extracting(Stored::tenant, Stored::status, Stored::token)
+                    .extracting(Stored::scopeKey, Stored::status, Stored::token)
                     .containsExactly(
-                            tuple(null, "CANDIDATE", null),
+                            tuple(WorkflowScopes.DEFAULT, "CANDIDATE", null),
                             tuple("tenant-a", "CANDIDATE", null),
                             tuple("tenant-b", "CANDIDATE", null));
             for (String tenant : new String[] {"tenant-a", "tenant-b"}) {
-                assertThat(await(node.service().list(new DefinitionFilter(TenantScope.TENANT, tenant, null))))
+                assertThat(await(node.service().list(new DefinitionFilter(tenant, null, null))))
                         .filteredOn(row -> row.key().definitionId().equals(candidatesId))
                         .singleElement()
                         .satisfies(row -> {
@@ -495,10 +494,10 @@ public class DefinitionOwnershipIT {
                 }
             }
             assertThat(fixture.stored(mixId))
-                    .extracting(Stored::tenant, Stored::version, Stored::status)
+                    .extracting(Stored::scopeKey, Stored::version, Stored::status)
                     .containsExactlyInAnyOrder(seeded.entrySet().stream()
                             .map(row -> tuple(
-                                    row.getKey().tenantKey(),
+                                    row.getKey().scopeKey(),
                                     row.getKey().definitionVersion(),
                                     row.getValue().name()))
                             .toArray(org.assertj.core.groups.Tuple[]::new));
@@ -506,46 +505,34 @@ public class DefinitionOwnershipIT {
             // When every scope is listed with absent, empty and selected status sets
             Map<DefinitionFilter, Set<DefinitionKey>> expectations = Map.ofEntries(
                     Map.entry(
-                            new DefinitionFilter(TenantScope.ALL, null, null),
+                            new DefinitionFilter(null, null, null),
                             Set.of(global1, global2, tenantA1, tenantA2, tenantA3, tenantB1, tenantB2, tenantB3)),
-                    Map.entry(new DefinitionFilter(TenantScope.GLOBAL, null, null), Set.of(global1, global2)),
+                    Map.entry(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null), Set.of(global1, global2)),
+                    Map.entry(new DefinitionFilter("tenant-a", null, null), Set.of(tenantA1, tenantA2, tenantA3)),
+                    Map.entry(new DefinitionFilter("tenant-b", null, null), Set.of(tenantB1, tenantB2, tenantB3)),
+                    Map.entry(new DefinitionFilter("tenant-c", null, null), Set.of()),
+                    Map.entry(new DefinitionFilter(null, null, Set.of()), Set.of()),
+                    Map.entry(new DefinitionFilter(WorkflowScopes.DEFAULT, null, Set.of()), Set.of()),
+                    Map.entry(new DefinitionFilter("tenant-a", null, Set.of()), Set.of()),
                     Map.entry(
-                            new DefinitionFilter(TenantScope.TENANT, "tenant-a", null),
-                            Set.of(tenantA1, tenantA2, tenantA3)),
-                    Map.entry(
-                            new DefinitionFilter(TenantScope.TENANT, "tenant-b", null),
-                            Set.of(tenantB1, tenantB2, tenantB3)),
-                    Map.entry(new DefinitionFilter(TenantScope.TENANT, "tenant-c", null), Set.of()),
-                    Map.entry(new DefinitionFilter(TenantScope.ALL, null, Set.of()), Set.of()),
-                    Map.entry(new DefinitionFilter(TenantScope.GLOBAL, null, Set.of()), Set.of()),
-                    Map.entry(new DefinitionFilter(TenantScope.TENANT, "tenant-a", Set.of()), Set.of()),
-                    Map.entry(
-                            new DefinitionFilter(TenantScope.ALL, null, Set.of(DefinitionStatus.CANDIDATE)),
+                            new DefinitionFilter(null, null, Set.of(DefinitionStatus.CANDIDATE)),
                             Set.of(global1, tenantA1, tenantB1)),
                     Map.entry(
                             new DefinitionFilter(
-                                    TenantScope.GLOBAL,
+                                    WorkflowScopes.DEFAULT,
                                     null,
                                     Set.of(DefinitionStatus.SUPERSEDED, DefinitionStatus.CANDIDATE)),
                             Set.of(global1, global2)),
                     Map.entry(
                             new DefinitionFilter(
-                                    TenantScope.TENANT,
-                                    "tenant-a",
-                                    Set.of(DefinitionStatus.ACTIVE, DefinitionStatus.RETIRED)),
+                                    "tenant-a", null, Set.of(DefinitionStatus.ACTIVE, DefinitionStatus.RETIRED)),
                             Set.of(tenantA2, tenantA3)),
                     Map.entry(
                             new DefinitionFilter(
-                                    TenantScope.TENANT,
-                                    "tenant-b",
-                                    Set.of(DefinitionStatus.DEPRECATED, DefinitionStatus.ACTIVATING)),
+                                    "tenant-b", null, Set.of(DefinitionStatus.DEPRECATED, DefinitionStatus.ACTIVATING)),
                             Set.of(tenantB2, tenantB3)),
-                    Map.entry(
-                            new DefinitionFilter(TenantScope.ALL, null, Set.of(DefinitionStatus.ACTIVE)),
-                            Set.of(tenantA2)),
-                    Map.entry(
-                            new DefinitionFilter(TenantScope.TENANT, "tenant-a", Set.of(DefinitionStatus.DEPRECATED)),
-                            Set.of()));
+                    Map.entry(new DefinitionFilter(null, null, Set.of(DefinitionStatus.ACTIVE)), Set.of(tenantA2)),
+                    Map.entry(new DefinitionFilter("tenant-a", null, Set.of(DefinitionStatus.DEPRECATED)), Set.of()));
             int statementsBefore = node.observer().statements().size();
             int queriesBefore = node.observer().queries().size();
             Map<DefinitionFilter, List<WorkflowDefinitionRecord>> listed = new java.util.LinkedHashMap<>();
@@ -579,13 +566,12 @@ public class DefinitionOwnershipIT {
                         .as("service rows listed for %s", filter)
                         .isEqualTo(listed.get(filter));
             }
-            assertThat(listed.get(new DefinitionFilter(TenantScope.TENANT, "tenant-c", null)))
-                    .isEmpty();
-            assertThat(listed.get(new DefinitionFilter(TenantScope.GLOBAL, null, null)))
-                    .allSatisfy(row -> assertThat(row.key().tenantKey()).isNull());
-            assertThat(listed.get(new DefinitionFilter(TenantScope.TENANT, "tenant-a", null)))
-                    .allSatisfy(row -> assertThat(row.key().tenantKey()).isEqualTo("tenant-a"));
-            List<WorkflowDefinitionRecord> everything = listed.get(new DefinitionFilter(TenantScope.ALL, null, null));
+            assertThat(listed.get(new DefinitionFilter("tenant-c", null, null))).isEmpty();
+            assertThat(listed.get(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null)))
+                    .allSatisfy(row -> assertThat(row.key().scopeKey()).isEqualTo(WorkflowScopes.DEFAULT));
+            assertThat(listed.get(new DefinitionFilter("tenant-a", null, null)))
+                    .allSatisfy(row -> assertThat(row.key().scopeKey()).isEqualTo("tenant-a"));
+            List<WorkflowDefinitionRecord> everything = listed.get(new DefinitionFilter(null, null, null));
             assertThatThrownBy(() -> everything.add(everything.get(0)))
                     .isInstanceOf(UnsupportedOperationException.class);
 
@@ -605,26 +591,21 @@ public class DefinitionOwnershipIT {
                     .extracting(Stored::status, Stored::token)
                     .containsOnly(tuple("CANDIDATE", null));
             assertThat(fixture.stored(mixId))
-                    .extracting(Stored::tenant, Stored::version, Stored::status)
+                    .extracting(Stored::scopeKey, Stored::version, Stored::status)
                     .containsExactlyInAnyOrder(seeded.entrySet().stream()
                             .map(row -> tuple(
-                                    row.getKey().tenantKey(),
+                                    row.getKey().scopeKey(),
                                     row.getKey().definitionVersion(),
                                     row.getValue().name()))
                             .toArray(org.assertj.core.groups.Tuple[]::new));
 
             // And invalid scope and key combinations are rejected when the filter or key is constructed
-            assertThatThrownBy(() -> new DefinitionFilter(TenantScope.TENANT, null, null))
-                    .isInstanceOfAny(NullPointerException.class, IllegalArgumentException.class);
-            assertThatThrownBy(() -> new DefinitionFilter(TenantScope.TENANT, " ", null))
+            assertThatThrownBy(() -> new DefinitionFilter(" ", null, null))
                     .isInstanceOf(IllegalArgumentException.class);
-            assertThatThrownBy(() -> new DefinitionFilter(TenantScope.TENANT, "x".repeat(256), null))
+            assertThatThrownBy(() -> new DefinitionFilter("x".repeat(256), null, null))
                     .isInstanceOf(IllegalArgumentException.class);
-            assertThatThrownBy(() -> new DefinitionFilter(TenantScope.GLOBAL, "tenant-a", null))
-                    .isInstanceOf(IllegalArgumentException.class);
-            assertThatThrownBy(() -> new DefinitionFilter(TenantScope.ALL, "tenant-a", null))
-                    .isInstanceOf(IllegalArgumentException.class);
-            assertThatThrownBy(() -> new DefinitionKey(null, " ", 1)).isInstanceOf(RuntimeException.class);
+            assertThatThrownBy(() -> new DefinitionKey(WorkflowScopes.DEFAULT, " ", 1))
+                    .isInstanceOf(RuntimeException.class);
             assertThatThrownBy(() -> new DefinitionKey("tenant-a", mixId, 0)).isInstanceOf(RuntimeException.class);
         }
     }
@@ -636,11 +617,11 @@ public class DefinitionOwnershipIT {
         String freshId = "ownership-reconcile-fresh-doc";
         String raceId = "ownership-reconcile-race-doc";
         DefinitionKey heldTenant = new DefinitionKey("tenant-a", heldId, 1);
-        DefinitionKey heldGlobal = new DefinitionKey(null, heldId, 1);
+        DefinitionKey heldGlobal = new DefinitionKey(WorkflowScopes.DEFAULT, heldId, 1);
         DefinitionKey freshTenant = new DefinitionKey("tenant-a", freshId, 1);
-        DefinitionKey freshGlobal = new DefinitionKey(null, freshId, 1);
+        DefinitionKey freshGlobal = new DefinitionKey(WorkflowScopes.DEFAULT, freshId, 1);
         DefinitionKey raceTenant = new DefinitionKey("tenant-a", raceId, 1);
-        DefinitionKey raceGlobal = new DefinitionKey(null, raceId, 1);
+        DefinitionKey raceGlobal = new DefinitionKey(WorkflowScopes.DEFAULT, raceId, 1);
 
         try (Fixture fixture = new Fixture(vertx)) {
             Node nodeA = fixture.node();
@@ -662,7 +643,7 @@ public class DefinitionOwnershipIT {
             // Then it is refused, inserts no global row and leaves tenant-a's row untouched
             assertThat(heldOutcome).isEqualTo(ReconcileOutcome.OWNER_CONFLICT);
             assertThat(fixture.stored(heldId)).hasSize(1);
-            assertThat(fixture.stored(heldId).getFirst().tenant()).isEqualTo("tenant-a");
+            assertThat(fixture.stored(heldId).getFirst().scopeKey()).isEqualTo("tenant-a");
             assertThat(fixture.stored(heldId).getFirst().status()).isEqualTo("ACTIVE");
             assertThat(fixture.stored(heldId).getFirst().changedAt()).isEqualTo(heldBefore.changedAt());
             assertThat(fixture.stored(heldId).getFirst().planHash()).isEqualTo(heldBefore.planHash());
@@ -695,15 +676,15 @@ public class DefinitionOwnershipIT {
                 assertThat(freshFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                     assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
                     assertThat(failure.key()).isEqualTo(freshTenant);
-                    assertThat(failure.getMessage()).contains("global");
+                    assertThat(failure.getMessage()).contains("default");
                 });
                 assertThat(fixture.stored(freshId))
-                        .extracting(Stored::tenant, Stored::status)
-                        .containsExactly(tuple(null, "SUPERSEDED"), tuple("tenant-a", "CANDIDATE"));
+                        .extracting(Stored::scopeKey, Stored::status)
+                        .containsExactly(tuple(WorkflowScopes.DEFAULT, "SUPERSEDED"), tuple("tenant-a", "CANDIDATE"));
             } else {
                 assertThat(freshOutcome).isEqualTo(ReconcileOutcome.OWNER_CONFLICT);
                 assertThat(fixture.stored(freshId))
-                        .extracting(Stored::tenant, Stored::status)
+                        .extracting(Stored::scopeKey, Stored::status)
                         .containsExactly(tuple("tenant-a", "ACTIVE"));
             }
 
@@ -734,15 +715,15 @@ public class DefinitionOwnershipIT {
                 assertThat(raceFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                     assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
                     assertThat(failure.key()).isEqualTo(raceTenant);
-                    assertThat(failure.getMessage()).contains("global");
+                    assertThat(failure.getMessage()).contains("default");
                 });
                 assertThat(fixture.stored(raceId))
-                        .extracting(Stored::tenant, Stored::status)
-                        .containsExactly(tuple(null, "SUPERSEDED"), tuple("tenant-a", "CANDIDATE"));
+                        .extracting(Stored::scopeKey, Stored::status)
+                        .containsExactly(tuple(WorkflowScopes.DEFAULT, "SUPERSEDED"), tuple("tenant-a", "CANDIDATE"));
             } else {
                 assertThat(raceOutcome).isEqualTo(ReconcileOutcome.OWNER_CONFLICT);
                 assertThat(fixture.stored(raceId))
-                        .extracting(Stored::tenant, Stored::status)
+                        .extracting(Stored::scopeKey, Stored::status)
                         .containsExactly(tuple("tenant-a", "ACTIVE"));
             }
         }
@@ -770,12 +751,12 @@ public class DefinitionOwnershipIT {
             assertThat(fixture.stored(missingId)).isEmpty();
 
             for (Map.Entry<String, Map.Entry<String, String>> entry : malformed.entrySet()) {
-                String tenantKey = entry.getValue().getKey();
+                String scopeKey = entry.getValue().getKey();
                 String definitionId = entry.getValue().getValue();
 
                 // When recomputing with a malformed key
                 int before = node.observer().statements().size();
-                Throwable failure = failureOf(node.store().recomputeActive(tenantKey, definitionId));
+                Throwable failure = failureOf(node.store().recomputeActive(scopeKey, definitionId));
                 int after = node.observer().statements().size();
 
                 // Then the call fails with an argument error and no statement was issued
@@ -795,13 +776,13 @@ public class DefinitionOwnershipIT {
         String supersededHigherId = "ownership-higher-superseded-doc";
         String deprecatedHigherId = "ownership-higher-deprecated-doc";
         String activeHigherId = "ownership-higher-active-doc";
-        DefinitionKey supersededV1 = new DefinitionKey(null, supersededHigherId, 1);
-        DefinitionKey supersededV2 = new DefinitionKey(null, supersededHigherId, 2);
-        DefinitionKey supersededV3 = new DefinitionKey(null, supersededHigherId, 3);
-        DefinitionKey deprecatedV1 = new DefinitionKey(null, deprecatedHigherId, 1);
-        DefinitionKey deprecatedV3 = new DefinitionKey(null, deprecatedHigherId, 3);
-        DefinitionKey activeV1 = new DefinitionKey(null, activeHigherId, 1);
-        DefinitionKey activeV2 = new DefinitionKey(null, activeHigherId, 2);
+        DefinitionKey supersededV1 = new DefinitionKey(WorkflowScopes.DEFAULT, supersededHigherId, 1);
+        DefinitionKey supersededV2 = new DefinitionKey(WorkflowScopes.DEFAULT, supersededHigherId, 2);
+        DefinitionKey supersededV3 = new DefinitionKey(WorkflowScopes.DEFAULT, supersededHigherId, 3);
+        DefinitionKey deprecatedV1 = new DefinitionKey(WorkflowScopes.DEFAULT, deprecatedHigherId, 1);
+        DefinitionKey deprecatedV3 = new DefinitionKey(WorkflowScopes.DEFAULT, deprecatedHigherId, 3);
+        DefinitionKey activeV1 = new DefinitionKey(WorkflowScopes.DEFAULT, activeHigherId, 1);
+        DefinitionKey activeV2 = new DefinitionKey(WorkflowScopes.DEFAULT, activeHigherId, 2);
 
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(supersededHigherId, deprecatedHigherId, activeHigherId);
@@ -865,6 +846,8 @@ public class DefinitionOwnershipIT {
         return new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 planHash,
                 DefinitionStatus.SUPERSEDED,
                 new DefinitionProvenance("static-source", "memory:static", "revision-static", null, null, now),
@@ -878,7 +861,7 @@ public class DefinitionOwnershipIT {
     }
 
     private static String sourceLabel(DefinitionKey key) {
-        return "mix-" + (key.tenantKey() == null ? "global" : key.tenantKey());
+        return "mix-" + key.scopeKey();
     }
 
     private static WorkflowDefinitionRecord candidate(DefinitionKey key) {
@@ -886,6 +869,8 @@ public class DefinitionOwnershipIT {
         return new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 "f".repeat(64),
                 DefinitionStatus.CANDIDATE,
                 new DefinitionProvenance(sourceLabel(key), null, null, null, null, now),
@@ -957,7 +942,7 @@ public class DefinitionOwnershipIT {
     }
 
     private record Stored(
-            String tenant, long version, String status, String token, String planHash, OffsetDateTime changedAt) {}
+            String scopeKey, long version, String status, String token, String planHash, OffsetDateTime changedAt) {}
 
     private record Node(Pool pool, WorkflowDefinitionSqlObserver observer, AppComponent app) {
 
@@ -1100,21 +1085,20 @@ public class DefinitionOwnershipIT {
         List<Stored> stored(String definitionId) {
             List<Stored> rows = new ArrayList<>();
             for (Row row : await(admin().preparedQuery("""
-                            SELECT tenant_key, definition_version, status, activation_token::text AS activation_token,
+                            SELECT scope_key, definition_version, status, activation_token::text AS activation_token,
                                    plan_hash, status_changed_at
                             FROM workflow_definitions WHERE definition_id = $1
-                            ORDER BY tenant_key NULLS FIRST, definition_version
+                            ORDER BY scope_key NULLS FIRST, definition_version
                             """).execute(Tuple.of(definitionId)))) {
                 rows.add(new Stored(
-                        row.getString("tenant_key"),
+                        row.getString("scope_key"),
                         row.getLong("definition_version"),
                         row.getString("status"),
                         row.getString("activation_token"),
                         row.getString("plan_hash"),
                         row.getOffsetDateTime("status_changed_at")));
             }
-            rows.sort(Comparator.comparing((Stored row) -> row.tenant() == null ? "" : row.tenant())
-                    .thenComparingLong(Stored::version));
+            rows.sort(Comparator.comparing(Stored::scopeKey).thenComparingLong(Stored::version));
             return rows;
         }
 
@@ -1124,20 +1108,19 @@ public class DefinitionOwnershipIT {
             await(admin().preparedQuery("""
                             UPDATE workflow_definitions
                             SET status_changed_at = clock_timestamp() - ($5::bigint * interval '1 second')
-                            WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2
+                            WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2
                               AND definition_version = $3 AND status = 'ACTIVATING' AND activation_token = $4::uuid
                             """)
-                    .execute(
-                            Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion(), token, ageSeconds)));
+                    .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion(), token, ageSeconds)));
         }
 
         /** Moves a row to a status that a candidate cannot reach through the public operations. */
         void forceStatus(DefinitionKey key, DefinitionStatus status) {
             await(admin().preparedQuery("""
                             UPDATE workflow_definitions SET status = $4
-                            WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                            WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
                             """)
-                    .execute(Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion(), status.name())));
+                    .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion(), status.name())));
         }
 
         @Override

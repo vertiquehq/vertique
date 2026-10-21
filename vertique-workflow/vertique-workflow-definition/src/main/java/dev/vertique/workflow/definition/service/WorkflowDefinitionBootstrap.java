@@ -21,6 +21,7 @@ import dev.vertique.workflow.registry.store.DocumentOrigin;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -242,14 +243,20 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
                     // Key, provenance and record are built for every resource before anything is
                     // registered, so an over-bound value fails startup rather than a later commit.
                     DefinitionKey key = new DefinitionKey(
-                            null,
+                            WorkflowScopes.DEFAULT,
                             compiled.definition().definitionId(),
                             compiled.definition().definitionVersion());
                     WorkflowDefinitionRecord record = DefaultWorkflowDefinitionService.record(
                             key, compiled, resource.format().name());
                     if (durable) {
                         var document = DefinitionSourceText.decode(key, resource.content(), resource.format(), config);
-                        loadedOrigins.add(new DocumentOrigin(key, document, record.provenance(), compiled.planHash()));
+                        loadedOrigins.add(new DocumentOrigin(
+                                key,
+                                document,
+                                record.provenance(),
+                                compiled.planHash(),
+                                compiled.contractName(),
+                                compiled.stateTypeName()));
                     }
                     records.put(compiled, record);
                     successes.add(compiled);

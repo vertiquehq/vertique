@@ -43,6 +43,7 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -743,7 +744,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     static WorkflowDefinitionLifecycleException deprecatedRefusal(String definitionId, long version) {
         return new WorkflowDefinitionLifecycleException(
                 WorkflowDefinitionLifecycleException.Reason.DEPRECATED,
-                new DefinitionKey(null, definitionId, version),
+                new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version),
                 "Definition '" + definitionId + "' version " + version
                         + " is deprecated and does not accept new starts or migrations");
     }

@@ -26,6 +26,7 @@ import dev.vertique.workflow.registry.store.ReconcileOutcome;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
@@ -53,8 +54,8 @@ import org.slf4j.LoggerFactory;
  *
  * <ol>
  *   <li>It attributes the registrations that already exist when it starts, the packaged static documents and
- *       the application-contributed definitions registered while the registry was constructed, to the global
- *       owner, and it snapshots the code definitions in the {@link WorkflowCodeDefinitionCatalog}.
+ *       the application-contributed definitions registered while the registry was constructed, to the default
+ *       scope, and it snapshots the code definitions in the {@link WorkflowCodeDefinitionCatalog}.
  *   <li>It records every packaged document and every code definition in the table. Drift, a conflicting kind, a
  *       conflicting owner, or a stored code definition that the deployed code no longer provides fails startup.
  *   <li>It restores every live document of every owner, deprecated ones included, and attributes each to its
@@ -79,7 +80,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             DefinitionStatus.ACTIVATING);
     private static final Comparator<WorkflowDefinitionRecord> LISTING_ORDER = Comparator.comparing(
                     (WorkflowDefinitionRecord record) -> record.key().definitionId())
-            .thenComparing(record -> record.key().tenantKey(), Comparator.nullsFirst(Comparator.naturalOrder()))
+            .thenComparing(record -> record.key().scopeKey())
             .thenComparingLong(record -> record.key().definitionVersion());
 
     private final Optional<WorkflowDefinitionRegistryStore> store;
@@ -145,10 +146,10 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     private Prepared prepare() {
         WorkflowRegistry local = registry.get();
         // Only what registry construction registered is attributed; later direct registration is not.
-        registrations.attributeExistingToGlobal(local);
+        registrations.attributeExistingToDefaultScope(local);
         List<DocumentOrigin> origins = loaders.stream()
                 .flatMap(loader -> loader.documentOrigins().stream())
-                .filter(origin -> origin.key().tenantKey() == null)
+                .filter(origin -> WorkflowScopes.DEFAULT.equals(origin.key().scopeKey()))
                 .sorted(Comparator.comparing(
                                 (DocumentOrigin origin) -> origin.key().definitionId())
                         .thenComparingLong(origin -> origin.key().definitionVersion()))
@@ -162,7 +163,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
 
     private Future<List<WorkflowDefinitionRecord>> listAll() {
         return store.orElseThrow()
-                .list(new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null))
+                .list(new DefinitionFilter(null, null, null))
                 .map(records -> records.stream().sorted(LISTING_ORDER).toList());
     }
 
@@ -174,6 +175,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 WorkflowDefinitionRecord source = new WorkflowDefinitionRecord(
                         origin.key(),
                         DefinitionKind.DOCUMENT,
+                        origin.contractName(),
+                        origin.stateTypeName(),
                         origin.planHash(),
                         DefinitionStatus.SUPERSEDED,
                         origin.provenance(),
@@ -196,7 +199,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             chain = chain.compose(ignored -> queue.submit(definition.definitionId(), () -> {
                 DefinitionKey key;
                 try {
-                    key = new DefinitionKey(null, definition.definitionId(), definition.version());
+                    key = new DefinitionKey(WorkflowScopes.DEFAULT, definition.definitionId(), definition.version());
                 } catch (IllegalArgumentException invalid) {
                     return Future.failedFuture(new WorkflowDefinitionException(
                             "Code definition " + printable(definition.definitionId()) + " version "
@@ -207,6 +210,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 WorkflowDefinitionRecord source = new WorkflowDefinitionRecord(
                         key,
                         DefinitionKind.CODE,
+                        definition.contractName(),
+                        definition.stateTypeName(),
                         definition.planHash(),
                         DefinitionStatus.SUPERSEDED,
                         new DefinitionProvenance(
@@ -308,24 +313,24 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         return listAll().compose(rows -> {
             String holders = rows.stream()
                     .filter(row -> row.key().definitionId().equals(key.definitionId()))
-                    .filter(row -> !Objects.equals(row.key().tenantKey(), key.tenantKey()))
+                    .filter(row -> !Objects.equals(row.key().scopeKey(), key.scopeKey()))
                     .filter(row -> HOLDING.contains(row.status()))
-                    .map(row -> owner(row.key().tenantKey()) + " (version "
+                    .map(row -> owner(row.key().scopeKey()) + " (version "
                             + row.key().definitionVersion() + " " + row.status() + ")")
                     .distinct()
                     .collect(Collectors.joining(", "));
             return Future.failedFuture(failure(
                     Reason.OWNER_CONFLICT,
                     key,
-                    "reconciliation OWNER_CONFLICT: the " + owner(key.tenantKey()) + " owner cannot take this id"
+                    "reconciliation OWNER_CONFLICT: the " + owner(key.scopeKey()) + " owner cannot take this id"
                             + " because it is held by "
                             + (holders.isEmpty() ? "another owner" : holders) + "; this start provides "
                             + source.kind() + " from " + described(source.provenance())));
         });
     }
 
-    private static String owner(@Nullable String tenantKey) {
-        return tenantKey == null ? "global" : tenantKey;
+    private static String owner(String scopeKey) {
+        return scopeKey;
     }
 
     /**
@@ -367,16 +372,16 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
      * status, code and documents alike.
      */
     private Future<Void> recompute(List<WorkflowDefinitionRecord> rows) {
-        TreeSet<OwnerId> owners = new TreeSet<>(Comparator.comparing(OwnerId::definitionId)
-                .thenComparing(OwnerId::tenantKey, Comparator.nullsFirst(Comparator.naturalOrder())));
+        TreeSet<OwnerId> owners =
+                new TreeSet<>(Comparator.comparing(OwnerId::definitionId).thenComparing(OwnerId::scopeKey));
         for (WorkflowDefinitionRecord row : rows) {
             if (row.status() == DefinitionStatus.ACTIVE || row.status() == DefinitionStatus.SUPERSEDED)
-                owners.add(new OwnerId(row.key().tenantKey(), row.key().definitionId()));
+                owners.add(new OwnerId(row.key().scopeKey(), row.key().definitionId()));
         }
         Future<Void> chain = Future.succeededFuture();
         for (OwnerId owner : owners)
             chain = chain.compose(ignored -> queue.submit(owner.definitionId(), () -> store.orElseThrow()
-                    .recomputeActive(owner.tenantKey(), owner.definitionId())));
+                    .recomputeActive(owner.scopeKey(), owner.definitionId())));
         return chain;
     }
 
@@ -416,7 +421,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             DefinitionKey key = row.key();
             chain = chain.compose(ignored -> queue.submit(key.definitionId(), () -> {
                 RuntimeWorkflow held = held(local, key);
-                if (registrations.classify(key.tenantKey(), key.definitionId(), key.definitionVersion(), held)
+                if (registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held)
                         == ManagedRegistrations.Standing.OWN) view.applied(row);
                 return Future.<Void>succeededFuture();
             }));
@@ -430,7 +435,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
      */
     private ManagedRegistrations.Standing standing(DefinitionKey key, @Nullable RuntimeWorkflow held) {
         ManagedRegistrations.Standing standing =
-                registrations.classify(key.tenantKey(), key.definitionId(), key.definitionVersion(), held);
+                registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
         if (standing == ManagedRegistrations.Standing.UNATTRIBUTED)
             throw failure(
                     Reason.INVALID_TRANSITION,
@@ -600,5 +605,5 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
 
     private record Prepared(WorkflowRegistry registry, List<DocumentOrigin> origins, List<CodeDefinition> code) {}
 
-    private record OwnerId(@Nullable String tenantKey, String definitionId) {}
+    private record OwnerId(String scopeKey, String definitionId) {}
 }

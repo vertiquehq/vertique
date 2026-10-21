@@ -65,6 +65,7 @@ import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
@@ -222,7 +223,7 @@ public final class ManagedDefinitionDatabase {
     }
 
     /** Builds a graph whose application contributes the given code-first definitions to the registry. */
-    static AppComponent appWithCode(
+    public static AppComponent appWithCode(
             Vertx vertx,
             Pool pool,
             JsonObject config,
@@ -298,6 +299,8 @@ public final class ManagedDefinitionDatabase {
 
         dev.vertique.workflow.ops.TransactionalWorkflowOperations<io.vertx.sqlclient.SqlClient>
                 transactionalOperations();
+
+        dev.vertique.workflow.ops.TransactionalTaskCallbacks<io.vertx.sqlclient.SqlClient> taskCallbacks();
 
         WorkflowDefinitionPipeline definitionPipeline();
 
@@ -776,7 +779,7 @@ public final class ManagedDefinitionDatabase {
                 WorkflowRegistry registry) {
             if (expectedDefinitions.isEmpty()) return Future.succeededFuture();
             return pool.preparedQuery("""
-                            SELECT tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                            SELECT scope_key, definition_id, definition_version, kind, plan_hash, status,
                                 document_format, source_type, source_uri, source_revision, source_author,
                                 source_upload_id, loaded_at, created_at, status_changed_at
                             FROM workflow_definitions WHERE definition_id = $1
@@ -788,8 +791,7 @@ public final class ManagedDefinitionDatabase {
                         for (Row row : rows) durable.add(metadata(row));
                         return List.copyOf(durable);
                     })
-                    .compose(durable -> service.list(
-                                    new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                    .compose(durable -> service.list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                             .map(serviceRows -> {
                                 List<WorkflowDefinitionRecord> scopedServiceRows = serviceRows.stream()
                                         .filter(record ->
@@ -820,10 +822,12 @@ public final class ManagedDefinitionDatabase {
         private static WorkflowDefinitionRecord metadata(Row row) {
             return new WorkflowDefinitionRecord(
                     new DefinitionKey(
-                            row.getString("tenant_key"),
+                            row.getString("scope_key"),
                             row.getString("definition_id"),
                             row.getLong("definition_version")),
                     DefinitionKind.valueOf(row.getString("kind")),
+                    "example.Contract",
+                    "example.State",
                     row.getString("plan_hash"),
                     DefinitionStatus.valueOf(row.getString("status")),
                     new DefinitionProvenance(
@@ -878,7 +882,9 @@ public final class ManagedDefinitionDatabase {
                 require(durable != null, "missing durable metadata for version " + version);
                 require(service != null, "missing service metadata for version " + version);
                 require(compiled != null, "missing compiled cache entry for version " + version);
-                require(durable.key().tenantKey() == null, "startup metadata is not global");
+                require(
+                        WorkflowScopes.DEFAULT.equals(durable.key().scopeKey()),
+                        "startup metadata is not in the default scope");
                 require(durable.kind() == DefinitionKind.DOCUMENT, "startup row is not DOCUMENT");
                 require(durable.status() == item.status(), "durable status differs for version " + version);
                 require(service.status() == item.status(), "service status differs for version " + version);

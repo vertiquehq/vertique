@@ -938,8 +938,8 @@ final class BranchTransitionEngine {
             @Nullable UUID dueDateTimerId,
             @Nullable String parentSubjectVersion,
             Instant now) {
-        // The record deliberately carries no tenant: only a branch token is in hand here, and the task store
-        // stores the tenant of the owning instance row whatever the record says.
+        // The record deliberately carries no scope: only a branch token is in hand here, and the task store
+        // stores the start scope of the owning instance row whatever the record says.
         return new TaskRecord(
                 taskId,
                 token.workflowId(),

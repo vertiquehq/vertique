@@ -7,6 +7,7 @@ import dev.vertique.db.DbExceptionMapper;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
@@ -163,7 +164,7 @@ public final class DefinitionPinAdmission {
                 .map(rows -> rows.iterator().next().getString("isolation"));
         return locked.compose(isolation -> {
             boolean snapshot = !"read committed".equals(isolation) && !"read uncommitted".equals(isolation);
-            String read = "SELECT tenant_key, definition_version, plan_hash, status FROM " + definitionsTable
+            String read = "SELECT scope_key, definition_version, plan_hash, status FROM " + definitionsTable
                     + " WHERE definition_id = $1" + (snapshot ? " FOR SHARE" : "");
             return translated(tx.preparedQuery(read).execute(Tuple.of(definitionId)), mapper, context)
                     .compose(rows -> {
@@ -184,7 +185,7 @@ public final class DefinitionPinAdmission {
             if (!snapshot) return Future.succeededFuture();
             return refused(
                     Reason.INVALID_TRANSITION,
-                    null,
+                    WorkflowScopes.DEFAULT,
                     definitionId,
                     version,
                     "no row of this definition id is visible to the transaction snapshot, which cannot tell an"
@@ -193,13 +194,12 @@ public final class DefinitionPinAdmission {
         }
         Set<String> holders = new LinkedHashSet<>();
         for (Row row : rows) {
-            if (HOLDING.contains(row.getString("status")))
-                holders.add(row.getString("tenant_key") == null ? "" : row.getString("tenant_key"));
+            if (HOLDING.contains(row.getString("status"))) holders.add(row.getString("scope_key"));
         }
         if (holders.size() != 1) {
             return refused(
                     Reason.INVALID_TRANSITION,
-                    null,
+                    WorkflowScopes.DEFAULT,
                     definitionId,
                     version,
                     holders.isEmpty()
@@ -207,16 +207,14 @@ public final class DefinitionPinAdmission {
                             : "the definition is held by more than one owner");
         }
         String owner = holders.iterator().next();
-        String ownerKey = owner.isEmpty() ? null : owner;
         for (Row row : rows) {
-            if (row.getLong("definition_version") != version
-                    || !owner.equals(row.getString("tenant_key") == null ? "" : row.getString("tenant_key"))) {
+            if (row.getLong("definition_version") != version || !owner.equals(row.getString("scope_key"))) {
                 continue;
             }
             if (!allowed.contains(row.getString("status"))) {
                 return refused(
                         Reason.INVALID_TRANSITION,
-                        ownerKey,
+                        owner,
                         definitionId,
                         version,
                         "the version is " + row.getString("status"));
@@ -224,7 +222,7 @@ public final class DefinitionPinAdmission {
             if (planHash != null && !planHash.equals(row.getString("plan_hash"))) {
                 return refused(
                         Reason.DRIFT,
-                        ownerKey,
+                        owner,
                         definitionId,
                         version,
                         "the pinned plan hash " + planHash + " is not the stored plan hash "
@@ -235,16 +233,16 @@ public final class DefinitionPinAdmission {
         }
         return refused(
                 Reason.INVALID_TRANSITION,
-                ownerKey,
+                owner,
                 definitionId,
                 version,
                 "the version is not held by the owner of the definition");
     }
 
     private static Future<Void> refused(
-            Reason reason, String tenantKey, String definitionId, long version, String detail) {
+            Reason reason, String scopeKey, String definitionId, long version, String detail) {
         try {
-            DefinitionKey key = new DefinitionKey(tenantKey, definitionId, version);
+            DefinitionKey key = new DefinitionKey(scopeKey, definitionId, version);
             return Future.failedFuture(new WorkflowDefinitionLifecycleException(
                     reason, key, "Definition " + key + " does not admit this instance: " + detail));
         } catch (IllegalArgumentException invalidKey) {

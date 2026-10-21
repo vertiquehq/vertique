@@ -110,14 +110,16 @@ class DefinitionValueTextRulesTest {
     void rejectsIsoControlCharactersInKeyText(int controlCodePoint) {
         String text = "wf" + new String(Character.toChars(controlCodePoint)) + "x";
 
-        assertThatThrownBy(() -> new DefinitionKey(null, text, 1)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new DefinitionKey(WorkflowScopes.DEFAULT, text, 1))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new DefinitionKey(text, "wf", 1)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @ParameterizedTest(name = "an unpaired surrogate variant {index} is rejected")
     @ValueSource(strings = {"wf\uD800x", "wf\uDC00x", "wf\uD83D", "wf\uDE00\uD83Dx"})
     void rejectsUnpairedSurrogatesInKeyText(String text) {
-        assertThatThrownBy(() -> new DefinitionKey(null, text, 1)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new DefinitionKey(WorkflowScopes.DEFAULT, text, 1))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new DefinitionKey(text, "wf", 1)).isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -130,9 +132,10 @@ class DefinitionValueTextRulesTest {
 
         assertThat(new DefinitionKey("tenant-" + SUPPLEMENTARY, ordinary, 1).definitionId())
                 .isEqualTo(ordinary);
-        assertThat(new DefinitionKey(null, supplementary, 1).definitionId()).isEqualTo(supplementary);
-        assertThat(new DefinitionKey(atBound, atBound, 1).tenantKey()).isEqualTo(atBound);
-        assertThatThrownBy(() -> new DefinitionKey(null, atBound + SUPPLEMENTARY, 1))
+        assertThat(new DefinitionKey(WorkflowScopes.DEFAULT, supplementary, 1).definitionId())
+                .isEqualTo(supplementary);
+        assertThat(new DefinitionKey(atBound, atBound, 1).scopeKey()).isEqualTo(atBound);
+        assertThatThrownBy(() -> new DefinitionKey(WorkflowScopes.DEFAULT, atBound + SUPPLEMENTARY, 1))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new DefinitionKey(atBound + SUPPLEMENTARY, "wf", 1))
                 .isInstanceOf(IllegalArgumentException.class);

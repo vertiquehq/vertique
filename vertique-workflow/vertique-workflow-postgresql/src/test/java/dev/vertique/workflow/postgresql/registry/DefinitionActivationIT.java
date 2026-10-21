@@ -21,6 +21,7 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -54,8 +55,8 @@ public class DefinitionActivationIT {
     @DisplayName("a failed completion compensates only its registration and a drifted body never registers")
     void rollsBackOnlyItsOwnFailedAttempt(Vertx vertx, VertxTestContext context) {
         String definitionId = "order-fulfillment-doc";
-        DefinitionKey v1 = new DefinitionKey(null, definitionId, 1);
-        DefinitionKey v2 = new DefinitionKey(null, definitionId, 2);
+        DefinitionKey v1 = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
+        DefinitionKey v2 = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 2);
         List<Pool> pools = new ArrayList<>();
         List<VertiqueApplicationHandle<?>> handles = new ArrayList<>();
         WorkflowDefinitionSqlObserver transactionObserver = new WorkflowDefinitionSqlObserver();
@@ -131,7 +132,7 @@ public class DefinitionActivationIT {
                                                             UPDATE workflow_definitions
                                                             SET document = $1,
                                                                 document_digest = encode(sha256(convert_to($1::text, 'UTF8')), 'hex')
-                                                            WHERE tenant_key IS NULL AND definition_id = $2
+                                                            WHERE scope_key = 'default' AND definition_id = $2
                                                               AND definition_version = $3
                                                             """)
                                                     .execute(Tuple.of(drifted, definitionId, 2L))
@@ -184,7 +185,7 @@ public class DefinitionActivationIT {
                                                         UPDATE workflow_definitions
                                                         SET document = $1,
                                                             document_digest = encode(sha256(convert_to($1::text, 'UTF8')), 'hex')
-                                                        WHERE tenant_key IS NULL AND definition_id = $2
+                                                        WHERE scope_key = 'default' AND definition_id = $2
                                                           AND definition_version = $3
                                                         """)
                                                 .execute(Tuple.of(
@@ -204,7 +205,7 @@ public class DefinitionActivationIT {
     @DisplayName("a fresh claim fences stale completion and release without removing its registration")
     void reclaimsOwnStaleActivation(Vertx vertx, VertxTestContext context) {
         String definitionId = "order-fulfillment-doc";
-        DefinitionKey key = new DefinitionKey(null, definitionId, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
         List<Pool> pools = new ArrayList<>();
         List<VertiqueApplicationHandle<?>> handles = new ArrayList<>();
         Pool pool = ManagedDefinitionDatabase.openPool(vertx, db);
@@ -228,7 +229,7 @@ public class DefinitionActivationIT {
                             .compose(pair -> pool.preparedQuery("""
                                             UPDATE workflow_definitions
                                             SET status_changed_at = clock_timestamp() - interval '5 minutes'
-                                            WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = $2
+                                            WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = $2
                                             """)
                                     .execute(Tuple.of(definitionId, 1L))
                                     .map(pair))
@@ -287,7 +288,7 @@ public class DefinitionActivationIT {
     @DisplayName("a reclaimed completion fails stale and preserves the replacement publication")
     void surfacesStaleCompletionAfterReplacementActivates(Vertx vertx, VertxTestContext context) {
         String definitionId = "order-fulfillment-doc";
-        DefinitionKey key = new DefinitionKey(null, definitionId, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
         List<Pool> pools = new ArrayList<>();
         List<VertiqueApplicationHandle<?>> handles = new ArrayList<>();
         WorkflowDefinitionSqlObserver observerA = new WorkflowDefinitionSqlObserver();
@@ -337,7 +338,7 @@ public class DefinitionActivationIT {
                 .compose(heldA -> poolB.preparedQuery("""
                                 UPDATE workflow_definitions
                                 SET status_changed_at = clock_timestamp() - interval '5 minutes'
-                                WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = $2
+                                WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = $2
                                   AND status = 'ACTIVATING' AND activation_token = $3::uuid
                                 """)
                         .execute(Tuple.of(definitionId, key.definitionVersion(), heldA.activationToken()))
@@ -413,7 +414,7 @@ public class DefinitionActivationIT {
     @DisplayName("a committed activation succeeds after its transaction response is lost")
     void acceptsCommittedActivationAfterResponseLoss(Vertx vertx, VertxTestContext context) {
         String definitionId = "order-fulfillment-doc";
-        DefinitionKey key = new DefinitionKey(null, definitionId, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
         List<Pool> pools = new ArrayList<>();
         List<VertiqueApplicationHandle<?>> handles = new ArrayList<>();
         Pool verificationPool = ManagedDefinitionDatabase.openPool(vertx, db);
@@ -493,14 +494,14 @@ public class DefinitionActivationIT {
                     .compose(ignoredRemoval -> pool.preparedQuery("""
                                     SELECT activation_token::text AS activation_token
                                     FROM workflow_definitions
-                                    WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = $2
+                                    WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = $2
                                     """)
                             .execute(Tuple.of(oldKey.definitionId(), oldKey.definitionVersion()))
                             .map(rows -> rows.iterator().next().getString("activation_token")))
                     .compose(oldToken -> pool.preparedQuery("""
                                     UPDATE workflow_definitions
                                     SET status_changed_at = clock_timestamp() - interval '5 minutes'
-                                    WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = $2
+                                    WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = $2
                                     """)
                             .execute(Tuple.of(oldKey.definitionId(), oldKey.definitionVersion()))
                             .map(oldToken))
@@ -530,7 +531,7 @@ public class DefinitionActivationIT {
                         assertThat(replacementPublication.plan().planHash())
                                 .isEqualTo(oldPublication.plan().planHash());
 
-                        DefinitionKey queuedKey = new DefinitionKey(null, oldKey.definitionId(), 3);
+                        DefinitionKey queuedKey = new DefinitionKey(WorkflowScopes.DEFAULT, oldKey.definitionId(), 3);
                         String queuedJson = new String(originalJson, StandardCharsets.UTF_8)
                                 .replace("\"definitionVersion\": 2", "\"definitionVersion\": 3");
                         SourceMetadata queuedMetadata =
@@ -566,7 +567,7 @@ public class DefinitionActivationIT {
                                 .compose(ignoredQueued -> pool.preparedQuery("""
                                                 SELECT status, activation_token::text AS activation_token
                                                 FROM workflow_definitions
-                                                WHERE tenant_key IS NULL AND definition_id = $1
+                                                WHERE scope_key = 'default' AND definition_id = $1
                                                   AND definition_version = $2
                                                 """)
                                         .execute(Tuple.of(oldKey.definitionId(), oldKey.definitionVersion()))
@@ -647,9 +648,9 @@ public class DefinitionActivationIT {
         return pool.preparedQuery("""
                         SELECT status, activation_token::text AS activation_token, plan_hash
                         FROM workflow_definitions
-                        WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                        WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
                         """)
-                .execute(Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion()))
+                .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion()))
                 .map(rows -> {
                     var iterator = rows.iterator();
                     assertThat(iterator.hasNext()).isTrue();

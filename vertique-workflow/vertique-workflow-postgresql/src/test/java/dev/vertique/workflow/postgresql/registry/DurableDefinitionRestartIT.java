@@ -27,6 +27,7 @@ import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -58,7 +59,7 @@ public class DurableDefinitionRestartIT {
     void restoresActivatedYamlBeforeTraffic(Vertx vertx, VertxTestContext context) {
         String definitionId = "order-fulfillment-doc";
         long version = 1;
-        DefinitionKey key = new DefinitionKey(null, definitionId, version);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version);
         SourceMetadata metadata = new SourceMetadata(
                 "restart-test",
                 "classpath:definitions/it/order-fulfillment.workflow.yaml",
@@ -85,8 +86,7 @@ public class DurableDefinitionRestartIT {
                     WorkflowDefinitionService service = first.definitionService();
                     return service.load(yaml, DocumentFormat.YAML, metadata, null)
                             .compose(compiled -> service.activate(key).map(compiled))
-                            .compose(compiled -> service.list(
-                                            new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                            .compose(compiled -> service.list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                                     .map(records -> {
                                         assertThat(compiled.planHash()).isNotBlank();
                                         assertThat(first.workflowRegistry().allRegistered())
@@ -119,7 +119,7 @@ public class DurableDefinitionRestartIT {
                                 assertThat(secondObservation.events())
                                         .containsExactly("bootstrap-complete", "bootstrap-verticle-deployed");
                                 return second.definitionService()
-                                        .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                                        .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                                         .map(records -> {
                                             assertThat(records).singleElement().satisfies(record -> {
                                                 assertThat(record.key()).isEqualTo(key);
@@ -142,7 +142,7 @@ public class DurableDefinitionRestartIT {
     void rejectsDriftAndMissingLoader(RestorationFailureCase failureCase, Vertx vertx, VertxTestContext context) {
         String definitionId = "order-fulfillment-doc";
         long version = 1;
-        DefinitionKey key = new DefinitionKey(null, definitionId, version);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version);
         byte[] original = ManagedDefinitionDatabase.yamlFixture();
         byte[] changed = new String(original, java.nio.charset.StandardCharsets.UTF_8)
                 .replace("wait-inventory", "wait-inventory-drift")
@@ -190,7 +190,7 @@ public class DurableDefinitionRestartIT {
                                                 UPDATE workflow_definitions
                                                 SET document = $1,
                                                     document_digest = encode(sha256(convert_to($1::text, 'UTF8')), 'hex')
-                                                WHERE tenant_key IS NULL AND definition_id = $2
+                                                WHERE scope_key = 'default' AND definition_id = $2
                                                   AND definition_version = $3
                                                 """)
                                             .execute(io.vertx.sqlclient.Tuple.of(
@@ -200,7 +200,7 @@ public class DurableDefinitionRestartIT {
                                             .compose(ignoredUpdate -> firstPool
                                                     .preparedQuery("""
                                                             SELECT plan_hash FROM workflow_definitions
-                                                            WHERE tenant_key IS NULL AND definition_id = $1
+                                                            WHERE scope_key = 'default' AND definition_id = $1
                                                               AND definition_version = $2
                                                             """)
                                                     .execute(io.vertx.sqlclient.Tuple.of(definitionId, version)))

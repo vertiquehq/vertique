@@ -764,7 +764,7 @@ public class PgWorkflowEnginePayloadConstraintIT {
 
     private static long startDedupRows(String key) {
         return count(
-                "SELECT count(*) FROM workflow_dedup WHERE kind = 'start' AND scope = $1 AND key = $2",
+                "SELECT count(*) FROM workflow_dedup WHERE kind = 'start' AND dedup_namespace = $1 AND key = $2",
                 Tuple.of(START_DEFINITION_ID, key));
     }
 

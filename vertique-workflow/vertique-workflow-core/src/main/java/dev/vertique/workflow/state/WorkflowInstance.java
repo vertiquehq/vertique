@@ -5,9 +5,11 @@ package dev.vertique.workflow.state;
 
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
+import java.util.Objects;
 
 /**
  * Snapshot of a workflow instance's current state as persisted in the repository.
@@ -49,10 +51,12 @@ import java.time.Instant;
  *     when no ambient durable context was present at start (empty capture) or for instances
  *     started before this carrier existed. Immutable for the lifetime of the instance — no
  *     {@code with*} updater exists for this field; every updater passes it through unchanged.
- * @param tenantKey optional tenant key stamped when the instance was created; {@code null} when no
- *     tenant applies and for rows created before the column existed. Immutable for the lifetime
- *     of the instance: no setter exists and every {@code with*} updater passes it through. It is
- *     information and a filter value, not an isolation or authorization boundary.
+ * @param scopeKey the start scope stamped when the instance was created; {@link WorkflowScopes#DEFAULT} for rows
+ *     created without one. It scopes the business key and the start deduplication. Immutable for the lifetime of the
+ *     instance: no setter exists and every {@code with*} updater passes it through. It is information and a filter
+ *     value, not an isolation or authorization boundary.
+ * @param definitionScopeKey the scope of the definition version this instance is pinned to;
+ *     {@link WorkflowScopes#DEFAULT} for rows created without one. Every {@code with*} updater passes it through.
  */
 public record WorkflowInstance(
         WorkflowInstanceId id,
@@ -73,11 +77,22 @@ public record WorkflowInstance(
         Instant createdAt,
         Instant updatedAt,
         @Nullable DurableMetadata metadata,
-        @Nullable String tenantKey) {
+        String scopeKey,
+        String definitionScopeKey) {
 
     /**
-     * Creates an instance without a tenant key. Retained so existing callers keep compiling;
-     * equivalent to the canonical constructor with a {@code null} {@code tenantKey}.
+     * Validates that both scope keys are present.
+     *
+     * @throws NullPointerException if a scope key is {@code null}
+     */
+    public WorkflowInstance {
+        Objects.requireNonNull(scopeKey, "scopeKey");
+        Objects.requireNonNull(definitionScopeKey, "definitionScopeKey");
+    }
+
+    /**
+     * Creates an instance in the default scope, started and defined there. Retained so existing callers keep
+     * compiling; equivalent to the canonical constructor with {@link WorkflowScopes#DEFAULT} for both scopes.
      */
     public WorkflowInstance(
             WorkflowInstanceId id,
@@ -117,7 +132,8 @@ public record WorkflowInstance(
                 createdAt,
                 updatedAt,
                 metadata,
-                null);
+                WorkflowScopes.DEFAULT,
+                WorkflowScopes.DEFAULT);
     }
 
     // --- Fluent updaters ---
@@ -149,7 +165,8 @@ public record WorkflowInstance(
                 createdAt,
                 updatedAt,
                 metadata,
-                tenantKey);
+                scopeKey,
+                definitionScopeKey);
     }
 
     /**
@@ -179,7 +196,8 @@ public record WorkflowInstance(
                 createdAt,
                 updatedAt,
                 metadata,
-                tenantKey);
+                scopeKey,
+                definitionScopeKey);
     }
 
     /**
@@ -209,7 +227,8 @@ public record WorkflowInstance(
                 createdAt,
                 updatedAt,
                 metadata,
-                tenantKey);
+                scopeKey,
+                definitionScopeKey);
     }
 
     /**
@@ -245,7 +264,8 @@ public record WorkflowInstance(
                 createdAt,
                 updatedAt,
                 metadata,
-                tenantKey);
+                scopeKey,
+                definitionScopeKey);
     }
 
     /**
@@ -292,7 +312,8 @@ public record WorkflowInstance(
                 createdAt,
                 updatedAt,
                 metadata,
-                tenantKey);
+                scopeKey,
+                definitionScopeKey);
     }
 
     /**
@@ -323,7 +344,8 @@ public record WorkflowInstance(
                 createdAt,
                 updatedAt,
                 metadata,
-                tenantKey);
+                scopeKey,
+                definitionScopeKey);
     }
 
     /**
@@ -353,6 +375,7 @@ public record WorkflowInstance(
                 createdAt,
                 when,
                 metadata,
-                tenantKey);
+                scopeKey,
+                definitionScopeKey);
     }
 }

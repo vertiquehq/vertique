@@ -39,16 +39,18 @@ final class TenantRowSeed {
      * <p>The key's id and version are those of the compiled document, so the id may be any the document declares.
      */
     static Future<DefinitionKey> insertCandidate(
-            AppComponent app, String tenantKey, byte[] document, DocumentFormat format, SourceMetadata source) {
+            AppComponent app, String scopeKey, byte[] document, DocumentFormat format, SourceMetadata source) {
         CompiledDefinition compiled = app.definitionPipeline().load(new DefinitionResource(document, format, source));
         DefinitionKey key = new DefinitionKey(
-                tenantKey,
+                scopeKey,
                 compiled.definition().definitionId(),
                 compiled.definition().definitionVersion());
         Instant now = Instant.now();
         WorkflowDefinitionRecord record = new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 compiled.planHash(),
                 DefinitionStatus.CANDIDATE,
                 new DefinitionProvenance(
@@ -75,14 +77,14 @@ final class TenantRowSeed {
      * executable registry; a graph started afterwards restores it from the table.
      */
     static DefinitionKey seed(
-            AppComponent app, String tenantKey, byte[] document, SourceMetadata source, DefinitionStatus target) {
+            AppComponent app, String scopeKey, byte[] document, SourceMetadata source, DefinitionStatus target) {
         if (target != DefinitionStatus.CANDIDATE
                 && target != DefinitionStatus.ACTIVE
                 && target != DefinitionStatus.DEPRECATED)
             throw new IllegalArgumentException("A seeded row can be CANDIDATE, ACTIVE or DEPRECATED, not " + target);
         WorkflowDefinitionRegistryStore store = app.definitionRegistryStore();
         DefinitionKey key =
-                DefinitionScenario.await(insertCandidate(app, tenantKey, document, DocumentFormat.YAML, source));
+                DefinitionScenario.await(insertCandidate(app, scopeKey, document, DocumentFormat.YAML, source));
         if (target == DefinitionStatus.CANDIDATE) return key;
         DefinitionScenario.await(store.claim(key).compose(store::complete));
         if (target == DefinitionStatus.DEPRECATED)

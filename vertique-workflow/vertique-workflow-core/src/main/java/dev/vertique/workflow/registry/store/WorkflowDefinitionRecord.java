@@ -7,10 +7,28 @@ import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.Objects;
 
-/** Metadata projection that never carries document source text. */
+/**
+ * Metadata projection that never carries document source text.
+ *
+ * <p>A {@link DefinitionKind#CODE} record belongs to the default scope and has no document format. The contract and
+ * state type names are the logical names of the definition's contract and state type.
+ *
+ * @param key the scoped identity of the definition version
+ * @param kind whether the definition comes from code or from a document
+ * @param contractName the logical name of the definition's contract
+ * @param stateTypeName the logical name of the definition's state type
+ * @param planHash the plan hash, 64 lowercase hexadecimal characters
+ * @param status the lifecycle status
+ * @param provenance where the definition was loaded from
+ * @param documentFormat the document format of a document definition, otherwise {@code null}
+ * @param createdAt when the row was created
+ * @param statusChangedAt when the status last changed
+ */
 public record WorkflowDefinitionRecord(
         DefinitionKey key,
         DefinitionKind kind,
+        String contractName,
+        String stateTypeName,
         String planHash,
         DefinitionStatus status,
         DefinitionProvenance provenance,
@@ -20,6 +38,8 @@ public record WorkflowDefinitionRecord(
     public WorkflowDefinitionRecord {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(kind, "kind");
+        DefinitionValues.identifier(contractName, "contractName", 255);
+        DefinitionValues.identifier(stateTypeName, "stateTypeName", 255);
         Objects.requireNonNull(status, "status");
         Objects.requireNonNull(provenance, "provenance");
         Objects.requireNonNull(createdAt, "createdAt");
@@ -27,7 +47,7 @@ public record WorkflowDefinitionRecord(
         if (planHash == null || !planHash.matches("[0-9a-f]{64}"))
             throw new IllegalArgumentException("planHash must be 64 lowercase hexadecimal characters");
         if (kind == DefinitionKind.DOCUMENT) DefinitionValues.format(documentFormat);
-        else if (documentFormat != null || key.tenantKey() != null)
-            throw new IllegalArgumentException("CODE requires global scope and no document format");
+        else if (documentFormat != null || !WorkflowScopes.DEFAULT.equals(key.scopeKey()))
+            throw new IllegalArgumentException("CODE requires the default scope and no document format");
     }
 }

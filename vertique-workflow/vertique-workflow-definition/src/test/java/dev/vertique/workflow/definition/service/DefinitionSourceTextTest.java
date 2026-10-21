@@ -35,6 +35,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
@@ -522,7 +523,7 @@ public class DefinitionSourceTextTest {
             CompiledDefinitionRef compiled) {
         assertThat(store.documents).anySatisfy(captured -> {
             assertThat(captured.record().key())
-                    .isEqualTo(new DefinitionKey(null, source.definitionId(), source.version()));
+                    .isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, source.definitionId(), source.version()));
             assertThat(captured.document().key()).isEqualTo(captured.record().key());
             assertThat(captured.document().document()).isEqualTo(source.expectedText());
             assertThat(captured.document().documentFormat()).isEqualTo(format.name());

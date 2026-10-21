@@ -5,6 +5,7 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -34,22 +35,22 @@ final class ManagedRegistrations {
     @Inject
     ManagedRegistrations() {}
 
-    /** Records that the lifecycle published {@code runtime} for {@code tenantKey}, replacing any older entry. */
-    void attribute(@Nullable String tenantKey, String definitionId, long version, RuntimeWorkflow runtime) {
+    /** Records that the lifecycle published {@code runtime} for {@code scopeKey}, replacing any older entry. */
+    void attribute(String scopeKey, String definitionId, long version, RuntimeWorkflow runtime) {
         attributions.put(
-                new VersionKey(definitionId, version), new Attribution(tenantKey, Objects.requireNonNull(runtime)));
+                new VersionKey(definitionId, version), new Attribution(scopeKey, Objects.requireNonNull(runtime)));
     }
 
     /**
-     * Attributes every registration already present in {@code registry} to the global owner, keeping any entry
+     * Attributes every registration already present in {@code registry} to the default scope, keeping any entry
      * that exists. These are the packaged static documents and application-contributed definitions that were
      * registered while the registry was constructed.
      */
-    void attributeExistingToGlobal(WorkflowRegistry registry) {
+    void attributeExistingToDefaultScope(WorkflowRegistry registry) {
         for (RuntimeWorkflow runtime : registry.allRegistered())
             attributions.putIfAbsent(
                     new VersionKey(runtime.plan().definitionId(), runtime.plan().definitionVersion()),
-                    new Attribution(null, runtime));
+                    new Attribution(WorkflowScopes.DEFAULT, runtime));
     }
 
     /** Forgets the entry for this id and version, but only while it still names exactly {@code runtime}. */
@@ -61,14 +62,14 @@ final class ManagedRegistrations {
     /**
      * Compares what the registry holds for an id and version against the attribution.
      *
-     * @param tenantKey the owner the caller acts for, or {@code null} for the global owner
+     * @param scopeKey the owner scope the caller acts for; {@link WorkflowScopes#DEFAULT} for the default scope
      * @param held the runtime the registry holds for the version, or {@code null} when it holds none
      */
-    Standing classify(@Nullable String tenantKey, String definitionId, long version, @Nullable RuntimeWorkflow held) {
+    Standing classify(String scopeKey, String definitionId, long version, @Nullable RuntimeWorkflow held) {
         if (held == null) return Standing.ABSENT;
         Attribution entry = attributions.get(new VersionKey(definitionId, version));
         if (entry == null || entry.runtime() != held) return Standing.UNATTRIBUTED;
-        return Objects.equals(entry.tenantKey(), tenantKey) ? Standing.OWN : Standing.OTHER_OWNER;
+        return Objects.equals(entry.scopeKey(), scopeKey) ? Standing.OWN : Standing.OTHER_OWNER;
     }
 
     /**
@@ -82,11 +83,11 @@ final class ManagedRegistrations {
         if (held == null) return Optional.empty();
         Attribution entry = attributions.get(new VersionKey(definitionId, version));
         if (entry == null || entry.runtime() != held) return Optional.empty();
-        return Optional.of(new Owner(entry.tenantKey()));
+        return Optional.of(new Owner(entry.scopeKey()));
     }
 
-    /** The owner a runtime was published for; a {@code null} tenant key is the global owner. */
-    record Owner(@Nullable String tenantKey) {}
+    /** The owner scope a runtime was published for; {@link WorkflowScopes#DEFAULT} is the default scope. */
+    record Owner(String scopeKey) {}
 
     /** How the registration held for an id and version relates to the owner a managed mutation acts for. */
     enum Standing {
@@ -102,5 +103,5 @@ final class ManagedRegistrations {
 
     private record VersionKey(String definitionId, long version) {}
 
-    private record Attribution(@Nullable String tenantKey, RuntimeWorkflow runtime) {}
+    private record Attribution(String scopeKey, RuntimeWorkflow runtime) {}
 }

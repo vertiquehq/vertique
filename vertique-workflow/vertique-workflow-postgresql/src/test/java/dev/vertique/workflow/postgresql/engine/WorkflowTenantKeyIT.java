@@ -45,6 +45,7 @@ import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
@@ -82,12 +83,12 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Real PostgreSQL proof that the engine leaves the instance tenant unset at start whatever the
- * ambient context holds, that every task takes the tenant of its instance row once another writer
- * has stamped one, and that the stamped tenant survives migration and resurrection.
+ * Real PostgreSQL proof that the engine starts every instance in the default scope whatever the
+ * ambient context holds, that every task takes the start scope of its instance row once another writer
+ * has stamped one, and that the stamped scope survives migration and resurrection.
  *
  * <p>The engine comes from the generated {@link TenantEngineHost} component, which registers the
- * shared {@link TenantCtxCodec} fixture with the real propagator so a tenant-looking value can be
+ * shared {@link TenantCtxCodec} fixture with the real propagator so a scope-looking value can be
  * bound as the ambient context.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
@@ -95,7 +96,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 public class WorkflowTenantKeyIT {
 
     static final PostgresContainer db = new PostgresContainer()
-            .withDatabaseName("workflow_tenant_key_test")
+            .withDatabaseName("workflow_scope_key_test")
             .withMigration("classpath:db/migration/workflow");
 
     private static final String SINGLE_ID = "tenant-single";
@@ -444,8 +445,8 @@ public class WorkflowTenantKeyIT {
     // --- Tests ---
 
     @Test
-    @DisplayName("engine-started rows have no tenant and a later stamp hands it to later tasks")
-    void engineStartedRowsHaveNoTenantAndALaterStampHandsItToLaterTasks() throws Exception {
+    @DisplayName("engine-started rows are in the default scope and a later stamp hands its scope to later tasks")
+    void engineStartedRowsAreInTheDefaultScopeAndALaterStampHandsItToLaterTasks() throws Exception {
         // Given single and forking workflows started under an ambient context carrying t1, two of them
         // left alone and two stamped t1 by another writer right after the start
         WorkflowInstanceId singleUnstamped = await(inContext(
@@ -497,15 +498,15 @@ public class WorkflowTenantKeyIT {
                         null,
                         null))));
 
-        // Then the ambient tenant was not taken: no instance row and no start task carries a tenant
+        // Then the ambient tenant was not taken: every instance row and start task is in the default scope
         for (WorkflowInstanceId started : List.of(singleUnstamped, forkUnstamped, singleStamped, forkStamped)) {
-            assertThat(instanceTenantColumn(started)).isNull();
-            assertThat(taskTenants(started)).hasSize(1).containsOnlyNulls();
+            assertThat(instanceScopeColumn(started)).isEqualTo(WorkflowScopes.DEFAULT);
+            assertThat(taskScopes(started)).hasSize(1).containsOnly(WorkflowScopes.DEFAULT);
         }
 
         // When another writer stamps two of the instances t1
-        stampInstanceTenant(singleStamped, "t1");
-        stampInstanceTenant(forkStamped, "t1");
+        stampInstanceScope(singleStamped, "t1");
+        stampInstanceScope(forkStamped, "t1");
 
         // And every single-task workflow has its first task completed and is signalled, and every forking
         // workflow has branch b parked for recovery and swept, all under a context without a tenant
@@ -514,30 +515,30 @@ public class WorkflowTenantKeyIT {
         parkBranchBThenSweep(forkUnstamped);
         parkBranchBThenSweep(forkStamped);
 
-        // Then the unstamped instances and all of their tasks still have no tenant
+        // Then the unstamped instances and all of their tasks are still in the default scope
         for (WorkflowInstanceId unstamped : List.of(singleUnstamped, forkUnstamped)) {
-            assertThat(instanceTenantColumn(unstamped)).isNull();
+            assertThat(instanceScopeColumn(unstamped)).isEqualTo(WorkflowScopes.DEFAULT);
             assertThat(await(instanceRepository.findById(unstamped))
                             .orElseThrow()
-                            .tenantKey())
-                    .isNull();
-            assertThat(taskTenants(unstamped)).hasSize(2).containsOnlyNulls();
+                            .scopeKey())
+                    .isEqualTo(WorkflowScopes.DEFAULT);
+            assertThat(taskScopes(unstamped)).hasSize(2).containsOnly(WorkflowScopes.DEFAULT);
         }
 
-        // And the stamped instances keep t1, the tasks created before the stamp stay null, and the
+        // And the stamped instances keep t1, the tasks created before the stamp stay in the default scope, and the
         // signal-resumed task and the recovered branch b task carry t1
         for (WorkflowInstanceId stamped : List.of(singleStamped, forkStamped)) {
-            assertThat(instanceTenantColumn(stamped)).isEqualTo("t1");
-            assertThat(await(instanceRepository.findById(stamped)).orElseThrow().tenantKey())
+            assertThat(instanceScopeColumn(stamped)).isEqualTo("t1");
+            assertThat(await(instanceRepository.findById(stamped)).orElseThrow().scopeKey())
                     .isEqualTo("t1");
-            assertThat(taskTenants(stamped)).containsExactly(null, "t1");
+            assertThat(taskScopes(stamped)).containsExactly(WorkflowScopes.DEFAULT, "t1");
         }
     }
 
     @Test
-    @DisplayName("migration and resurrection keep the instance tenant")
-    void migrationAndResurrectionKeepTheInstanceTenant() throws Exception {
-        // Given a waiting instance and a failed instance of version 1, both stamped t1 through the repository
+    @DisplayName("migration and resurrection keep the instance scopes")
+    void migrationAndResurrectionKeepTheInstanceScopes() throws Exception {
+        // Given a waiting instance and a failed instance of version 1, both started in t1 through the repository
         String sourceHash =
                 host.workflowRegistry().resolvePinned(MIGRATE_ID, 1L).plan().planHash();
         Instant created = Instant.parse("2026-05-08T09:00:00Z");
@@ -562,7 +563,8 @@ public class WorkflowTenantKeyIT {
                 created,
                 created,
                 null,
-                "t1");
+                "t1",
+                WorkflowScopes.DEFAULT);
         WorkflowInstance finishedRow = new WorkflowInstance(
                 finished,
                 MIGRATE_ID,
@@ -582,33 +584,36 @@ public class WorkflowTenantKeyIT {
                 created,
                 created,
                 null,
-                "t1");
+                "t1",
+                WorkflowScopes.DEFAULT);
         await(pool.withTransaction(tx -> instanceRepository.insert(runningRow, tx)));
         await(pool.withTransaction(tx -> instanceRepository.insert(finishedRow, tx)));
-        assertThat(instanceTenantColumn(running)).isEqualTo("t1");
-        assertThat(instanceTenantColumn(finished)).isEqualTo("t1");
+        assertThat(instanceScopeColumn(running)).isEqualTo("t1");
+        assertThat(instanceScopeColumn(finished)).isEqualTo("t1");
 
         // When the waiting instance is migrated to version 2 and the failed instance is retried
         await(inContext(null, () -> operations.migrate(running, 2L)));
         await(inContext(null, () -> operations.retry(finished)));
 
-        // Then the migrated instance moved to version 2 and still carries t1 in its row and its record
+        // Then the migrated instance moved to version 2 and still carries t1 as its start scope in its row and its
+        // record
         assertThat(await(instanceRepository.findById(running)).orElseThrow().definitionVersion())
                 .isEqualTo(2L);
-        assertThat(instanceTenantColumn(running)).isEqualTo("t1");
-        assertThat(await(instanceRepository.findById(running)).orElseThrow().tenantKey())
+        assertThat(instanceScopeColumn(running)).isEqualTo("t1");
+        assertThat(await(instanceRepository.findById(running)).orElseThrow().scopeKey())
                 .isEqualTo("t1");
 
-        // And the resurrected instance is running again and still carries t1 in its row and its record
+        // And the resurrected instance is running again and still carries t1 as its start scope in its row and its
+        // record
         assertThat(await(instanceRepository.findById(finished)).orElseThrow().status())
                 .isNotEqualTo(WorkflowStatus.FAILED);
-        assertThat(instanceTenantColumn(finished)).isEqualTo("t1");
-        assertThat(await(instanceRepository.findById(finished)).orElseThrow().tenantKey())
+        assertThat(instanceScopeColumn(finished)).isEqualTo("t1");
+        assertThat(await(instanceRepository.findById(finished)).orElseThrow().scopeKey())
                 .isEqualTo("t1");
 
         // And the task each of them created afterwards carries t1
-        assertThat(taskTenants(running)).containsExactly("t1");
-        assertThat(taskTenants(finished)).containsExactly("t1");
+        assertThat(taskScopes(running)).containsExactly("t1");
+        assertThat(taskScopes(finished)).containsExactly("t1");
     }
 
     // --- Helpers ---
@@ -637,9 +642,9 @@ public class WorkflowTenantKeyIT {
         return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
     }
 
-    private static void stampInstanceTenant(WorkflowInstanceId id, String tenant) throws Exception {
-        await(pool.preparedQuery("UPDATE workflow_instances SET tenant_key = $1 WHERE id = $2")
-                .execute(Tuple.of(tenant, id.value())));
+    private static void stampInstanceScope(WorkflowInstanceId id, String scopeKey) throws Exception {
+        await(pool.preparedQuery("UPDATE workflow_instances SET scope_key = $1 WHERE id = $2")
+                .execute(Tuple.of(scopeKey, id.value())));
     }
 
     private static void completeFirstTaskThenSignalGo(WorkflowInstanceId id, String keySuffix) throws Exception {
@@ -669,22 +674,22 @@ public class WorkflowTenantKeyIT {
         await(inContext(null, () -> recovery.sweepOnce(Instant.now(), 10)));
     }
 
-    private static String instanceTenantColumn(WorkflowInstanceId id) throws Exception {
-        return await(pool.preparedQuery("SELECT tenant_key FROM workflow_instances WHERE id = $1")
+    private static String instanceScopeColumn(WorkflowInstanceId id) throws Exception {
+        return await(pool.preparedQuery("SELECT scope_key FROM workflow_instances WHERE id = $1")
                 .execute(Tuple.of(id.value()))
-                .map(rows -> rows.iterator().next().getString("tenant_key")));
+                .map(rows -> rows.iterator().next().getString("scope_key")));
     }
 
-    private static List<String> taskTenants(WorkflowInstanceId id) throws Exception {
+    private static List<String> taskScopes(WorkflowInstanceId id) throws Exception {
         return await(pool.preparedQuery(
-                        "SELECT tenant_key FROM workflow_tasks WHERE workflow_id = $1 ORDER BY created_at, task_id")
+                        "SELECT scope_key FROM workflow_tasks WHERE workflow_id = $1 ORDER BY created_at, task_id")
                 .execute(Tuple.of(id.value()))
                 .map(rows -> {
-                    List<String> tenants = new ArrayList<>();
+                    List<String> scopes = new ArrayList<>();
                     for (Row row : rows) {
-                        tenants.add(row.getString("tenant_key"));
+                        scopes.add(row.getString("scope_key"));
                     }
-                    return tenants;
+                    return scopes;
                 }));
     }
 

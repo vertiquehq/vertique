@@ -124,23 +124,21 @@ final class DefinitionPropagationPass {
      */
     Future<Void> run() {
         if (store.isEmpty()) return Future.succeededFuture();
-        return store.orElseThrow()
-                .list(new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null))
-                .compose(rows -> {
-                    Set<DefinitionKey> listed = new HashSet<>();
-                    for (WorkflowDefinitionRecord row : rows) listed.add(row.key());
-                    Future<Void> chain = Future.succeededFuture();
-                    for (WorkflowDefinitionRecord row : rows)
-                        if (!LIVE.contains(row.status())) chain = chain.compose(ignored -> apply(row, true));
-                    for (WorkflowDefinitionRecord row : rows)
-                        if (LIVE.contains(row.status())) chain = chain.compose(ignored -> apply(row, false));
-                    return chain.map(ignored -> {
-                        view.retainFailures(listed);
-                        settledRows.keySet().retainAll(listed);
-                        reasons.keySet().retainAll(listed);
-                        return (Void) null;
-                    });
-                });
+        return store.orElseThrow().list(new DefinitionFilter(null, null, null)).compose(rows -> {
+            Set<DefinitionKey> listed = new HashSet<>();
+            for (WorkflowDefinitionRecord row : rows) listed.add(row.key());
+            Future<Void> chain = Future.succeededFuture();
+            for (WorkflowDefinitionRecord row : rows)
+                if (!LIVE.contains(row.status())) chain = chain.compose(ignored -> apply(row, true));
+            for (WorkflowDefinitionRecord row : rows)
+                if (LIVE.contains(row.status())) chain = chain.compose(ignored -> apply(row, false));
+            return chain.map(ignored -> {
+                view.retainFailures(listed);
+                settledRows.keySet().retainAll(listed);
+                reasons.keySet().retainAll(listed);
+                return (Void) null;
+            });
+        });
     }
 
     /**
@@ -188,7 +186,7 @@ final class DefinitionPropagationPass {
             WorkflowRegistry local = registry.get();
             RuntimeWorkflow held = DefinitionPublication.held(local, key.definitionId(), key.definitionVersion());
             ManagedRegistrations.Standing standing =
-                    registrations.classify(key.tenantKey(), key.definitionId(), key.definitionVersion(), held);
+                    registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
             boolean own = standing == ManagedRegistrations.Standing.OWN;
             if (!LIVE.contains(row.status())) {
                 Settled memo = settledRows.get(key);
@@ -274,7 +272,7 @@ final class DefinitionPropagationPass {
                 WorkflowRegistry local = registry.get();
                 RuntimeWorkflow held = DefinitionPublication.held(local, key.definitionId(), key.definitionVersion());
                 ManagedRegistrations.Standing standing =
-                        registrations.classify(key.tenantKey(), key.definitionId(), key.definitionVersion(), held);
+                        registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
                 boolean removed = false;
                 if (standing == ManagedRegistrations.Standing.OWN) {
                     local.unregister(key.definitionId(), key.definitionVersion());
@@ -312,7 +310,7 @@ final class DefinitionPropagationPass {
         WorkflowRegistry local = registry.get();
         RuntimeWorkflow held = DefinitionPublication.held(local, key.definitionId(), key.definitionVersion());
         ManagedRegistrations.Standing standing =
-                registrations.classify(key.tenantKey(), key.definitionId(), key.definitionVersion(), held);
+                registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
         Future<Void> restored;
         switch (standing) {
             case UNATTRIBUTED ->
@@ -375,7 +373,7 @@ final class DefinitionPropagationPass {
         ManagedRegistrations.Owner owner = registrations
                 .ownerOf(key.definitionId(), key.definitionVersion(), held)
                 .orElseThrow();
-        DefinitionKey otherKey = new DefinitionKey(owner.tenantKey(), key.definitionId(), key.definitionVersion());
+        DefinitionKey otherKey = new DefinitionKey(owner.scopeKey(), key.definitionId(), key.definitionVersion());
         return store.orElseThrow()
                 .find(otherKey)
                 .recover(error -> Future.failedFuture(fatal(error) ? error : new TableUnreadable(error)))

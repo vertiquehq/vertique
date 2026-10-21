@@ -28,6 +28,7 @@ import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.Payloads;
 import dev.vertique.workflow.schema.fixtures.ReviewNoteWorkflowV1;
 import dev.vertique.workflow.schema.fixtures.ReviewState;
@@ -54,10 +55,9 @@ import org.junit.jupiter.api.Test;
  */
 class SchemaActivationTest {
 
-    private static final DefinitionKey REVIEW_NOTE_V1 = new DefinitionKey(null, "review-note", 1L);
+    private static final DefinitionKey REVIEW_NOTE_V1 = new DefinitionKey(WorkflowScopes.DEFAULT, "review-note", 1L);
 
-    private static final DefinitionFilter GLOBAL =
-            new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null);
+    private static final DefinitionFilter GLOBAL = new DefinitionFilter(WorkflowScopes.DEFAULT, null, null);
 
     private static final String SCALAR_DECISION_MESSAGE =
             "definition 'review-note' v1 step 'review' decision 'note' payload type 'java.lang.String'"

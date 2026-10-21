@@ -255,16 +255,16 @@ static PayloadMapperContributor reserveInventoryPayload() {
 ## Runtime Loading And Activation
 
 `WorkflowDefinitionService` returns Futures for loading, activation, metadata listing, and source
-attribution. For a global definition, compose activation after the candidate load completes:
+attribution. For a definition in the default scope, compose activation after the candidate load completes:
 
 ```java
 Future<CompiledDefinitionRef> activated = service
         .load(content, DocumentFormat.YAML, metadata, null)
         .compose(ref -> service.activate(new DefinitionKey(
-                null, ref.definitionId(), ref.definitionVersion())).map(ref));
+                WorkflowScopes.DEFAULT, ref.definitionId(), ref.definitionVersion())).map(ref));
 
 Future<List<WorkflowDefinitionRecord>> definitions = service.list(
-        new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null));
+        new DefinitionFilter(WorkflowScopes.DEFAULT, null, null));
 ```
 
 `load` parses, validates, and compiles a candidate without registering it. A document loaded this way, or restored from the store, can name only classes in the type-name index, so a class an application wants such a document to use must be listed in a contributed `WorkflowTypeCatalog` (the workflow annotation processor generates one for `@WorkflowContract` and `@WorkflowType` classes) or be used by a registered definition; a name outside the index fails the returned Future with `WorkflowUnknownTypeNameException` before any validation runs. `activate` publishes it;
@@ -301,12 +301,12 @@ instance, and reports RETIRED in service metadata and lists; the returned Future
 `PINNED_INSTANCES` or `INVALID_TRANSITION`. Retiring a candidate of one owner never removes another owner's runtime,
 even when id, version and hash are equal.
 
-Startup restores the live documents of every owner, global and tenant. An id that deployed code registers is a
-global CODE row, so activating a tenant document under that id fails with `OWNER_CONFLICT` naming both owners.
-With the store bound, `load` for a tenant accepts only a document id of the form `<tenantKey>:<name>` and a tenant key without `:`;
-otherwise it fails with `WorkflowDefinitionException` naming the tenant key and id and stores nothing. Use the namespaced id
-everywhere the definition id is used (start, pinned resolution, migration targets). Global loads and the in-memory service are
-unchanged; avoid `:` in global ids, since a global id equal to a tenant's namespaced id still collides at startup.
+Startup restores the live documents of every owner scope. An id that deployed code registers is a
+default-scope CODE row, so activating a document of another scope under that id fails with `OWNER_CONFLICT` naming both owners.
+With the store bound, `load` for a non-default scope accepts only a document id of the form `<scopeKey>:<name>` and a scope key without `:`;
+otherwise it fails with `WorkflowDefinitionException` naming the scope key and id and stores nothing. A `null` scope argument loads into the default scope. Use the namespaced id
+everywhere the definition id is used (start, pinned resolution, migration targets). Default-scope loads and the in-memory service are
+unchanged; avoid `:` in default-scope ids, since such an id equal to another scope's namespaced id still collides at startup.
 `load`, `activate`, `deprecate`, `retire` and `reinstate` perform no authorization: restrict them to authorized callers. The
 public `currentStatus` of a version that is only persisted metadata (a candidate or retired row that startup did
 not compile) reports the persisted status instead of returning `null`; it returns `null` only when nothing is known about the version. An equal plan hash no longer proves equal text: a
@@ -316,9 +316,9 @@ same id and version fails startup, so bump the version of a changed document; a 
 `sourceMetadata(DefinitionKey)` reads attribution without fetching source text. Lists contain immutable,
 key-bearing metadata. With a store bound, `list` and `sourceMetadata` read the durable table and have no
 in-memory fallback, so metadata of packaged documents and code definitions appears only after the managed
-BOOTSTRAP step has recorded it. Definition id and tenant key (255), source type (64), URI (2048) and revision,
+BOOTSTRAP step has recorded it. Definition id and scope key (255), source type (64), URI (2048) and revision,
 author and upload id (255) code-point limits apply in every mode, including when no store is installed. NUL and
-unpaired surrogates are rejected in every text field, ISO control characters in ids and tenant keys, and a
+unpaired surrogates are rejected in every text field, ISO control characters in ids and scope keys, and a
 version must be positive. Over-limit input is rejected before anything is registered. Invalid asynchronous
 arguments are failed Futures. Previously started instances keep their pinned version. Coexisting versions of one document id name the same contract class, and a version that names another contract than the id's registered versions is refused at registration.
 

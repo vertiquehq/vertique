@@ -38,6 +38,7 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -98,7 +99,7 @@ class DefaultWorkflowDefinitionServiceNamespaceTest {
                 Optional.empty());
         DefaultWorkflowDefinitionService noStoreService = new DefaultWorkflowDefinitionService(
                 buildPipeline(), new WorkflowDefinitionStore(), () -> new DefaultWorkflowRegistry());
-        DefinitionFilter all = new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null);
+        DefinitionFilter all = new DefinitionFilter(null, null, null);
 
         // When documents outside the namespace are loaded for tenants t1 and a:b
         // Then each load fails naming the tenant key and the id
@@ -148,9 +149,11 @@ class DefaultWorkflowDefinitionServiceNamespaceTest {
         Mockito.verify(durable, Mockito.times(2)).insertCandidate(stored.capture(), Mockito.any());
         assertThat(stored.getAllValues())
                 .extracting(WorkflowDefinitionRecord::key)
-                .containsExactly(new DefinitionKey("t1", "t1:X", 1), new DefinitionKey(null, "global:X", 1));
+                .containsExactly(
+                        new DefinitionKey("t1", "t1:X", 1), new DefinitionKey(WorkflowScopes.DEFAULT, "global:X", 1));
         assertThat(durableCache.get(new DefinitionKey("t1", "t1:X", 1))).isPresent();
-        assertThat(durableCache.get(new DefinitionKey(null, "global:X", 1))).isPresent();
+        assertThat(durableCache.get(new DefinitionKey(WorkflowScopes.DEFAULT, "global:X", 1)))
+                .isPresent();
 
         // And the service with no store still loads an unprefixed id for a tenant as before
         CompiledDefinitionRef unprefixed = ServiceTestHelpers.await(
@@ -182,7 +185,7 @@ class DefaultWorkflowDefinitionServiceNamespaceTest {
                         service.load(yamlFor("X", PlainContract.class), DocumentFormat.YAML, meta(), "t\n1")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .satisfies(failure ->
-                        assertThat(failure.getMessage()).contains("tenantKey").doesNotContain("\n"));
+                        assertThat(failure.getMessage()).contains("scopeKey").doesNotContain("\n"));
         Mockito.verify(durable, Mockito.never())
                 .insertCandidate(Mockito.any(WorkflowDefinitionRecord.class), Mockito.any());
 

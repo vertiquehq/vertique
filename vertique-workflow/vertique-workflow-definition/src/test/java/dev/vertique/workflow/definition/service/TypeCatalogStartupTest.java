@@ -24,6 +24,7 @@ import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowType;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
@@ -383,7 +384,7 @@ class TypeCatalogStartupTest {
             assertThat(recorder.requested()).doesNotContain(LegacyPlain.class.getName());
             assertThat(ServiceTestHelpers.await(component
                             .workflowDefinitionService()
-                            .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))))
+                            .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))))
                     .isEmpty();
         }
     }

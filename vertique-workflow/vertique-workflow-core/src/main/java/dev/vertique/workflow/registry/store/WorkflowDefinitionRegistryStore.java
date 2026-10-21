@@ -4,7 +4,6 @@
 package dev.vertique.workflow.registry.store;
 
 import io.vertx.core.Future;
-import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,7 +21,7 @@ public interface WorkflowDefinitionRegistryStore {
     /**
      * Finds definition metadata by key without loading document source text.
      *
-     * @param key tenant-scoped definition key to find
+     * @param key scoped definition key to find
      * @return a future containing the metadata record, or an empty value when no definition has that key
      */
     Future<Optional<WorkflowDefinitionRecord>> find(DefinitionKey key);
@@ -30,15 +29,15 @@ public interface WorkflowDefinitionRegistryStore {
     /**
      * Finds source text for a document definition by key.
      *
-     * @param key tenant-scoped definition key to find
+     * @param key scoped definition key to find
      * @return a future containing the document, or an empty value when the key has no document definition
      */
     Future<Optional<WorkflowDefinitionDocument>> findDocument(DefinitionKey key);
 
     /**
-     * Lists metadata records selected by tenant scope and optional statuses; source text is not included.
+     * Lists metadata records selected by optional scope, definition id and statuses; source text is not included.
      *
-     * @param filter tenant scope and optional definition statuses to select
+     * @param filter optional scope, definition id and definition statuses to select
      * @return a future containing the matching metadata records
      */
     Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter);
@@ -56,7 +55,7 @@ public interface WorkflowDefinitionRegistryStore {
 
     /**
      * Reconciles a definition that the deployed code provides with the persisted registry, as startup does. The
-     * record must be a global {@code CODE} record without document text. An absent key is inserted as a
+     * record must be a default-scope {@code CODE} record without document text. An absent key is inserted as a
      * superseded definition, so that the active membership is decided afterwards by
      * {@link #recomputeActive}. For an existing code definition with the same plan hash, provenance is refreshed
      * and the outcome is {@code UNCHANGED}. When the plan hash differs, the store decides inside its own
@@ -76,7 +75,7 @@ public interface WorkflowDefinitionRegistryStore {
      * Claims an eligible candidate for activation, or reclaims this key's stale activation attempt, and
      * returns a unique token identifying the attempt.
      *
-     * @param key tenant-scoped definition key to claim
+     * @param key scoped definition key to claim
      * @return a future containing the token-fenced activation claim
      */
     Future<ActivationClaim> claim(DefinitionKey key);
@@ -121,7 +120,7 @@ public interface WorkflowDefinitionRegistryStore {
      * any point rolls back every change of the transaction, leaving the retired row and the previous active row
      * as they were. The failure is typed as an owner conflict when another owner holds the id.
      *
-     * @param key tenant-scoped definition key to change
+     * @param key scoped definition key to change
      * @param from the status the row is required to have
      * @param to the status to store
      * @return a future completed after the store-owned transaction commits
@@ -140,7 +139,7 @@ public interface WorkflowDefinitionRegistryStore {
      * is still pinned fails with reason {@code PINNED_INSTANCES}. A refusal changes no row, and a success changes
      * only this row's status and status change time.
      *
-     * @param key tenant-scoped definition key to retire
+     * @param key scoped definition key to retire
      * @return a future completed after the store-owned transaction commits
      */
     Future<Void> retire(DefinitionKey key);
@@ -158,15 +157,15 @@ public interface WorkflowDefinitionRegistryStore {
     Future<Void> resetStaleActivating(String definitionId);
 
     /**
-     * Recomputes active membership for one exact tenant owner and definition id. Only ACTIVE and
+     * Recomputes active membership for one exact scope and definition id. Only ACTIVE and
      * SUPERSEDED rows participate; the highest version becomes ACTIVE and lower eligible versions
-     * become SUPERSEDED. Other statuses, owners, and definition ids are left unchanged. The
-     * returned future fails with {@link IllegalArgumentException} for an invalid tenant key or
+     * become SUPERSEDED. Other statuses, scopes, and definition ids are left unchanged. The
+     * returned future fails with {@link IllegalArgumentException} for an invalid scope key or
      * definition id, before any storage access.
      *
-     * @param tenantKey the exact owner, or {@code null} for the global owner
+     * @param scopeKey the exact scope; {@link WorkflowScopes#DEFAULT} for the default scope
      * @param definitionId the definition id to recompute
      * @return a future completed after the store-owned transaction commits
      */
-    Future<Void> recomputeActive(@Nullable String tenantKey, String definitionId);
+    Future<Void> recomputeActive(String scopeKey, String definitionId);
 }

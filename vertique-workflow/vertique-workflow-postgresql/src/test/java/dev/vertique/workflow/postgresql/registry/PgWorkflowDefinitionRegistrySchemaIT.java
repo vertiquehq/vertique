@@ -19,7 +19,6 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.ActivationOutcome;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
-import dev.vertique.workflow.registry.store.DefinitionFilter.TenantScope;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionProvenance;
@@ -28,6 +27,7 @@ import dev.vertique.workflow.registry.store.ReconcileOutcome;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
@@ -178,7 +178,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
                     observed, new PgDbExceptionMapper(), Optional.empty(), schemas);
             PgWorkflowInstanceRepository instances =
                     new PgWorkflowInstanceRepository(plain, new PgDbExceptionMapper(), schemas);
-            DefinitionKey key = new DefinitionKey(null, CODE_ID, 1);
+            DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, CODE_ID, 1);
 
             // When: a code row is reconciled, the instance pin is admitted and its status moves through the
             // live-update, terminal-update and resume paths
@@ -191,7 +191,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
             assertEquals(
                     ReconcileOutcome.REHASHED,
                     await(store.upsertCode(codeRecord(key, OTHER_PLAN_HASH, DefinitionStatus.SUPERSEDED))));
-            await(store.recomputeActive(null, CODE_ID));
+            await(store.recomputeActive(WorkflowScopes.DEFAULT, CODE_ID));
             assertEquals(
                     DefinitionStatus.ACTIVE,
                     await(store.find(key)).orElseThrow().status());
@@ -347,9 +347,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         assertEquals(
                 "{\"v\":2}", await(store.findDocument(key(2))).orElseThrow().document());
         assertEquals(
-                2,
-                await(store.list(new DefinitionFilter(TenantScope.ALL, null, null)))
-                        .size());
+                2, await(store.list(new DefinitionFilter(null, null, null))).size());
 
         assertEquals(
                 ReconcileOutcome.INSERTED,
@@ -360,7 +358,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         assertEquals(
                 ReconcileOutcome.DRIFT,
                 await(store.upsertDocument(record(3, OTHER_PLAN_HASH, DefinitionStatus.SUPERSEDED), document(3))));
-        await(store.recomputeActive(null, DEFINITION_ID));
+        await(store.recomputeActive(WorkflowScopes.DEFAULT, DEFINITION_ID));
         assertEquals(
                 DefinitionStatus.ACTIVE, await(store.find(key(3))).orElseThrow().status());
 
@@ -379,6 +377,8 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         return new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.CODE,
+                "example.Contract",
+                "example.State",
                 planHash,
                 status,
                 new DefinitionProvenance("code", "memory://code", null, null, null, now),
@@ -445,7 +445,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
     }
 
     private static DefinitionKey key(long version) {
-        return new DefinitionKey(null, DEFINITION_ID, version);
+        return new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, version);
     }
 
     private static WorkflowDefinitionRecord record(long version, String planHash, DefinitionStatus status) {
@@ -453,6 +453,8 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         return new WorkflowDefinitionRecord(
                 key(version),
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 planHash,
                 status,
                 new DefinitionProvenance("test", "memory://" + version, null, null, null, now),

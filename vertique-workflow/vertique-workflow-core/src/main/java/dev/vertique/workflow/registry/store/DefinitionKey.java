@@ -3,23 +3,22 @@
 
 package dev.vertique.workflow.registry.store;
 
-import jakarta.annotation.Nullable;
-
 /**
- * Tenant-scoped durable identity; null tenant denotes global scope.
+ * Scoped durable identity of one definition version; the default scope is {@link WorkflowScopes#DEFAULT}.
  *
- * <p>The tenant key and the definition id must each be nonblank, at most 255 code points long, and free of NUL,
+ * <p>The scope key and the definition id must each be nonblank, at most 255 code points long, and free of NUL,
  * unpaired surrogates and ISO control characters (U+0000 to U+001F and U+007F to U+009F); a supplementary
- * character (a surrogate pair) is valid and counts as one code point. The version must be positive. A value
- * that breaks a rule is rejected with {@link IllegalArgumentException}.
+ * character (a surrogate pair) is valid and counts as one code point. The version must be positive. A missing
+ * scope key or definition id is rejected with {@link NullPointerException}, and any other value that breaks a rule
+ * with {@link IllegalArgumentException}.
  *
- * @param tenantKey the owning tenant, or {@code null} for the global scope
+ * @param scopeKey the owning scope; {@link WorkflowScopes#DEFAULT} for the default scope
  * @param definitionId the workflow definition id
  * @param definitionVersion the positive definition version
  */
-public record DefinitionKey(@Nullable String tenantKey, String definitionId, long definitionVersion) {
+public record DefinitionKey(String scopeKey, String definitionId, long definitionVersion) {
     public DefinitionKey {
-        if (tenantKey != null) DefinitionValues.identifier(tenantKey, "tenantKey", 255);
+        DefinitionValues.identifier(scopeKey, "scopeKey", 255);
         DefinitionValues.identifier(definitionId, "definitionId", 255);
         if (definitionVersion <= 0) throw new IllegalArgumentException("definitionVersion must be positive");
     }

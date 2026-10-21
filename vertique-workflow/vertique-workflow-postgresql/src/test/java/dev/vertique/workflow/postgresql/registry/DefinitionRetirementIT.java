@@ -38,6 +38,7 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
@@ -119,7 +120,7 @@ public class DefinitionRetirementIT {
     @Test
     void refusesPinnedAndCoolingRetirement(Vertx vertx) {
         String id = "retirement-it-pinned-doc";
-        DefinitionKey key = new DefinitionKey(null, id, 7);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 7);
 
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(id);
@@ -232,9 +233,9 @@ public class DefinitionRetirementIT {
     void rejectsActiveRetirementAndCountsExactVersion(Vertx vertx) {
         String id = "retirement-it-count-doc";
         String otherId = "retirement-it-count-other-doc";
-        DefinitionKey deprecatedKey = new DefinitionKey(null, id, 1);
-        DefinitionKey activeKey = new DefinitionKey(null, id, 2);
-        DefinitionKey nextKey = new DefinitionKey(null, id, 3);
+        DefinitionKey deprecatedKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+        DefinitionKey activeKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
+        DefinitionKey nextKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 3);
 
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(id, otherId);
@@ -477,7 +478,7 @@ public class DefinitionRetirementIT {
                     assertThat(app.workflowRegistry().isDeprecated(id, version)).isFalse();
                 }
                 case STATIC_DOCUMENT_ORIGIN -> {
-                    DefinitionKey key = new DefinitionKey(null, id, version);
+                    DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
                     WorkflowDefinitionSource staticSource = () -> List.of(new DefinitionResource(
                             document(id, version, contract), DocumentFormat.YAML, source("static-origin")));
 
@@ -514,8 +515,8 @@ public class DefinitionRetirementIT {
                             .noneMatch(runtime -> runtime.plan().definitionId().equals(id));
                 }
                 case CONTRIBUTED_CODE_ORIGIN -> {
-                    DefinitionKey codeKey = new DefinitionKey(null, id, 1);
-                    DefinitionKey documentKey = new DefinitionKey(null, id, version);
+                    DefinitionKey codeKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+                    DefinitionKey documentKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
                     Class<?> codeContract = fixtureContract("RegistryProbeContract");
 
                     // Given a code-first definition that an application contributor registered at startup, whose
@@ -570,7 +571,7 @@ public class DefinitionRetirementIT {
                     assertThat(fixture.stored(id, version)).isEqualTo(documentBefore);
                 }
                 case FRESH_GLOBAL_DOCUMENT_RESTORE -> {
-                    DefinitionKey key = new DefinitionKey(null, id, version);
+                    DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
 
                     // Given a global document activated by one application graph, which is then shut down
                     Node first = fixture.node();
@@ -610,7 +611,7 @@ public class DefinitionRetirementIT {
                     assertThat(app.workflowRegistry().allRegistered()).doesNotContain(restored);
                 }
                 case COMPLETED_REPLACEMENT_BEFORE_OPERATION -> {
-                    DefinitionKey key = new DefinitionKey(null, id, version);
+                    DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
                     byte[] bytes = document(id, version, contract);
                     AppComponent app = fixture.node().app();
                     long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
@@ -654,7 +655,7 @@ public class DefinitionRetirementIT {
                             .isPresent();
                 }
                 case DIRECT_UNKNOWN_PUBLICATION -> {
-                    DefinitionKey key = new DefinitionKey(null, id, version);
+                    DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
                     byte[] bytes = document(id, version, contract);
                     AppComponent app = fixture.node().app();
                     long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
@@ -746,8 +747,8 @@ public class DefinitionRetirementIT {
     void staleNodeCannotCommitStartAfterRetirement(Vertx vertx) {
         String pinId = "retirement-it-stale-pin-doc";
         String goneId = "retirement-it-stale-gone-doc";
-        DefinitionKey pinKey = new DefinitionKey(null, pinId, 1);
-        DefinitionKey goneKey = new DefinitionKey(null, goneId, 1);
+        DefinitionKey pinKey = new DefinitionKey(WorkflowScopes.DEFAULT, pinId, 1);
+        DefinitionKey goneKey = new DefinitionKey(WorkflowScopes.DEFAULT, goneId, 1);
 
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(pinId, goneId);
@@ -835,10 +836,10 @@ public class DefinitionRetirementIT {
         String retryRetiredId = "retirement-it-retry-retired-doc";
         String migrateRetiredId = "retirement-it-migrate-retired-doc";
         String eligibleId = "retirement-it-retry-eligible-doc";
-        DefinitionKey retryFirstKey = new DefinitionKey(null, retryFirstId, 1);
-        DefinitionKey retrySnapshotKey = new DefinitionKey(null, retrySnapshotId, 1);
-        DefinitionKey retryRollbackKey = new DefinitionKey(null, retryRollbackId, 1);
-        DefinitionKey migrateAdmitKey = new DefinitionKey(null, migrateAdmitId, 2);
+        DefinitionKey retryFirstKey = new DefinitionKey(WorkflowScopes.DEFAULT, retryFirstId, 1);
+        DefinitionKey retrySnapshotKey = new DefinitionKey(WorkflowScopes.DEFAULT, retrySnapshotId, 1);
+        DefinitionKey retryRollbackKey = new DefinitionKey(WorkflowScopes.DEFAULT, retryRollbackId, 1);
+        DefinitionKey migrateAdmitKey = new DefinitionKey(WorkflowScopes.DEFAULT, migrateAdmitId, 2);
         String seededHash = "e".repeat(64);
 
         try (Fixture fixture = new Fixture(vertx)) {
@@ -917,7 +918,7 @@ public class DefinitionRetirementIT {
             // Then the admission read after the lock wait sees RETIRED and refuses: the pin is not resurrected
             assertThat(lateRetryFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
-                assertThat(failure.key()).isEqualTo(new DefinitionKey(null, retryRetiredId, 1));
+                assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, retryRetiredId, 1));
             });
             assertThat(fixture.instance(retiredRetryInstance).status()).isEqualTo("FAILED");
             assertThat(fixture.instance(retiredRetryInstance).version()).isZero();
@@ -1035,7 +1036,8 @@ public class DefinitionRetirementIT {
             assertThat(lateMigrationFailure)
                     .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                         assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
-                        assertThat(failure.key()).isEqualTo(new DefinitionKey(null, migrateRetiredId, 2));
+                        assertThat(failure.key())
+                                .isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, migrateRetiredId, 2));
                     });
             assertThat(fixture.instance(sourcePin)).isEqualTo(sourceBefore);
             assertThat(fixture.historyCount()).isEqualTo(migrationHistoryBefore);
@@ -1065,8 +1067,8 @@ public class DefinitionRetirementIT {
         String migrateId = "retirement-it-snapshot-migrate-doc";
         String eligibleId = "retirement-it-snapshot-eligible-doc";
         String unmanagedId = "retirement-it-snapshot-unmanaged";
-        DefinitionKey startKey = new DefinitionKey(null, startId, 1);
-        DefinitionKey migrateKey = new DefinitionKey(null, migrateId, 2);
+        DefinitionKey startKey = new DefinitionKey(WorkflowScopes.DEFAULT, startId, 1);
+        DefinitionKey migrateKey = new DefinitionKey(WorkflowScopes.DEFAULT, migrateId, 2);
         String seededHash = "e".repeat(64);
 
         try (Fixture fixture = new Fixture(vertx)) {
@@ -1083,7 +1085,7 @@ public class DefinitionRetirementIT {
                             DocumentFormat.YAML,
                             source("snapshot-eligible"),
                             null));
-            await(nodeA.definitionService().activate(new DefinitionKey(null, eligibleId, 1)));
+            await(nodeA.definitionService().activate(new DefinitionKey(WorkflowScopes.DEFAULT, eligibleId, 1)));
             UUID sourcePin = fixture.insertInstance(migrateId, 1, "old-hash", "RUNNING", false);
             Instance sourceBefore = fixture.instance(sourcePin);
 
@@ -1190,7 +1192,7 @@ public class DefinitionRetirementIT {
     @Test
     void admitsTwoStartsConcurrentlyWhileRetireWaits(Vertx vertx) {
         String id = "retirement-it-concurrent-doc";
-        DefinitionKey key = new DefinitionKey(null, id, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
 
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(id);
@@ -1247,7 +1249,7 @@ public class DefinitionRetirementIT {
         String otherHash = "b".repeat(64);
         String raceId = "retirement-it-resurrect-race-doc";
         String barrierId = "retirement-it-resurrect-barrier-doc";
-        DefinitionKey raceKey = new DefinitionKey(null, raceId, 1);
+        DefinitionKey raceKey = new DefinitionKey(WorkflowScopes.DEFAULT, raceId, 1);
 
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(
@@ -1300,7 +1302,7 @@ public class DefinitionRetirementIT {
                         .as("resurrection against a %s row", status)
                         .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                             assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
-                            assertThat(failure.key()).isEqualTo(new DefinitionKey(null, id, 1));
+                            assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
                         });
                 assertThat(fixture.instance(failed).status()).isEqualTo("FAILED");
             }
@@ -1321,7 +1323,7 @@ public class DefinitionRetirementIT {
             // Then the hash mismatch refuses it as drift between this node and the committed definition
             assertThat(hashRefusal).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.reason()).isEqualTo(Reason.DRIFT);
-                assertThat(failure.key()).isEqualTo(new DefinitionKey(null, oldHashId, 1));
+                assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, oldHashId, 1));
             });
             assertThat(fixture.instance(oldHashed).status()).isEqualTo("FAILED");
 
@@ -1417,7 +1419,7 @@ public class DefinitionRetirementIT {
             // Then the committed retirement wins and the instance is not resurrected
             assertThat(lateFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
-                assertThat(failure.key()).isEqualTo(new DefinitionKey(null, barrierId, 1));
+                assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, barrierId, 1));
             });
             assertThat(fixture.instance(barrierInstance).status()).isEqualTo("FAILED");
         }
@@ -1426,7 +1428,7 @@ public class DefinitionRetirementIT {
     @Test
     void rejectsAutocommitClientBeforePinWrites(Vertx vertx) {
         String id = "retirement-it-autocommit-doc";
-        DefinitionKey key = new DefinitionKey(null, id, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
 
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(id);
@@ -1556,8 +1558,8 @@ public class DefinitionRetirementIT {
         String advisoryId = "retirement-it-timeout-advisory-doc";
         String rowId = "retirement-it-timeout-row-doc";
         String staticId = "retirement-it-timeout-static-doc";
-        DefinitionKey advisoryKey = new DefinitionKey(null, advisoryId, 1);
-        DefinitionKey rowKey = new DefinitionKey(null, rowId, 1);
+        DefinitionKey advisoryKey = new DefinitionKey(WorkflowScopes.DEFAULT, advisoryId, 1);
+        DefinitionKey rowKey = new DefinitionKey(WorkflowScopes.DEFAULT, rowId, 1);
 
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(advisoryId, rowId, staticId);
@@ -1633,7 +1635,7 @@ public class DefinitionRetirementIT {
             Tx rowHolder = fixture.begin(null);
             await(rowHolder.connection().preparedQuery("""
                             SELECT definition_id FROM workflow_definitions
-                            WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = 1
+                            WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = 1
                             FOR UPDATE
                             """).execute(Tuple.of(rowId)));
 
@@ -1717,7 +1719,7 @@ public class DefinitionRetirementIT {
             // Given one owner whose only row, version 1, is DEPRECATED and therefore holds the id
             // (definition rows are seeded by SQL, because the statuses are not reachable through the public operations)
             fixture.seedDefinition(deprecatedId, 1, hash, "DEPRECATED");
-            DefinitionKey deprecatedKey = new DefinitionKey(null, deprecatedId, 1);
+            DefinitionKey deprecatedKey = new DefinitionKey(WorkflowScopes.DEFAULT, deprecatedId, 1);
 
             // And an instance already pinned to that version that FAILED, and one pinned to an unmanaged version 3
             UUID failed = fixture.insertInstance(deprecatedId, 1, hash, "FAILED", false);
@@ -1787,7 +1789,7 @@ public class DefinitionRetirementIT {
                         .as("a new pin on a %s version", status)
                         .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                             assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
-                            assertThat(failure.key()).isEqualTo(new DefinitionKey(null, id, 2));
+                            assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2));
                         });
                 assertThat(fixture.instanceCount(id)).isEqualTo(before);
 
@@ -1820,7 +1822,7 @@ public class DefinitionRetirementIT {
     @Test
     void retireCountsPinCommittedWhileWaitingEvenWithRepeatableReadServerDefault(Vertx vertx) {
         String id = "retirement-it-default-isolation-doc";
-        DefinitionKey key = new DefinitionKey(null, id, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
 
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(id);
@@ -2274,7 +2276,7 @@ public class DefinitionRetirementIT {
 
         private void deleteRows(String... definitionIds) {
             for (String definitionId : definitionIds) {
-                await(admin().preparedQuery("DELETE FROM workflow_dedup WHERE kind = 'start' AND scope = $1")
+                await(admin().preparedQuery("DELETE FROM workflow_dedup WHERE kind = 'start' AND dedup_namespace = $1")
                         .execute(Tuple.of(definitionId)));
                 await(admin().preparedQuery("DELETE FROM workflow_instances WHERE definition_id = $1")
                         .execute(Tuple.of(definitionId)));
@@ -2316,23 +2318,23 @@ public class DefinitionRetirementIT {
             await(admin().preparedQuery("""
                             UPDATE workflow_definitions
                             SET status_changed_at = clock_timestamp() - ($4::bigint * interval '1 second')
-                            WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2
+                            WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2
                               AND definition_version = $3
                             """)
-                    .execute(Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion(), ageSeconds)));
+                    .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion(), ageSeconds)));
         }
 
         Stored stored(String definitionId, long version) {
-            return stored(null, definitionId, version);
+            return stored(WorkflowScopes.DEFAULT, definitionId, version);
         }
 
         /** Moves a row to a status that the public operations cannot reach for it. */
         void forceStatus(DefinitionKey key, DefinitionStatus status) {
             await(admin().preparedQuery("""
                             UPDATE workflow_definitions SET status = $4
-                            WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                            WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
                             """)
-                    .execute(Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion(), status.name())));
+                    .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion(), status.name())));
         }
 
         /** Begins a caller-owned transaction on a genuine connection, optionally at a stronger isolation level. */
@@ -2386,9 +2388,9 @@ public class DefinitionRetirementIT {
         void seedDefinition(String definitionId, long version, String planHash, String status) {
             await(admin().preparedQuery("""
                             INSERT INTO workflow_definitions
-                                (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                                (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                                  source_type, loaded_at, activation_token)
-                            VALUES (NULL, $1, $2, 'CODE', $3, $4, 'seed', now(),
+                            VALUES ('default', $1, $2, 'CODE', 'example.Contract', 'example.State', $3, $4, 'seed', now(),
                                     CASE WHEN $4 = 'ACTIVATING' THEN gen_random_uuid() ELSE NULL END)
                             """).execute(Tuple.of(definitionId, version, planHash, status)));
         }
@@ -2418,7 +2420,7 @@ public class DefinitionRetirementIT {
 
         long dedupCount(String definitionId) {
             return await(admin().preparedQuery(
-                                    "SELECT count(*) AS total FROM workflow_dedup WHERE kind = 'start' AND scope = $1")
+                                    "SELECT count(*) AS total FROM workflow_dedup WHERE kind = 'start' AND dedup_namespace = $1")
                             .execute(Tuple.of(definitionId)))
                     .iterator()
                     .next()
@@ -2428,7 +2430,7 @@ public class DefinitionRetirementIT {
         UUID dedupTarget(String definitionId, String idempotencyKey) {
             return await(admin().preparedQuery("""
                                     SELECT workflow_id FROM workflow_dedup
-                                    WHERE kind = 'start' AND scope = $1 AND key = $2
+                                    WHERE kind = 'start' AND dedup_namespace = $1 AND key = $2
                                     """).execute(Tuple.of(definitionId, idempotencyKey)))
                     .iterator()
                     .next()
@@ -2494,25 +2496,25 @@ public class DefinitionRetirementIT {
         Optional<Stored> findStored(String definitionId, long version) {
             long count = await(admin().preparedQuery("""
                                     SELECT count(*) AS total FROM workflow_definitions
-                                    WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = $2
+                                    WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = $2
                                     """).execute(Tuple.of(definitionId, version)))
                     .iterator()
                     .next()
                     .getLong("total");
-            return count == 0 ? Optional.empty() : Optional.of(stored(null, definitionId, version));
+            return count == 0 ? Optional.empty() : Optional.of(stored(WorkflowScopes.DEFAULT, definitionId, version));
         }
 
-        Stored stored(String tenantKey, String definitionId, long version) {
+        Stored stored(String scopeKey, String definitionId, long version) {
             List<Stored> rows = new ArrayList<>();
             for (Row row : await(admin().preparedQuery("""
-                            SELECT tenant_key, definition_version, status, plan_hash, document, document_format,
+                            SELECT scope_key, definition_version, status, plan_hash, document, document_format,
                                    source_type, source_uri, source_revision, loaded_at, status_changed_at
                             FROM workflow_definitions
-                            WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2
+                            WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2
                               AND definition_version = $3
-                            """).execute(Tuple.of(tenantKey, definitionId, version)))) {
+                            """).execute(Tuple.of(scopeKey, definitionId, version)))) {
                 rows.add(new Stored(
-                        row.getString("tenant_key"),
+                        row.getString("scope_key"),
                         row.getLong("definition_version"),
                         row.getString("status"),
                         row.getString("plan_hash"),

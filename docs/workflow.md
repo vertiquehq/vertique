@@ -273,8 +273,8 @@ definitions, their lifecycle status and their document sources survive restarts 
 - **No store.** Without a store (graphs that do not install the PostgreSQL module) nothing changes: definitions stay
   in memory, the service keeps its local outcomes behind the same `Future` signatures, the startup step does no I/O
   and no timer is scheduled. `deprecate`, `retire` and `reinstate` need the store and fail without one.
-- **Identity.** A row is identified by `DefinitionKey(tenantKey, definitionId, definitionVersion)`. A null tenant key
-  is the global owner. One owner at a time holds a definition id; a second owner's claim fails with `OWNER_CONFLICT`.
+- **Identity.** A row is identified by `DefinitionKey(scopeKey, definitionId, definitionVersion)`. The scope key is
+  required; `WorkflowScopes.DEFAULT` is the default scope, which code definitions always use. One owner at a time holds a definition id; a second owner's claim fails with `OWNER_CONFLICT`.
 - **Tenant ids.** With the store bound, `load` for a tenant accepts only a document whose id is `<tenantKey>:<name>`
   (a non-blank name), and a tenant key must not contain `:`; anything else fails with `WorkflowDefinitionException`
   naming the tenant key and the id, and nothing is stored. The namespaced id is the definition id everywhere it is used:
@@ -331,14 +331,14 @@ synchronous exceptions.
 ### Async usage
 
 ```java
-DefinitionKey v1 = new DefinitionKey(null, "order-fulfillment", 1);
+DefinitionKey v1 = new DefinitionKey(WorkflowScopes.DEFAULT, "order-fulfillment", 1);
 SourceMetadata source = new SourceMetadata("upload", null, null, "ops", null, Instant.now());
 
 // Load a candidate from bytes and activate it.
 Future<Void> published = definitionService
         .load(yamlBytes, DocumentFormat.YAML, source, null)
         .compose(ref -> definitionService.activate(
-                new DefinitionKey(null, ref.definitionId(), ref.definitionVersion())));
+                new DefinitionKey(WorkflowScopes.DEFAULT, ref.definitionId(), ref.definitionVersion())));
 
 // The snippets below are separate steps: run each one when its turn comes, not all at once.
 
@@ -480,48 +480,53 @@ changes startup for every PostgreSQL application. Do the following in order.
 
 ### 1. Migrate the schema
 
-- Flyway applies one new migration, `V002__create_workflow_definitions_and_tenant_key.sql`, from `db/migration/workflow`
-  (`V1__` is unchanged). It creates the `workflow_definitions` table with its `document_digest` column, adds a nullable
-  `tenant_key` column to `workflow_tasks` and `workflow_instances` (existing rows `null`) and creates one partial index
-  per table for tenant-filtered listings: `idx_workflow_tasks_tenant_updated_at` and
-  `idx_workflow_instances_tenant_updated_at`, each on `(tenant_key, updated_at DESC, <id>)` where `tenant_key IS NOT NULL`.
-  It must run before the first 0.4.0 node starts.
-- **Lock and duration.** Each `ALTER TABLE` and each `CREATE INDEX` holds an `ACCESS EXCLUSIVE` lock until the migration
-  commits, and each index build is a sequential scan of its table under that lock, so the time the tables are blocked
-  grows with their size. Run the migration when no long transaction is open on `workflow_tasks` or `workflow_instances`.
-  It waits at most 30 seconds per statement for a lock (`SET LOCAL lock_timeout`), during which new statements on that
-  table queue behind it, and then fails, so rerun it after the blocking transaction ends. A manual run must be one
-  transaction (`psql --single-transaction -f V002__create_workflow_definitions_and_tenant_key.sql`), or the timeout has no
-  effect.
-- **Large installations.** Every tenant column and tenant index statement is `IF NOT EXISTS`, so you can do the table work
-  ahead of the upgrade and let the migration find it done. Run these exact statements outside a transaction (each on an
-  autocommit connection), with the `ALTER` statements first. A statement that times out on its lock changes nothing and can
-  be rerun:
+- Flyway applies one new migration, `V002__workflow_definitions_and_scopes.sql`, from `db/migration/workflow`
+  (`V1__` is unchanged). It creates the `workflow_definitions` table, keyed by `(scope_key, definition_id,
+  definition_version)`, with its `document_digest`, `contract_name` and `state_type_name` columns, and it converts the
+  released tables to scope keys:
+  `workflow_instances` gains `scope_key` and `definition_scope_key` and `workflow_tasks` gains `scope_key`, each
+  `VARCHAR(255) NOT NULL DEFAULT 'default'` (existing rows read `default`; no row is rewritten); the business-key index
+  `idx_workflow_instances_business_key` becomes unique per `(scope_key, definition_id, business_key)`; the keyset indexes
+  `idx_workflow_instances_scope_updated_at` and `idx_workflow_tasks_scope_updated_at` serve scope-filtered listings, each
+  on `(scope_key, updated_at DESC, <id>)`; and `workflow_dedup.scope` is renamed `dedup_namespace`, gains `scope_key`, and
+  its primary key becomes `(kind, scope_key, dedup_namespace, key)`. Stored fingerprints and namespaces are kept as they were.
+- **Stop every 0.3.0 node first.** All nodes that run 0.3.0 must be stopped before the first 0.4.0 node starts and applies
+  the migration. The 0.3.0 dedup statements use `ON CONFLICT (kind, scope, key)`; the renamed column and the new primary
+  key leave that conflict target without a matching index, so a 0.3.0 node that is still running after the migration
+  fails every start. Rolling deploys apply only from 0.4.0 on, and rolling code back to 0.3.0 is not supported.
+- **Lock and duration.** Each `ALTER TABLE`, the business-key index rebuild and the primary-key rebuild on
+  `workflow_dedup` hold an `ACCESS EXCLUSIVE` lock until the migration commits, and each index build is a sequential scan
+  of its table under that lock, so the time the tables are blocked grows with their size. Run the migration when no long
+  transaction is open on `workflow_tasks`, `workflow_instances` or `workflow_dedup`. It waits at most 30 seconds per
+  statement for a lock (`SET LOCAL lock_timeout`), during which new statements on that table queue behind it, and then
+  fails, so rerun it after the blocking transaction ends. A manual run must be one transaction
+  (`psql --single-transaction -f V002__workflow_definitions_and_scopes.sql`), or the timeout has no effect.
+- **Large installations.** The column and keyset-index statements are `IF NOT EXISTS`, so you can add the scope columns
+  and build the two keyset indexes ahead of the upgrade and let the migration find them done, but only after the last
+  0.3.0 node has stopped is it safe to change `workflow_dedup`, which always happens inside the migration. Run these exact
+  statements outside a transaction (each on an autocommit connection), with the `ALTER` statements first. A statement that
+  times out on its lock changes nothing and can be rerun:
 
   ```sql
   SET lock_timeout = '30s';
-  ALTER TABLE workflow_tasks     ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255);
-  ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255);
-  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_tasks_tenant_updated_at
-      ON workflow_tasks (tenant_key, updated_at DESC, task_id ASC) WHERE tenant_key IS NOT NULL;
-  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_instances_tenant_updated_at
-      ON workflow_instances (tenant_key, updated_at DESC, id ASC) WHERE tenant_key IS NOT NULL;
+  ALTER TABLE workflow_tasks ADD COLUMN IF NOT EXISTS scope_key VARCHAR(255) NOT NULL DEFAULT 'default';
+  ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS scope_key VARCHAR(255) NOT NULL DEFAULT 'default';
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_tasks_scope_updated_at
+      ON workflow_tasks (scope_key, updated_at DESC, task_id ASC);
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_instances_scope_updated_at
+      ON workflow_instances (scope_key, updated_at DESC, id ASC);
   ```
 
-  The migration then adds no scan. `ADD COLUMN IF NOT EXISTS` still takes the exclusive lock briefly. Both `IF NOT EXISTS`
-  forms match by name only, so a column or index of that name with a different definition is silently accepted: use the
-  statements above unchanged. A failed concurrent build leaves an `INVALID` index that `IF NOT EXISTS` would skip: check
-  `pg_index.indisvalid` for both index names and drop an invalid one before the migration runs. To confirm the result, read
-  `pg_get_indexdef('idx_workflow_tasks_tenant_updated_at'::regclass)` and the same for the instances index, and check that
-  `information_schema.columns` shows `tenant_key` as `character varying(255)` on both tables.
-- **Rolling upgrade.** Instances started and tasks created by nodes of the previous release keep `tenant_key = null`
-  permanently, and the engine sets no tenant on new instances yet, so every engine-started instance is `null` too. For
-  tasks created earlier from an instance that another writer stamped, run `UPDATE workflow_tasks t SET tenant_key =
-  i.tenant_key FROM workflow_instances i WHERE t.workflow_id = i.id AND t.tenant_key IS NULL AND i.tenant_key IS NOT
-  NULL`. Instances started by previous-release nodes cannot be backfilled from the column.
+  The migration then builds nothing for them. It always drops and rebuilds the business-key index, and it always renames
+  the dedup column (`ALTER TABLE ... RENAME COLUMN` has no `IF EXISTS` form, so do not run it ahead of time). The
+  `IF NOT EXISTS` forms match by name only, so a column or index of that name with a different definition is silently
+  accepted: use the statements above unchanged. A failed concurrent build leaves an `INVALID` index that `IF NOT EXISTS`
+  would skip: check `pg_index.indisvalid` for both index names and drop an invalid one before the migration runs.
+- **Existing rows.** Instances, tasks and start deduplication rows of 0.3.0 read the default scope after the upgrade; the
+  instances resume in it and complete their stored task decisions. The engine starts every new instance in the default
+  scope as well.
 - **Development databases.** A database that applied an earlier 0.4.0 snapshot must be recreated: version 2 changed its
   checksum and description, so Flyway validation fails, and the versions 3 and 4 it recorded are no longer shipped.
-- PostgreSQL 15 or later is required (`NULLS NOT DISTINCT`).
 - Anything else that writes `DOCUMENT` rows, such as operator scripts or other modules, must supply `document_digest`:
   the lowercase hex SHA-256 of the stored UTF-8 text, present on `DOCUMENT` rows and absent on `CODE` rows. Where Flyway
   is disabled, run the migration script yourself, in one transaction, before the first 0.4.0 node starts.
@@ -535,7 +540,7 @@ cycle. Eight old declarations are removed; constructors and all other members st
 
 | Before | After |
 |---|---|
-| `CompiledDefinitionRef load(byte[], DocumentFormat, SourceMetadata)` | `Future<CompiledDefinitionRef> load(byte[], DocumentFormat, SourceMetadata, @Nullable String tenantKey)` |
+| `CompiledDefinitionRef load(byte[], DocumentFormat, SourceMetadata)` | `Future<CompiledDefinitionRef> load(byte[], DocumentFormat, SourceMetadata, @Nullable String scopeKey)` |
 | `void activate(String id, long version)` | `Future<Void> activate(DefinitionKey key)` |
 | `Collection<CompiledDefinitionRef> list()` | `Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter)` |
 | `Optional<SourceMetadata> sourceMetadata(String id, long version)` | `Future<Optional<SourceMetadata>> sourceMetadata(DefinitionKey key)` |
@@ -559,7 +564,7 @@ Every PostgreSQL application, including code-first ones that never touch documen
   (`RUNNING`, `WAITING` or `COMPENSATING`), startup fails with `DRIFT` naming both hashes. Keep the code of a version unchanged
   until its instances finish, or bump the version. With no pinned instance the stored hash is replaced and a WARN logs it.
 - **Key rules.** A code definition with a blank, over-long or control-character id, or a non-positive version, fails
-  startup with a message naming the definition. Definition ids and tenant keys are at most 255 code points.
+  startup with a message naming the definition. Definition ids and scope keys are at most 255 code points.
 - **Kind and owner conflicts** fail startup naming both rows or owners.
 - **Tenant ids are namespaced.** With the store bound, `load` for a tenant now requires the document id to be
   `<tenantKey>:<name>` and the tenant key to contain no `:`. Existing tenant rows are unaffected; rename and reload a
@@ -625,28 +630,37 @@ is registered, and a static source failing a limit fails startup naming the reso
 - **Added bindings.** Applications gain the bound `WorkflowDefinitionLifecycle`, `WorkflowDefinitionRegistryView` and
   `WorkflowDefinitionPropagationPoller`. The poller adds one periodic timer per node; it is scheduled after startup and
   stopped at shutdown.
-- **Instance tenant.** `V002__` adds the nullable tenant columns. The engine sets no tenant on new instances yet, so
-  they stay `null` (see [Instance Tenant](#instance-tenant)). Tenant ids
-  use the `<tenantKey>:<name>` namespace for definition loads. Record patterns that deconstruct `WorkflowInstance`,
-  `TaskRecord`, `WorkflowInstanceQuery` or `TaskFilter` by component list need the new trailing `tenantKey` component.
-  Other modules or tools that read `workflow_instances` or `workflow_tasks` see an extra nullable column.
+- **Instance scopes.** `V002__` adds the scope columns, which default to `default`. The engine starts every new instance in
+  the default scope for now (see [Instance Scopes](#instance-scopes)). Scopes other than `default`
+  use the `<scopeKey>:<name>` namespace for definition loads. Record patterns that deconstruct `WorkflowInstance`,
+  `TaskRecord`, `WorkflowInstanceQuery` or `TaskFilter` by component list need the new trailing `scopeKey` components
+  (`scopeKey` and `definitionScopeKey` on the instance). Other modules or tools that read `workflow_instances` or
+  `workflow_tasks` see extra non-null columns, and tools that read `workflow_dedup.scope` must read `dedup_namespace`.
 
 ### 6. Configuration
 
 Two optional keys, `workflow.definitions.maxStalenessSeconds` (30) and `workflow.definitions.maxDocumentSizeBytes` (262144).
 Existing configuration needs no change. See [Configuration](#configuration).
 
-## Instance Tenant
+## Instance Scopes
 
-`WorkflowInstance`, `TaskRecord`, `WorkflowInstanceQuery` and `TaskFilter` carry a nullable `tenantKey`. The engine sets no tenant when it starts an instance, and no engine setting exists yet: an instance tenant is `NULL` unless another writer stamps it, so a tenant filter matches nothing for engine-started instances. The value is stored as given and is not validated beyond the column length of 255. Migration and resurrection keep an instance's tenant for its life.
+`WorkflowScopes.DEFAULT` (`"default"`) is the reserved default scope. It is a value, not a stored record: it always exists
+and needs no registration. `WorkflowInstance` carries a non-null start scope (`scopeKey`) and the scope of its pinned
+definition version (`definitionScopeKey`); `TaskRecord` carries a non-null `scopeKey`; `WorkflowInstanceQuery` and
+`TaskFilter` carry a nullable `scopeKey` filter. The engine starts every instance in the default scope, and no engine
+setting exists yet. The value is stored as given and is not validated beyond the column length of 255. Migration and
+resurrection keep an instance's scopes for its life.
 
-- **Tasks follow the instance.** The PostgreSQL task store writes the owning instance row's tenant on every task insert, whatever the `TaskRecord` carries, so a task created after another writer stamped its instance carries that tenant and a task created earlier stays `NULL`.
-- **Filters.** `WorkflowInstanceQuery.tenantKey` and `TaskFilter.tenantKey` match exactly when non-null; `null` matches every tenant. Never pass an unresolved tenant as `null` expecting scoping.
-- **Information, not isolation.** The tenant is a label and a filter. Operations addressed by instance or task id (query, signal, cancel, retry, migrate, task complete or reassign) do not check it, and timers, branch tokens and definition resolution are global: before acting on a caller-supplied id, load the instance and compare its `tenantKey()` with the caller's tenant. Definition-lifecycle refusal messages can name another owner's tenant, status and plan hashes: do not forward them to tenants.
-- **Global keys.** Start idempotency keys and business keys are global: a start that reuses another tenant's key returns that tenant's instance.
-- **No definition cross-check.** Nothing ties an instance tenant to a definition owner: a stamped instance may run another tenant's namespaced definition or a global one.
-
----
+- **Tasks follow the instance.** The PostgreSQL task store writes the owning instance row's start scope on every task
+  insert, whatever the `TaskRecord` carries, so a task created after another writer stamped its instance carries that
+  scope and a task created earlier stays in the default scope.
+- **Filters.** `WorkflowInstanceQuery.scopeKey` and `TaskFilter.scopeKey` match exactly when non-null; `null` matches every
+  scope. Never pass an unresolved scope as `null` expecting scoping.
+- **Information, not isolation.** The scope is a label and a filter. Operations addressed by instance or task id (query,
+  signal, cancel, retry, migrate, task complete or reassign) do not check it, and timers, branch tokens and definition
+  resolution are global: before acting on a caller-supplied id, load the instance and compare its `scopeKey()` with the
+  caller's scope. Definition-lifecycle refusal messages can name another owner's scope, status and plan hashes: do not
+  forward them to tenants.
 
 ## Durable Context Propagation
 

@@ -41,6 +41,7 @@ import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.ReconcileOutcome;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
@@ -99,9 +100,9 @@ public class DefinitionPropagationIT {
         String id = "propagation-it-lifecycle";
         String deprecatedId = "propagation-it-deprecated-first";
         String oversizedId = "propagation-it-oversized";
-        DefinitionKey key = new DefinitionKey(null, id, 1);
-        DefinitionKey deprecatedKey = new DefinitionKey(null, deprecatedId, 1);
-        DefinitionKey oversizedKey = new DefinitionKey(null, oversizedId, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+        DefinitionKey deprecatedKey = new DefinitionKey(WorkflowScopes.DEFAULT, deprecatedId, 1);
+        DefinitionKey oversizedKey = new DefinitionKey(WorkflowScopes.DEFAULT, oversizedId, 1);
         Instant loadedAt = Instant.parse("2026-10-19T09:00:00Z");
 
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db);
@@ -224,9 +225,9 @@ public class DefinitionPropagationIT {
             int oversizedBytes = b.app().workflowDefinitionsConfig().maxStoredDocumentSizeBytes() + 1;
             scenario.execute("""
                     INSERT INTO workflow_definitions
-                        (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                        (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                          document, document_format, document_digest, source_type, loaded_at)
-                    VALUES (NULL, $1, 1, 'DOCUMENT', repeat('a', 64), 'ACTIVE', repeat('x', $2),
+                    VALUES ('default', $1, 1, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), 'ACTIVE', repeat('x', $2),
                             'YAML', encode(sha256(convert_to(repeat('x', $2), 'UTF8')), 'hex'),
                             'propagation-test', now())
                     """, Tuple.of(oversizedId, oversizedBytes));
@@ -268,7 +269,7 @@ public class DefinitionPropagationIT {
                     UPDATE workflow_definitions
                     SET document = $2, plan_hash = $3,
                         document_digest = encode(sha256(convert_to($2::text, 'UTF8')), 'hex')
-                    WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = 1
+                    WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = 1
                     """, Tuple.of(oversizedId, oversizedText, oversizedHash));
             await(b.app().definitionPropagationPoller().pollNow());
 
@@ -425,7 +426,7 @@ public class DefinitionPropagationIT {
     @DisplayName("a reinstated code version is restored on a peer from its own deployed code, or fails and is counted")
     void restoresReinstatedCodeOnPeer(PeerCase peerCase, Vertx vertx) {
         String id = "propagation-it-code";
-        DefinitionKey key = new DefinitionKey(null, id, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
         boolean higherLive = peerCase == PeerCase.SUPERSEDED;
         WorkflowDefinition<?, ?> deployedOnA = code(id, 1, PeerCode.class, "done");
         WorkflowDefinition<?, ?> deployedOnB = peerCase == PeerCase.DRIFTED_CODE
@@ -481,6 +482,8 @@ public class DefinitionPropagationIT {
                         .upsertCode(new WorkflowDefinitionRecord(
                                 key,
                                 DefinitionKind.CODE,
+                                "example.Contract",
+                                "example.State",
                                 hash,
                                 DefinitionStatus.SUPERSEDED,
                                 new DefinitionProvenance("code", null, null, null, null, now),

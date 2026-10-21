@@ -12,6 +12,7 @@ import dev.vertique.workflow.engine.spi.DedupClaim;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
@@ -24,13 +25,13 @@ import java.util.UUID;
 /**
  * PostgreSQL-backed repository for workflow deduplication records.
  *
- * <p>The {@code workflow_dedup} table has a composite primary key {@code (kind, scope, key)} and
- * covers two deduplication concerns:
+ * <p>The {@code workflow_dedup} table has a composite primary key {@code (kind, scope_key, dedup_namespace, key)}
+ * and covers two deduplication concerns; every statement here addresses the default scope:
  *
  * <ul>
- *   <li>{@code kind='start'}, {@code scope=definitionId}, {@code key=idempotencyKey} — prevents
+ *   <li>{@code kind='start'}, {@code dedup_namespace=definitionId}, {@code key=idempotencyKey} — prevents
  *       duplicate workflow starts for the same idempotency key within a definition.
- *   <li>{@code kind='signal'}, {@code scope=workflowInstanceId::text}, {@code key=signalDedupKey}
+ *   <li>{@code kind='signal'}, {@code dedup_namespace=workflowInstanceId::text}, {@code key=signalDedupKey}
  *       — prevents the same signal from being applied twice to the same instance.
  * </ul>
  *
@@ -50,16 +51,16 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
     // --- Dedup kind constants ---
 
-    /** Kind value for workflow start dedup rows: {@code (kind='start', scope=definitionId, key=idempotencyKey)}. */
+    /** Kind value for workflow start dedup rows: {@code (kind='start', dedup_namespace=definitionId, key=idempotencyKey)}. */
     private static final String DEDUP_KIND_START = "start";
 
-    /** Kind value for signal dedup rows: {@code (kind='signal', scope=instanceId::text, key=signalDedupKey)}. */
+    /** Kind value for signal dedup rows: {@code (kind='signal', dedup_namespace=instanceId::text, key=signalDedupKey)}. */
     private static final String DEDUP_KIND_SIGNAL = "signal";
 
-    /** Kind value for task-completion dedup rows: {@code (kind='task-complete', scope=taskId::text, key=idempotencyKey)}. */
+    /** Kind value for task-completion dedup rows: {@code (kind='task-complete', dedup_namespace=taskId::text, key=idempotencyKey)}. */
     private static final String DEDUP_KIND_TASK_COMPLETE = "task-complete";
 
-    /** Kind value for task-reassignment dedup rows: {@code (kind='task-reassign', scope=taskId::text, key=idempotencyKey)}. */
+    /** Kind value for task-reassignment dedup rows: {@code (kind='task-reassign', dedup_namespace=taskId::text, key=idempotencyKey)}. */
     private static final String DEDUP_KIND_TASK_REASSIGN = "task-reassign";
 
     /** Name of the migration instance whose schema mapping places the workflow tables. */
@@ -82,7 +83,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * iff this transaction inserted (won the race); {@code false} iff a prior committed transaction
      * already held the row.
      *
-     * <p>Parameters: $1=scope (definitionId), $2=key (idempotencyKey), $3=workflow_id, $4=fingerprint.
+     * <p>Parameters: $1=dedup_namespace (definitionId), $2=key (idempotencyKey), $3=workflow_id, $4=fingerprint.
      */
     private final String sqlClaimOrResolveStart;
 
@@ -102,7 +103,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * caller can detect idempotent retries (same key + same fingerprint) versus conflicts (same key
      * + different fingerprint).
      *
-     * <p>Parameters: $1=scope (taskId::text), $2=key (idempotencyKey), $3=workflow_id, $4=fingerprint.
+     * <p>Parameters: $1=dedup_namespace (taskId::text), $2=key (idempotencyKey), $3=workflow_id, $4=fingerprint.
      */
     private final String sqlClaimOrResolveTaskComplete;
 
@@ -110,7 +111,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * Race-safe upsert for task-reassignment dedup. Mirror of
      * {@link #sqlClaimOrResolveTaskComplete} with a different {@code kind} literal.
      *
-     * <p>Parameters: $1=scope (taskId::text), $2=key (idempotencyKey), $3=workflow_id, $4=fingerprint.
+     * <p>Parameters: $1=dedup_namespace (taskId::text), $2=key (idempotencyKey), $3=workflow_id, $4=fingerprint.
      */
     private final String sqlClaimOrResolveTaskReassign;
 
@@ -146,39 +147,43 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
         String dedup = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_dedup");
 
-        this.sqlClaimOrResolveStart = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id, fingerprint)"
-                + " VALUES ('" + DEDUP_KIND_START + "', $1, $2, $3, $4)"
-                + " ON CONFLICT (kind, scope, key) DO UPDATE"
-                + " SET workflow_id = workflow_dedup.workflow_id"
-                + " RETURNING workflow_id, (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
+        this.sqlClaimOrResolveStart =
+                "INSERT INTO " + dedup + " (kind, scope_key, dedup_namespace, key, workflow_id, fingerprint)"
+                        + " VALUES ('" + DEDUP_KIND_START + "', '" + WorkflowScopes.DEFAULT + "', $1, $2, $3, $4)"
+                        + " ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE"
+                        + " SET workflow_id = workflow_dedup.workflow_id"
+                        + " RETURNING workflow_id, (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
 
         this.sqlFindSignal = "SELECT workflow_id FROM " + dedup + " WHERE kind = '" + DEDUP_KIND_SIGNAL
-                + "' AND scope = $1 AND key = $2";
+                + "' AND scope_key = '" + WorkflowScopes.DEFAULT + "' AND dedup_namespace = $1 AND key = $2";
 
-        this.sqlInsertSignal = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id)" + " VALUES ('"
-                + DEDUP_KIND_SIGNAL + "', $1, $2, $3)";
+        this.sqlInsertSignal = "INSERT INTO " + dedup + " (kind, scope_key, dedup_namespace, key, workflow_id)"
+                + " VALUES ('" + DEDUP_KIND_SIGNAL + "', '" + WorkflowScopes.DEFAULT + "', $1, $2, $3)";
 
-        this.sqlClaimOrResolveSignal = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id)"
-                + " VALUES ('" + DEDUP_KIND_SIGNAL + "', $1, $2, $3)"
-                + " ON CONFLICT (kind, scope, key) DO UPDATE"
+        this.sqlClaimOrResolveSignal = "INSERT INTO " + dedup + " (kind, scope_key, dedup_namespace, key, workflow_id)"
+                + " VALUES ('" + DEDUP_KIND_SIGNAL + "', '" + WorkflowScopes.DEFAULT + "', $1, $2, $3)"
+                + " ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE"
                 + " SET workflow_id = workflow_dedup.workflow_id"
                 + " RETURNING (xmax = 0) AS inserted";
 
-        this.sqlClaimOrResolveTaskComplete = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id, fingerprint)"
-                + " VALUES ('" + DEDUP_KIND_TASK_COMPLETE + "', $1, $2, $3, $4)"
-                + " ON CONFLICT (kind, scope, key) DO UPDATE"
+        this.sqlClaimOrResolveTaskComplete = "INSERT INTO " + dedup
+                + " (kind, scope_key, dedup_namespace, key, workflow_id, fingerprint)"
+                + " VALUES ('" + DEDUP_KIND_TASK_COMPLETE + "', '" + WorkflowScopes.DEFAULT + "', $1, $2, $3, $4)"
+                + " ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE"
                 + " SET workflow_id = workflow_dedup.workflow_id"
                 + " RETURNING (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
 
-        this.sqlClaimOrResolveTaskReassign = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id, fingerprint)"
-                + " VALUES ('" + DEDUP_KIND_TASK_REASSIGN + "', $1, $2, $3, $4)"
-                + " ON CONFLICT (kind, scope, key) DO UPDATE"
+        this.sqlClaimOrResolveTaskReassign = "INSERT INTO " + dedup
+                + " (kind, scope_key, dedup_namespace, key, workflow_id, fingerprint)"
+                + " VALUES ('" + DEDUP_KIND_TASK_REASSIGN + "', '" + WorkflowScopes.DEFAULT + "', $1, $2, $3, $4)"
+                + " ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE"
                 + " SET workflow_id = workflow_dedup.workflow_id"
                 + " RETURNING (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
 
-        this.sqlClaimOrResolveDispatch = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id)"
-                + " VALUES ('" + WorkflowDedupScopes.DISPATCH_KIND + "', $1, $2, $3)"
-                + " ON CONFLICT (kind, scope, key) DO UPDATE"
+        this.sqlClaimOrResolveDispatch = "INSERT INTO " + dedup
+                + " (kind, scope_key, dedup_namespace, key, workflow_id)"
+                + " VALUES ('" + WorkflowDedupScopes.DISPATCH_KIND + "', '" + WorkflowScopes.DEFAULT + "', $1, $2, $3)"
+                + " ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE"
                 + " SET workflow_id = workflow_dedup.workflow_id"
                 + " RETURNING (xmax = 0) AS inserted";
     }
@@ -192,9 +197,9 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * <p>Executes:
      *
      * <pre>{@code
-     * INSERT INTO workflow_dedup (kind, scope, key, workflow_id, fingerprint)
+     * INSERT INTO workflow_dedup (kind, scope_key, dedup_namespace, key, workflow_id, fingerprint)
      * VALUES ('start', $definitionId, $idempotencyKey, $proposedNewId, $fingerprint)
-     * ON CONFLICT (kind, scope, key) DO UPDATE
+     * ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE
      *   SET workflow_id = workflow_dedup.workflow_id
      * RETURNING workflow_id, (xmax = 0) AS inserted, fingerprint AS existing_fingerprint;
      * }</pre>
@@ -213,7 +218,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * version-pinning was introduced) are treated as "no version recorded" and never trigger the
      * conflict path.
      *
-     * @param definitionId   the workflow definition id; used as the dedup scope
+     * @param definitionId   the workflow definition id; used as the dedup namespace
      * @param idempotencyKey the caller-supplied idempotency key
      * @param proposedNewId  the workflow instance id this caller proposes to use if it wins
      * @param fingerprint    the version fingerprint to record, e.g. {@code "definitionVersion=1"}
@@ -244,7 +249,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     /**
      * Looks up an existing signal dedup record for the given workflow instance and dedup key.
      *
-     * @param workflowId     the workflow instance id (used as the dedup scope)
+     * @param workflowId     the workflow instance id (used as the dedup namespace)
      * @param signalDedupKey the caller-supplied signal dedup key
      * @param tx             the active transaction to use
      * @return a {@link Future} containing the persisted {@link UUID} if the signal was already
@@ -268,12 +273,12 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     /**
      * Records that a signal has been applied to the given workflow instance.
      *
-     * <p>Inserts a row with {@code kind='signal'}, {@code scope=workflowId.value().toString()},
+     * <p>Inserts a row with {@code kind='signal'}, {@code dedup_namespace=workflowId.value().toString()},
      * {@code key=signalDedupKey}, {@code workflow_id=workflowId.value()}. Fails with a
      * unique-constraint violation if the same {@code (workflowId, signalDedupKey)} was already
      * inserted (which is always a programming error — callers must check {@link #findSignal} first).
      *
-     * @param workflowId     the workflow instance id (used as the dedup scope)
+     * @param workflowId     the workflow instance id (used as the dedup namespace)
      * @param signalDedupKey the caller-supplied signal dedup key
      * @param tx             the active transaction to use
      * @return a {@link Future} that completes when the row is inserted
@@ -295,9 +300,9 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * <p>Executes:
      *
      * <pre>{@code
-     * INSERT INTO workflow_dedup (kind, scope, key, workflow_id, fingerprint)
+     * INSERT INTO workflow_dedup (kind, scope_key, dedup_namespace, key, workflow_id, fingerprint)
      * VALUES ('task-complete', $taskId, $idempotencyKey, $workflowId, $fingerprint)
-     * ON CONFLICT (kind, scope, key) DO UPDATE
+     * ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE
      *   SET workflow_id = workflow_dedup.workflow_id
      * RETURNING (xmax = 0) AS inserted, fingerprint AS existing_fingerprint;
      * }</pre>
@@ -307,7 +312,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * just-written fingerprint. On conflict ({@code inserted=false}), it equals the fingerprint
      * committed by the winning transaction.
      *
-     * @param taskId         the task id; used as the dedup scope
+     * @param taskId         the task id; used as the dedup namespace
      * @param idempotencyKey the caller-supplied idempotency key
      * @param workflowId     the workflow instance id; stored as the FK reference
      * @param fingerprint    the SHA-256 hex fingerprint of the completion command
@@ -337,7 +342,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * <p>Identical to {@link #claimOrResolveTaskCompletion} but uses {@code kind='task-reassign'}
      * so that completion and reassignment dedup rows for the same task id never collide.
      *
-     * @param taskId         the task id; used as the dedup scope
+     * @param taskId         the task id; used as the dedup namespace
      * @param idempotencyKey the caller-supplied idempotency key
      * @param workflowId     the workflow instance id; stored as the FK reference
      * @param fingerprint    the SHA-256 hex fingerprint of the reassignment command
@@ -375,7 +380,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * {@code ON CONFLICT} semantics wait for a conflicting transaction to commit/roll back before
      * the UPDATE branch executes, so exactly one caller observes {@code inserted=true}.
      *
-     * @param workflowId     the workflow instance id (used as the dedup scope)
+     * @param workflowId     the workflow instance id (used as the dedup namespace)
      * @param signalDedupKey the caller-supplied signal dedup key
      * @param tx             the active transaction to use
      * @return a {@link Future} of {@code true} when this caller won the race, {@code false}
@@ -391,13 +396,13 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     }
 
     /**
-     * Variant of {@link #claimOrResolveSignal} that accepts a caller-supplied {@code (scope, key)}
+     * Variant of {@link #claimOrResolveSignal} that accepts a caller-supplied {@code (dedup_namespace, key)}
      * pair directly. Used by the branch-aware signal path (PRD-WF-002 §D11/§FR-WF-PAR-026): the
      * branch path uses {@link dev.vertique.workflow.dedup.WorkflowDedupScopes#signalKey} which
      * folds the branch identity into the dedup key so two sibling branches sharing the same
      * caller-supplied {@code dedupKey} cannot collide.
      *
-     * @param scope dedup scope (typically the workflow id string)
+     * @param scope dedup namespace (typically the workflow id string)
      * @param key dedup key (typically a SHA-256 hex digest combining branch identity + dedup key)
      * @param workflowId workflow instance id (for the FK column)
      * @param tx the active transaction
@@ -418,11 +423,11 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
     /**
      * Race-safe upsert for branch service-dispatch idempotency. Mirrors the signal-dedup pattern:
-     * inserts {@code (kind='dispatch', scope=workflowId, key=<SHA-256 hex>, workflow_id)}; the
+     * inserts {@code (kind='dispatch', dedup_namespace=workflowId, key=<SHA-256 hex>, workflow_id)}; the
      * {@code DO UPDATE} no-op makes {@code RETURNING} fire on conflict so the caller always learns
      * whether it inserted (won the race) or found a prior committed row.
      *
-     * <p>Parameters: $1=scope (workflowId::text), $2=key (SHA-256 hex), $3=workflow_id.
+     * <p>Parameters: $1=dedup_namespace (workflowId::text), $2=key (SHA-256 hex), $3=workflow_id.
      */
     private final String sqlClaimOrResolveDispatch;
 
@@ -438,7 +443,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * canonical scope/key strings before calling.
      *
      * @param workflowId the parent workflow instance id
-     * @param scope the canonical dispatch scope ({@link WorkflowDedupScopes#dispatchScope})
+     * @param scope the canonical dispatch namespace ({@link WorkflowDedupScopes#dispatchScope})
      * @param key the canonical dispatch key ({@link WorkflowDedupScopes#dispatchKey})
      * @param tx the active transaction
      * @return a {@link Future} of {@code true} when this caller won the race

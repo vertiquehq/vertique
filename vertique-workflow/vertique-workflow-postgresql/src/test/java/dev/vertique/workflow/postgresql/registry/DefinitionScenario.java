@@ -15,6 +15,7 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -48,7 +49,7 @@ final class DefinitionScenario implements AutoCloseable {
 
     /** One committed definition row read straight from the table, without the source text digest. */
     record Stored(
-            String tenant,
+            String scopeKey,
             long version,
             String kind,
             String status,
@@ -279,12 +280,12 @@ final class DefinitionScenario implements AutoCloseable {
         }
     }
 
-    /** Inserts a global code row directly, with the code provenance and no document. */
+    /** Inserts a default-scope code row directly, with the code provenance and no document. */
     void seedCode(String definitionId, long version, String planHash, String status) {
         execute("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status, source_type, loaded_at)
-                VALUES (NULL, $1, $2, 'CODE', $3, $4, 'code', now())
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, source_type, loaded_at)
+                VALUES ('default', $1, $2, 'CODE', 'example.Contract', 'example.State', $3, $4, 'code', now())
                 """, Tuple.of(definitionId, version, planHash, status));
     }
 
@@ -292,16 +293,15 @@ final class DefinitionScenario implements AutoCloseable {
      * Inserts a document row directly. Its digest is the SQL digest of its text, and a row seeded as {@code
      * ACTIVATING} carries a claim token.
      */
-    void seedDocument(
-            String tenantKey, String definitionId, long version, String planHash, String status, String text) {
+    void seedDocument(String scopeKey, String definitionId, long version, String planHash, String status, String text) {
         execute("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                      document, document_format, document_digest, source_type, loaded_at, activation_token)
-                VALUES ($1, $2, $3, 'DOCUMENT', $4, $5, $6, 'YAML',
+                VALUES ($1, $2, $3, 'DOCUMENT', 'example.Contract', 'example.State', $4, $5, $6, 'YAML',
                         encode(sha256(convert_to($6::text, 'UTF8')), 'hex'), 'seed-docs', now(),
                         CASE WHEN $5 = 'ACTIVATING' THEN gen_random_uuid() ELSE NULL END)
-                """, Tuple.of(tenantKey, definitionId, version, planHash, status, text));
+                """, Tuple.of(scopeKey, definitionId, version, planHash, status, text));
     }
 
     /** Moves the row's status change time to the given age, measured by the database clock. */
@@ -309,8 +309,8 @@ final class DefinitionScenario implements AutoCloseable {
         execute("""
                 UPDATE workflow_definitions
                 SET status_changed_at = clock_timestamp() - ($4::bigint * interval '1 second')
-                WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
-                """, Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion(), ageSeconds));
+                WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                """, Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion(), ageSeconds));
     }
 
     /** Moves a global document row into a claim that nobody completed, so only its age decides whether it is stale. */
@@ -318,8 +318,8 @@ final class DefinitionScenario implements AutoCloseable {
         execute("""
                 UPDATE workflow_definitions
                 SET status = 'ACTIVATING', activation_token = gen_random_uuid()
-                WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
-                """, Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion()));
+                WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                """, Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion()));
     }
 
     /** Inserts an instance row pinned to the exact version and plan hash. */
@@ -359,7 +359,7 @@ final class DefinitionScenario implements AutoCloseable {
     /** Counts the start deduplication rows of the definition id. */
     long dedupCount(String definitionId) {
         return await(admin().preparedQuery(
-                                "SELECT count(*) AS total FROM workflow_dedup WHERE kind = 'start' AND scope = $1")
+                                "SELECT count(*) AS total FROM workflow_dedup WHERE kind = 'start' AND dedup_namespace = $1")
                         .execute(Tuple.of(definitionId)))
                 .iterator()
                 .next()
@@ -385,21 +385,21 @@ final class DefinitionScenario implements AutoCloseable {
 
     /** Returns the global row, or empty when there is none. */
     Optional<Stored> findStored(String definitionId, long version) {
-        return findStored(null, definitionId, version);
+        return findStored(WorkflowScopes.DEFAULT, definitionId, version);
     }
 
-    /** Returns the row of the owner (a tenant key, or {@code null} for global), or empty when there is none. */
-    Optional<Stored> findStored(String tenantKey, String definitionId, long version) {
+    /** Returns the row of the owner scope, or empty when there is none. */
+    Optional<Stored> findStored(String scopeKey, String definitionId, long version) {
         List<Stored> rows = new ArrayList<>();
         for (Row row : await(admin().preparedQuery("""
-                        SELECT tenant_key, definition_version, kind, status, plan_hash, document, document_format,
+                        SELECT scope_key, definition_version, kind, status, plan_hash, document, document_format,
                                source_type, source_uri, source_revision, source_author, loaded_at, created_at,
                                status_changed_at, activation_token
                         FROM workflow_definitions
-                        WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
-                        """).execute(Tuple.of(tenantKey, definitionId, version)))) {
+                        WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                        """).execute(Tuple.of(scopeKey, definitionId, version)))) {
             rows.add(new Stored(
-                    row.getString("tenant_key"),
+                    row.getString("scope_key"),
                     row.getLong("definition_version"),
                     row.getString("kind"),
                     row.getString("status"),
@@ -416,21 +416,21 @@ final class DefinitionScenario implements AutoCloseable {
                     row.getUUID("activation_token")));
         }
         assertThat(rows)
-                .as("rows of %s for %s v%s", tenantKey == null ? "global" : tenantKey, definitionId, version)
+                .as("rows of %s for %s v%s", scopeKey, definitionId, version)
                 .hasSizeLessThanOrEqualTo(1);
         return rows.stream().findFirst();
     }
 
-    /** Returns the one global row. */
+    /** Returns the one default-scope row. */
     Stored stored(String definitionId, long version) {
-        return stored(null, definitionId, version);
+        return stored(WorkflowScopes.DEFAULT, definitionId, version);
     }
 
     /** Returns the one row of the owner. */
-    Stored stored(String tenantKey, String definitionId, long version) {
-        return findStored(tenantKey, definitionId, version)
-                .orElseThrow(() -> new AssertionError("No row of " + (tenantKey == null ? "global" : tenantKey)
-                        + " for " + definitionId + " v" + version));
+    Stored stored(String scopeKey, String definitionId, long version) {
+        return findStored(scopeKey, definitionId, version)
+                .orElseThrow(
+                        () -> new AssertionError("No row of " + scopeKey + " for " + definitionId + " v" + version));
     }
 
     /** Counts every row of the definition id, across owners. */

@@ -28,6 +28,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
@@ -103,7 +104,7 @@ class DefinitionAsyncFallbackTest {
     void preservesNoStoreOutcomes() {
         NoStoreComponent component = DaggerDefinitionAsyncFallbackTest_NoStoreComponent.create();
         WorkflowDefinitionService service = component.definitionService();
-        DefinitionKey key = new DefinitionKey(null, "fallback-order", 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, "fallback-order", 1);
         SourceMetadata provenance =
                 new SourceMetadata("test", "opaque:source", "rev-1", "author", "upload", Instant.now());
 
@@ -124,7 +125,7 @@ class DefinitionAsyncFallbackTest {
                         .definitionVersion())
                 .isEqualTo(1);
 
-        DefinitionFilter global = new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null);
+        DefinitionFilter global = new DefinitionFilter(WorkflowScopes.DEFAULT, null, null);
         java.util.List<WorkflowDefinitionRecord> records = ServiceTestHelpers.await(service.list(global));
         assertThat(records).hasSize(1);
         assertThat(records.get(0).key()).isEqualTo(key);
@@ -136,7 +137,7 @@ class DefinitionAsyncFallbackTest {
         assertThat(records).hasSize(1);
         assertThat(ServiceTestHelpers.await(service.list(global))).hasSize(2);
 
-        DefinitionFilter none = new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, Set.of());
+        DefinitionFilter none = new DefinitionFilter(null, null, Set.of());
         assertThat(ServiceTestHelpers.await(service.list(none))).isEmpty();
 
         Future<CompiledDefinitionRef> malformed =
@@ -177,7 +178,7 @@ class DefinitionAsyncFallbackTest {
 
         // Then the Future fails with IllegalArgumentException and nothing was stored or published
         assertThatThrownBy(() -> ServiceTestHelpers.await(loaded)).isInstanceOf(IllegalArgumentException.class);
-        DefinitionFilter all = new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null);
+        DefinitionFilter all = new DefinitionFilter(null, null, null);
         assertThat(ServiceTestHelpers.await(service.list(all))).isEmpty();
         assertThat(component.workflowRegistry().allRegistered()).isEmpty();
     }
@@ -196,7 +197,7 @@ class DefinitionAsyncFallbackTest {
 
         // Then the Future fails with IllegalArgumentException and nothing was stored or published
         assertThatThrownBy(() -> ServiceTestHelpers.await(loaded)).isInstanceOf(IllegalArgumentException.class);
-        DefinitionFilter all = new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null);
+        DefinitionFilter all = new DefinitionFilter(null, null, null);
         assertThat(ServiceTestHelpers.await(service.list(all))).isEmpty();
         assertThat(component.workflowRegistry().allRegistered()).isEmpty();
     }
@@ -217,7 +218,7 @@ class DefinitionAsyncFallbackTest {
         // Then it is a candidate that keeps the full uri, and it is listed but not published
         assertThat(loaded.status()).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(loaded.source().uri()).isEqualTo(atBound);
-        DefinitionFilter all = new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null);
+        DefinitionFilter all = new DefinitionFilter(null, null, null);
         assertThat(ServiceTestHelpers.await(service.list(all))).hasSize(1);
         assertThat(component.workflowRegistry().allRegistered()).isEmpty();
     }

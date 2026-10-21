@@ -39,12 +39,12 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
-import dev.vertique.workflow.registry.store.DefinitionFilter.TenantScope;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
@@ -86,8 +86,8 @@ class DefinitionCacheScopeTest {
     private static final String GLOBAL_V2_HASH = "d".repeat(64);
     private static final String TENANT_A_V2_HASH = "e".repeat(64);
 
-    private static final DefinitionKey GLOBAL_V1 = new DefinitionKey(null, ID, 1);
-    private static final DefinitionKey GLOBAL_V2 = new DefinitionKey(null, ID, 2);
+    private static final DefinitionKey GLOBAL_V1 = new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1);
+    private static final DefinitionKey GLOBAL_V2 = new DefinitionKey(WorkflowScopes.DEFAULT, ID, 2);
     private static final DefinitionKey TENANT_A_V1 = new DefinitionKey("tenant-a", ID, 1);
     private static final DefinitionKey TENANT_A_V2 = new DefinitionKey("tenant-a", ID, 2);
     private static final DefinitionKey TENANT_B_V1 = new DefinitionKey("tenant-b", ID, 1);
@@ -203,18 +203,17 @@ class DefinitionCacheScopeTest {
         assertThat(cache.list()).allSatisfy(ref -> assertThat(ref.source()).isEqualTo(GLOBAL_SOURCE));
 
         // Then the scoped metadata views return exactly each scope's rows with its own provenance
-        assertThat(records(cache, TenantScope.ALL, null, null))
+        assertThat(records(cache, null, null))
                 .containsExactlyInAnyOrder(GLOBAL_V1, GLOBAL_V2, TENANT_A_V1, TENANT_A_V2, TENANT_B_V1);
-        assertThat(records(cache, TenantScope.GLOBAL, null, null)).containsExactlyInAnyOrder(GLOBAL_V1, GLOBAL_V2);
-        assertThat(records(cache, TenantScope.TENANT, "tenant-a", null))
-                .containsExactlyInAnyOrder(TENANT_A_V1, TENANT_A_V2);
-        assertThat(records(cache, TenantScope.TENANT, "tenant-b", null)).containsExactly(TENANT_B_V1);
-        assertThat(records(cache, TenantScope.TENANT, "tenant-c", null)).isEmpty();
-        assertThat(records(cache, TenantScope.ALL, null, Set.of(DefinitionStatus.ACTIVE)))
+        assertThat(records(cache, WorkflowScopes.DEFAULT, null)).containsExactlyInAnyOrder(GLOBAL_V1, GLOBAL_V2);
+        assertThat(records(cache, "tenant-a", null)).containsExactlyInAnyOrder(TENANT_A_V1, TENANT_A_V2);
+        assertThat(records(cache, "tenant-b", null)).containsExactly(TENANT_B_V1);
+        assertThat(records(cache, "tenant-c", null)).isEmpty();
+        assertThat(records(cache, null, Set.of(DefinitionStatus.ACTIVE)))
                 .containsExactlyInAnyOrder(GLOBAL_V2, TENANT_A_V2, TENANT_B_V1);
-        assertThat(records(cache, TenantScope.GLOBAL, null, Set.of(DefinitionStatus.SUPERSEDED)))
+        assertThat(records(cache, WorkflowScopes.DEFAULT, Set.of(DefinitionStatus.SUPERSEDED)))
                 .containsExactly(GLOBAL_V1);
-        assertThat(records(cache, TenantScope.TENANT, "tenant-a", Set.of())).isEmpty();
+        assertThat(records(cache, "tenant-a", Set.of())).isEmpty();
         assertThat(cache.sourceMetadata(ID, 1)).contains(GLOBAL_SOURCE);
         assertThat(cache.sourceMetadata(TENANT_A_V1)).contains(TENANT_A_SOURCE);
         assertThat(cache.sourceMetadata(TENANT_B_V1)).contains(TENANT_B_SOURCE);
@@ -229,6 +228,8 @@ class DefinitionCacheScopeTest {
         cache.metadata(new WorkflowDefinitionRecord(
                 TENANT_B_V1,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 TENANT_B_HASH,
                 DefinitionStatus.DEPRECATED,
                 changed,
@@ -261,7 +262,7 @@ class DefinitionCacheScopeTest {
         // And the metadata-only tenant has a metadata row but no executable cache entry
         assertThat(restored.get(TENANT_B_V1)).isEmpty();
         assertThat(restored.sourceMetadata(TENANT_B_V1)).contains(TENANT_B_SOURCE);
-        assertThat(records(restored, TenantScope.TENANT, "tenant-b", null)).containsExactly(TENANT_B_V1);
+        assertThat(records(restored, "tenant-b", null)).containsExactly(TENANT_B_V1);
 
         // And the global entry is unchanged and still the only unscoped result
         assertThat(restored.get(ID, 1).orElseThrow().compiled()).isSameAs(globalV1);
@@ -272,7 +273,7 @@ class DefinitionCacheScopeTest {
             assertThat(ref.status()).isEqualTo(ActivationStatus.CANDIDATE);
             assertThat(ref.source()).isEqualTo(GLOBAL_SOURCE);
         });
-        assertThat(records(restored, TenantScope.GLOBAL, null, null)).containsExactly(GLOBAL_V1);
+        assertThat(records(restored, WorkflowScopes.DEFAULT, null)).containsExactly(GLOBAL_V1);
 
         // When the service loads the same document globally and for two tenants with distinct provenance
         WorkflowDefinitionStore serviceCache = new WorkflowDefinitionStore();
@@ -292,19 +293,19 @@ class DefinitionCacheScopeTest {
                 .contains(TENANT_B_SOURCE);
         assertThat(serviceCache.list()).singleElement().satisfies(ref -> assertThat(ref.source())
                 .isEqualTo(GLOBAL_SOURCE));
-        assertThat(ServiceTestHelpers.await(service.list(new DefinitionFilter(TenantScope.GLOBAL, null, null))))
+        assertThat(ServiceTestHelpers.await(service.list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))))
                 .extracting(WorkflowDefinitionRecord::key)
                 .containsExactly(GLOBAL_V1);
-        assertThat(ServiceTestHelpers.await(service.list(new DefinitionFilter(TenantScope.TENANT, "tenant-a", null))))
+        assertThat(ServiceTestHelpers.await(service.list(new DefinitionFilter("tenant-a", null, null))))
                 .singleElement()
                 .satisfies(row -> {
                     assertThat(row.key()).isEqualTo(TENANT_A_V1);
                     assertThat(row.provenance().sourceType()).isEqualTo("tenant-a-source");
                 });
-        assertThat(ServiceTestHelpers.await(service.list(new DefinitionFilter(TenantScope.TENANT, "tenant-b", null))))
+        assertThat(ServiceTestHelpers.await(service.list(new DefinitionFilter("tenant-b", null, null))))
                 .extracting(WorkflowDefinitionRecord::key)
                 .containsExactly(TENANT_B_V1);
-        assertThat(ServiceTestHelpers.await(service.list(new DefinitionFilter(TenantScope.ALL, null, null))))
+        assertThat(ServiceTestHelpers.await(service.list(new DefinitionFilter(null, null, null))))
                 .extracting(WorkflowDefinitionRecord::key)
                 .containsExactlyInAnyOrder(GLOBAL_V1, TENANT_A_V1, TENANT_B_V1);
 
@@ -321,8 +322,8 @@ class DefinitionCacheScopeTest {
     }
 
     private static List<DefinitionKey> records(
-            WorkflowDefinitionStore cache, TenantScope scope, String tenantKey, Set<DefinitionStatus> statuses) {
-        return cache.records(new DefinitionFilter(scope, tenantKey, statuses)).stream()
+            WorkflowDefinitionStore cache, String scopeKey, Set<DefinitionStatus> statuses) {
+        return cache.records(new DefinitionFilter(scopeKey, null, statuses)).stream()
                 .map(WorkflowDefinitionRecord::key)
                 .toList();
     }
@@ -332,6 +333,8 @@ class DefinitionCacheScopeTest {
         return new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 compiled.planHash(),
                 status,
                 DefaultWorkflowDefinitionService.provenance(compiled.source()),

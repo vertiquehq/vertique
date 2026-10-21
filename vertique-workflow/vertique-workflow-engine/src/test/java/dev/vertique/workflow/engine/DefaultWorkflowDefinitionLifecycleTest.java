@@ -27,6 +27,7 @@ import dev.vertique.workflow.registry.store.ReconcileOutcome;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -56,7 +57,7 @@ import org.mockito.Mockito;
  */
 class DefaultWorkflowDefinitionLifecycleTest {
 
-    private static final DefinitionKey KEY = new DefinitionKey(null, "wf", 1);
+    private static final DefinitionKey KEY = new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1);
     private static final String PLAN_HASH = "a".repeat(64);
     private static final String OTHER_HASH = "b".repeat(64);
 
@@ -393,7 +394,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
         scenario.registryHolds(own);
         ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute(null, "wf", 1, own);
+        registrations.attribute(WorkflowScopes.DEFAULT, "wf", 1, own);
         scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.ACTIVE))));
         scenario.transitions.add(Future.succeededFuture());
 
@@ -448,7 +449,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
         scenario.registryHolds(own);
         ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute(null, "wf", 1, own);
+        registrations.attribute(WorkflowScopes.DEFAULT, "wf", 1, own);
         scenario.retirements.add(Future.succeededFuture());
 
         // When the row is retired
@@ -467,7 +468,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
         scenario.registryHolds(own);
         ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute(null, "wf", 1, own);
+        registrations.attribute(WorkflowScopes.DEFAULT, "wf", 1, own);
         scenario.retirements.add(Future.failedFuture(new IllegalStateException("commit outcome unknown")));
         scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.RETIRED))));
 
@@ -487,7 +488,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
         scenario.registryHolds(own);
         ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute(null, "wf", 1, own);
+        registrations.attribute(WorkflowScopes.DEFAULT, "wf", 1, own);
         IllegalStateException original = new IllegalStateException("pins exist");
         scenario.retirements.add(Future.failedFuture(original));
         scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
@@ -550,6 +551,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
         return new WorkflowDefinitionRecord(
                 KEY,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 PLAN_HASH,
                 status,
                 new DefinitionProvenance("test", null, null, null, null, now),
@@ -563,6 +566,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
         return new WorkflowDefinitionRecord(
                 KEY,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 planHash,
                 status,
                 new DefinitionProvenance("test", null, null, null, null, now),
@@ -692,7 +697,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<Void> recomputeActive(String tenantKey, String definitionId) {
+        public Future<Void> recomputeActive(String scopeKey, String definitionId) {
             throw new UnsupportedOperationException();
         }
 
@@ -803,7 +808,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
         Future<Void> first = world.lifecycle.reinstate(KEY);
         assertThat(first.failed()).isTrue();
         RuntimeWorkflow published = world.registry.resolvePinned("wf", 1);
-        assertThat(world.registrations.classify(null, "wf", 1, published)).isEqualTo(ManagedRegistrations.Standing.OWN);
+        assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf", 1, published))
+                .isEqualTo(ManagedRegistrations.Standing.OWN);
         assertThat(world.registry.unregistered).isEmpty();
 
         // And the row turns out to have been committed, with the hash of the published runtime
@@ -817,7 +823,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
         assertThat(retry.succeeded()).as("retry: %s", retry.cause()).isTrue();
         assertThat(world.registry.allRegistered()).containsExactly(published);
         assertThat(world.registry.unregistered).isEmpty();
-        assertThat(world.registrations.classify(null, "wf", 1, published)).isEqualTo(ManagedRegistrations.Standing.OWN);
+        assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf", 1, published))
+                .isEqualTo(ManagedRegistrations.Standing.OWN);
 
         // And the committed row is handed to the loader exactly once
         assertThat(world.loader.handOffs)
@@ -852,7 +859,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         assertThat(retry.cause()).isSameAs(conflict);
         assertThat(world.registry.allRegistered()).isEmpty();
         assertThat(world.registry.unregistered).contains("wf@1");
-        assertThat(world.registrations.classify(null, "wf", 1, published))
+        assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf", 1, published))
                 .isEqualTo(ManagedRegistrations.Standing.UNATTRIBUTED);
         assertThat(world.loader.handOffs).isEmpty();
     }
@@ -888,7 +895,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         assertThat(store.events).containsExactly("find", "list");
         assertThat(world.registry.allRegistered()).isEmpty();
         assertThat(world.registry.unregistered).contains("wf@1");
-        assertThat(world.registrations.classify(null, "wf", 1, published))
+        assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf", 1, published))
                 .isEqualTo(ManagedRegistrations.Standing.UNATTRIBUTED);
         assertThat(world.loader.handOffs).isEmpty();
     }
@@ -969,7 +976,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         assertThat(world.registry.history).hasSize(1);
         assertThat(world.registry.allRegistered()).isEmpty();
         assertThat(world.registry.unregistered).containsExactly("wf@1");
-        assertThat(world.registrations.classify(null, "wf", 1, world.registry.history.getFirst()))
+        assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf", 1, world.registry.history.getFirst()))
                 .isEqualTo(ManagedRegistrations.Standing.UNATTRIBUTED);
         assertThat(world.loader.handOffs).isEmpty();
     }
@@ -1193,7 +1200,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<Void> recomputeActive(String tenantKey, String definitionId) {
+        public Future<Void> recomputeActive(String scopeKey, String definitionId) {
             throw new UnsupportedOperationException();
         }
 
@@ -1352,7 +1359,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<Void> recomputeActive(String tenantKey, String definitionId) {
+        public Future<Void> recomputeActive(String scopeKey, String definitionId) {
             throw new UnsupportedOperationException();
         }
 
@@ -1424,6 +1431,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
             return new WorkflowDefinitionRecord(
                     KEY,
                     DefinitionKind.DOCUMENT,
+                    "example.Contract",
+                    "example.State",
                     PLAN_HASH,
                     DefinitionStatus.CANDIDATE,
                     new DefinitionProvenance("test", null, null, null, null, now),
@@ -1486,7 +1495,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<Void> recomputeActive(String tenantKey, String definitionId) {
+        public Future<Void> recomputeActive(String scopeKey, String definitionId) {
             throw new UnsupportedOperationException();
         }
 

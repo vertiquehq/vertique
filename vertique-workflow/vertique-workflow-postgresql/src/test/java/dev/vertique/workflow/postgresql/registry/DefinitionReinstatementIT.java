@@ -42,6 +42,7 @@ import dev.vertique.workflow.registry.store.ReconcileOutcome;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -122,7 +123,7 @@ public class DefinitionReinstatementIT {
     @DisplayName("a retired code version whose code is still deployed returns to service and can be retired again")
     void reinstatesCodeAfterRestartUnregisteredIt(Vertx vertx) {
         String id = "reinstatement-it-code";
-        DefinitionKey key = new DefinitionKey(null, id, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
         WorkflowDefinition<?, ?> deployed = code(id, 1, ReinstatedCodeV1.class, "done");
         String hash = planHashOf(deployed);
 
@@ -207,7 +208,7 @@ public class DefinitionReinstatementIT {
     void refusesMissingCodeAndAnotherOwner(Vertx vertx) {
         String missingId = "reinstatement-it-missing-code";
         String ownerId = "reinstatement-it-owner-doc";
-        DefinitionKey missingKey = new DefinitionKey(null, missingId, 1);
+        DefinitionKey missingKey = new DefinitionKey(WorkflowScopes.DEFAULT, missingId, 1);
         DefinitionKey tenantOneKey = new DefinitionKey("tenant-one", ownerId, 1);
         DefinitionKey tenantTwoKey = new DefinitionKey("tenant-two", ownerId, 1);
         WorkflowDefinition<?, ?> deployedNeighbour = code(missingId, 2, MissingCodeV2.class, "done");
@@ -292,7 +293,7 @@ public class DefinitionReinstatementIT {
     @DisplayName("a retired code version whose stored hash differs from the deployed code's hash fails as drift")
     void refusesCodeWhoseStoredHashDiffersFromDeployedCode(Vertx vertx) {
         String id = "reinstatement-it-drift-code";
-        DefinitionKey key = new DefinitionKey(null, id, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
         WorkflowDefinition<?, ?> deployed = code(id, 1, DriftCodeV1.class, "done");
         String deployedHash = planHashOf(deployed);
         String storedHash = "b".repeat(64);
@@ -353,8 +354,8 @@ public class DefinitionReinstatementIT {
     void reinstatesDocumentOrFailsClosedOnDrift(Vertx vertx) {
         String id = "reinstatement-it-doc";
         String driftId = "reinstatement-it-drift-doc";
-        DefinitionKey key = new DefinitionKey(null, id, 1);
-        DefinitionKey driftKey = new DefinitionKey(null, driftId, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+        DefinitionKey driftKey = new DefinitionKey(WorkflowScopes.DEFAULT, driftId, 1);
         Instant loadedAt = Instant.parse("2026-10-19T09:00:00Z");
 
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
@@ -391,7 +392,7 @@ public class DefinitionReinstatementIT {
             assertThat(compiledDriftHash)
                     .as("the stored hash must differ from the hash of the stored text for the drift case")
                     .isNotEqualTo(storedDriftHash);
-            scenario.seedDocument(null, driftId, 1, storedDriftHash, "RETIRED", driftText);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, driftId, 1, storedDriftHash, "RETIRED", driftText);
             first.close();
 
             // And a restart, after which neither retired document is registered
@@ -472,10 +473,10 @@ public class DefinitionReinstatementIT {
         String preservedId = "reinstatement-it-preserved";
         String promotionMarker = "reinstatement-promotion-gate";
         String restoreMarker = "reinstatement-restore-gate";
-        DefinitionKey v1 = new DefinitionKey(null, id, 1);
-        DefinitionKey v2 = new DefinitionKey(null, id, 2);
-        DefinitionKey v3 = new DefinitionKey(null, id, 3);
-        DefinitionKey preservedV1 = new DefinitionKey(null, preservedId, 1);
+        DefinitionKey v1 = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+        DefinitionKey v2 = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
+        DefinitionKey v3 = new DefinitionKey(WorkflowScopes.DEFAULT, id, 3);
+        DefinitionKey preservedV1 = new DefinitionKey(WorkflowScopes.DEFAULT, preservedId, 1);
         WorkflowDefinition<?, ?> codeV1 = code(id, 1, Rollback.class, "done");
         WorkflowDefinition<?, ?> codeV2 = code(id, 2, Rollback.class, "done");
         WorkflowDefinition<?, ?> codeV3 = code(id, 3, Rollback.class, "done");
@@ -739,7 +740,7 @@ public class DefinitionReinstatementIT {
     @DisplayName("the store settles the owner check on current rows whatever the server default isolation is")
     void storeSeesAnOwnerThatCommitsWhileItWaitsEvenWithRepeatableReadServerDefault(Vertx vertx) {
         String id = "reinstatement-it-isolation";
-        DefinitionKey key = new DefinitionKey(null, id, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
         String hash = "c".repeat(64);
         String text = documentText(id, 1, IsolationDocV1.class);
 
@@ -771,7 +772,7 @@ public class DefinitionReinstatementIT {
             WorkflowDefinitionRegistryStore store = app.definitionRegistryStore();
 
             // And a retired global document, and a transaction that holds the exclusive lock of the id
-            scenario.seedDocument(null, id, 1, hash, "RETIRED", text);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, id, 1, hash, "RETIRED", text);
             Stored before = scenario.stored(id, 1);
             Tx holder = Tx.beginExclusive(scenario, id);
 
@@ -803,7 +804,7 @@ public class DefinitionReinstatementIT {
     @DisplayName("a startup reconciliation sees an owner that commits while it waits, whatever the server default is")
     void reconciliationSeesAnOwnerThatCommitsWhileItWaitsEvenWithRepeatableReadServerDefault(Vertx vertx) {
         String id = "reinstatement-it-reconcile-isolation";
-        DefinitionKey globalKey = new DefinitionKey(null, id, 1);
+        DefinitionKey globalKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
         String hash = "e".repeat(64);
         String text = documentText(id, 1, ReconcileIsolationDocV1.class);
 
@@ -836,6 +837,8 @@ public class DefinitionReinstatementIT {
             WorkflowDefinitionRecord record = new WorkflowDefinitionRecord(
                     globalKey,
                     DefinitionKind.DOCUMENT,
+                    "example.Contract",
+                    "example.State",
                     hash,
                     DefinitionStatus.SUPERSEDED,
                     new DefinitionProvenance("static-source", "memory:static", "revision-static", null, null, now),
@@ -861,7 +864,7 @@ public class DefinitionReinstatementIT {
     @DisplayName("the store itself refuses to reinstate while another owner holds the id")
     void storeRefusesToReinstateWhileAnotherOwnerHoldsTheId(Vertx vertx) {
         String id = "reinstatement-it-store-owner";
-        DefinitionKey key = new DefinitionKey(null, id, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
         DefinitionKey holderKey = new DefinitionKey("tenant-two", id, 1);
         String hash = "d".repeat(64);
         String text = documentText(id, 1, StoreOwnerDocV1.class);
@@ -873,7 +876,7 @@ public class DefinitionReinstatementIT {
             long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
 
             // Given a retired global document
-            scenario.seedDocument(null, id, 1, hash, "RETIRED", text);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, id, 1, hash, "RETIRED", text);
             Stored retiredBefore = scenario.stored(id, 1);
 
             for (String holding : List.of("ACTIVE", "SUPERSEDED", "DEPRECATED", "ACTIVATING")) {
@@ -899,7 +902,7 @@ public class DefinitionReinstatementIT {
                 assertThat(scenario.stored("tenant-two", id, 1)).isEqualTo(holderBefore);
                 scenario.execute("""
                         DELETE FROM workflow_definitions
-                        WHERE tenant_key = 'tenant-two' AND definition_id = $1
+                        WHERE scope_key = 'tenant-two' AND definition_id = $1
                         """, Tuple.of(id));
             }
 
@@ -924,7 +927,7 @@ public class DefinitionReinstatementIT {
         String id = "reinstatement-it-store-pairs";
         String hash = "d".repeat(64);
         String text = documentText(id, 1, StorePairsDocV1.class);
-        DefinitionKey retired = new DefinitionKey(null, id, 1);
+        DefinitionKey retired = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
         record Pair(DefinitionStatus from, DefinitionStatus to) {}
 
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
@@ -932,11 +935,11 @@ public class DefinitionReinstatementIT {
             WorkflowDefinitionRegistryStore store = scenario.node(none()).app().definitionRegistryStore();
 
             // Given one retired version, and one version in each other status that a reinstatement could meet
-            scenario.seedDocument(null, id, 1, hash, "RETIRED", text);
-            scenario.seedDocument(null, id, 2, hash, "ACTIVE", text);
-            scenario.seedDocument(null, id, 3, hash, "DEPRECATED", text);
-            scenario.seedDocument(null, id, 4, hash, "SUPERSEDED", text);
-            scenario.seedDocument(null, id, 5, hash, "CANDIDATE", text);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, id, 1, hash, "RETIRED", text);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, id, 2, hash, "ACTIVE", text);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, id, 3, hash, "DEPRECATED", text);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, id, 4, hash, "SUPERSEDED", text);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, id, 5, hash, "CANDIDATE", text);
             List<Stored> before = List.of(
                     scenario.stored(id, 1),
                     scenario.stored(id, 2),
@@ -967,7 +970,7 @@ public class DefinitionReinstatementIT {
 
             // When the retired to superseded change is requested on each row that is not retired
             for (int version = 2; version <= 5; version++) {
-                DefinitionKey key = new DefinitionKey(null, id, version);
+                DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
                 String found = before.get(version - 1).status();
                 Throwable refused =
                         failureOf(store.transition(key, DefinitionStatus.RETIRED, DefinitionStatus.SUPERSEDED));
@@ -984,7 +987,7 @@ public class DefinitionReinstatementIT {
             }
 
             // When the change is requested on a version that does not exist
-            DefinitionKey missing = new DefinitionKey(null, id, 99);
+            DefinitionKey missing = new DefinitionKey(WorkflowScopes.DEFAULT, id, 99);
             Throwable absent =
                     failureOf(store.transition(missing, DefinitionStatus.RETIRED, DefinitionStatus.SUPERSEDED));
 
@@ -1002,8 +1005,8 @@ public class DefinitionReinstatementIT {
     @DisplayName("a reinstated lower document version stays superseded under the active higher version")
     void reinstatedLowerDocumentStaysSupersededUnderTheActiveHigherVersion(Vertx vertx) {
         String id = "reinstatement-it-lower-doc";
-        DefinitionKey v1 = new DefinitionKey(null, id, 1);
-        DefinitionKey v2 = new DefinitionKey(null, id, 2);
+        DefinitionKey v1 = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+        DefinitionKey v2 = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
         Instant loadedAt = Instant.parse("2026-10-19T09:00:00Z");
 
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
@@ -1119,7 +1122,7 @@ public class DefinitionReinstatementIT {
                        AND OLD.status = 'SUPERSEDED' AND NEW.status = 'ACTIVE' THEN
                         IF (
                             SELECT status FROM workflow_definitions
-                            WHERE tenant_key IS NOT DISTINCT FROM NEW.tenant_key
+                            WHERE scope_key IS NOT DISTINCT FROM NEW.scope_key
                               AND definition_id = NEW.definition_id AND definition_version = %d
                         ) = 'SUPERSEDED' THEN
                             RAISE EXCEPTION '%s' USING ERRCODE = '23514';

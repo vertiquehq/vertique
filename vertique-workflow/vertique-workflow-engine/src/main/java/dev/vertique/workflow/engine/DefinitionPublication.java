@@ -92,7 +92,7 @@ final class DefinitionPublication {
         RuntimeWorkflow published = null;
         try {
             published = local.resolvePinned(key.definitionId(), key.definitionVersion());
-            registrations.attribute(key.tenantKey(), key.definitionId(), key.definitionVersion(), published);
+            registrations.attribute(key.scopeKey(), key.definitionId(), key.definitionVersion(), published);
             return published;
         } catch (RuntimeException e) {
             // The registration was made by this call, so it is removed whatever the registry holds under the key.

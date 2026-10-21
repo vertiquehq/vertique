@@ -24,11 +24,11 @@ import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
-import dev.vertique.workflow.registry.store.DefinitionFilter.TenantScope;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -90,7 +90,7 @@ public class DefinitionDeprecationIT {
         DefinitionStatus otherStatusBefore = targetIsActive ? DefinitionStatus.SUPERSEDED : DefinitionStatus.ACTIVE;
         Class<?> contractV1 = targetIsActive ? ActiveCase.class : SupersededCase.class;
         Class<?> contractV2 = targetIsActive ? ActiveCase.class : SupersededCase.class;
-        DefinitionKey targetKey = new DefinitionKey(null, id, targetVersion);
+        DefinitionKey targetKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion);
         byte[] documentV1 = document(id, 1, contractV1);
         byte[] documentV2 = document(id, 2, contractV2);
 
@@ -102,10 +102,10 @@ public class DefinitionDeprecationIT {
             // Given two versions loaded and activated through the service, so both are registered and cached
             CompiledDefinitionRef loadedV1 = await(
                     app.definitionService().load(documentV1, DocumentFormat.YAML, source("deprecation-v1"), null));
-            await(app.definitionService().activate(new DefinitionKey(null, id, 1)));
+            await(app.definitionService().activate(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)));
             CompiledDefinitionRef loadedV2 = await(
                     app.definitionService().load(documentV2, DocumentFormat.YAML, source("deprecation-v2"), null));
-            await(app.definitionService().activate(new DefinitionKey(null, id, 2)));
+            await(app.definitionService().activate(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)));
             CompiledDefinitionRef loadedTarget = targetIsActive ? loadedV2 : loadedV1;
 
             // And the committed predecessor status of the target and of the other version is the one under test
@@ -145,7 +145,8 @@ public class DefinitionDeprecationIT {
 
             // And the service metadata reports the target as DEPRECATED and the other version unchanged
             List<WorkflowDefinitionRecord> serviceRecords =
-                    await(app.definitionService().list(new DefinitionFilter(TenantScope.GLOBAL, null, null))).stream()
+                    await(app.definitionService().list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null)))
+                            .stream()
                             .filter(record -> record.key().definitionId().equals(id))
                             .toList();
             assertThat(serviceRecords)
@@ -215,9 +216,9 @@ public class DefinitionDeprecationIT {
     @Test
     void rejectsUnsupportedOrMismatchedTransitions(Vertx vertx) {
         String id = "deprecation-it-transition-doc";
-        DefinitionKey supersededKey = new DefinitionKey(null, id, 1);
-        DefinitionKey activeKey = new DefinitionKey(null, id, 2);
-        DefinitionKey missingKey = new DefinitionKey(null, id, 99);
+        DefinitionKey supersededKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+        DefinitionKey activeKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
+        DefinitionKey missingKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 99);
 
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(id);
@@ -300,8 +301,8 @@ public class DefinitionDeprecationIT {
     @Test
     void refusesTransitionWhileAnotherOwnerHoldsTheId(Vertx vertx) {
         String id = "deprecation-it-owner-doc";
-        DefinitionKey globalKey = new DefinitionKey(null, id, 1);
-        DefinitionKey tenantKey = new DefinitionKey("tenant-a", id, 1);
+        DefinitionKey globalKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+        DefinitionKey scopeKey = new DefinitionKey("tenant-a", id, 1);
 
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(id);
@@ -322,23 +323,23 @@ public class DefinitionDeprecationIT {
 
             // And tenant-a is also forced to ACTIVE by SQL, because the public operations never let two owners hold an
             // id
-            fixture.forceStatus(tenantKey, DefinitionStatus.ACTIVE);
-            Stored globalBefore = fixture.stored(null, id, 1);
+            fixture.forceStatus(scopeKey, DefinitionStatus.ACTIVE);
+            Stored globalBefore = fixture.stored(WorkflowScopes.DEFAULT, id, 1);
             Stored tenantBefore = fixture.stored("tenant-a", id, 1);
             assertThat(globalBefore.status()).isEqualTo("ACTIVE");
             assertThat(tenantBefore.status()).isEqualTo("ACTIVE");
 
             // When each owner's ACTIVE row is deprecated while the other owner holds the id
             Throwable tenantFailure =
-                    failureOf(store.transition(tenantKey, DefinitionStatus.ACTIVE, DefinitionStatus.DEPRECATED));
+                    failureOf(store.transition(scopeKey, DefinitionStatus.ACTIVE, DefinitionStatus.DEPRECATED));
             Throwable globalFailure =
                     failureOf(store.transition(globalKey, DefinitionStatus.ACTIVE, DefinitionStatus.DEPRECATED));
 
             // Then both are refused with an owner conflict naming the other holder
             assertThat(tenantFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, refusal -> {
                 assertThat(refusal.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                assertThat(refusal.key()).isEqualTo(tenantKey);
-                assertThat(refusal.getMessage()).contains("global");
+                assertThat(refusal.key()).isEqualTo(scopeKey);
+                assertThat(refusal.getMessage()).contains("default");
             });
             assertThat(globalFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, refusal -> {
                 assertThat(refusal.reason()).isEqualTo(Reason.OWNER_CONFLICT);
@@ -347,7 +348,7 @@ public class DefinitionDeprecationIT {
             });
 
             // And neither row changed
-            assertThat(fixture.stored(null, id, 1)).isEqualTo(globalBefore);
+            assertThat(fixture.stored(WorkflowScopes.DEFAULT, id, 1)).isEqualTo(globalBefore);
             assertThat(fixture.stored("tenant-a", id, 1)).isEqualTo(tenantBefore);
         }
     }
@@ -517,7 +518,7 @@ public class DefinitionDeprecationIT {
         }
 
         Stored stored(String definitionId, long version) {
-            return stored(null, definitionId, version);
+            return stored(WorkflowScopes.DEFAULT, definitionId, version);
         }
 
         long rowCount(String definitionId) {
@@ -533,20 +534,20 @@ public class DefinitionDeprecationIT {
         void forceStatus(DefinitionKey key, DefinitionStatus status) {
             await(admin().preparedQuery("""
                             UPDATE workflow_definitions SET status = $4
-                            WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                            WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
                             """)
-                    .execute(Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion(), status.name())));
+                    .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion(), status.name())));
         }
 
-        Stored stored(String tenantKey, String definitionId, long version) {
+        Stored stored(String scopeKey, String definitionId, long version) {
             List<Stored> rows = new ArrayList<>();
             for (Row row : await(admin().preparedQuery("""
                             SELECT definition_version, status, plan_hash, document, document_format, source_type,
                                    source_uri, source_revision, loaded_at, status_changed_at
                             FROM workflow_definitions
-                            WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2
+                            WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2
                               AND definition_version = $3
-                            """).execute(Tuple.of(tenantKey, definitionId, version)))) {
+                            """).execute(Tuple.of(scopeKey, definitionId, version)))) {
                 rows.add(new Stored(
                         row.getLong("definition_version"),
                         row.getString("status"),

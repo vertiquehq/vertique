@@ -30,6 +30,7 @@ import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootO
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
@@ -67,8 +68,8 @@ public class DefinitionDigestIT {
         String editedId = "digest-guarded-read-edited-doc";
         String validOversizedId = "digest-oversized-valid-doc";
         String badOversizedId = "digest-oversized-bad-doc";
-        DefinitionKey activeKey = new DefinitionKey(null, activeId, 1);
-        DefinitionKey editedKey = new DefinitionKey(null, editedId, 1);
+        DefinitionKey activeKey = new DefinitionKey(WorkflowScopes.DEFAULT, activeId, 1);
+        DefinitionKey editedKey = new DefinitionKey(WorkflowScopes.DEFAULT, editedId, 1);
         String editMarker = "# edited directly in the database";
 
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
@@ -108,7 +109,7 @@ public class DefinitionDigestIT {
             assertThat(planHashOf(app, editedStored, "edited-check")).isEqualTo(editedLoaded.planHash());
             scenario.execute("""
                     UPDATE workflow_definitions SET document = $1
-                    WHERE tenant_key IS NULL AND definition_id = $2 AND definition_version = 1
+                    WHERE scope_key = 'default' AND definition_id = $2 AND definition_version = 1
                     """, Tuple.of(editedStored, editedId));
             Stored candidateBefore = scenario.stored(editedId, 1);
             assertThat(candidateBefore.status()).isEqualTo("CANDIDATE");
@@ -164,7 +165,7 @@ public class DefinitionDigestIT {
             node.close();
             scenario.execute("""
                     UPDATE workflow_definitions SET document = $1
-                    WHERE tenant_key IS NULL AND definition_id = $2 AND definition_version = 1
+                    WHERE scope_key = 'default' AND definition_id = $2 AND definition_version = 1
                     """, Tuple.of(activeEdited, activeId));
 
             // When the application restarts
@@ -203,10 +204,10 @@ public class DefinitionDigestIT {
 
             // When each is read through the guarded accessor
             WorkflowDefinitionRegistryStore oversizedStore = reader.app().definitionRegistryStore();
-            Throwable validDigestFailure =
-                    failureOf(oversizedStore.findDocument(new DefinitionKey(null, validOversizedId, 1)));
-            Throwable badDigestFailure =
-                    failureOf(oversizedStore.findDocument(new DefinitionKey(null, badOversizedId, 1)));
+            Throwable validDigestFailure = failureOf(
+                    oversizedStore.findDocument(new DefinitionKey(WorkflowScopes.DEFAULT, validOversizedId, 1)));
+            Throwable badDigestFailure = failureOf(
+                    oversizedStore.findDocument(new DefinitionKey(WorkflowScopes.DEFAULT, badOversizedId, 1)));
 
             // Then both give the existing size error, because the envelope is checked before any digest
             for (Throwable failure : new Throwable[] {validDigestFailure, badDigestFailure}) {
@@ -235,7 +236,7 @@ public class DefinitionDigestIT {
     private static String storedDigest(DefinitionScenario scenario, String definitionId) {
         return await(scenario.admin().preparedQuery("""
                                 SELECT document_digest FROM workflow_definitions
-                                WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = 1
+                                WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = 1
                                 """).execute(Tuple.of(definitionId)))
                 .iterator()
                 .next()
@@ -247,9 +248,9 @@ public class DefinitionDigestIT {
             DefinitionScenario scenario, String definitionId, int length, String digest) {
         scenario.execute("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                      document, document_format, document_digest, source_type, loaded_at)
-                VALUES (NULL, $1, 1, 'DOCUMENT', repeat('a', 64), 'CANDIDATE',
+                VALUES ('default', $1, 1, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), 'CANDIDATE',
                         repeat('x', $2), 'JSON', $3, 'digest-test', now())
                 """, Tuple.of(definitionId, length, digest));
     }

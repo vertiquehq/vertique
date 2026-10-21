@@ -54,7 +54,7 @@ public final class WorkflowDedupScopes {
     // --- Signal scopes ---
 
     /**
-     * Returns the {@code workflow_dedup.scope} string for a signal claim.
+     * Returns the {@code workflow_dedup.dedup_namespace} string for a signal claim.
      *
      * @param workflowId the parent workflow instance id
      * @return {@code workflowId.toString()} (36 chars)
@@ -119,7 +119,7 @@ public final class WorkflowDedupScopes {
     // --- Dispatch scopes ---
 
     /**
-     * Returns the {@code workflow_dedup.scope} string for a branch service-dispatch claim.
+     * Returns the {@code workflow_dedup.dedup_namespace} string for a branch service-dispatch claim.
      *
      * @param workflowId the parent workflow instance id
      * @return {@code workflowId.toString()} (36 chars)

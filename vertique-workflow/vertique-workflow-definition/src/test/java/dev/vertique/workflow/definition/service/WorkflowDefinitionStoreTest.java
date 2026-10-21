@@ -18,6 +18,7 @@ import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -550,8 +551,10 @@ class WorkflowDefinitionStoreTest {
         private WorkflowDefinitionRecord activeRecord(String id, long version) {
             Instant now = Instant.parse("2026-01-01T00:00:00Z");
             return new WorkflowDefinitionRecord(
-                    new DefinitionKey(null, id, version),
+                    new DefinitionKey(WorkflowScopes.DEFAULT, id, version),
                     DefinitionKind.DOCUMENT,
+                    "example.Contract",
+                    "example.State",
                     "a".repeat(64),
                     DefinitionStatus.ACTIVE,
                     new DefinitionProvenance("test", null, null, null, null, now),

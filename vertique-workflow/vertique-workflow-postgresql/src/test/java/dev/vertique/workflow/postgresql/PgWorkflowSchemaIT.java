@@ -94,6 +94,7 @@ import dev.vertique.workflow.registry.store.ReconcileOutcome;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.retention.WorkflowRetentionService;
 import dev.vertique.workflow.retention.WorkflowRetentionService.PurgeResult;
 import dev.vertique.workflow.retention.WorkflowRetentionService.RetentionResult;
@@ -225,7 +226,7 @@ public class PgWorkflowSchemaIT {
             "idx_workflow_instances_archive_sweep",
             "idx_workflow_instances_archived_at",
             "idx_workflow_instances_subject_versioned",
-            "idx_workflow_instances_tenant_updated_at",
+            "idx_workflow_instances_scope_updated_at",
             "idx_workflow_dedup_workflow_id",
             "idx_workflow_timers_orphan_scan",
             "idx_workflow_timers_workflow_id",
@@ -238,7 +239,7 @@ public class PgWorkflowSchemaIT {
             "idx_workflow_tasks_open_due_at",
             "idx_workflow_tasks_updated_at_keyset",
             "idx_workflow_tasks_branch_token",
-            "idx_workflow_tasks_tenant_updated_at",
+            "idx_workflow_tasks_scope_updated_at",
             "idx_workflow_branch_tokens_status_lookup",
             "idx_workflow_branch_tokens_recovery",
             "idx_workflow_branch_tokens_wait",
@@ -263,8 +264,8 @@ public class PgWorkflowSchemaIT {
     private static final String RETENTION_DEFINITION = "schema-placement-retention";
     private static final String REGISTRY_DEFINITION = "schema-placement-registry";
     private static final String SUBJECT_TYPE = "order";
-    private static final String TENANT_KEY = "tenant-a";
-    private static final String OTHER_TENANT_KEY = "tenant-b";
+    private static final String SCOPE_KEY = "scope-a";
+    private static final String OTHER_SCOPE_KEY = "scope-b";
     private static final List<TaskDecisionDescriptor> DECISIONS =
             List.of(new TaskDecisionDescriptor("approve", "java.lang.String", "done"));
     private static final Instant LONG_OVERDUE = Instant.parse("2001-01-01T00:00:00Z");
@@ -929,15 +930,15 @@ public class PgWorkflowSchemaIT {
         String businessKey = unique("business-key");
         String subjectId = unique("subject");
         WorkflowInstance withSubject = newInstance(
-                definitionId, businessKey, new WorkflowSubjectRef(SUBJECT_TYPE, subjectId, "v1"), TENANT_KEY);
+                definitionId, businessKey, new WorkflowSubjectRef(SUBJECT_TYPE, subjectId, "v1"), SCOPE_KEY);
         WorkflowInstance plain = newInstance(definitionId, null, null);
 
         // insert in the caller's transaction
         inTransaction(runtime, tx -> instances.insert(withSubject, tx));
         inTransaction(runtime, tx -> instances.insert(plain, tx));
         assertEquals("RUNNING", mappedValue("workflow_instances", "id", withSubject.id(), "status"));
-        assertEquals(TENANT_KEY, mappedValue("workflow_instances", "id", withSubject.id(), "tenant_key"));
-        assertEquals("none", mappedValue("workflow_instances", "id", plain.id(), "COALESCE(tenant_key, 'none')"));
+        assertEquals(SCOPE_KEY, mappedValue("workflow_instances", "id", withSubject.id(), "scope_key"));
+        assertEquals(WorkflowScopes.DEFAULT, mappedValue("workflow_instances", "id", plain.id(), "scope_key"));
 
         // every read path finds the mapped row
         WorkflowInstance loaded = await(instances.findById(withSubject.id())).orElseThrow();
@@ -981,16 +982,16 @@ public class PgWorkflowSchemaIT {
                         .orElseThrow()
                         .version());
 
-        // the tenant filter is an exact match on the mapped column, and the re-pin leaves the tenant alone
+        // the scope filter is an exact match on the mapped column, and the re-pin leaves the scope alone
         assertEquals(
                 Set.of(withSubject.id().value()),
                 instanceIds(await(
-                        instances.findFiltered(byDefinition.withTenantKey(TENANT_KEY), PageCursor.first(PAGE_SIZE)))));
+                        instances.findFiltered(byDefinition.withScopeKey(SCOPE_KEY), PageCursor.first(PAGE_SIZE)))));
         assertEquals(
                 Set.of(),
                 instanceIds(await(instances.findFiltered(
-                        byDefinition.withTenantKey(OTHER_TENANT_KEY), PageCursor.first(PAGE_SIZE)))));
-        assertEquals(TENANT_KEY, mappedValue("workflow_instances", "id", withSubject.id(), "tenant_key"));
+                        byDefinition.withScopeKey(OTHER_SCOPE_KEY), PageCursor.first(PAGE_SIZE)))));
+        assertEquals(SCOPE_KEY, mappedValue("workflow_instances", "id", withSubject.id(), "scope_key"));
 
         return new LifecycleInstances(repinned, plain, businessKey, subjectId);
     }
@@ -1185,8 +1186,8 @@ public class PgWorkflowSchemaIT {
         WorkflowDefinitionRegistryStore registry = runtime.workflowDefinitionRegistryStore();
         String planHash = "c".repeat(64);
         Instant now = Instant.parse("2026-01-01T00:00:00Z");
-        DefinitionKey first = new DefinitionKey(null, REGISTRY_DEFINITION, 1);
-        DefinitionKey second = new DefinitionKey(null, REGISTRY_DEFINITION, 2);
+        DefinitionKey first = new DefinitionKey(WorkflowScopes.DEFAULT, REGISTRY_DEFINITION, 1);
+        DefinitionKey second = new DefinitionKey(WorkflowScopes.DEFAULT, REGISTRY_DEFINITION, 2);
 
         await(registry.insertCandidate(
                 registryRecord(first, planHash, DefinitionStatus.CANDIDATE, now), registryDocument(first)));
@@ -1196,7 +1197,7 @@ public class PgWorkflowSchemaIT {
                 ReconcileOutcome.INSERTED,
                 await(registry.upsertDocument(
                         registryRecord(second, planHash, DefinitionStatus.SUPERSEDED, now), registryDocument(second))));
-        await(registry.recomputeActive(null, REGISTRY_DEFINITION));
+        await(registry.recomputeActive(WorkflowScopes.DEFAULT, REGISTRY_DEFINITION));
         await(registry.transition(first, DefinitionStatus.SUPERSEDED, DefinitionStatus.DEPRECATED));
 
         assertEquals(
@@ -1205,9 +1206,7 @@ public class PgWorkflowSchemaIT {
         assertEquals(
                 "{\"v\":1}", await(registry.findDocument(first)).orElseThrow().document());
         assertEquals(
-                2,
-                await(registry.list(new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null)))
-                        .size());
+                2, await(registry.list(new DefinitionFilter(null, null, null))).size());
         assertEquals("DEPRECATED", mappedValue("workflow_definitions", "definition_version", 1, "status"));
         assertEquals("ACTIVE", mappedValue("workflow_definitions", "definition_version", 2, "status"));
         assertEquals("{\"v\":2}", mappedValue("workflow_definitions", "definition_version", 2, "document"));
@@ -1218,6 +1217,8 @@ public class PgWorkflowSchemaIT {
         return new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 planHash,
                 status,
                 new DefinitionProvenance("test", "memory://" + key.definitionVersion(), null, null, null, now),
@@ -1390,30 +1391,29 @@ public class PgWorkflowSchemaIT {
                 Set.of(plain.taskId()),
                 taskIds(inTransaction(runtime, tx -> tasks.findByFilter(byWorkflow, PageCursor.first(PAGE_SIZE), tx))));
 
-        // the insert stamped each task with its instance's tenant, read from the mapped instances table
+        // the insert stamped each task with its instance's scope, read from the mapped instances table
         Set<UUID> subjectTasks = Set.of(toComplete.taskId(), toCancel.taskId(), toExpire.taskId(), open.taskId());
         for (UUID taskId : subjectTasks) {
-            assertEquals(TENANT_KEY, mappedValue("workflow_tasks", "task_id", taskId, "tenant_key"));
+            assertEquals(SCOPE_KEY, mappedValue("workflow_tasks", "task_id", taskId, "scope_key"));
         }
-        assertEquals("none", mappedValue("workflow_tasks", "task_id", plain.taskId(), "COALESCE(tenant_key, 'none')"));
+        assertEquals(WorkflowScopes.DEFAULT, mappedValue("workflow_tasks", "task_id", plain.taskId(), "scope_key"));
 
-        // the tenant filter works on both query shapes: the correlated archival check and the subject join
-        TaskFilter byTenant = TaskFilter.empty().withTenantKey(TENANT_KEY);
+        // the scope filter works on both query shapes: the correlated archival check and the subject join
+        TaskFilter byScope = TaskFilter.empty().withScopeKey(SCOPE_KEY);
         assertEquals(
                 subjectTasks,
-                taskIds(inTransaction(runtime, tx -> tasks.findByFilter(byTenant, PageCursor.first(PAGE_SIZE), tx))));
+                taskIds(inTransaction(runtime, tx -> tasks.findByFilter(byScope, PageCursor.first(PAGE_SIZE), tx))));
         assertEquals(
                 subjectTasks,
                 taskIds(inTransaction(
                         runtime,
-                        tx -> tasks.findByFilter(
-                                bySubject.withTenantKey(TENANT_KEY), PageCursor.first(PAGE_SIZE), tx))));
+                        tx -> tasks.findByFilter(bySubject.withScopeKey(SCOPE_KEY), PageCursor.first(PAGE_SIZE), tx))));
         assertEquals(
                 Set.of(),
                 taskIds(inTransaction(
                         runtime,
                         tx -> tasks.findByFilter(
-                                bySubject.withTenantKey(OTHER_TENANT_KEY), PageCursor.first(PAGE_SIZE), tx))));
+                                bySubject.withScopeKey(OTHER_SCOPE_KEY), PageCursor.first(PAGE_SIZE), tx))));
 
         assertEquals("COMPLETED", mappedValue("workflow_tasks", "task_id", toComplete.taskId(), "status"));
         assertEquals("CANCELLED", mappedValue("workflow_tasks", "task_id", toCancel.taskId(), "status"));
@@ -1924,11 +1924,11 @@ public class PgWorkflowSchemaIT {
     }
 
     private static WorkflowInstance newInstance(String definitionId, String businessKey, WorkflowSubjectRef subject) {
-        return newInstance(definitionId, businessKey, subject, null);
+        return newInstance(definitionId, businessKey, subject, WorkflowScopes.DEFAULT);
     }
 
     private static WorkflowInstance newInstance(
-            String definitionId, String businessKey, WorkflowSubjectRef subject, String tenantKey) {
+            String definitionId, String businessKey, WorkflowSubjectRef subject, String scopeKey) {
         Instant now = Instant.now();
         return new WorkflowInstance(
                 new WorkflowInstanceId(UUID.randomUUID()),
@@ -1949,7 +1949,8 @@ public class PgWorkflowSchemaIT {
                 now,
                 now,
                 null,
-                tenantKey);
+                scopeKey,
+                WorkflowScopes.DEFAULT);
     }
 
     private static WorkflowInstance repinned(

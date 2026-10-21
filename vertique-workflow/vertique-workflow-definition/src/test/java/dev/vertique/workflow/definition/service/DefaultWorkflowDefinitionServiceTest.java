@@ -40,6 +40,7 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -485,10 +486,10 @@ class DefaultWorkflowDefinitionServiceTest {
     }
 
     private DefinitionKey key(String id, long version) {
-        return new DefinitionKey(null, id, version);
+        return new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
     }
 
     private DefinitionFilter globalFilter() {
-        return new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null);
+        return new DefinitionFilter(WorkflowScopes.DEFAULT, null, null);
     }
 }

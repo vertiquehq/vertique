@@ -28,9 +28,9 @@ import java.time.Instant;
  * @param subjectId filter by the subject id of the owning workflow instance; null means no filter
  * @param includeArchived when {@code true}, includes tasks belonging to archived workflow
  *     instances; defaults to {@code false}
- * @param tenantKey filter by the tenant key of the owning workflow instance (exact match); null
- *     means no filter and matches every tenant. This is a filter, not an isolation or
- *     authorization boundary: a caller that has not resolved a tenant must not pass null
+ * @param scopeKey filter by the start scope of the owning workflow instance (exact match); null
+ *     means no filter and matches every scope. This is a filter, not an isolation or
+ *     authorization boundary: a caller that has not resolved a scope must not pass null
  *     expecting scoping.
  */
 public record TaskFilter(
@@ -43,11 +43,11 @@ public record TaskFilter(
         @Nullable String subjectType,
         @Nullable String subjectId,
         boolean includeArchived,
-        @Nullable String tenantKey) {
+        @Nullable String scopeKey) {
 
     /**
-     * Creates a filter without a tenant constraint. Retained so existing callers keep compiling;
-     * equivalent to the canonical constructor with a {@code null} {@code tenantKey}.
+     * Creates a filter without a scope constraint. Retained so existing callers keep compiling;
+     * equivalent to the canonical constructor with a {@code null} {@code scopeKey}.
      */
     public TaskFilter(
             @Nullable String assigneeUser,
@@ -120,7 +120,7 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                tenantKey);
+                scopeKey);
     }
 
     /**
@@ -140,7 +140,7 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                tenantKey);
+                scopeKey);
     }
 
     /**
@@ -160,7 +160,7 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                tenantKey);
+                scopeKey);
     }
 
     /**
@@ -180,7 +180,7 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                tenantKey);
+                scopeKey);
     }
 
     /**
@@ -200,7 +200,7 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                tenantKey);
+                scopeKey);
     }
 
     /**
@@ -220,7 +220,7 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                tenantKey);
+                scopeKey);
     }
 
     /**
@@ -240,7 +240,7 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                tenantKey);
+                scopeKey);
     }
 
     /**
@@ -260,7 +260,7 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                tenantKey);
+                scopeKey);
     }
 
     /**
@@ -283,17 +283,17 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                tenantKey);
+                scopeKey);
     }
 
     /**
-     * Returns a copy of this filter with the {@code tenantKey} field set.
+     * Returns a copy of this filter with the {@code scopeKey} field set.
      *
-     * @param tenantKey the tenant key to match exactly; null removes the filter, which matches
-     *     every tenant
+     * @param scopeKey the scope key to match exactly; null removes the filter, which matches
+     *     every scope
      * @return a new {@code TaskFilter} with the updated field
      */
-    public TaskFilter withTenantKey(@Nullable String tenantKey) {
+    public TaskFilter withScopeKey(@Nullable String scopeKey) {
         return new TaskFilter(
                 assigneeUser,
                 assigneeRole,
@@ -304,6 +304,6 @@ public record TaskFilter(
                 subjectType,
                 subjectId,
                 includeArchived,
-                tenantKey);
+                scopeKey);
     }
 }

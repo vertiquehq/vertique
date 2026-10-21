@@ -25,6 +25,7 @@ import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowType;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
@@ -179,7 +180,7 @@ class CatalogOnlyDocumentLoadTest {
         assertThat(recorder.requested()).doesNotContain(NeverCatalogued.class.getName());
         assertThat(ServiceTestHelpers.await(component
                         .workflowDefinitionService()
-                        .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))))
+                        .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))))
                 .isEmpty();
     }
 
@@ -192,7 +193,7 @@ class CatalogOnlyDocumentLoadTest {
         ServiceTestHelpers.await(load(component, acmeDocument("acme-b", "acme.contract.b", AcmeState.class.getName())));
 
         for (String definitionId : List.of("acme-a", "acme-b")) {
-            DefinitionKey key = new DefinitionKey(null, definitionId, 1);
+            DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
             assertThat(component
                             .workflowDefinitionStore()
                             .get(key)
@@ -210,11 +211,13 @@ class CatalogOnlyDocumentLoadTest {
     void restoredDocumentResolvesCataloguedNamesOnly() {
         DocumentLoadComponent component = DaggerCatalogOnlyDocumentLoadTest_DocumentLoadComponent.create();
         RecordingClassLoader recorder = new RecordingClassLoader();
-        DefinitionKey key = new DefinitionKey(null, "never", 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, "never", 1);
         Instant now = Instant.now();
         WorkflowDefinitionRecord stored = new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 "a".repeat(64),
                 DefinitionStatus.CANDIDATE,
                 new DefinitionProvenance("test", "test://never", null, null, null, now),

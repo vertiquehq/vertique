@@ -29,6 +29,7 @@ import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -90,8 +91,8 @@ public class DefinitionDocumentPolicyIT {
         byte[] jsonBytes = utf16Be(jsonSource);
         SourceMetadata yamlMetadata = metadata("raised-yaml");
         SourceMetadata jsonMetadata = metadata("utf16-json");
-        DefinitionKey yamlKey = new DefinitionKey(null, "order-fulfillment-doc", 1);
-        DefinitionKey jsonKey = new DefinitionKey(null, "order-fulfillment-doc", 2);
+        DefinitionKey yamlKey = new DefinitionKey(WorkflowScopes.DEFAULT, "order-fulfillment-doc", 1);
+        DefinitionKey jsonKey = new DefinitionKey(WorkflowScopes.DEFAULT, "order-fulfillment-doc", 2);
         WorkflowDefinitionSqlObserver retryObserver = new WorkflowDefinitionSqlObserver();
         String nonUtf8Database =
                 "workflow_defs_non_utf8_" + UUID.randomUUID().toString().replace("-", "");
@@ -160,7 +161,7 @@ public class DefinitionDocumentPolicyIT {
                             .compose(ignored -> {
                                 int statementStart = observer.statements().size();
                                 return first.definitionService()
-                                        .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                                        .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                                         .map(records -> {
                                             assertThat(records)
                                                     .extracting(WorkflowDefinitionRecord::key)
@@ -194,7 +195,8 @@ public class DefinitionDocumentPolicyIT {
                             .compose(ignored -> insertUtf8OversizedRow(
                                     observedMainPool, "oversized-utf8-candidate", "CANDIDATE", 300_001))
                             .compose(ignored -> first.definitionRegistryStore()
-                                    .findDocument(new DefinitionKey(null, "oversized-utf8-candidate", 1))
+                                    .findDocument(
+                                            new DefinitionKey(WorkflowScopes.DEFAULT, "oversized-utf8-candidate", 1))
                                     .transform(result -> {
                                         assertThat(result.failed()).isTrue();
                                         assertThat(result.cause()).isInstanceOf(WorkflowDefinitionException.class);
@@ -215,11 +217,12 @@ public class DefinitionDocumentPolicyIT {
                                         return Future.succeededFuture();
                                     }))
                             .compose(ignored -> first.definitionRegistryStore()
-                                    .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                                    .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                                     .map(records -> {
                                         assertThat(records)
                                                 .extracting(WorkflowDefinitionRecord::key)
-                                                .contains(new DefinitionKey(null, "oversized-utf8-candidate", 1));
+                                                .contains(new DefinitionKey(
+                                                        WorkflowScopes.DEFAULT, "oversized-utf8-candidate", 1));
                                         return (Void) null;
                                     }))
                             .compose(ignored -> first.definitionService()
@@ -267,7 +270,7 @@ public class DefinitionDocumentPolicyIT {
                                                             restoredObserver)
                                                     .compose(ignoredRestore -> restored.definitionService()
                                                             .list(new DefinitionFilter(
-                                                                    DefinitionFilter.TenantScope.GLOBAL, null, null))
+                                                                    WorkflowScopes.DEFAULT, null, null))
                                                             .map(records -> {
                                                                 assertThat(records.stream()
                                                                                 .filter(record -> record.key()
@@ -415,7 +418,7 @@ public class DefinitionDocumentPolicyIT {
             int statementStart = observer.statements().size();
             return component
                     .definitionService()
-                    .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                    .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                     .map(records -> {
                         assertThat(records.stream()
                                         .filter(record -> record.key().equals(key))
@@ -434,7 +437,7 @@ public class DefinitionDocumentPolicyIT {
         return pool.preparedQuery("""
                         SELECT octet_length(document) AS source_bytes, char_length(document) AS source_characters
                         FROM workflow_definitions
-                        WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = $2
+                        WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = $2
                         """)
                 .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
                 .map(rows -> {
@@ -510,7 +513,7 @@ public class DefinitionDocumentPolicyIT {
         pools.add(pool);
         AppComponent component = ManagedDefinitionDatabase.app(
                 vertx, pool, new JsonObject(), new BootObservation("unused", 1, "unused", false), List::of);
-        DefinitionKey key = new DefinitionKey(null, "order-fulfillment-doc", 2);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, "order-fulfillment-doc", 2);
         SourceMetadata provenance = metadata("strict-text");
         byte[] validRoot = ManagedDefinitionDatabase.jsonFixture();
         byte[] malformedTail = append(validRoot, (byte) 0xff);
@@ -577,9 +580,9 @@ public class DefinitionDocumentPolicyIT {
     private static Future<Void> insertOversizedRow(Pool pool, String definitionId, String status, int size) {
         return pool.preparedQuery("""
                         INSERT INTO workflow_definitions
-                            (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                            (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                              document, document_format, document_digest, source_type, loaded_at)
-                        VALUES (NULL, $1, 1, 'DOCUMENT', repeat('a', 64), $2, repeat('x', $3),
+                        VALUES ('default', $1, 1, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), $2, repeat('x', $3),
                                 'JSON', encode(sha256(convert_to(repeat('x', $3), 'UTF8')), 'hex'),
                                 'policy-test', now())
                         """)
@@ -590,9 +593,9 @@ public class DefinitionDocumentPolicyIT {
     private static Future<Void> insertUtf8OversizedRow(Pool pool, String definitionId, String status, int codePoints) {
         return pool.preparedQuery("""
                         INSERT INTO workflow_definitions
-                            (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                            (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                              document, document_format, document_digest, source_type, loaded_at)
-                        VALUES (NULL, $1, 1, 'DOCUMENT', repeat('a', 64), $2, repeat('é', $3),
+                        VALUES ('default', $1, 1, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), $2, repeat('é', $3),
                                 'JSON', encode(sha256(convert_to(repeat('é', $3), 'UTF8')), 'hex'),
                                 'policy-test', now())
                         """)
@@ -633,7 +636,7 @@ public class DefinitionDocumentPolicyIT {
     private static Future<Void> exerciseLowerLimitRestore(
             Vertx vertx, PostgresContainer postgres, List<Pool> pools, List<VertiqueApplicationHandle<?>> handles) {
         String definitionId = "order-fulfillment-doc";
-        DefinitionKey key = new DefinitionKey(null, definitionId, 2);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 2);
         byte[] source = ManagedDefinitionDatabase.jsonFixture();
         int lowerLimit = 1_000;
         JsonObject loweredConfig = new JsonObject()
@@ -735,10 +738,12 @@ public class DefinitionDocumentPolicyIT {
         WorkflowDefinitionSqlObserver observer = new WorkflowDefinitionSqlObserver();
         Pool pool = observer.observe(rawPool);
         pools.add(pool);
-        DefinitionKey documentKey = new DefinitionKey(null, "non-utf8-document-candidate", 1);
+        DefinitionKey documentKey = new DefinitionKey(WorkflowScopes.DEFAULT, "non-utf8-document-candidate", 1);
         WorkflowDefinitionRecord documentRecord = new WorkflowDefinitionRecord(
                 documentKey,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 "a".repeat(64),
                 DefinitionStatus.CANDIDATE,
                 new DefinitionProvenance("non-utf8-test", null, null, null, null, Instant.now()),
@@ -757,14 +762,14 @@ public class DefinitionDocumentPolicyIT {
 
         return pool.preparedQuery("""
                         INSERT INTO workflow_definitions
-                            (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                            (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                              document, document_format, document_digest, source_type, loaded_at)
-                        VALUES (NULL, $1, 1, 'DOCUMENT', repeat('a', 64), 'CANDIDATE', '{}',
+                        VALUES ('default', $1, 1, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), 'CANDIDATE', '{}',
                                 'JSON',
                                 -- SHA-256 of the two-character text {}, spelled out because this database is SQL_ASCII
                                 '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
                                 'non-utf8-test', now()),
-                               (NULL, 'definition-policy-code', 1, 'CODE', repeat('b', 64), 'ACTIVE',
+                               ('default', 'definition-policy-code', 1, 'CODE', 'example.Contract', 'example.State', repeat('b', 64), 'ACTIVE',
                                 NULL, NULL, NULL, 'fixture-code', now())
                         """)
                 .execute(Tuple.of(documentKey.definitionId()))
@@ -780,13 +785,14 @@ public class DefinitionDocumentPolicyIT {
                                 return (Void) null;
                             })
                             .compose(ignored -> app.definitionRegistryStore()
-                                    .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                                    .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                                     .map(records -> {
                                         assertThat(records)
                                                 .extracting(WorkflowDefinitionRecord::key)
                                                 .contains(
                                                         documentKey,
-                                                        new DefinitionKey(null, "definition-policy-code", 1));
+                                                        new DefinitionKey(
+                                                                WorkflowScopes.DEFAULT, "definition-policy-code", 1));
                                         return (Void) null;
                                     }))
                             .compose(ignored -> {

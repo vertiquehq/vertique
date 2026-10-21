@@ -10,6 +10,7 @@ import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Instant;
@@ -27,8 +28,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * that is separate from the {@link dev.vertique.workflow.registry.WorkflowRegistry}'s version
  * ordering. The store's status is informational — it never overrides registry semantics.
  *
- * <p>Internal storage: a {@link ConcurrentHashMap} keyed on {@link DefinitionKey} (tenant, id
- * and version). Public legacy methods address only global entries; internal paths retain tenant scope. Each entry is a {@link StoredEntry} holding the compiled definition and
+ * <p>Internal storage: a {@link ConcurrentHashMap} keyed on {@link DefinitionKey} (scope, id
+ * and version). Public legacy methods address only default-scope entries; internal paths retain the scope. Each entry is a {@link StoredEntry} holding the compiled definition and
  * an {@link AtomicReference} to the current status.
  *
  * <p>Thread-safety contract:
@@ -117,7 +118,7 @@ public final class WorkflowDefinitionStore {
     public void storeCandidate(CompiledDefinition compiled) {
         storeCandidate(
                 new DefinitionKey(
-                        null,
+                        WorkflowScopes.DEFAULT,
                         compiled.definition().definitionId(),
                         compiled.definition().definitionVersion()),
                 compiled);
@@ -148,13 +149,13 @@ public final class WorkflowDefinitionStore {
     }
 
     /**
-     * Maps legacy id/version arguments to a global key; input the key rejects maps to empty so each
+     * Maps legacy id/version arguments to a default-scope key; input the key rejects maps to empty so each
      * legacy method can keep its original outcome for ids and versions that can never be stored.
      */
     private static Optional<DefinitionKey> legacyKey(String definitionId, long definitionVersion) {
         Objects.requireNonNull(definitionId, "definitionId");
         try {
-            return Optional.of(new DefinitionKey(null, definitionId, definitionVersion));
+            return Optional.of(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, definitionVersion));
         } catch (IllegalArgumentException e) {
             return Optional.empty();
         }
@@ -330,7 +331,7 @@ public final class WorkflowDefinitionStore {
         // Step 1 — Pre-CAS scan: if a higher-version ACTIVE entry already exists, supersede
         // immediately without attempting the CAS.
         boolean higherActiveExists = byKey.entrySet().stream()
-                .anyMatch(e -> Objects.equals(e.getKey().tenantKey(), key.tenantKey())
+                .anyMatch(e -> Objects.equals(e.getKey().scopeKey(), key.scopeKey())
                         && e.getKey().definitionId().equals(definitionId)
                         && e.getKey().definitionVersion() > definitionVersion
                         && e.getValue().status().get() == ActivationStatus.ACTIVE);
@@ -361,7 +362,7 @@ public final class WorkflowDefinitionStore {
         // flipped). Re-scan now that we hold ACTIVE and reconcile.
         for (ConcurrentHashMap.Entry<DefinitionKey, StoredEntry> e : byKey.entrySet()) {
             DefinitionKey k = e.getKey();
-            if (!Objects.equals(k.tenantKey(), key.tenantKey())
+            if (!Objects.equals(k.scopeKey(), key.scopeKey())
                     || !k.definitionId().equals(definitionId)
                     || k.definitionVersion() == definitionVersion) {
                 continue;
@@ -395,7 +396,7 @@ public final class WorkflowDefinitionStore {
      */
     public Collection<CompiledDefinitionRef> list() {
         return List.copyOf(byKey.entrySet().stream()
-                .filter(e -> e.getKey().tenantKey() == null)
+                .filter(e -> WorkflowScopes.DEFAULT.equals(e.getKey().scopeKey()))
                 .map(java.util.Map.Entry::getValue)
                 .map(entry -> new CompiledDefinitionRef(
                         entry.compiled().definition().definitionId(),
@@ -431,11 +432,11 @@ public final class WorkflowDefinitionStore {
         }
     }
 
-    /** Marks lower versions of the same tenant and id that the cache holds as ACTIVE as SUPERSEDED. */
+    /** Marks lower versions of the same scope and id that the cache holds as ACTIVE as SUPERSEDED. */
     private void supersedeLowerActive(DefinitionKey active) {
         for (ConcurrentHashMap.Entry<DefinitionKey, StoredEntry> e : byKey.entrySet()) {
             DefinitionKey k = e.getKey();
-            if (Objects.equals(k.tenantKey(), active.tenantKey())
+            if (Objects.equals(k.scopeKey(), active.scopeKey())
                     && k.definitionId().equals(active.definitionId())
                     && k.definitionVersion() < active.definitionVersion()
                     && e.getValue().status().compareAndSet(ActivationStatus.ACTIVE, ActivationStatus.SUPERSEDED)) {
@@ -465,6 +466,8 @@ public final class WorkflowDefinitionStore {
                     : new WorkflowDefinitionRecord(
                             previous.key(),
                             previous.kind(),
+                            previous.contractName(),
+                            previous.stateTypeName(),
                             previous.planHash(),
                             status,
                             previous.provenance(),
@@ -476,12 +479,16 @@ public final class WorkflowDefinitionStore {
 
     List<WorkflowDefinitionRecord> records(DefinitionFilter filter) {
         return metadataByKey.values().stream()
-                .filter(r -> filter.scope() == DefinitionFilter.TenantScope.ALL
-                        || Objects.equals(r.key().tenantKey(), filter.tenantKey()))
+                .filter(r -> filter.scopeKey() == null
+                        || filter.scopeKey().equals(r.key().scopeKey()))
+                .filter(r -> filter.definitionId() == null
+                        || filter.definitionId().equals(r.key().definitionId()))
                 .map(r -> get(r.key())
                         .map(e -> new WorkflowDefinitionRecord(
                                 r.key(),
                                 r.kind(),
+                                r.contractName(),
+                                r.stateTypeName(),
                                 r.planHash(),
                                 DefinitionStatus.valueOf(e.status().get().name()),
                                 r.provenance(),

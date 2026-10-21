@@ -25,36 +25,36 @@ class DefinitionStoreValuesTest {
     void validatesDefinitionKey() {
         String maxCodePoints = "😀".repeat(255);
 
-        assertThat(new DefinitionKey(maxCodePoints, "valid-id", 1).tenantKey()).isEqualTo(maxCodePoints);
-        assertThat(new DefinitionKey(null, maxCodePoints, 1).definitionId()).isEqualTo(maxCodePoints);
-        assertThatThrownBy(() -> new DefinitionKey(null, " ", 1)).isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> new DefinitionKey(null, "x".repeat(256), 1)).isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> new DefinitionKey(null, "valid-id", 0)).isInstanceOf(RuntimeException.class);
+        assertThat(new DefinitionKey(maxCodePoints, "valid-id", 1).scopeKey()).isEqualTo(maxCodePoints);
+        assertThat(new DefinitionKey(WorkflowScopes.DEFAULT, maxCodePoints, 1).definitionId())
+                .isEqualTo(maxCodePoints);
+        assertThatThrownBy(() -> new DefinitionKey(WorkflowScopes.DEFAULT, " ", 1))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> new DefinitionKey(WorkflowScopes.DEFAULT, "x".repeat(256), 1))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> new DefinitionKey(WorkflowScopes.DEFAULT, "valid-id", 0))
+                .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new DefinitionKey(" ", "valid-id", 1)).isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new DefinitionKey("x".repeat(256), "valid-id", 1))
                 .isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> new DefinitionKey(null, maxCodePoints + "x", 1))
+        assertThatThrownBy(() -> new DefinitionKey(WorkflowScopes.DEFAULT, maxCodePoints + "x", 1))
                 .isInstanceOf(RuntimeException.class);
     }
 
     @Test
-    @DisplayName("definition filters enforce explicit tenant scope and hold immutable status snapshots")
+    @DisplayName("definition filters treat a missing component as every value and hold immutable status snapshots")
     void validatesAndSnapshotsDefinitionFilter() {
         Set<DefinitionStatus> supplied = new HashSet<>(Set.of(DefinitionStatus.CANDIDATE));
-        DefinitionFilter filter = new DefinitionFilter(DefinitionFilter.TenantScope.TENANT, "tenant-a", supplied);
+        DefinitionFilter filter = new DefinitionFilter("tenant-a", "orders", supplied);
         supplied.add(DefinitionStatus.ACTIVE);
 
         assertThat(filter.statuses()).containsExactly(DefinitionStatus.CANDIDATE);
         assertThatThrownBy(() -> filter.statuses().add(DefinitionStatus.RETIRED))
                 .isInstanceOf(UnsupportedOperationException.class);
-        assertThat(new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, Set.of()).statuses())
-                .isEmpty();
-        assertThatThrownBy(() -> new DefinitionFilter(DefinitionFilter.TenantScope.ALL, "tenant-a", null))
-                .isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, "tenant-a", null))
-                .isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> new DefinitionFilter(DefinitionFilter.TenantScope.TENANT, null, null))
-                .isInstanceOf(RuntimeException.class);
+        assertThat(new DefinitionFilter(null, null, Set.of()).statuses()).isEmpty();
+        assertThat(new DefinitionFilter(null, null, null).scopeKey()).isNull();
+        assertThatThrownBy(() -> new DefinitionFilter(" ", null, null)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> new DefinitionFilter(null, " ", null)).isInstanceOf(RuntimeException.class);
     }
 
     @Test
@@ -62,9 +62,18 @@ class DefinitionStoreValuesTest {
     void validatesProvenanceAndDefinitionRecord() {
         DefinitionProvenance provenance =
                 new DefinitionProvenance("s".repeat(64), null, "r".repeat(255), "a".repeat(255), "u".repeat(255), NOW);
-        DefinitionKey globalKey = new DefinitionKey(null, "orders", 1);
+        DefinitionKey globalKey = new DefinitionKey(WorkflowScopes.DEFAULT, "orders", 1);
         WorkflowDefinitionRecord code = new WorkflowDefinitionRecord(
-                globalKey, DefinitionKind.CODE, HASH, DefinitionStatus.ACTIVE, provenance, null, NOW, NOW);
+                globalKey,
+                DefinitionKind.CODE,
+                "example.Contract",
+                "example.State",
+                HASH,
+                DefinitionStatus.ACTIVE,
+                provenance,
+                null,
+                NOW,
+                NOW);
 
         assertThat(code.key()).isEqualTo(globalKey);
         assertThatThrownBy(() -> new DefinitionProvenance(" ", null, null, null, null, NOW))
@@ -80,23 +89,70 @@ class DefinitionStoreValuesTest {
         assertThatThrownBy(() -> new DefinitionProvenance("upload", null, null, null, "x".repeat(256), NOW))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
-                        null, DefinitionKind.CODE, HASH, DefinitionStatus.ACTIVE, provenance, null, NOW, NOW))
+                        null,
+                        DefinitionKind.CODE,
+                        "example.Contract",
+                        "example.State",
+                        HASH,
+                        DefinitionStatus.ACTIVE,
+                        provenance,
+                        null,
+                        NOW,
+                        NOW))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
-                        globalKey, null, HASH, DefinitionStatus.ACTIVE, provenance, null, NOW, NOW))
-                .isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> new WorkflowDefinitionRecord(
-                        globalKey, DefinitionKind.CODE, HASH, null, provenance, null, NOW, NOW))
-                .isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> new WorkflowDefinitionRecord(
-                        globalKey, DefinitionKind.CODE, HASH, DefinitionStatus.ACTIVE, null, null, NOW, NOW))
-                .isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> new WorkflowDefinitionRecord(
-                        globalKey, DefinitionKind.CODE, HASH, DefinitionStatus.ACTIVE, provenance, null, null, NOW))
+                        globalKey,
+                        null,
+                        "example.Contract",
+                        "example.State",
+                        HASH,
+                        DefinitionStatus.ACTIVE,
+                        provenance,
+                        null,
+                        NOW,
+                        NOW))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         globalKey,
                         DefinitionKind.CODE,
+                        "example.Contract",
+                        "example.State",
+                        HASH,
+                        null,
+                        provenance,
+                        null,
+                        NOW,
+                        NOW))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> new WorkflowDefinitionRecord(
+                        globalKey,
+                        DefinitionKind.CODE,
+                        "example.Contract",
+                        "example.State",
+                        HASH,
+                        DefinitionStatus.ACTIVE,
+                        null,
+                        null,
+                        NOW,
+                        NOW))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> new WorkflowDefinitionRecord(
+                        globalKey,
+                        DefinitionKind.CODE,
+                        "example.Contract",
+                        "example.State",
+                        HASH,
+                        DefinitionStatus.ACTIVE,
+                        provenance,
+                        null,
+                        null,
+                        NOW))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> new WorkflowDefinitionRecord(
+                        globalKey,
+                        DefinitionKind.CODE,
+                        "example.Contract",
+                        "example.State",
                         "A".repeat(64),
                         DefinitionStatus.ACTIVE,
                         provenance,
@@ -107,6 +163,8 @@ class DefinitionStoreValuesTest {
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         globalKey,
                         DefinitionKind.CODE,
+                        "example.Contract",
+                        "example.State",
                         "a".repeat(63),
                         DefinitionStatus.ACTIVE,
                         provenance,
@@ -117,6 +175,8 @@ class DefinitionStoreValuesTest {
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         globalKey,
                         DefinitionKind.CODE,
+                        "example.Contract",
+                        "example.State",
                         "g".repeat(64),
                         DefinitionStatus.ACTIVE,
                         provenance,
@@ -127,6 +187,8 @@ class DefinitionStoreValuesTest {
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         new DefinitionKey("tenant-a", "orders", 1),
                         DefinitionKind.CODE,
+                        "example.Contract",
+                        "example.State",
                         HASH,
                         DefinitionStatus.ACTIVE,
                         provenance,
@@ -135,14 +197,23 @@ class DefinitionStoreValuesTest {
                         NOW))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
-                        globalKey, DefinitionKind.CODE, HASH, DefinitionStatus.ACTIVE, provenance, "YAML", NOW, NOW))
+                        globalKey,
+                        DefinitionKind.CODE,
+                        "example.Contract",
+                        "example.State",
+                        HASH,
+                        DefinitionStatus.ACTIVE,
+                        provenance,
+                        "YAML",
+                        NOW,
+                        NOW))
                 .isInstanceOf(RuntimeException.class);
     }
 
     @Test
     @DisplayName("document carriers preserve Unicode source without a constructor size cap")
     void validatesDocumentTextAndCanonicalFormat() {
-        DefinitionKey key = new DefinitionKey(null, "orders", 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, "orders", 1);
         String text = "# keep source characters\r\n" + "x".repeat(262_145);
         WorkflowDefinitionDocument document = new WorkflowDefinitionDocument(key, text, "YAML");
 
@@ -163,23 +234,48 @@ class DefinitionStoreValuesTest {
     @Test
     @DisplayName("definition records require their carrier metadata and documents to use matching keys")
     void requiresDefinitionRecordFieldsAndMatchingDocumentKeys() {
-        DefinitionKey key = new DefinitionKey(null, "orders", 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, "orders", 1);
         DefinitionProvenance provenance = new DefinitionProvenance("static", null, null, null, null, NOW);
         WorkflowDefinitionRecord documentRecord = new WorkflowDefinitionRecord(
-                key, DefinitionKind.DOCUMENT, HASH, DefinitionStatus.CANDIDATE, provenance, "JSON", NOW, NOW);
+                key,
+                DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
+                HASH,
+                DefinitionStatus.CANDIDATE,
+                provenance,
+                "JSON",
+                NOW,
+                NOW);
         WorkflowDefinitionDocument body = new WorkflowDefinitionDocument(key, "{}", "JSON");
 
         assertThat(documentRecord.key()).isEqualTo(body.key());
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
-                        key, DefinitionKind.DOCUMENT, HASH, DefinitionStatus.CANDIDATE, provenance, null, NOW, NOW))
+                        key,
+                        DefinitionKind.DOCUMENT,
+                        "example.Contract",
+                        "example.State",
+                        HASH,
+                        DefinitionStatus.CANDIDATE,
+                        provenance,
+                        null,
+                        NOW,
+                        NOW))
                 .isInstanceOf(RuntimeException.class);
         assertThatCode(() -> new WorkflowDefinitionDocument(
-                        new DefinitionKey(null, "other", 1), body.document(), body.documentFormat()))
+                        new DefinitionKey(WorkflowScopes.DEFAULT, "other", 1), body.document(), body.documentFormat()))
                 .doesNotThrowAnyException();
-        assertThatThrownBy(() -> new DocumentOrigin(new DefinitionKey(null, "other", 1), body, provenance, HASH))
+        assertThatThrownBy(() -> new DocumentOrigin(
+                        new DefinitionKey(WorkflowScopes.DEFAULT, "other", 1),
+                        body,
+                        provenance,
+                        HASH,
+                        "example.Contract",
+                        "example.State"))
                 .isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> new DocumentOrigin(key, body, null, HASH)).isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> new DocumentOrigin(key, body, provenance, null))
+        assertThatThrownBy(() -> new DocumentOrigin(key, body, null, HASH, "example.Contract", "example.State"))
+                .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> new DocumentOrigin(key, body, provenance, null, "example.Contract", "example.State"))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new ActivationClaim(null, java.util.UUID.randomUUID()))
                 .isInstanceOf(RuntimeException.class);

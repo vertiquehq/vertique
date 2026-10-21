@@ -58,6 +58,7 @@ import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
@@ -635,7 +636,7 @@ public class DocumentDefinitionFanOutIT {
     @DisplayName("planHash is accessible via WorkflowDefinitionService.list() after fan-out bootstrap")
     void fanOutDefinitionPlanHashIsAccessibleViaService(VertxTestContext ctx) {
         definitionService
-                .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "definition metadata query must succeed: " + ar.cause());
                     List<WorkflowDefinitionRecord> refs = ar.result();

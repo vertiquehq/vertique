@@ -21,6 +21,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
@@ -79,7 +80,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
 
     @Override
     public Future<CompiledDefinitionRef> load(
-            byte[] content, DocumentFormat format, SourceMetadata metadata, @Nullable String tenantKey) {
+            byte[] content, DocumentFormat format, SourceMetadata metadata, @Nullable String scopeKey) {
         return attempt(() -> {
             Objects.requireNonNull(content, "content");
             Objects.requireNonNull(format, "format");
@@ -92,7 +93,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
             return work(() -> {
                         CompiledDefinition compiled = pipeline.load(resource);
                         DefinitionKey key = new DefinitionKey(
-                                tenantKey,
+                                scopeKey == null ? WorkflowScopes.DEFAULT : scopeKey,
                                 compiled.definition().definitionId(),
                                 compiled.definition().definitionVersion());
                         if (durable.isPresent()) requireTenantNamespace(key);
@@ -120,21 +121,21 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     }
 
     /**
-     * With a durable store, a tenant-scoped definition id is the tenant key, a colon and a name, so one tenant
-     * cannot hold an id that another owner needs. A tenant key therefore must not contain the colon itself. The
+     * With a durable store, a definition id outside the default scope is the scope key, a colon and a name, so one
+     * scope cannot hold an id that another owner needs. A scope key therefore must not contain the colon itself. The
      * values were already bounded and stripped of control characters by {@link DefinitionKey}, so the rejection
      * message cannot carry unbounded or forged text.
      */
     private static void requireTenantNamespace(DefinitionKey key) {
-        String tenantKey = key.tenantKey();
-        if (tenantKey == null) return;
+        String scopeKey = key.scopeKey();
+        if (WorkflowScopes.DEFAULT.equals(scopeKey)) return;
         String definitionId = key.definitionId();
-        String prefix = tenantKey + ":";
-        if (tenantKey.indexOf(':') >= 0
+        String prefix = scopeKey + ":";
+        if (scopeKey.indexOf(':') >= 0
                 || !definitionId.startsWith(prefix)
                 || definitionId.substring(prefix.length()).isBlank())
-            throw new WorkflowDefinitionException("tenant '" + tenantKey + "' may only load definitions whose id is '"
-                    + tenantKey.replace(':', '_') + ":<name>' (a tenant key must not contain ':'); rejected id '"
+            throw new WorkflowDefinitionException("tenant '" + scopeKey + "' may only load definitions whose id is '"
+                    + scopeKey.replace(':', '_') + ":<name>' (a tenant key must not contain ':'); rejected id '"
                     + definitionId + "'");
     }
 
@@ -271,6 +272,8 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
         return new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
+                compiled.contractName(),
+                compiled.stateTypeName(),
                 compiled.planHash(),
                 DefinitionStatus.CANDIDATE,
                 provenance(compiled.source()),

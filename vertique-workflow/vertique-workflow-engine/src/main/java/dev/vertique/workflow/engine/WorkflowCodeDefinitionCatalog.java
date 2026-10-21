@@ -47,16 +47,17 @@ final class WorkflowCodeDefinitionCatalog {
                 .map(RuntimeWorkflow::plan)
                 .map(plan -> new VersionKey(plan.definitionId(), plan.definitionVersion()))
                 .filter(key -> !documentOrigins.contains(key))
-                .collect(Collectors.toUnmodifiableMap(
-                        key -> key,
-                        key -> new CodeDefinition(
-                                key.definitionId(),
-                                key.version(),
-                                registry.resolvePinned(key.definitionId(), key.version())
-                                        .plan()
-                                        .planHash(),
-                                registry.registeredDefinition(key.definitionId(), key.version())
-                                        .orElse(null))));
+                .collect(Collectors.toUnmodifiableMap(key -> key, key -> {
+                    RuntimeWorkflow runtime = registry.resolvePinned(key.definitionId(), key.version());
+                    return new CodeDefinition(
+                            key.definitionId(),
+                            key.version(),
+                            runtime.contractName(),
+                            runtime.plan().stateTypeName(),
+                            runtime.plan().planHash(),
+                            registry.registeredDefinition(key.definitionId(), key.version())
+                                    .orElse(null));
+                }));
         entries = snapshot;
         return ordered(snapshot);
     }
@@ -85,12 +86,16 @@ final class WorkflowCodeDefinitionCatalog {
      *
      * @param definitionId the definition id
      * @param version the exact version
+     * @param contractName the logical name of the contract the registered runtime implements
+     * @param stateTypeName the logical name of the state type of the registered runtime's plan
      * @param planHash the plan hash of the registered runtime
      * @param definition the definition as it was registered, or {@code null} when the registry does not retain it
      */
     record CodeDefinition(
             String definitionId,
             long version,
+            String contractName,
+            String stateTypeName,
             String planHash,
             @Nullable WorkflowDefinition<?, ?> definition) {}
 }

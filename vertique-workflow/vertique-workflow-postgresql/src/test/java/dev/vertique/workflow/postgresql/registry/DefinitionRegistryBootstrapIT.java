@@ -28,6 +28,7 @@ import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -149,33 +150,90 @@ public class DefinitionRegistryBootstrapIT {
                 vertx, pool, new JsonObject(), new BootObservation(CODE_RECOMPUTE_ID, 1, "unused", false), List::of);
 
         List<DefinitionSeed> seeds = List.of(
-                definitionSeed(null, CODE_RECOMPUTE_ID, 1, DefinitionKind.CODE, DefinitionStatus.ACTIVE, null),
-                definitionSeed(null, CODE_RECOMPUTE_ID, 2, DefinitionKind.CODE, DefinitionStatus.SUPERSEDED, null),
-                definitionSeed(null, CODE_RECOMPUTE_ID, 3, DefinitionKind.CODE, DefinitionStatus.CANDIDATE, null),
                 definitionSeed(
-                        null,
+                        WorkflowScopes.DEFAULT,
+                        CODE_RECOMPUTE_ID,
+                        1,
+                        DefinitionKind.CODE,
+                        DefinitionStatus.ACTIVE,
+                        null),
+                definitionSeed(
+                        WorkflowScopes.DEFAULT,
+                        CODE_RECOMPUTE_ID,
+                        2,
+                        DefinitionKind.CODE,
+                        DefinitionStatus.SUPERSEDED,
+                        null),
+                definitionSeed(
+                        WorkflowScopes.DEFAULT,
+                        CODE_RECOMPUTE_ID,
+                        3,
+                        DefinitionKind.CODE,
+                        DefinitionStatus.CANDIDATE,
+                        null),
+                definitionSeed(
+                        WorkflowScopes.DEFAULT,
                         CODE_RECOMPUTE_ID,
                         4,
                         DefinitionKind.CODE,
                         DefinitionStatus.ACTIVATING,
                         UUID.fromString("10000000-0000-0000-0000-000000000004")),
-                definitionSeed(null, CODE_RECOMPUTE_ID, 5, DefinitionKind.CODE, DefinitionStatus.DEPRECATED, null),
-                definitionSeed(null, CODE_RECOMPUTE_ID, 6, DefinitionKind.CODE, DefinitionStatus.RETIRED, null),
-                definitionSeed(null, DOCUMENT_RECOMPUTE_ID, 1, DefinitionKind.DOCUMENT, DefinitionStatus.ACTIVE, null),
                 definitionSeed(
-                        null, DOCUMENT_RECOMPUTE_ID, 2, DefinitionKind.DOCUMENT, DefinitionStatus.SUPERSEDED, null),
+                        WorkflowScopes.DEFAULT,
+                        CODE_RECOMPUTE_ID,
+                        5,
+                        DefinitionKind.CODE,
+                        DefinitionStatus.DEPRECATED,
+                        null),
                 definitionSeed(
-                        null, DOCUMENT_RECOMPUTE_ID, 3, DefinitionKind.DOCUMENT, DefinitionStatus.CANDIDATE, null),
+                        WorkflowScopes.DEFAULT,
+                        CODE_RECOMPUTE_ID,
+                        6,
+                        DefinitionKind.CODE,
+                        DefinitionStatus.RETIRED,
+                        null),
                 definitionSeed(
-                        null,
+                        WorkflowScopes.DEFAULT,
+                        DOCUMENT_RECOMPUTE_ID,
+                        1,
+                        DefinitionKind.DOCUMENT,
+                        DefinitionStatus.ACTIVE,
+                        null),
+                definitionSeed(
+                        WorkflowScopes.DEFAULT,
+                        DOCUMENT_RECOMPUTE_ID,
+                        2,
+                        DefinitionKind.DOCUMENT,
+                        DefinitionStatus.SUPERSEDED,
+                        null),
+                definitionSeed(
+                        WorkflowScopes.DEFAULT,
+                        DOCUMENT_RECOMPUTE_ID,
+                        3,
+                        DefinitionKind.DOCUMENT,
+                        DefinitionStatus.CANDIDATE,
+                        null),
+                definitionSeed(
+                        WorkflowScopes.DEFAULT,
                         DOCUMENT_RECOMPUTE_ID,
                         4,
                         DefinitionKind.DOCUMENT,
                         DefinitionStatus.ACTIVATING,
                         UUID.fromString("20000000-0000-0000-0000-000000000004")),
                 definitionSeed(
-                        null, DOCUMENT_RECOMPUTE_ID, 5, DefinitionKind.DOCUMENT, DefinitionStatus.DEPRECATED, null),
-                definitionSeed(null, DOCUMENT_RECOMPUTE_ID, 6, DefinitionKind.DOCUMENT, DefinitionStatus.RETIRED, null),
+                        WorkflowScopes.DEFAULT,
+                        DOCUMENT_RECOMPUTE_ID,
+                        5,
+                        DefinitionKind.DOCUMENT,
+                        DefinitionStatus.DEPRECATED,
+                        null),
+                definitionSeed(
+                        WorkflowScopes.DEFAULT,
+                        DOCUMENT_RECOMPUTE_ID,
+                        6,
+                        DefinitionKind.DOCUMENT,
+                        DefinitionStatus.RETIRED,
+                        null),
                 definitionSeed(
                         "tenant-target",
                         TENANT_RECOMPUTE_ID,
@@ -183,12 +241,41 @@ public class DefinitionRegistryBootstrapIT {
                         DefinitionKind.DOCUMENT,
                         DefinitionStatus.CANDIDATE,
                         null),
-                definitionSeed(null, TENANT_RECOMPUTE_ID, 1, DefinitionKind.DOCUMENT, DefinitionStatus.ACTIVE, null),
                 definitionSeed(
-                        null, TENANT_RECOMPUTE_ID, 2, DefinitionKind.DOCUMENT, DefinitionStatus.SUPERSEDED, null),
-                definitionSeed(null, OTHER_DEFINITION_ID, 1, DefinitionKind.CODE, DefinitionStatus.ACTIVE, null),
-                definitionSeed(null, ROLLBACK_RECOMPUTE_ID, 1, DefinitionKind.CODE, DefinitionStatus.ACTIVE, null),
-                definitionSeed(null, ROLLBACK_RECOMPUTE_ID, 2, DefinitionKind.CODE, DefinitionStatus.SUPERSEDED, null));
+                        WorkflowScopes.DEFAULT,
+                        TENANT_RECOMPUTE_ID,
+                        1,
+                        DefinitionKind.DOCUMENT,
+                        DefinitionStatus.ACTIVE,
+                        null),
+                definitionSeed(
+                        WorkflowScopes.DEFAULT,
+                        TENANT_RECOMPUTE_ID,
+                        2,
+                        DefinitionKind.DOCUMENT,
+                        DefinitionStatus.SUPERSEDED,
+                        null),
+                definitionSeed(
+                        WorkflowScopes.DEFAULT,
+                        OTHER_DEFINITION_ID,
+                        1,
+                        DefinitionKind.CODE,
+                        DefinitionStatus.ACTIVE,
+                        null),
+                definitionSeed(
+                        WorkflowScopes.DEFAULT,
+                        ROLLBACK_RECOMPUTE_ID,
+                        1,
+                        DefinitionKind.CODE,
+                        DefinitionStatus.ACTIVE,
+                        null),
+                definitionSeed(
+                        WorkflowScopes.DEFAULT,
+                        ROLLBACK_RECOMPUTE_ID,
+                        2,
+                        DefinitionKind.CODE,
+                        DefinitionStatus.SUPERSEDED,
+                        null));
 
         Future<Void> proof = deleteDefinitions(
                         pool,
@@ -200,9 +287,9 @@ public class DefinitionRegistryBootstrapIT {
                 .compose(ignored -> insertDefinitionSeeds(pool, seeds))
                 .compose(ignored -> readSnapshots(pool, OTHER_DEFINITION_ID))
                 .compose(otherIdBefore -> assertRecomputedOwner(
-                                app.definitionRegistryStore(), pool, CODE_RECOMPUTE_ID, null)
-                        .compose(ignored ->
-                                assertRecomputedOwner(app.definitionRegistryStore(), pool, DOCUMENT_RECOMPUTE_ID, null))
+                                app.definitionRegistryStore(), pool, CODE_RECOMPUTE_ID, WorkflowScopes.DEFAULT)
+                        .compose(ignored -> assertRecomputedOwner(
+                                app.definitionRegistryStore(), pool, DOCUMENT_RECOMPUTE_ID, WorkflowScopes.DEFAULT))
                         .compose(ignored -> readSnapshots(pool, OTHER_DEFINITION_ID))
                         .map(otherIdAfter -> {
                             assertThat(otherIdAfter)
@@ -243,7 +330,7 @@ public class DefinitionRegistryBootstrapIT {
             runMutationLockWait(lockCase, vertx, context, resources);
             return;
         }
-        DefinitionKey key = new DefinitionKey(null, definitionId, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
         WorkflowDefinitionSqlObserver sqlObserver = new WorkflowDefinitionSqlObserver();
 
         Pool mutationPool = ManagedDefinitionDatabase.openPool(vertx, db, 1);
@@ -365,7 +452,7 @@ public class DefinitionRegistryBootstrapIT {
     private static void runMutationLockWait(
             LockWaitCase lockCase, Vertx vertx, VertxTestContext context, LockWaitResources resources) {
         String definitionId = lockCase.definitionId();
-        DefinitionKey key = new DefinitionKey(null, definitionId, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
         WorkflowDefinitionSqlObserver sqlObserver = new WorkflowDefinitionSqlObserver();
         Pool mutationPool = ManagedDefinitionDatabase.openPool(vertx, db, 1);
         Pool observedMutationPool = sqlObserver.observe(mutationPool);
@@ -462,7 +549,7 @@ public class DefinitionRegistryBootstrapIT {
         BootObservation observation = new BootObservation(definitionId, List.of());
         AppComponent app = ManagedDefinitionDatabase.app(
                 vertx, observedMutationPool, new JsonObject(), observation, staticDocuments());
-        DefinitionKey lockKey = new DefinitionKey(null, definitionId, 1);
+        DefinitionKey lockKey = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
         Future<Void> work = deleteDefinitions(mutationPool, definitionId)
                 .compose(ignored -> backendPid(observedMutationPool))
                 .compose(writerPid -> acquireLockHolder(lockCase, definitionId, holderPool, lockKey, resources)
@@ -523,10 +610,15 @@ public class DefinitionRegistryBootstrapIT {
                 switch (lockCase.mutation()) {
                     case INSERT_CANDIDATE, UPSERT_DOCUMENT ->
                         List.of(definitionSeed(
-                                null, definitionId, 1, DefinitionKind.DOCUMENT, DefinitionStatus.RETIRED, null));
+                                WorkflowScopes.DEFAULT,
+                                definitionId,
+                                1,
+                                DefinitionKind.DOCUMENT,
+                                DefinitionStatus.RETIRED,
+                                null));
                     case COMPLETE, RELEASE ->
                         List.of(definitionSeed(
-                                null,
+                                WorkflowScopes.DEFAULT,
                                 definitionId,
                                 1,
                                 DefinitionKind.DOCUMENT,
@@ -535,9 +627,14 @@ public class DefinitionRegistryBootstrapIT {
                     case RECOMPUTE_ACTIVE ->
                         List.of(
                                 definitionSeed(
-                                        null, definitionId, 1, DefinitionKind.DOCUMENT, DefinitionStatus.ACTIVE, null),
+                                        WorkflowScopes.DEFAULT,
+                                        definitionId,
+                                        1,
+                                        DefinitionKind.DOCUMENT,
+                                        DefinitionStatus.ACTIVE,
+                                        null),
                                 definitionSeed(
-                                        null,
+                                        WorkflowScopes.DEFAULT,
                                         definitionId,
                                         2,
                                         DefinitionKind.DOCUMENT,
@@ -555,7 +652,7 @@ public class DefinitionRegistryBootstrapIT {
                         || lockCase.mutation() == MutationKind.UPSERT_DOCUMENT
                 ? 2
                 : 1;
-        DefinitionKey key = new DefinitionKey(null, definitionId, mutationVersion);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, mutationVersion);
         return switch (lockCase.mutation()) {
             case INSERT_CANDIDATE ->
                 store.insertCandidate(mutationRecord(key, DefinitionStatus.CANDIDATE), mutationDocument(key));
@@ -566,7 +663,7 @@ public class DefinitionRegistryBootstrapIT {
                 store.complete(new ActivationClaim(key, UUID.fromString("30000000-0000-0000-0000-000000000001")));
             case RELEASE ->
                 store.release(new ActivationClaim(key, UUID.fromString("30000000-0000-0000-0000-000000000001")));
-            case RECOMPUTE_ACTIVE -> recomputeActive(store, null, definitionId);
+            case RECOMPUTE_ACTIVE -> recomputeActive(store, WorkflowScopes.DEFAULT, definitionId);
             case STARTUP -> throw new IllegalArgumentException("startup is exercised through the managed application");
         };
     }
@@ -591,7 +688,7 @@ public class DefinitionRegistryBootstrapIT {
             return connection
                     .preparedQuery("""
                                     SELECT definition_id FROM workflow_definitions
-                                    WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = $2
+                                    WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = $2
                                     FOR UPDATE
                                     """)
                     .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
@@ -694,15 +791,15 @@ public class DefinitionRegistryBootstrapIT {
     }
 
     private static Future<Void> assertRecomputedOwner(
-            WorkflowDefinitionRegistryStore store, Pool pool, String definitionId, String tenantKey) {
-        return readSnapshots(pool, definitionId).compose(before -> recomputeActive(store, tenantKey, definitionId)
+            WorkflowDefinitionRegistryStore store, Pool pool, String definitionId, String scopeKey) {
+        return readSnapshots(pool, definitionId).compose(before -> recomputeActive(store, scopeKey, definitionId)
                 .compose(ignored -> readSnapshots(pool, definitionId))
                 .compose(after -> {
                     List<DefinitionSnapshot> ownerBefore = before.stream()
-                            .filter(row -> java.util.Objects.equals(row.tenantKey(), tenantKey))
+                            .filter(row -> java.util.Objects.equals(row.scopeKey(), scopeKey))
                             .toList();
                     List<DefinitionSnapshot> ownerAfter = after.stream()
-                            .filter(row -> java.util.Objects.equals(row.tenantKey(), tenantKey))
+                            .filter(row -> java.util.Objects.equals(row.scopeKey(), scopeKey))
                             .toList();
                     assertThat(ownerBefore).hasSize(6);
                     assertThat(ownerBefore)
@@ -724,12 +821,12 @@ public class DefinitionRegistryBootstrapIT {
                                             .contains(row.status()))
                                     .toList());
                     assertThat(after.stream()
-                                    .filter(row -> !java.util.Objects.equals(row.tenantKey(), tenantKey))
+                                    .filter(row -> !java.util.Objects.equals(row.scopeKey(), scopeKey))
                                     .toList())
                             .containsExactlyElementsOf(before.stream()
-                                    .filter(row -> !java.util.Objects.equals(row.tenantKey(), tenantKey))
+                                    .filter(row -> !java.util.Objects.equals(row.scopeKey(), scopeKey))
                                     .toList());
-                    return recomputeActive(store, tenantKey, definitionId)
+                    return recomputeActive(store, scopeKey, definitionId)
                             .compose(ignoredAgain -> readSnapshots(pool, definitionId))
                             .map(repeated -> {
                                 assertThat(repeated)
@@ -746,7 +843,7 @@ public class DefinitionRegistryBootstrapIT {
                         .compose(ignored -> readSnapshots(pool, TENANT_RECOMPUTE_ID))
                         .map(after -> {
                             assertThat(before)
-                                    .filteredOn(row -> "tenant-target".equals(row.tenantKey()))
+                                    .filteredOn(row -> "tenant-target".equals(row.scopeKey()))
                                     .extracting(DefinitionSnapshot::status)
                                     .containsExactly("CANDIDATE");
                             assertThat(after)
@@ -760,7 +857,7 @@ public class DefinitionRegistryBootstrapIT {
     private static Future<Void> assertPromotionFailureRollsBack(WorkflowDefinitionRegistryStore store, Pool pool) {
         Future<Void> proof = installRecomputePromotionFailure(pool)
                 .compose(ignored -> readSnapshots(pool, ROLLBACK_RECOMPUTE_ID))
-                .compose(before -> recomputeActive(store, null, ROLLBACK_RECOMPUTE_ID)
+                .compose(before -> recomputeActive(store, WorkflowScopes.DEFAULT, ROLLBACK_RECOMPUTE_ID)
                         .transform(operation -> {
                             assertThat(operation.failed()).isTrue();
                             assertThat(operation.cause()).isInstanceOf(WorkflowPersistenceException.class);
@@ -788,8 +885,8 @@ public class DefinitionRegistryBootstrapIT {
     }
 
     private static Future<Void> recomputeActive(
-            WorkflowDefinitionRegistryStore store, String tenantKey, String definitionId) {
-        return store.recomputeActive(tenantKey, definitionId);
+            WorkflowDefinitionRegistryStore store, String scopeKey, String definitionId) {
+        return store.recomputeActive(scopeKey, definitionId);
     }
 
     private static Future<Void> installRecomputePromotionFailure(Pool pool) {
@@ -801,7 +898,7 @@ public class DefinitionRegistryBootstrapIT {
                                        AND OLD.status = 'SUPERSEDED' AND NEW.status = 'ACTIVE' THEN
                                         IF (
                                             SELECT status FROM workflow_definitions
-                                            WHERE tenant_key IS NOT DISTINCT FROM NEW.tenant_key
+                                            WHERE scope_key IS NOT DISTINCT FROM NEW.scope_key
                                               AND definition_id = NEW.definition_id AND definition_version = 1
                                         ) = 'SUPERSEDED' THEN
                                             RAISE EXCEPTION 'controlled recompute promotion failure' USING ERRCODE = '23514';
@@ -851,17 +948,17 @@ public class DefinitionRegistryBootstrapIT {
         for (DefinitionSeed seed : seeds) {
             inserted = inserted.compose(ignored -> pool.preparedQuery("""
                             INSERT INTO workflow_definitions (
-                                tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                                scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                                 document, document_format, document_digest, source_type, source_uri,
                                 source_revision, source_author, source_upload_id, loaded_at, created_at,
                                 status_changed_at, activation_token)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                            VALUES ($1, $2, $3, $4, 'example.Contract', 'example.State', $5, $6, $7, $8,
                                     CASE WHEN $4 = 'DOCUMENT'
                                          THEN encode(sha256(convert_to($7::text, 'UTF8')), 'hex') END,
                                     $9, $10, $11, $12, $13, $14, $15, $16, $17)
                             """)
                     .execute(Tuple.tuple()
-                            .addString(seed.tenantKey())
+                            .addString(seed.scopeKey())
                             .addString(seed.definitionId())
                             .addLong(seed.definitionVersion())
                             .addString(seed.kind().name())
@@ -884,7 +981,7 @@ public class DefinitionRegistryBootstrapIT {
     }
 
     private static DefinitionSeed definitionSeed(
-            String tenantKey,
+            String scopeKey,
             String definitionId,
             long version,
             DefinitionKind kind,
@@ -892,7 +989,7 @@ public class DefinitionRegistryBootstrapIT {
             UUID activationToken) {
         Instant base = Instant.parse("2026-10-18T10:00:00Z").plusSeconds(version);
         return new DefinitionSeed(
-                tenantKey,
+                scopeKey,
                 definitionId,
                 version,
                 kind,
@@ -908,17 +1005,17 @@ public class DefinitionRegistryBootstrapIT {
 
     private static Future<List<DefinitionSnapshot>> readSnapshots(Pool pool, String definitionId) {
         return pool.preparedQuery("""
-                        SELECT tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                        SELECT scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                             document, document_format, source_type, source_uri, source_revision, source_author,
                             source_upload_id, loaded_at, created_at, status_changed_at, activation_token
                         FROM workflow_definitions
                         WHERE definition_id = $1
-                        ORDER BY tenant_key NULLS FIRST, definition_version
+                        ORDER BY scope_key NULLS FIRST, definition_version
                         """).execute(Tuple.of(definitionId)).map(rows -> {
             List<DefinitionSnapshot> snapshots = new ArrayList<>();
             for (Row row : rows) {
                 snapshots.add(new DefinitionSnapshot(
-                        row.getString("tenant_key"),
+                        row.getString("scope_key"),
                         row.getString("definition_id"),
                         row.getLong("definition_version"),
                         row.getString("kind"),
@@ -956,6 +1053,8 @@ public class DefinitionRegistryBootstrapIT {
         return new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 "c".repeat(64),
                 status,
                 new DefinitionProvenance(
@@ -1010,9 +1109,9 @@ public class DefinitionRegistryBootstrapIT {
     private static Future<Void> assertCandidateWasNotPartiallyClaimed(Pool pool, DefinitionKey key) {
         return pool.preparedQuery("""
                         SELECT status, activation_token FROM workflow_definitions
-                        WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                        WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
                         """)
-                .execute(Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion()))
+                .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion()))
                 .map(rows -> {
                     Row row = rows.iterator().next();
                     assertThat(row.getString("status")).isEqualTo("CANDIDATE");
@@ -1173,7 +1272,7 @@ public class DefinitionRegistryBootstrapIT {
     private record MutationWaitSetup(List<DefinitionSnapshot> before, int writerPid) {}
 
     private record DefinitionSeed(
-            String tenantKey,
+            String scopeKey,
             String definitionId,
             long definitionVersion,
             DefinitionKind kind,
@@ -1187,7 +1286,7 @@ public class DefinitionRegistryBootstrapIT {
             UUID activationToken) {}
 
     private record DefinitionSnapshot(
-            String tenantKey,
+            String scopeKey,
             String definitionId,
             long definitionVersion,
             String kind,

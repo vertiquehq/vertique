@@ -48,6 +48,7 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
@@ -164,7 +165,7 @@ public class MixedDefinitionBootstrapIT {
             "a packaged document with the same plan hash but different text fails startup instead of being ignored")
     void treatsSameHashDifferentTextAsDrift(Vertx vertx) {
         String id = "mixed-bootstrap-text-drift-doc";
-        DefinitionKey key = new DefinitionKey(null, id, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
 
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
             scenario.ownRows(id);
@@ -278,7 +279,7 @@ public class MixedDefinitionBootstrapIT {
     @DisplayName("code-first versions are recorded at startup, ordered without a collision and keep their deprecation")
     void recordsAndOrdersCodeVersions(Vertx vertx) {
         String id = "mixed-bootstrap-code-order";
-        DefinitionKey v1Key = new DefinitionKey(null, id, 1);
+        DefinitionKey v1Key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
         WorkflowDefinition<?, ?> codeV1 = code(id, 1, OrderCode.class, "done");
         WorkflowDefinition<?, ?> codeV2 = code(id, 2, OrderCode.class, "done");
         String hashV1 = planHashOf(codeV1);
@@ -302,13 +303,13 @@ public class MixedDefinitionBootstrapIT {
                     .isPresent();
             Stored rowV1 = scenario.stored(id, 1);
             Stored rowV2 = scenario.stored(id, 2);
-            assertThat(rowV1.tenant()).isNull();
+            assertThat(rowV1.scopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
             assertThat(rowV1.kind()).isEqualTo("CODE");
             assertThat(rowV1.planHash()).isEqualTo(hashV1);
             assertThat(rowV1.sourceType()).isEqualTo("code");
             assertThat(rowV1.document()).isNull();
             assertThat(rowV1.documentFormat()).isNull();
-            assertThat(rowV2.tenant()).isNull();
+            assertThat(rowV2.scopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
             assertThat(rowV2.kind()).isEqualTo("CODE");
             assertThat(rowV2.planHash()).isEqualTo(hashV2);
             assertThat(rowV2.sourceType()).isEqualTo("code");
@@ -379,7 +380,7 @@ public class MixedDefinitionBootstrapIT {
                     .isNotNull()
                     .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                         assertThat(failure.reason()).isEqualTo(Reason.DRIFT);
-                        assertThat(failure.key()).isEqualTo(new DefinitionKey(null, pinnedId, 1));
+                        assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, pinnedId, 1));
                         assertThat(failure.getMessage())
                                 .contains(pinnedId)
                                 .contains(storedPinnedHash)
@@ -432,7 +433,7 @@ public class MixedDefinitionBootstrapIT {
 
             // Given a stored document row with a different hash, and a packaged label that tries to forge a log line
             String text = documentText(id, 1, StaticDriftV1.class);
-            scenario.seedDocument(null, id, 1, "f".repeat(64), "SUPERSEDED", text);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, id, 1, "f".repeat(64), "SUPERSEDED", text);
             String label = "forged\r\nERROR injected line";
 
             // When the application starts with that packaged document
@@ -507,7 +508,7 @@ public class MixedDefinitionBootstrapIT {
             // Given a stored document row with a different hash for the same id and version
             String driftText = documentText(driftId, 1, StaticDriftV1.class);
             String storedDriftHash = "f".repeat(64);
-            scenario.seedDocument(null, driftId, 1, storedDriftHash, "SUPERSEDED", driftText);
+            scenario.seedDocument(WorkflowScopes.DEFAULT, driftId, 1, storedDriftHash, "SUPERSEDED", driftText);
             Stored driftBefore = scenario.stored(driftId, 1);
 
             // When the application starts with the static document
@@ -520,7 +521,7 @@ public class MixedDefinitionBootstrapIT {
                     .isNotNull()
                     .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                         assertThat(failure.reason()).isEqualTo(Reason.DRIFT);
-                        assertThat(failure.key()).isEqualTo(new DefinitionKey(null, driftId, 1));
+                        assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, driftId, 1));
                         assertThat(failure.getMessage())
                                 .contains(driftId)
                                 .contains(storedDriftHash)
@@ -546,7 +547,7 @@ public class MixedDefinitionBootstrapIT {
                     .isNotNull()
                     .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                         assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
-                        assertThat(failure.key()).isEqualTo(new DefinitionKey(null, kindId, 1));
+                        assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, kindId, 1));
                         assertThat(failure.getMessage())
                                 .contains(kindId)
                                 .contains("CODE")
@@ -571,7 +572,8 @@ public class MixedDefinitionBootstrapIT {
                         .isNotNull()
                         .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                             assertThat(failure.reason()).isEqualTo(Reason.CODE_UNAVAILABLE);
-                            assertThat(failure.key()).isEqualTo(new DefinitionKey(null, missingId, 1));
+                            assertThat(failure.key())
+                                    .isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, missingId, 1));
                             assertThat(failure.getMessage()).contains(missingId);
                         });
                 assertThat(scenario.stored(missingId, 1)).isEqualTo(missingBefore);
@@ -593,10 +595,10 @@ public class MixedDefinitionBootstrapIT {
                     .isNotNull()
                     .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                         assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                        assertThat(failure.key()).isEqualTo(new DefinitionKey(null, heldId, 1));
+                        assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, heldId, 1));
                         assertThat(failure.getMessage())
                                 .contains("tenant-holder")
-                                .containsIgnoringCase("global");
+                                .containsIgnoringCase("default");
                     });
             assertThat(scenario.findStored(heldId, 1)).isEmpty();
             staticHeld.close();
@@ -621,10 +623,10 @@ public class MixedDefinitionBootstrapIT {
                     .isNotNull()
                     .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                         assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                        assertThat(failure.key()).isEqualTo(new DefinitionKey(null, codeHeldId, 2));
+                        assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, codeHeldId, 2));
                         assertThat(failure.getMessage())
                                 .contains("tenant-holder")
-                                .containsIgnoringCase("global");
+                                .containsIgnoringCase("default");
                     });
             assertThat(scenario.findStored(codeHeldId, 2)).isEmpty();
         }
@@ -639,12 +641,12 @@ public class MixedDefinitionBootstrapIT {
         String nearId = "mixed-bootstrap-stale-near-doc";
         String freshId = "mixed-bootstrap-stale-fresh-doc";
         String staleTenant = "tenant-stale";
-        DefinitionKey v1 = new DefinitionKey(null, docId, 1);
-        DefinitionKey v2 = new DefinitionKey(null, docId, 2);
-        DefinitionKey v3 = new DefinitionKey(null, docId, 3);
-        DefinitionKey claimedKey = new DefinitionKey(null, claimedId, 1);
+        DefinitionKey v1 = new DefinitionKey(WorkflowScopes.DEFAULT, docId, 1);
+        DefinitionKey v2 = new DefinitionKey(WorkflowScopes.DEFAULT, docId, 2);
+        DefinitionKey v3 = new DefinitionKey(WorkflowScopes.DEFAULT, docId, 3);
+        DefinitionKey claimedKey = new DefinitionKey(WorkflowScopes.DEFAULT, claimedId, 1);
         DefinitionKey tenantClaimKey = new DefinitionKey(staleTenant, codeId, 1);
-        DefinitionKey nearKey = new DefinitionKey(null, nearId, 1);
+        DefinitionKey nearKey = new DefinitionKey(WorkflowScopes.DEFAULT, nearId, 1);
         WorkflowDefinition<?, ?> staleCode = code(codeId, 1, StaleCodeV1.class, "done");
         String codeHash = planHashOf(staleCode);
         Instant loadedAt = Instant.parse("2026-10-18T12:00:00Z");
@@ -815,7 +817,7 @@ public class MixedDefinitionBootstrapIT {
     void refusesTenantActivationAgainstGlobalCode(Vertx vertx) {
         String id = "mixed-bootstrap-tenant-vs-code";
         String tenant = "tenant-conflict";
-        DefinitionKey tenantKey = new DefinitionKey(tenant, id, 1);
+        DefinitionKey scopeKey = new DefinitionKey(tenant, id, 1);
         WorkflowDefinition<?, ?> codeV1 = code(id, 1, TenantVsCodeV1.class, "done");
         String codeHash = planHashOf(codeV1);
 
@@ -841,15 +843,15 @@ public class MixedDefinitionBootstrapIT {
             var definitionBefore = node.app().workflowRegistry().registeredDefinition(id, 1);
 
             // When the tenant activates its candidate through the real lifecycle
-            Throwable refusal = failureOf(node.app().definitionService().activate(tenantKey));
+            Throwable refusal = failureOf(node.app().definitionService().activate(scopeKey));
 
             // Then it fails as an ownership conflict naming both owners
             assertThat(refusal)
                     .isNotNull()
                     .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                         assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                        assertThat(failure.key()).isEqualTo(tenantKey);
-                        assertThat(failure.getMessage()).contains(tenant).containsIgnoringCase("global");
+                        assertThat(failure.key()).isEqualTo(scopeKey);
+                        assertThat(failure.getMessage()).contains(tenant).containsIgnoringCase("default");
                     });
 
             // And the executable registry and both rows are unchanged
@@ -871,7 +873,7 @@ public class MixedDefinitionBootstrapIT {
     @DisplayName("an old-code node is refused new pins, migrations and retries after a rolling same-version rehash")
     void rejectsOldHashPinsAfterRollingRehash(Vertx vertx) {
         String id = "mixed-bootstrap-rolling-rehash";
-        DefinitionKey v2Key = new DefinitionKey(null, id, 2);
+        DefinitionKey v2Key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
         WorkflowDefinition<?, ?> unchangedV1 = code(id, 1, Rolling.class, "done");
         WorkflowDefinition<?, ?> oldV2 = code(id, 2, Rolling.class, "done");
         WorkflowDefinition<?, ?> newV2 = code(id, 2, Rolling.class, "finished");
@@ -1224,7 +1226,7 @@ public class MixedDefinitionBootstrapIT {
             "a packaged document deprecated at runtime is deprecated again after a restart and still serves its pins")
     void restoresDeprecatedPackagedDocumentAfterRestart(Vertx vertx) {
         String id = "mixed-bootstrap-packaged-deprecated";
-        DefinitionKey v1 = new DefinitionKey(null, id, 1);
+        DefinitionKey v1 = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
         Instant loadedAt = Instant.parse("2026-10-18T12:00:00Z");
         String textV1 = documentText(id, 1, PackagedDeprecated.class);
         String textV2 = documentText(id, 2, PackagedDeprecated.class);
@@ -1380,7 +1382,7 @@ public class MixedDefinitionBootstrapIT {
                     .isNotNull()
                     .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                         assertThat(failure.reason()).isEqualTo(Reason.DRIFT);
-                        assertThat(failure.key()).isEqualTo(new DefinitionKey(null, id, 1));
+                        assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
                         assertThat(failure.getMessage())
                                 .contains(id)
                                 .contains(storedHash)

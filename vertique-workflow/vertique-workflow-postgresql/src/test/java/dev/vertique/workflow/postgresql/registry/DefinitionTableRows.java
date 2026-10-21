@@ -57,9 +57,9 @@ final class DefinitionTableRows {
             throws SQLException {
         try (PreparedStatement insert = connection.prepareStatement("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                      source_type, loaded_at)
-                VALUES (NULL, ?, ?, 'CODE', repeat('a', 64), ?, 'migration-test', now())
+                VALUES ('default', ?, ?, 'CODE', 'example.Contract', 'example.State', repeat('a', 64), ?, 'migration-test', now())
                 """)) {
             insert.setString(1, definitionId);
             insert.setLong(2, version);
@@ -72,9 +72,9 @@ final class DefinitionTableRows {
     static void insertDocumentOmittingDigest(Connection connection, String definitionId) throws SQLException {
         try (PreparedStatement insert = connection.prepareStatement("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                      document, document_format, source_type, loaded_at)
-                VALUES (NULL, ?, 1, 'DOCUMENT', repeat('a', 64), 'CANDIDATE', '{}', 'YAML', 'migration-test', now())
+                VALUES ('default', ?, 1, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), 'CANDIDATE', '{}', 'YAML', 'migration-test', now())
                 """)) {
             insert.setString(1, definitionId);
             insert.executeUpdate();
@@ -86,9 +86,9 @@ final class DefinitionTableRows {
             throws SQLException {
         try (PreparedStatement insert = connection.prepareStatement("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                      document, document_format, document_digest, source_type, loaded_at)
-                VALUES (NULL, ?, 1, 'DOCUMENT', repeat('a', 64), 'CANDIDATE', ?, 'YAML', ?, 'migration-test', now())
+                VALUES ('default', ?, 1, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), 'CANDIDATE', ?, 'YAML', ?, 'migration-test', now())
                 """)) {
             insert.setString(1, definitionId);
             insert.setString(2, document);
@@ -101,9 +101,9 @@ final class DefinitionTableRows {
     static void insertCodeWithDigest(Connection connection, String definitionId, String digest) throws SQLException {
         try (PreparedStatement insert = connection.prepareStatement("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                      document_digest, source_type, loaded_at)
-                VALUES (NULL, ?, 1, 'CODE', repeat('a', 64), 'CANDIDATE', ?, 'migration-test', now())
+                VALUES ('default', ?, 1, 'CODE', 'example.Contract', 'example.State', repeat('a', 64), 'CANDIDATE', ?, 'migration-test', now())
                 """)) {
             insert.setString(1, definitionId);
             insert.setString(2, digest);

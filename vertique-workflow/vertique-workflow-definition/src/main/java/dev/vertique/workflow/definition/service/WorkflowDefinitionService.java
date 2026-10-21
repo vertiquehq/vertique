@@ -16,7 +16,7 @@ import java.util.Optional;
 /** Asynchronous management of document candidates and their executable activation. */
 public interface WorkflowDefinitionService {
     /**
-     * Parses and compiles a candidate without publishing it; null tenant denotes global scope.
+     * Parses and compiles a candidate without publishing it; a null scope key denotes the default scope.
      *
      * <p>The document resolves its contract, state and payload type names through the type-name index
      * only, which holds the types of the contributed catalogs and registered definitions. A name the
@@ -24,7 +24,7 @@ public interface WorkflowDefinitionService {
      * naming the document field and the name when it is a valid name; no class is loaded by name.
      */
     Future<CompiledDefinitionRef> load(
-            byte[] content, DocumentFormat format, SourceMetadata metadata, @Nullable String tenantKey);
+            byte[] content, DocumentFormat format, SourceMetadata metadata, @Nullable String scopeKey);
     /** Activates an existing candidate, preserving the prior publication when activation fails. */
     Future<Void> activate(DefinitionKey key);
     /**

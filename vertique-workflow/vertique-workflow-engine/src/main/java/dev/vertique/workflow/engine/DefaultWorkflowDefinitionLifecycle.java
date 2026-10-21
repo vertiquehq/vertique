@@ -205,7 +205,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     if (status != DefinitionStatus.RETIRED)
                         throw failure(Reason.INVALID_TRANSITION, key, "cannot reinstate status " + status);
                     attempt.retired = true;
-                    return durable.list(new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null));
+                    return durable.list(new DefinitionFilter(null, null, null));
                 })
                 .compose(rows -> {
                     if (attempt.settled) return Future.<Void>succeededFuture();
@@ -234,7 +234,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         WorkflowRegistry local = registry.get();
         RuntimeWorkflow held = held(local, key.definitionId(), key.definitionVersion());
         if (held != remembered
-                || registrations.classify(key.tenantKey(), key.definitionId(), key.definitionVersion(), held)
+                || registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held)
                         != ManagedRegistrations.Standing.OWN
                 || !attempt.record.planHash().equals(held.plan().planHash())) return false;
         if (attempt.record.kind() == DefinitionKind.DOCUMENT) attempt.loader = loaderFor(attempt.record);
@@ -261,9 +261,9 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private static void requireNoOtherHolder(DefinitionKey key, List<WorkflowDefinitionRecord> rows) {
         String holders = rows.stream()
                 .filter(row -> row.key().definitionId().equals(key.definitionId()))
-                .filter(row -> !Objects.equals(row.key().tenantKey(), key.tenantKey()))
+                .filter(row -> !Objects.equals(row.key().scopeKey(), key.scopeKey()))
                 .filter(row -> HOLDING.contains(row.status()))
-                .map(row -> owner(row.key().tenantKey()) + " (version "
+                .map(row -> owner(row.key().scopeKey()) + " (version "
                         + row.key().definitionVersion() + " " + row.status() + ")")
                 .distinct()
                 .collect(Collectors.joining(", "));
@@ -271,8 +271,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             throw failure(Reason.OWNER_CONFLICT, key, "another owner holds this definition id: " + holders);
     }
 
-    private static String owner(@Nullable String tenantKey) {
-        return tenantKey == null ? "global" : tenantKey;
+    private static String owner(String scopeKey) {
+        return scopeKey;
     }
 
     /**
@@ -286,7 +286,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         WorkflowRegistry local = registry.get();
         RuntimeWorkflow held = held(local, key.definitionId(), key.definitionVersion());
         ManagedRegistrations.Standing standing =
-                registrations.classify(key.tenantKey(), key.definitionId(), key.definitionVersion(), held);
+                registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
         if (standing == ManagedRegistrations.Standing.UNATTRIBUTED
                 || standing == ManagedRegistrations.Standing.OTHER_OWNER)
             throw failure(
@@ -455,7 +455,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         String id = key.definitionId();
         long version = key.definitionVersion();
         RuntimeWorkflow held = held(local, id, version);
-        if (registrations.classify(key.tenantKey(), id, version, held) == ManagedRegistrations.Standing.OWN) {
+        if (registrations.classify(key.scopeKey(), id, version, held) == ManagedRegistrations.Standing.OWN) {
             local.unregister(id, version);
             registrations.clear(id, version, held);
             uncertain.remove(key, held);
@@ -471,7 +471,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
      */
     private ManagedRegistrations.Standing preflight(DefinitionKey key) {
         ManagedRegistrations.Standing standing = registrations.classify(
-                key.tenantKey(),
+                key.scopeKey(),
                 key.definitionId(),
                 key.definitionVersion(),
                 held(registry.get(), key.definitionId(), key.definitionVersion()));
@@ -491,7 +491,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private void attribute(Attempt attempt) {
         if (attempt.publication != null)
             registrations.attribute(
-                    attempt.key.tenantKey(),
+                    attempt.key.scopeKey(),
                     attempt.key.definitionId(),
                     attempt.key.definitionVersion(),
                     attempt.publication);
@@ -696,7 +696,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     .<Void>map(found -> {
                         WorkflowRegistry local = registry.get();
                         boolean own = registrations.classify(
-                                        key.tenantKey(),
+                                        key.scopeKey(),
                                         key.definitionId(),
                                         key.definitionVersion(),
                                         held(local, key.definitionId(), key.definitionVersion()))

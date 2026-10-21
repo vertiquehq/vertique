@@ -141,7 +141,8 @@ public class PgWorkflowDedupRepositoryTaskIT {
      * @return a {@link Future} containing the fingerprint value (may be {@code null})
      */
     private Future<String> readFingerprint(String kind, String scope, String key) {
-        return pool.preparedQuery("SELECT fingerprint FROM workflow_dedup WHERE kind = $1 AND scope = $2 AND key = $3")
+        return pool.preparedQuery(
+                        "SELECT fingerprint FROM workflow_dedup WHERE kind = $1 AND dedup_namespace = $2 AND key = $3")
                 .execute(Tuple.of(kind, scope, key))
                 .map(rs -> {
                     var it = rs.iterator();

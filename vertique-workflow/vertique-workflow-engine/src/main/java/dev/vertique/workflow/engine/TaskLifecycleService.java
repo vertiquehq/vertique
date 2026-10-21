@@ -324,7 +324,7 @@ final class TaskLifecycleService {
                 null, // branchTokenId
                 null, // forkStepId
                 null, // branchId
-                inst.tenantKey());
+                inst.scopeKey());
     }
 
     /**

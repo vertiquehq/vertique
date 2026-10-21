@@ -24,10 +24,10 @@ import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reas
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
-import dev.vertique.workflow.registry.store.DefinitionFilter.TenantScope;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import java.nio.charset.StandardCharsets;
@@ -122,7 +122,7 @@ public class DefinitionNamespaceIT {
             assertThat(node.app().workflowRegistry().resolvePinned(namespacedId, 1))
                     .isNotNull();
             List<WorkflowDefinitionRecord> listed =
-                    await(node.app().definitionService().list(new DefinitionFilter(TenantScope.TENANT, "t1", null)));
+                    await(node.app().definitionService().list(new DefinitionFilter("t1", null, null)));
             assertThat(listed).extracting(WorkflowDefinitionRecord::key).containsExactly(namespacedKey);
         }
     }
@@ -159,8 +159,8 @@ public class DefinitionNamespaceIT {
                     .isNotNull()
                     .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                         assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
-                        assertThat(failure.key()).isEqualTo(new DefinitionKey(null, squatterId, 1));
-                        assertThat(failure.getMessage()).contains("t1").containsIgnoringCase("global");
+                        assertThat(failure.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, squatterId, 1));
+                        assertThat(failure.getMessage()).contains("t1").containsIgnoringCase("default");
                     });
             collided.close();
             assertThat(scenario.findStored(squatterId, 1)).isEmpty();

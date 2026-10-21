@@ -25,6 +25,7 @@ import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowType;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
@@ -91,7 +92,7 @@ class DocumentRestorePlanHashTest {
 
     // --- Fixture documents ---
 
-    private static final DefinitionKey KEY = new DefinitionKey(null, "restore-saga", 1);
+    private static final DefinitionKey KEY = new DefinitionKey(WorkflowScopes.DEFAULT, "restore-saga", 1);
 
     private static String document() {
         return """
@@ -124,6 +125,8 @@ class DocumentRestorePlanHashTest {
         return new WorkflowDefinitionRecord(
                 KEY,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 planHash,
                 DefinitionStatus.CANDIDATE,
                 new DefinitionProvenance("test", "test://restore", null, null, null, now),
