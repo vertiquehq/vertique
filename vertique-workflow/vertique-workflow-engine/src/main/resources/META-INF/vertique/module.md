@@ -66,6 +66,11 @@ The engine performs no transaction management of its own. Public operation metho
 and pass the resulting `SqlClient` handle into their transactional variants. Callers that already own a
 transaction use `TransactionalWorkflowOperations<SqlClient>` directly.
 
+A signal is refused, with nothing changed (no state, history, dedup row or timer), when the version the instance is pinned to
+does not wait for it: the future fails with `WorkflowSignalRejectedException` naming the instance, the signal and the
+pinned definition id and version. The check reads the pinned plan, so it applies after the pin is resolved and its plan hash
+verified and before the instance's waiting state is examined.
+
 Task completion validates the caller's decision and payload inside the completion transaction and
 rejects caller-caused problems with `WorkflowInvalidPayloadException` (HTTP 400 class, structured
 pointer details):

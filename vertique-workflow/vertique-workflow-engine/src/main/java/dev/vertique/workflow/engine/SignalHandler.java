@@ -250,8 +250,8 @@ final class SignalHandler {
 
     /**
      * Applies a validated signal to the given instance after dedup check. Resolves the pinned
-     * runtime workflow, validates the waiting state, coerces the payload, updates state, persists,
-     * and drives transitions.
+     * runtime workflow, refuses a signal the pinned plan never waits for, validates the waiting
+     * state, coerces the payload, updates state, persists, and drives transitions.
      *
      * @param inst the locked instance
      * @param ctx the bundled signal name, payload, and dedup key
@@ -273,6 +273,15 @@ final class SignalHandler {
             WorkflowPayloads.requirePlanHashMatches(inst, rw);
         } catch (WorkflowPlanHashDriftException e) {
             return Future.failedFuture(e);
+        }
+
+        // A signal the pinned plan never waits for is refused naming the pinned version.
+        if (!waitsForSignal(rw, ctx.signalName())) {
+            return Future.failedFuture(
+                    new WorkflowSignalRejectedException("Instance '" + inst.id().value()
+                            + "' cannot receive signal '" + ctx.signalName() + "': '"
+                            + rw.plan().definitionId() + "' v"
+                            + rw.plan().definitionVersion() + " does not wait for signal '" + ctx.signalName() + "'"));
         }
 
         // Validate instance is in WAITING status for this signal.
@@ -357,6 +366,19 @@ final class SignalHandler {
     }
 
     // --- Internal helpers ---
+
+    /**
+     * Returns whether any wait node of the pinned plan, including the waits inside fork branches and
+     * the waits guarded by a timeout, waits for the named signal.
+     */
+    private static boolean waitsForSignal(RuntimeWorkflow rw, String signalName) {
+        for (WorkflowNode node : rw.plan().nodes()) {
+            if (node instanceof WaitSignalNode wait && signalName.equals(wait.signalName())) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /**
      * Finds the {@link WaitSignalNode} for the given step id and signal name using the O(1)
