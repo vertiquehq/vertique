@@ -44,6 +44,20 @@ Before submitting a change, run:
 
 Use `./mvnw -ntp spotless:apply` to apply the project formatter.
 
+To get a short, reliable result instead of reading a full build log, run Maven
+through `scripts/build-verdict.sh`, which writes the whole output to a temporary
+log and prints a verdict (exit status, final build result, test totals from the
+reports written by that run, failing reports, and the log path):
+
+```bash
+scripts/build-verdict.sh clean verify
+scripts/build-verdict.sh -pl vertique-core -am -Dtest=ResultTest test
+```
+
+It reports `SUSPECT` when Maven exits successfully but no tests ran, which
+catches selectors that silently match nothing. `--expect-tests` turns that
+case into exit status 3.
+
 ## Mutation testing (advisory)
 
 Pull requests that change production Java get a non-required "Mutation
