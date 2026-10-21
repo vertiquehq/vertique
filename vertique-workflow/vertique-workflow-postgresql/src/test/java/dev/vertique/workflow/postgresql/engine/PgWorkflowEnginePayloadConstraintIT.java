@@ -25,6 +25,8 @@ import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.validation.ValidationModule;
 import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -157,7 +159,10 @@ public class PgWorkflowEnginePayloadConstraintIT {
 
     interface InstanceContract {}
 
-    interface BranchContract {}
+    interface BranchContract {
+        @WorkflowSignal("my-signal")
+        Future<Void> mySignal(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
     interface StartContract {}
 

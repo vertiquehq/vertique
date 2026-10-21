@@ -3,8 +3,12 @@
 
 package dev.vertique.examples.workflow.order;
 
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
+import io.vertx.core.Future;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Duration;
@@ -41,21 +45,34 @@ public final class TimerWorkflowDefinition {
     /**
      * Marker contract interface for the {@link StandaloneTimer} workflow definition.
      *
-     * <p>The registry requires each definition to declare a unique contract class. This interface
-     * serves that requirement for {@code "timer-standalone"} without exposing typed proxy methods
+     * <p>A definition names a contract class. This interface serves that requirement for
+     * {@code "timer-standalone"} without exposing typed proxy methods
      * (the timer IT drives the workflow via {@link dev.vertique.workflow.ops.WorkflowOperations}
      * directly, not through a contract proxy).
      */
     public interface StandaloneTimerContract {}
 
     /**
-     * Marker contract interface for the {@link SignalWithTimeout} workflow definition.
+     * Contract interface for the {@link SignalWithTimeout} workflow definition.
      *
-     * <p>The registry requires each definition to declare a unique contract class. This interface
-     * serves that requirement for {@code "timer-signal-timeout"} without exposing typed proxy
-     * methods.
+     * <p>The registry requires a definition to declare every signal it waits for on its contract.
+     * This interface declares {@code "ok-signal"} for {@code "timer-signal-timeout"}; the timer IT
+     * drives the workflow via {@link dev.vertique.workflow.ops.WorkflowOperations} directly, not
+     * through a contract proxy.
      */
-    public interface SignalWithTimeoutContract {}
+    public interface SignalWithTimeoutContract {
+
+        /**
+         * Delivers the {@code "ok-signal"} signal.
+         *
+         * @param id the workflow instance id
+         * @param payload the signal payload
+         * @param dedupKey the deduplication key
+         * @return a {@link Future} that completes when the signal has been applied
+         */
+        @WorkflowSignal("ok-signal")
+        Future<Void> okSignal(WorkflowInstanceId id, OkSignal payload, @SignalDedupKey String dedupKey);
+    }
 
     private TimerWorkflowDefinition() {}
 

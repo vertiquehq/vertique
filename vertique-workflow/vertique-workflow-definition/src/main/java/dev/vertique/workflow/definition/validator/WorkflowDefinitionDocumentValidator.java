@@ -57,10 +57,6 @@ import java.util.function.Supplier;
  *   <li>{@code CONTRACT_UNRESOLVABLE} — {@code contract} FQN not found on classpath.</li>
  *   <li>{@code CONTRACT_NOT_ANNOTATED} — resolved contract class is not annotated with
  *       {@link WorkflowContract}.</li>
- *   <li>{@code CONTRACT_DEFINITION_ID_MISMATCH} — annotation {@code definitionId()} does not
- *       match the document's {@code definitionId}.</li>
- *   <li>{@code CONTRACT_DEFINITION_VERSION_MISMATCH} — annotation {@code definitionVersion()} does
- *       not match the document's {@code definitionVersion}.</li>
  *   <li>{@code START_PAYLOAD_TYPE_UNRESOLVABLE} — {@code startPayloadType} FQN not found.</li>
  *   <li>{@code INITIAL_STATE_MAPPER_UNKNOWN} — {@code initialStateMapper} id not registered.</li>
  *   <li>{@code SUBJECT_RESOLVER_UNKNOWN} — {@code subjectResolver} present but not registered.</li>
@@ -293,7 +289,7 @@ public final class WorkflowDefinitionDocumentValidator {
                 "`contract`",
                 violations);
         if (contractClass != null) {
-            checkContractAnnotation(definitionId, definitionVersion, contractClass, doc, violations);
+            checkContractAnnotation(definitionId, definitionVersion, contractClass, violations);
         }
 
         Class<?> resolvedStartPayloadType = checkClassResolvable(
@@ -510,15 +506,12 @@ public final class WorkflowDefinitionDocumentValidator {
     }
 
     /**
-     * Checks that the resolved contract class is annotated with {@link WorkflowContract} and that
-     * the annotation's {@code definitionId()} and {@code definitionVersion()} match the document.
+     * Checks that the resolved contract class is annotated with {@link WorkflowContract}. The
+     * annotation's legacy {@code definitionId()} and {@code definitionVersion()} are not compared with
+     * the document, because many definitions and versions may share one contract.
      */
     private static void checkContractAnnotation(
-            String definitionId,
-            long definitionVersion,
-            Class<?> contractClass,
-            WorkflowDefinitionDocument doc,
-            List<Violation> violations) {
+            String definitionId, long definitionVersion, Class<?> contractClass, List<Violation> violations) {
         WorkflowContract annotation = contractClass.getAnnotation(WorkflowContract.class);
         if (annotation == null) {
             violations.add(new Violation(
@@ -529,30 +522,6 @@ public final class WorkflowDefinitionDocumentValidator {
                     "CONTRACT_NOT_ANNOTATED",
                     "`contract` class '" + contractClass.getName() + "' is not annotated with @WorkflowContract"));
             return;
-        }
-        if (!annotation.definitionId().equals(doc.definitionId())) {
-            violations.add(new Violation(
-                    blankFallback(definitionId),
-                    definitionVersion,
-                    null,
-                    null,
-                    "CONTRACT_DEFINITION_ID_MISMATCH",
-                    "`contract` annotation `@WorkflowContract.definitionId()` is '"
-                            + annotation.definitionId()
-                            + "' but the document's `definitionId` is '"
-                            + doc.definitionId() + "'"));
-        }
-        if (annotation.definitionVersion() != doc.definitionVersion()) {
-            violations.add(new Violation(
-                    blankFallback(definitionId),
-                    definitionVersion,
-                    null,
-                    null,
-                    "CONTRACT_DEFINITION_VERSION_MISMATCH",
-                    "`contract` annotation `@WorkflowContract.definitionVersion()` is "
-                            + annotation.definitionVersion()
-                            + " but the document's `definitionVersion` is "
-                            + doc.definitionVersion()));
         }
     }
 

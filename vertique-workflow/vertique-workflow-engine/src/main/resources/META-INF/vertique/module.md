@@ -351,7 +351,7 @@ committed status in place.
 `WorkflowDefinitionLifecycle.retire` retires a CANDIDATE version, or a DEPRECATED one after the cooling window (the
 configured staleness bound) once no RUNNING, WAITING or COMPENSATING instance, archived or not, is pinned to it; the
 store checks status, cooling and the pin count in one transaction, so a refusal is typed (`COOLING`, `PINNED_INSTANCES`,
-or `INVALID_TRANSITION` for ACTIVE/SUPERSEDED). Retirement removes the local runtime and its contract mapping only when
+or `INVALID_TRANSITION` for ACTIVE/SUPERSEDED). Retirement removes the local runtime only when
 the engine's own managed publication attributed that exact runtime to the retiring owner: the engine records every
 registration it publishes or restores, and the registrations present when startup begins (packaged documents and
 application-contributed code) count as global. A runtime that was registered directly through `WorkflowRegistry`
@@ -361,7 +361,7 @@ at runtime and expect the lifecycle to manage them; managed operations also rely
 Managed operations are serialized per definition id on the node. A direct `register` or `unregister` of the same id
 while a managed operation is in flight does not take part in that queue and is outside the lifecycle's compound
 guarantee; each individual registry operation stays thread safe.
-`activate` has no such preflight: activating a version that a foreign registration already occupies fails when it
+`activate` has no such preflight: activating a version that a foreign registration already occupies, or that names another contract than the id's registered versions, fails when it
 registers, and the claim is released. If removing the local runtime fails after the durable retirement committed, the
 call fails but the row stays RETIRED and the runtime stays registered until the next restart; repeating the call is
 refused because the row is no longer retirable.
@@ -415,7 +415,7 @@ rows; its slot stays held until the action finishes. An error that is not fatal,
 contained to its row in the same way. A store error while re-reading a row fails the pass instead of counting the
 healthy rows as failing.
 
-1. Retired rows remove the runtime attributed to the row's own owner (and its contract mapping); a runtime of another
+1. Retired rows remove the runtime attributed to the row's own owner; a runtime of another
    owner, or a replacement, is never removed because id, version and hash match, and a retired row whose runtime is
    unattributed has nothing of its owner to remove and is settled without failing. Candidate and retired documents are
    handed to their loader through `onMetadata`. Activating rows are left alone.

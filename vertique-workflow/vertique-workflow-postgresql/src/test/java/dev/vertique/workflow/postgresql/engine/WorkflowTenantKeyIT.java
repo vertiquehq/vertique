@@ -20,6 +20,8 @@ import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
@@ -120,13 +122,20 @@ public class WorkflowTenantKeyIT {
 
     record TargetState(String name, boolean migrated) {}
 
-    interface SingleContract {}
+    interface SingleContract {
+        @WorkflowSignal("go")
+        Future<Void> go(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
-    interface ForkContract {}
+    interface ForkContract {
+        @WorkflowSignal("sig-b")
+        Future<Void> sigB(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
-    interface MigrateContractV1 {}
-
-    interface MigrateContractV2 {}
+    interface MigrateContract {
+        @WorkflowSignal("go")
+        Future<Void> go(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /** A code-first definition whose body is supplied by the declaration. */
     static final class FlowDefinition<S, C> implements WorkflowDefinition<S, C> {
@@ -240,8 +249,8 @@ public class WorkflowTenantKeyIT {
             });
 
     /** Version 1 of the migrated definition: hold (signal) -> review-v1 (task) -> done-v1. */
-    static final WorkflowDefinition<SourceState, MigrateContractV1> MIGRATE_V1 =
-            new FlowDefinition<>(MigrateContractV1.class, SourceState.class, MIGRATE_ID, 1L, wf -> wf.init(
+    static final WorkflowDefinition<SourceState, MigrateContract> MIGRATE_V1 =
+            new FlowDefinition<>(MigrateContract.class, SourceState.class, MIGRATE_ID, 1L, wf -> wf.init(
                             StartFlow.class, p -> new SourceState(p.key()))
                     .initialStep("hold-v1")
                     .waitForSignal("hold-v1", "go", String.class)
@@ -257,8 +266,8 @@ public class WorkflowTenantKeyIT {
                     .complete("done-v1"));
 
     /** Version 2 of the migrated definition: review-v2 (task) -> done-v2. */
-    static final WorkflowDefinition<TargetState, MigrateContractV2> MIGRATE_V2 =
-            new FlowDefinition<>(MigrateContractV2.class, TargetState.class, MIGRATE_ID, 2L, wf -> wf.init(
+    static final WorkflowDefinition<TargetState, MigrateContract> MIGRATE_V2 =
+            new FlowDefinition<>(MigrateContract.class, TargetState.class, MIGRATE_ID, 2L, wf -> wf.init(
                             StartFlow.class, p -> new TargetState(p.key(), false))
                     .initialStep("review-v2")
                     .task("review-v2")

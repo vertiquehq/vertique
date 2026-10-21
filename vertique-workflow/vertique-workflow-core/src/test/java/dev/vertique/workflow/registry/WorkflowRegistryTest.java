@@ -40,16 +40,16 @@ class WorkflowRegistryTest {
     record SignalPayload(String data) {}
 
     @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
-    interface OrderSagaContractV1 {}
-
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 2)
-    interface OrderSagaContractV2 {}
+    interface OrderSagaContract {
+        @WorkflowSignal("order.confirmed")
+        Future<Void> confirmed(WorkflowInstanceId id, SignalPayload payload, @SignalDedupKey String dedupKey);
+    }
 
     /** Valid definition — version 1. */
-    static final WorkflowDefinition<OrderState, OrderSagaContractV1> DEF_V1 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<OrderState, OrderSagaContract> DEF_V1 = new WorkflowDefinition<>() {
         @Override
-        public Class<OrderSagaContractV1> contract() {
-            return OrderSagaContractV1.class;
+        public Class<OrderSagaContract> contract() {
+            return OrderSagaContract.class;
         }
 
         @Override
@@ -77,10 +77,10 @@ class WorkflowRegistryTest {
     };
 
     /** Valid definition — version 2 (different structure). */
-    static final WorkflowDefinition<OrderState, OrderSagaContractV2> DEF_V2 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<OrderState, OrderSagaContract> DEF_V2 = new WorkflowDefinition<>() {
         @Override
-        public Class<OrderSagaContractV2> contract() {
-            return OrderSagaContractV2.class;
+        public Class<OrderSagaContract> contract() {
+            return OrderSagaContract.class;
         }
 
         @Override
@@ -108,10 +108,10 @@ class WorkflowRegistryTest {
     };
 
     /** Invalid definition: never calls wf.init(). */
-    static final WorkflowDefinition<OrderState, OrderSagaContractV1> DEF_NO_INIT = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<OrderState, OrderSagaContract> DEF_NO_INIT = new WorkflowDefinition<>() {
         @Override
-        public Class<OrderSagaContractV1> contract() {
-            return OrderSagaContractV1.class;
+        public Class<OrderSagaContract> contract() {
+            return OrderSagaContract.class;
         }
 
         @Override
@@ -139,45 +139,44 @@ class WorkflowRegistryTest {
     // --- Plan graph validation fixtures ---
 
     /** Invalid definition: two nodes share the same stepId. */
-    static final WorkflowDefinition<OrderState, OrderSagaContractV1> DEF_DUPLICATE_STEP_ID =
-            new WorkflowDefinition<>() {
-                @Override
-                public Class<OrderSagaContractV1> contract() {
-                    return OrderSagaContractV1.class;
-                }
+    static final WorkflowDefinition<OrderState, OrderSagaContract> DEF_DUPLICATE_STEP_ID = new WorkflowDefinition<>() {
+        @Override
+        public Class<OrderSagaContract> contract() {
+            return OrderSagaContract.class;
+        }
 
-                @Override
-                public Class<OrderState> stateType() {
-                    return OrderState.class;
-                }
+        @Override
+        public Class<OrderState> stateType() {
+            return OrderState.class;
+        }
 
-                @Override
-                public String definitionId() {
-                    return "dup-step-def";
-                }
+        @Override
+        public String definitionId() {
+            return "dup-step-def";
+        }
 
-                @Override
-                public long definitionVersion() {
-                    return 1L;
-                }
+        @Override
+        public long definitionVersion() {
+            return 1L;
+        }
 
-                @Override
-                public void define(WorkflowBuilder<OrderState> wf) {
-                    wf.init(StartCmd.class, cmd -> new OrderState(cmd.id()))
-                            .initialStep("step")
-                            // Two nodes with the same stepId — must be rejected by graph validation
-                            .dispatch("step", "svc-a", s -> new Object(), "done")
-                            .dispatch("step", "svc-b", s -> new Object(), "done")
-                            .complete("done");
-                }
-            };
+        @Override
+        public void define(WorkflowBuilder<OrderState> wf) {
+            wf.init(StartCmd.class, cmd -> new OrderState(cmd.id()))
+                    .initialStep("step")
+                    // Two nodes with the same stepId — must be rejected by graph validation
+                    .dispatch("step", "svc-a", s -> new Object(), "done")
+                    .dispatch("step", "svc-b", s -> new Object(), "done")
+                    .complete("done");
+        }
+    };
 
     /** Invalid definition: initialStepId does not match any node. */
-    static final WorkflowDefinition<OrderState, OrderSagaContractV1> DEF_DANGLING_INITIAL_STEP =
+    static final WorkflowDefinition<OrderState, OrderSagaContract> DEF_DANGLING_INITIAL_STEP =
             new WorkflowDefinition<>() {
                 @Override
-                public Class<OrderSagaContractV1> contract() {
-                    return OrderSagaContractV1.class;
+                public Class<OrderSagaContract> contract() {
+                    return OrderSagaContract.class;
                 }
 
                 @Override
@@ -205,44 +204,43 @@ class WorkflowRegistryTest {
             };
 
     /** Invalid definition: ServiceDispatchNode.nextStepId does not resolve. */
-    static final WorkflowDefinition<OrderState, OrderSagaContractV1> DEF_DANGLING_NEXT_STEP =
-            new WorkflowDefinition<>() {
-                @Override
-                public Class<OrderSagaContractV1> contract() {
-                    return OrderSagaContractV1.class;
-                }
+    static final WorkflowDefinition<OrderState, OrderSagaContract> DEF_DANGLING_NEXT_STEP = new WorkflowDefinition<>() {
+        @Override
+        public Class<OrderSagaContract> contract() {
+            return OrderSagaContract.class;
+        }
 
-                @Override
-                public Class<OrderState> stateType() {
-                    return OrderState.class;
-                }
+        @Override
+        public Class<OrderState> stateType() {
+            return OrderState.class;
+        }
 
-                @Override
-                public String definitionId() {
-                    return "dangling-next-def";
-                }
+        @Override
+        public String definitionId() {
+            return "dangling-next-def";
+        }
 
-                @Override
-                public long definitionVersion() {
-                    return 1L;
-                }
+        @Override
+        public long definitionVersion() {
+            return 1L;
+        }
 
-                @Override
-                public void define(WorkflowBuilder<OrderState> wf) {
-                    wf.init(StartCmd.class, cmd -> new OrderState(cmd.id()))
-                            .initialStep("dispatch")
-                            // nextStepId "nonexistent" does not match any node
-                            .dispatch("dispatch", "svc", s -> new Object(), "nonexistent")
-                            .complete("done");
-                }
-            };
+        @Override
+        public void define(WorkflowBuilder<OrderState> wf) {
+            wf.init(StartCmd.class, cmd -> new OrderState(cmd.id()))
+                    .initialStep("dispatch")
+                    // nextStepId "nonexistent" does not match any node
+                    .dispatch("dispatch", "svc", s -> new Object(), "nonexistent")
+                    .complete("done");
+        }
+    };
 
     /** Invalid definition: compensationStepId resolves to a non-CompensationNode. */
-    static final WorkflowDefinition<OrderState, OrderSagaContractV1> DEF_COMP_STEP_WRONG_TYPE =
+    static final WorkflowDefinition<OrderState, OrderSagaContract> DEF_COMP_STEP_WRONG_TYPE =
             new WorkflowDefinition<>() {
                 @Override
-                public Class<OrderSagaContractV1> contract() {
-                    return OrderSagaContractV1.class;
+                public Class<OrderSagaContract> contract() {
+                    return OrderSagaContract.class;
                 }
 
                 @Override
@@ -272,11 +270,11 @@ class WorkflowRegistryTest {
             };
 
     /** Invalid definition: CompensationNode.forwardStepId resolves to a non-ServiceDispatchNode. */
-    static final WorkflowDefinition<OrderState, OrderSagaContractV1> DEF_FWD_STEP_WRONG_TYPE =
+    static final WorkflowDefinition<OrderState, OrderSagaContract> DEF_FWD_STEP_WRONG_TYPE =
             new WorkflowDefinition<>() {
                 @Override
-                public Class<OrderSagaContractV1> contract() {
-                    return OrderSagaContractV1.class;
+                public Class<OrderSagaContract> contract() {
+                    return OrderSagaContract.class;
                 }
 
                 @Override
@@ -306,11 +304,11 @@ class WorkflowRegistryTest {
             };
 
     /** Invalid definition: compensation pair is mismatched (sdn.compensationStepId != comp.stepId). */
-    static final WorkflowDefinition<OrderState, OrderSagaContractV1> DEF_MISMATCHED_COMP_PAIR =
+    static final WorkflowDefinition<OrderState, OrderSagaContract> DEF_MISMATCHED_COMP_PAIR =
             new WorkflowDefinition<>() {
                 @Override
-                public Class<OrderSagaContractV1> contract() {
-                    return OrderSagaContractV1.class;
+                public Class<OrderSagaContract> contract() {
+                    return OrderSagaContract.class;
                 }
 
                 @Override
@@ -346,10 +344,10 @@ class WorkflowRegistryTest {
             };
 
     /** Invalid definition: duplicate signal name. */
-    static final WorkflowDefinition<OrderState, OrderSagaContractV1> DEF_DUPLICATE_SIGNAL = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<OrderState, OrderSagaContract> DEF_DUPLICATE_SIGNAL = new WorkflowDefinition<>() {
         @Override
-        public Class<OrderSagaContractV1> contract() {
-            return OrderSagaContractV1.class;
+        public Class<OrderSagaContract> contract() {
+            return OrderSagaContract.class;
         }
 
         @Override
@@ -525,10 +523,10 @@ class WorkflowRegistryTest {
         @Test
         @DisplayName("definition that calls wf.init(...) with no step DSL → WorkflowDefinitionException")
         void shouldRejectEmptyPlan() {
-            WorkflowDefinition<OrderState, OrderSagaContractV1> emptyPlan = new WorkflowDefinition<>() {
+            WorkflowDefinition<OrderState, OrderSagaContract> emptyPlan = new WorkflowDefinition<>() {
                 @Override
-                public Class<OrderSagaContractV1> contract() {
-                    return OrderSagaContractV1.class;
+                public Class<OrderSagaContract> contract() {
+                    return OrderSagaContract.class;
                 }
 
                 @Override
@@ -660,9 +658,8 @@ class WorkflowRegistryTest {
         }
 
         @Test
-        @DisplayName(
-                "registering same contract class to two different definitionIds throws WorkflowDefinitionException")
-        void registeringSameContractTwiceThrows() {
+        @DisplayName("registering the same contract class for two different definitionIds succeeds")
+        void registeringSameContractForTwoDefinitionIdsSucceeds() {
             // Both definitions share the same contract class (ContractD1), but have different ids.
             WorkflowDefinition<StateA, ContractD1> defD1 = new WorkflowDefinition<>() {
                 @Override
@@ -697,7 +694,7 @@ class WorkflowRegistryTest {
             WorkflowDefinition<StateB, ContractD1> defD2 = new WorkflowDefinition<>() {
                 @Override
                 public Class<ContractD1> contract() {
-                    // Re-using the same ContractD1 class — must be rejected.
+                    // Re-using the same ContractD1 class — accepted, a contract may have many definitions.
                     return ContractD1.class;
                 }
 
@@ -726,26 +723,23 @@ class WorkflowRegistryTest {
 
             registry.register(defD1);
 
-            // Second registration re-binds ContractD1 to a different definitionId — must be rejected.
-            assertThatThrownBy(() -> registry.register(defD2))
-                    .isInstanceOf(WorkflowDefinitionException.class)
-                    .hasMessageContaining(ContractD1.class.getName());
+            // Second registration names ContractD1 for a different definitionId — accepted.
+            assertThatCode(() -> registry.register(defD2)).doesNotThrowAnyException();
+            assertThat(registry.resolvePinned("d1", 1L).contractName()).isEqualTo(ContractD1.class.getName());
+            assertThat(registry.resolvePinned("d2", 1L).contractName()).isEqualTo(ContractD1.class.getName());
         }
 
         @Test
         @DisplayName("registering different versions of the same definitionId succeeds; resolveCurrent returns highest")
         void registeringDifferentVersionsOfSameDefinitionWorks() {
-            // Contract V1 and V2 for definitionId "multi" — different contract types, different versions.
+            // Versions 1 and 2 of definitionId "multi" share one contract.
             @WorkflowContract(definitionId = "multi", definitionVersion = 1)
-            interface MultiContractV1 {}
+            interface MultiContract {}
 
-            @WorkflowContract(definitionId = "multi", definitionVersion = 2)
-            interface MultiContractV2 {}
-
-            WorkflowDefinition<StateA, MultiContractV1> defV1 = new WorkflowDefinition<>() {
+            WorkflowDefinition<StateA, MultiContract> defV1 = new WorkflowDefinition<>() {
                 @Override
-                public Class<MultiContractV1> contract() {
-                    return MultiContractV1.class;
+                public Class<MultiContract> contract() {
+                    return MultiContract.class;
                 }
 
                 @Override
@@ -771,10 +765,10 @@ class WorkflowRegistryTest {
                 }
             };
 
-            WorkflowDefinition<StateB, MultiContractV2> defV2 = new WorkflowDefinition<>() {
+            WorkflowDefinition<StateB, MultiContract> defV2 = new WorkflowDefinition<>() {
                 @Override
-                public Class<MultiContractV2> contract() {
-                    return MultiContractV2.class;
+                public Class<MultiContract> contract() {
+                    return MultiContract.class;
                 }
 
                 @Override
@@ -811,6 +805,86 @@ class WorkflowRegistryTest {
     }
 
     // --- Many definitions per contract: tests ---
+
+    @Test
+    @DisplayName("many definition ids and versions implement one contract and keep their own identity")
+    void manyDefinitionsAndVersionsImplementOneContract() {
+        // Given: three distinct definition classes, two ids and three versions, naming one contract
+        // and waiting only for signals the contract declares
+        List<WorkflowDefinition<ApprovalState, ApprovalContract>> definitions =
+                List.of(new PurchaseApprovalV1(), new PurchaseApprovalV2(), new TravelApprovalV1());
+
+        // When: all three register in one registry
+        for (WorkflowDefinition<ApprovalState, ApprovalContract> definition : definitions) {
+            registry.register(definition);
+        }
+
+        // Then: each resolves to its own id, version, state type and the shared contract name
+        record Expected(String id, long version, Class<?> definitionClass) {}
+        List<Expected> expected = List.of(
+                new Expected("purchase-approval", 1L, PurchaseApprovalV1.class),
+                new Expected("purchase-approval", 2L, PurchaseApprovalV2.class),
+                new Expected("travel-approval", 1L, TravelApprovalV1.class));
+        for (Expected e : expected) {
+            RuntimeWorkflow rw = registry.resolvePinned(e.id(), e.version());
+            assertThat(rw.plan().definitionId()).as("plan id").isEqualTo(e.id());
+            assertThat(rw.plan().definitionVersion()).as("plan version").isEqualTo(e.version());
+            assertThat(rw.stateType()).as("state type").isEqualTo(ApprovalState.class);
+            assertThat(rw.contractName()).as("contract name").isEqualTo("approval");
+            assertThat(registry.definitionClass(e.definitionClass()))
+                    .as("definition class %s", e.definitionClass().getSimpleName())
+                    .hasValueSatisfying(registered -> {
+                        assertThat(registered.definitionId()).isEqualTo(e.id());
+                        assertThat(registered.contractName()).isEqualTo("approval");
+                        assertThat(registered.contract()).isEqualTo(ApprovalContract.class);
+                    });
+        }
+        assertThat(registry.allRegistered()).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("a version naming another contract than its id's earlier versions is refused")
+    void versionNamingAnotherContractIsRefused() {
+        // Given: purchase-approval v1 registered with the approval contract
+        registry.register(new PurchaseApprovalV1());
+
+        // When: purchase-approval v2 names another contract and registers
+        assertThatThrownBy(() -> registry.register(new PurchaseApprovalV2OtherContract()))
+                // Then: the registration is refused naming the version and both contract names
+                .isInstanceOf(WorkflowDefinitionException.class)
+                .hasMessageContaining("'purchase-approval' v2")
+                .hasMessageContaining("approval")
+                .hasMessageContaining("other");
+
+        // and: the refused version is not resolvable while v1 is still registered
+        assertThatThrownBy(() -> registry.resolvePinned("purchase-approval", 2L))
+                .isInstanceOf(WorkflowVersionPinUnavailableException.class);
+        assertThat(registry.resolvePinned("purchase-approval", 1L).plan().definitionVersion())
+                .isEqualTo(1L);
+        assertThat(registry.allRegistered()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("a version waiting for a signal its contract does not declare is refused")
+    void versionWaitingForUndeclaredSignalIsRefused() {
+        // Given: the contract declares approve and escalate; this definition waits for approve, then
+        // for remind (guarded by a timeout), then for audit inside a fork branch and for escalate in
+        // the other branch
+        WorkflowDefinition<ApprovalState, ApprovalContract> undeclaredWaits = new WaitsForUndeclaredSignals();
+
+        // When: it registers
+        assertThatThrownBy(() -> registry.register(undeclaredWaits))
+                // Then: the registration is refused naming the version and the undeclared signals, sorted
+                .isInstanceOf(WorkflowDefinitionException.class)
+                .hasMessageContaining("'undeclared-waits' v1")
+                .hasMessageContaining("audit, remind");
+
+        // and: nothing is registered
+        assertThat(registry.allRegistered()).isEmpty();
+        assertThatThrownBy(() -> registry.resolvePinned("undeclared-waits", 1L))
+                .isInstanceOf(WorkflowVersionPinUnavailableException.class);
+        assertThat(registry.definitionClass(WaitsForUndeclaredSignals.class)).isEmpty();
+    }
 
     @Test
     @DisplayName("registration reads identity from the definition, not from the contract annotation")

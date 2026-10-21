@@ -14,6 +14,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -138,10 +140,16 @@ public class PgWorkflowEngineTransactionalIT {
     // --- Fake contract markers ---
 
     /** Marker contract interface for the simple (init → complete) workflow. */
-    interface FakeSimpleContract {}
+    interface FakeSimpleContract {
+        @WorkflowSignal("payment.captured")
+        Future<Void> paymentCaptured(WorkflowInstanceId id, PaymentCaptured payload, @SignalDedupKey String dedupKey);
+    }
 
     /** Marker contract interface for the signal (init → wait → complete) workflow. */
-    interface FakeSignalContract {}
+    interface FakeSignalContract {
+        @WorkflowSignal("payment.captured")
+        Future<Void> paymentCaptured(WorkflowInstanceId id, PaymentCaptured payload, @SignalDedupKey String dedupKey);
+    }
 
     // --- Workflow definitions ---
 

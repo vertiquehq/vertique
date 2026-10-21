@@ -241,6 +241,10 @@ OrderFulfillmentWorkflow byId = factory.create(OrderFulfillmentWorkflow.class, "
 - **What creation checks.** Creation validates the contract interface's methods only: the annotation, the interface kind, one role annotation per method, one start method, unique signal names and the method shapes. It does not resolve a plan or compare payload types; a payload that does not fit the definition is reported when the client starts or signals.
 - **Generated and reflective clients.** Both build the start command through `WorkflowClientBinding.startCommand(...)`, so they send the same command. A generated proxy takes `(WorkflowOperations, WorkflowClientBinding)` and embeds no definition id or version.
 
+- **Many definitions per contract.** Any number of definition ids and versions may name one contract. The registry reads a definition's id, version, state type and contract from the definition, never from the `@WorkflowContract` annotation, and keeps no map from a contract to one definition. The registry no longer offers a lookup from a contract class to its definition; look a definition up with `resolvePinned(id, version)`, `registeredDefinition(id, version)`, `allRegistered()` or `definitionClass(definitionClass)`.
+- **One contract per definition id.** Every version of a definition id must name the same contract. Registering a version whose contract name differs from that of an earlier version of the same id fails with `WorkflowDefinitionException` naming `'<id>' v<version>` and both contract names; nothing is registered.
+- **Declared signals.** A definition that waits for a signal must declare it on its contract, as a `@WorkflowSignal` method of the contract interface or of an interface it extends. Registration fails with `WorkflowDefinitionException` naming the definition and the undeclared signals in sorted order; waits inside fork branches and waits guarded by a timeout count. Marker contracts are not exempt: an empty contract can only back a definition that waits for no signal. A contract may declare signals that some of its versions do not wait for, and it may grow: add the `@WorkflowSignal` method before registering a version that waits for the new signal.
+
 The `definitionId` and `definitionVersion` attributes of `@WorkflowContract` are not read by clients. `WorkflowClientFactory.create(Contract.class)` no longer exists, and the annotation processor no longer generates Dagger providers of typed clients: obtain a client from the factory, for example in your own `@Provides` method.
 
 `@WorkflowContract.value()` gives the contract a logical name (see Logical Type Names); the name does not change the plan hash. Contract annotations are useful for type-safe application code. Document-defined workflows still use a contract class today; see `dev.vertique:vertique-workflow-definition` for the typed document model and its current limits.
@@ -438,7 +442,7 @@ the id's executable membership; a claim, completion or static reconciliation by 
 `WorkflowCoreModule` declares optional
 store, lifecycle, and configuration bindings plus the loader multibinding. Without persistence, the
 standalone definition graph needs neither a database nor a configuration parser. `WorkflowRegistry.unregister`
-removes a version and its contract mapping; third-party registries must implement it to support durable
+removes a version; third-party registries must implement it to support durable
 activation compensation. Its default throws explicitly.
 
 ### Document Policy Configuration

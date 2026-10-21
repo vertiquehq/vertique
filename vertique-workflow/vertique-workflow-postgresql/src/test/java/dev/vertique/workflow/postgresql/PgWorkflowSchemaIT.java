@@ -48,6 +48,8 @@ import dev.vertique.inboxoutbox.postgresql.InboxOutboxMigrationsModule;
 import dev.vertique.inboxoutbox.postgresql.TransactionalMessagingPostgresqlModule;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
@@ -584,7 +586,13 @@ public class PgWorkflowSchemaIT {
 
     record FanoutState(String orderId) {}
 
-    interface FanoutContract {}
+    interface FanoutContract {
+        @WorkflowSignal("signal-a")
+        Future<Void> signalA(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("signal-b")
+        Future<Void> signalB(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /** Fork with two signal-wait branches under an all-required join, the shape the recovery sweep serves. */
     static final WorkflowDefinition<FanoutState, FanoutContract> FORK_JOIN_DEFINITION = new WorkflowDefinition<>() {

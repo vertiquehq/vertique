@@ -18,7 +18,6 @@ import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.plan.CompensationNode;
 import dev.vertique.workflow.plan.CompleteNode;
@@ -340,11 +339,6 @@ class WorkflowOutboxComposeValidatorTest {
 
         @Override
         public RuntimeWorkflow resolvePinned(String definitionId, long version) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
             throw new UnsupportedOperationException();
         }
 

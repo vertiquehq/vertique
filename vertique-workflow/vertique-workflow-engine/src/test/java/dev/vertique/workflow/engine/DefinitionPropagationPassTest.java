@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
@@ -1006,11 +1005,6 @@ class DefinitionPropagationPassTest {
             RuntimeWorkflow found = runtimes.get(definitionId + "@" + version);
             if (found == null) throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
             return found;
-        }
-
-        @Override
-        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

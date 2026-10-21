@@ -15,8 +15,8 @@ import java.util.Optional;
  * implementations contributed to the Dagger multibinding. The registry validates each definition
  * at registration time and rejects invalid plans with a {@code WorkflowDefinitionException}.
  *
- * <p>The registry is also the source of {@link WorkflowContractMetadata} for contract interfaces,
- * and maps the class of a registered definition to its definition id and contract for
+ * <p>Any number of definition ids and versions may implement one contract. The registry maps the
+ * class of a registered definition to its definition id and contract for
  * {@code WorkflowClientFactory}.
  *
  * <p>The framework implements this interface ({@link DefaultWorkflowRegistry}); applications call it.
@@ -67,18 +67,6 @@ public interface WorkflowRegistry {
     RuntimeWorkflow resolvePinned(String definitionId, long version);
 
     /**
-     * Returns the {@link dev.vertique.workflow.contract.WorkflowContractMetadata} for the given
-     * contract interface.
-     *
-     * @param contractInterface a contract interface annotated with
-     *     {@link dev.vertique.workflow.contract.WorkflowContract}
-     * @return the contract metadata for the interface
-     * @throws dev.vertique.workflow.exception.WorkflowProxyContractException if the interface is not
-     *     annotated with {@code @WorkflowContract} or is not linked to a registered definition
-     */
-    dev.vertique.workflow.contract.WorkflowContractMetadata contractMetadata(Class<?> contractInterface);
-
-    /**
      * Returns the definition id and contract of a registered definition class.
      *
      * <p>The lookup is by the exact runtime class of the registered definition objects. A class whose
@@ -99,7 +87,7 @@ public interface WorkflowRegistry {
      * @return immutable collection of all registered runtime workflows; never null, may be empty
      */
     Collection<RuntimeWorkflow> allRegistered();
-    /** Removes a version and its contract mapping. Unsupported registries fail explicitly. */
+    /** Removes a version. Unsupported registries fail explicitly. */
     default void unregister(String definitionId, long version) {
         throw new UnsupportedOperationException("unregister is not supported");
     }

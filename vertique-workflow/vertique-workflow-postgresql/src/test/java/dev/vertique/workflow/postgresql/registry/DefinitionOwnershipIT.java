@@ -13,7 +13,7 @@ import dev.vertique.core.VertiqueRuntime;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.WorkflowContract;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
+import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
@@ -21,7 +21,6 @@ import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
-import dev.vertique.workflow.exception.WorkflowProxyContractException;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -78,37 +77,37 @@ import org.junit.jupiter.api.extension.ExtendWith;
 public class DefinitionOwnershipIT {
 
     @WorkflowContract(definitionId = "ownership-race-doc", definitionVersion = 1)
-    public interface RaceV1 {}
+    public interface RaceV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "ownership-held-doc", definitionVersion = 1)
-    public interface HeldV1 {}
+    public interface HeldV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "tenant-a:ownership-v3-first-doc", definitionVersion = 3)
-    public interface V3FirstVersion3 {}
+    public interface V3FirstVersion3 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "tenant-a:ownership-v3-first-doc", definitionVersion = 4)
-    public interface V3FirstVersion4 {}
+    public interface V3FirstVersion4 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "tenant-a:ownership-v4-first-doc", definitionVersion = 3)
-    public interface V4FirstVersion3 {}
+    public interface V4FirstVersion3 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "tenant-a:ownership-v4-first-doc", definitionVersion = 4)
-    public interface V4FirstVersion4 {}
+    public interface V4FirstVersion4 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "ownership-stale-doc", definitionVersion = 1)
-    public interface StaleV1 {}
+    public interface StaleV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "ownership-candidates-doc", definitionVersion = 1)
-    public interface CandidatesV1 {}
+    public interface CandidatesV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "ownership-reconcile-held-doc", definitionVersion = 1)
-    public interface ReconcileHeldV1 {}
+    public interface ReconcileHeldV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "ownership-reconcile-fresh-doc", definitionVersion = 1)
-    public interface ReconcileFreshV1 {}
+    public interface ReconcileFreshV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "ownership-reconcile-race-doc", definitionVersion = 1)
-    public interface ReconcileRaceV1 {}
+    public interface ReconcileRaceV1 extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_definition_ownership_it")
@@ -190,8 +189,7 @@ public class DefinitionOwnershipIT {
                     .isEqualTo(winnerPlanHash);
             assertThat(loserNode.registry().allRegistered())
                     .noneMatch(runtime -> runtime.plan().definitionId().equals(raceId));
-            assertThatThrownBy(() -> loserNode.registry().contractMetadata(RaceV1.class))
-                    .isInstanceOf(WorkflowProxyContractException.class);
+            assertThat(loserNode.registry().registeredDefinition(raceId, 1)).isEmpty();
 
             // Given a second id where tenant-a's claim is committed and its completion is held back
             TenantRowSeed.seed(
@@ -377,7 +375,7 @@ public class DefinitionOwnershipIT {
             await(nodeB.service().activate(tenantB));
             RuntimeWorkflow replacement = nodeB.registry().resolvePinned(id, 1);
             RuntimeWorkflow replacementCurrent = nodeB.registry().resolveCurrent(id);
-            WorkflowContractMetadata replacementContract = nodeB.registry().contractMetadata(StaleV1.class);
+            var replacementDefinition = nodeB.registry().registeredDefinition(id, 1);
             Stored replacementRow = fixture.stored(id).stream()
                     .filter(row -> "tenant-b".equals(row.tenant()))
                     .findFirst()
@@ -408,10 +406,10 @@ public class DefinitionOwnershipIT {
                         assertThat(row.planHash()).isEqualTo(replacementRow.planHash());
                     });
 
-            // And tenant-b's runtime identity, current and pinned resolution and contract mapping are unchanged
+            // And tenant-b's runtime identity, current and pinned resolution and registered definition are unchanged
             assertThat(nodeB.registry().resolvePinned(id, 1)).isSameAs(replacement);
             assertThat(nodeB.registry().resolveCurrent(id)).isSameAs(replacementCurrent);
-            assertThat(nodeB.registry().contractMetadata(StaleV1.class)).isEqualTo(replacementContract);
+            assertThat(nodeB.registry().registeredDefinition(id, 1)).isEqualTo(replacementDefinition);
             assertThat(nodeB.registry().allRegistered())
                     .filteredOn(runtime -> runtime.plan().definitionId().equals(id))
                     .singleElement()
@@ -420,8 +418,7 @@ public class DefinitionOwnershipIT {
             // And nothing of tenant-a stays executable on its node
             assertThat(nodeA.registry().allRegistered())
                     .noneMatch(runtime -> runtime.plan().definitionId().equals(id));
-            assertThatThrownBy(() -> nodeA.registry().contractMetadata(StaleV1.class))
-                    .isInstanceOf(WorkflowProxyContractException.class);
+            assertThat(nodeA.registry().registeredDefinition(id, 1)).isEmpty();
         }
     }
 

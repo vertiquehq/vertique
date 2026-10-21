@@ -14,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
@@ -49,10 +50,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 public class DefinitionDigestIT {
 
     @WorkflowContract(definitionId = "digest-guarded-read-active-doc", definitionVersion = 1)
-    public interface ActiveCaseV1 {}
+    public interface ActiveCaseV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "digest-guarded-read-edited-doc", definitionVersion = 1)
-    public interface EditedCaseV1 {}
+    public interface EditedCaseV1 extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_definition_digest_it")

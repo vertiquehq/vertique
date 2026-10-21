@@ -12,6 +12,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -106,7 +108,13 @@ public class PgWorkflowEngineRaceJoinSupersedesOpenWaitsIT {
 
     record GoSignal(String v) {}
 
-    interface RaceContract {}
+    interface RaceContract {
+        @WorkflowSignal("go-a")
+        Future<Void> goA(WorkflowInstanceId id, GoSignal payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("go-b")
+        Future<Void> goB(WorkflowInstanceId id, GoSignal payload, @SignalDedupKey String dedupKey);
+    }
 
     static final WorkflowDefinition<State, RaceContract> DEFINITION = new WorkflowDefinition<>() {
         @Override

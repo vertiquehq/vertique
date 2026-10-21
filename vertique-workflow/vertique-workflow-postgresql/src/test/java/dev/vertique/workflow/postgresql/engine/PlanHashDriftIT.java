@@ -14,6 +14,8 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -27,6 +29,7 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -92,7 +95,13 @@ public class PlanHashDriftIT {
     record SigB(String data) {}
 
     /** Marker contract for the drift-test workflow. */
-    interface DriftContract {}
+    interface DriftContract {
+        @WorkflowSignal("wait-b")
+        Future<Void> waitB(WorkflowInstanceId id, SigB payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("wait-a")
+        Future<Void> waitA(WorkflowInstanceId id, SigA payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Plan A: minimal workflow that waits for signal {@code "wait-a"} then completes.

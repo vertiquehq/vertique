@@ -390,11 +390,11 @@ class WorkflowDefinitionDocumentValidatorTest {
         assertViolationCode(result, "CONTRACT_NOT_ANNOTATED");
     }
 
-    // --- Rule 6: CONTRACT_DEFINITION_ID_MISMATCH ---
+    // --- Rule 6: the contract annotation's definitionId is not compared ---
 
     @Test
-    @DisplayName("CONTRACT_DEFINITION_ID_MISMATCH — annotation definitionId != document definitionId")
-    void rule06_contractDefinitionIdMismatch() {
+    @DisplayName("a contract annotation naming another definitionId than the document is accepted")
+    void rule06_contractAnnotationDefinitionIdIsNotCompared() {
         WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
                 DEF_ID,
                 DEF_VER,
@@ -408,15 +408,15 @@ class WorkflowDefinitionDocumentValidatorTest {
 
         WorkflowDefinitionViolations result = new WorkflowDefinitionDocumentValidator(emptyLookup).validate(doc);
 
-        Violation v = findFirstByCode(result, "CONTRACT_DEFINITION_ID_MISMATCH");
-        assertThat(v.message()).contains("wrong-id").contains(DEF_ID);
+        assertThat(result.toList().stream().map(Violation::code).toList())
+                .doesNotContain("CONTRACT_DEFINITION_ID_MISMATCH", "CONTRACT_NOT_ANNOTATED");
     }
 
-    // --- Rule 7: CONTRACT_DEFINITION_VERSION_MISMATCH ---
+    // --- Rule 7: the contract annotation's definitionVersion is not compared ---
 
     @Test
-    @DisplayName("CONTRACT_DEFINITION_VERSION_MISMATCH — annotation definitionVersion != document version")
-    void rule07_contractDefinitionVersionMismatch() {
+    @DisplayName("a contract annotation naming another definitionVersion than the document is accepted")
+    void rule07_contractAnnotationDefinitionVersionIsNotCompared() {
         WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
                 DEF_ID,
                 DEF_VER,
@@ -430,8 +430,8 @@ class WorkflowDefinitionDocumentValidatorTest {
 
         WorkflowDefinitionViolations result = new WorkflowDefinitionDocumentValidator(emptyLookup).validate(doc);
 
-        Violation v = findFirstByCode(result, "CONTRACT_DEFINITION_VERSION_MISMATCH");
-        assertThat(v.message()).contains("99").contains("1");
+        assertThat(result.toList().stream().map(Violation::code).toList())
+                .doesNotContain("CONTRACT_DEFINITION_VERSION_MISMATCH", "CONTRACT_NOT_ANNOTATED");
     }
 
     // --- Rule 8: START_PAYLOAD_TYPE_UNRESOLVABLE ---

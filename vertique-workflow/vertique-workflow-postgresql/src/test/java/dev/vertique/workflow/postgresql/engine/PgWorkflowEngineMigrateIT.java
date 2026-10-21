@@ -11,6 +11,8 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -32,6 +34,7 @@ import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -118,19 +121,19 @@ public class PgWorkflowEngineMigrateIT {
     record V2State(String name, boolean migrated) {}
 
     /** Marker contract for v1 of the migration-test workflow. */
-    interface MigrateTestContractV1 {}
-
-    /** Marker contract for v2 of the migration-test workflow. */
-    interface MigrateTestContractV2 {}
+    interface MigrateTestContract {
+        @WorkflowSignal("pause")
+        Future<Void> pause(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     static final String DEF_ID = "migrate-test";
 
     // --- V1 definition: init → waitForSignal("pause") → complete ---
 
-    static final WorkflowDefinition<V1State, MigrateTestContractV1> DEF_V1 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<V1State, MigrateTestContract> DEF_V1 = new WorkflowDefinition<>() {
         @Override
-        public Class<MigrateTestContractV1> contract() {
-            return MigrateTestContractV1.class;
+        public Class<MigrateTestContract> contract() {
+            return MigrateTestContract.class;
         }
 
         @Override
@@ -162,10 +165,10 @@ public class PgWorkflowEngineMigrateIT {
 
     // --- V2 definition: init → complete (AnchorAtInitial drives instance here immediately) ---
 
-    static final WorkflowDefinition<V2State, MigrateTestContractV2> DEF_V2 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<V2State, MigrateTestContract> DEF_V2 = new WorkflowDefinition<>() {
         @Override
-        public Class<MigrateTestContractV2> contract() {
-            return MigrateTestContractV2.class;
+        public Class<MigrateTestContract> contract() {
+            return MigrateTestContract.class;
         }
 
         @Override
@@ -325,7 +328,7 @@ public class PgWorkflowEngineMigrateIT {
         String idempotencyKey = "migrate-happy-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
                 DEF_ID,
-                MigrateTestContractV2.class.getName(),
+                MigrateTestContract.class.getName(),
                 new StartPayload("alice"),
                 idempotencyKey,
                 null,
@@ -390,7 +393,7 @@ public class PgWorkflowEngineMigrateIT {
         String idempotencyKey = "migrate-hash-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
                 DEF_ID,
-                MigrateTestContractV2.class.getName(),
+                MigrateTestContract.class.getName(),
                 new StartPayload("bob"),
                 idempotencyKey,
                 null,

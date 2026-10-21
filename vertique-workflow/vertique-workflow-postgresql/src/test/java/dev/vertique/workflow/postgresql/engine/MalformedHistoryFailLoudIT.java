@@ -11,6 +11,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -118,7 +120,13 @@ public class MalformedHistoryFailLoudIT {
     }
 
     /** Marker contract for the two-step saga. */
-    interface TwoStepContract {}
+    interface TwoStepContract {
+        @WorkflowSignal("sig1")
+        Future<Void> sig1(WorkflowInstanceId id, SigOne payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("sig2")
+        Future<Void> sig2(WorkflowInstanceId id, SigTwo payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Two-step compensable saga used for the SIGNAL_RECEIVED corruption test:
@@ -198,7 +206,10 @@ public class MalformedHistoryFailLoudIT {
     }
 
     /** Marker contract for the one-step saga. */
-    interface OneStepContract {}
+    interface OneStepContract {
+        @WorkflowSignal("done")
+        Future<Void> done(WorkflowInstanceId id, SigOne payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * One-step compensable saga used for the SIDE_EFFECT_RECORDED corruption test:

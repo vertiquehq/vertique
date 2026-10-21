@@ -57,18 +57,12 @@ class DefaultWorkflowRegistryConcurrencyTest {
     interface TaskAlphaContract {}
 
     @WorkflowContract(definitionId = "task-foo", definitionVersion = 1)
-    interface TaskFooV1Contract {}
+    interface TaskFooContract {}
 
+    // Refusal: the "task-foo" v2 definition below names this contract instead of TaskFooContract,
+    // which the registry refuses, to exercise the rollback path.
     @WorkflowContract(definitionId = "task-foo", definitionVersion = 2)
-    interface TaskFooV2Contract {}
-
-    @WorkflowContract(definitionId = "task-foo", definitionVersion = 3)
-    interface TaskFooV3Contract {}
-
-    // Collision: this contract is used for the "foo-v2 collision" scenario —
-    // the v2 definition below reuses this interface to exercise the rollback path.
-    @WorkflowContract(definitionId = "task-foo", definitionVersion = 1)
-    interface CollidingContractSameAsV1 {}
+    interface OtherTaskContract {}
 
     // --- Helpers ---
 
@@ -208,7 +202,7 @@ class DefaultWorkflowRegistryConcurrencyTest {
         @Test
         @DisplayName("readers see either a clean miss or a complete hit; never NPE or unexpected exception")
         void resolveShouldNeverObserveHalfPublishedState() throws InterruptedException {
-            WorkflowDefinition<TaskState, ?> def = minimalDef("task-foo", 1, TaskFooV1Contract.class);
+            WorkflowDefinition<TaskState, ?> def = minimalDef("task-foo", 1, TaskFooContract.class);
 
             ExecutorService pool = Executors.newFixedThreadPool(4);
             CountDownLatch started = new CountDownLatch(1);
@@ -279,57 +273,68 @@ class DefaultWorkflowRegistryConcurrencyTest {
     // --- Test 3: Rollback atomicity ---
 
     @Nested
-    @DisplayName("rollback atomicity on contract collision")
+    @DisplayName("rollback atomicity on a refused contract")
     class RollbackAtomicity {
 
         @Test
-        @DisplayName("failed register due to contract collision leaves no half-committed state")
-        void contractCollisionRollsBackVersion() throws InterruptedException {
-            // Register "task-foo" v1 with TaskFooV1Contract first.
-            registry.register(minimalDef("task-foo", 1, TaskFooV1Contract.class));
+        @DisplayName("a refused contract leaves no half-committed state")
+        void refusedContractRollsBackVersion() throws InterruptedException {
+            // Register "task-foo" v1 with TaskFooContract first.
+            registry.register(minimalDef("task-foo", 1, TaskFooContract.class));
 
-            // Now attempt to register "task-bar" v1 using the SAME contract class as "task-foo" v1.
-            // This must fail (contract already bound to task-foo). The rollback must ensure
-            // task-bar does NOT appear in allRegistered().
-            WorkflowDefinition<TaskState, ?> collidingDef = minimalDef("task-bar", 1, TaskFooV1Contract.class);
+            // Now attempt to register "task-foo" v2 naming another contract than v1.
+            // This must fail (every version of a definition names one contract). The refusal must ensure
+            // v2 does NOT appear in allRegistered().
+            WorkflowDefinition<TaskState, ?> refusedDef = minimalDef("task-foo", 2, OtherTaskContract.class);
 
-            assertThatThrownBy(() -> registry.register(collidingDef)).isInstanceOf(WorkflowDefinitionException.class);
+            assertThatThrownBy(() -> registry.register(refusedDef)).isInstanceOf(WorkflowDefinitionException.class);
 
-            // After the rollback, allRegistered must contain only task-foo v1 — no task-bar
+            // After the refusal, allRegistered must contain only task-foo v1
             Collection<RuntimeWorkflow> registered = registry.allRegistered();
             assertThat(registered).hasSize(1);
             assertThat(registered.iterator().next().plan().definitionId()).isEqualTo("task-foo");
 
-            // task-foo v1 is still resolvable; "task-bar" must be missing
+            // task-foo v1 is still resolvable; v2 must be missing
             RuntimeWorkflow foo = registry.resolveCurrent("task-foo");
             assertThat(foo.plan().definitionVersion()).isEqualTo(1L);
 
-            assertThatThrownBy(() -> registry.resolveCurrent("task-bar"))
-                    .isInstanceOf(WorkflowDefinitionMissingException.class);
+            assertThatThrownBy(() -> registry.resolvePinned("task-foo", 2L))
+                    .isInstanceOf(WorkflowVersionPinUnavailableException.class);
+        }
+
+        @Test
+        @DisplayName("a second definition id on the same contract is accepted")
+        void secondDefinitionIdOnSameContractIsAccepted() {
+            registry.register(minimalDef("task-foo", 1, TaskFooContract.class));
+
+            registry.register(minimalDef("task-bar", 1, TaskFooContract.class));
+
+            assertThat(registry.allRegistered()).hasSize(2);
+            assertThat(registry.resolveCurrent("task-bar").plan().definitionId())
+                    .isEqualTo("task-bar");
         }
 
         @Test
         @DisplayName("concurrent reader during a rolled-back registration sees only the prior committed state")
         void concurrentReaderSeesOnlyPriorStateAfterRollback() throws InterruptedException {
             // Register "task-foo" v1 first
-            registry.register(minimalDef("task-foo", 1, TaskFooV1Contract.class));
+            registry.register(minimalDef("task-foo", 1, TaskFooContract.class));
 
-            // Now attempt to register "task-foo" v2 with a contract that collides with TaskFooV1Contract
-            // (same class — cannot rebind)
-            WorkflowDefinition<TaskState, ?> collidingV2 = minimalDef("task-foo", 2, TaskFooV1Contract.class);
+            // Now attempt to register "task-foo" v2 with a contract other than TaskFooContract
+            WorkflowDefinition<TaskState, ?> collidingV2 = minimalDef("task-foo", 2, OtherTaskContract.class);
 
             ExecutorService pool = Executors.newFixedThreadPool(2);
             CountDownLatch started = new CountDownLatch(1);
             AtomicInteger unexpectedCount = new AtomicInteger(0);
             AtomicReference<Throwable> firstUnexpected = new AtomicReference<>();
 
-            // Thread A: attempts to register colliding v2 (will fail with contract collision)
+            // Thread A: attempts to register v2 under another contract (will be refused)
             Future<Void> writerFuture = pool.submit(() -> {
                 started.await();
                 try {
                     registry.register(collidingV2);
                 } catch (WorkflowDefinitionException e) {
-                    // Expected — contract collision
+                    // Expected — another contract than v1
                 }
                 return null;
             });
@@ -397,9 +402,9 @@ class DefaultWorkflowRegistryConcurrencyTest {
         @Test
         @DisplayName("resolveCurrent returns v3; resolvePinned returns v1, v2, v3 correctly")
         void shouldResolveCorrectVersions() {
-            registry.register(minimalDef("task-foo", 1, TaskFooV1Contract.class));
-            registry.register(minimalDef("task-foo", 2, TaskFooV2Contract.class));
-            registry.register(minimalDef("task-foo", 3, TaskFooV3Contract.class));
+            registry.register(minimalDef("task-foo", 1, TaskFooContract.class));
+            registry.register(minimalDef("task-foo", 2, TaskFooContract.class));
+            registry.register(minimalDef("task-foo", 3, TaskFooContract.class));
 
             RuntimeWorkflow current = registry.resolveCurrent("task-foo");
             assertThat(current.plan().definitionVersion()).isEqualTo(3L);

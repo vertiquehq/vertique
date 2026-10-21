@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.WorkflowContract;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
+import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.service.ActivationStatus;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
@@ -23,7 +23,6 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
-import dev.vertique.workflow.exception.WorkflowProxyContractException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
@@ -83,49 +82,37 @@ public class DefinitionReinstatementIT {
     public interface DriftCodeV1 {}
 
     @WorkflowContract(definitionId = "reinstatement-it-owner-doc", definitionVersion = 1)
-    public interface OwnerDocV1 {}
+    public interface OwnerDocV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "reinstatement-it-doc", definitionVersion = 1)
-    public interface ReinstatedDocV1 {}
+    public interface ReinstatedDocV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "reinstatement-it-drift-doc", definitionVersion = 1)
-    public interface DriftDocV1 {}
+    public interface DriftDocV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "reinstatement-it-rollback", definitionVersion = 1)
-    public interface RollbackV1 {}
-
-    @WorkflowContract(definitionId = "reinstatement-it-rollback", definitionVersion = 2)
-    public interface RollbackV2 {}
-
-    @WorkflowContract(definitionId = "reinstatement-it-rollback", definitionVersion = 3)
-    public interface RollbackV3 {}
+    public interface Rollback {}
 
     @WorkflowContract(definitionId = "reinstatement-it-preserved", definitionVersion = 1)
-    public interface PreservedV1 {}
-
-    @WorkflowContract(definitionId = "reinstatement-it-preserved", definitionVersion = 2)
-    public interface PreservedV2 {}
+    public interface Preserved {}
 
     @WorkflowContract(definitionId = "reinstatement-it-stale-doc", definitionVersion = 1)
-    public interface StaleDocV1 {}
+    public interface StaleDocV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "reinstatement-it-isolation", definitionVersion = 1)
-    public interface IsolationDocV1 {}
+    public interface IsolationDocV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "reinstatement-it-reconcile-isolation", definitionVersion = 1)
-    public interface ReconcileIsolationDocV1 {}
+    public interface ReconcileIsolationDocV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "reinstatement-it-store-owner", definitionVersion = 1)
-    public interface StoreOwnerDocV1 {}
+    public interface StoreOwnerDocV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "reinstatement-it-store-pairs", definitionVersion = 1)
-    public interface StorePairsDocV1 {}
+    public interface StorePairsDocV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "reinstatement-it-lower-doc", definitionVersion = 1)
-    public interface LowerDocV1 {}
-
-    @WorkflowContract(definitionId = "reinstatement-it-lower-doc", definitionVersion = 2)
-    public interface LowerDocV2 {}
+    public interface LowerDoc extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_definition_reinstatement_it")
@@ -145,14 +132,13 @@ public class DefinitionReinstatementIT {
             // Given a retired code row whose code the application still deploys
             scenario.seedCode(id, 1, hash, "RETIRED");
 
-            // And a restart, after which the retired version has neither an executable registration nor a contract
-            // mapping
+            // And a restart, after which the retired version has no executable registration and no registered
+            // definition
             Boot restarted = scenario.node(none(), unobserved(), List.of(deployed));
             WorkflowRegistry registry = restarted.app().workflowRegistry();
             assertThatThrownBy(() -> registry.resolvePinned(id, 1))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThatThrownBy(() -> registry.contractMetadata(ReinstatedCodeV1.class))
-                    .isInstanceOf(WorkflowProxyContractException.class);
+            assertThat(registry.registeredDefinition(id, 1)).isEmpty();
             Stored retired = scenario.stored(id, 1);
             assertThat(retired.status()).isEqualTo("RETIRED");
             WorkflowDefinitionService service = restarted.app().definitionService();
@@ -169,13 +155,11 @@ public class DefinitionReinstatementIT {
                     .isEqualTo(retired);
             assertThat(reinstated.planHash()).isEqualTo(hash);
 
-            // And both current and pinned resolution serve the deployed code, with its contract mapping restored
+            // And both current and pinned resolution serve the deployed code, with the registered definition restored
             assertThat(registry.resolvePinned(id, 1).plan().planHash()).isEqualTo(hash);
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(1);
             assertThat(registry.isDeprecated(id, 1)).isFalse();
-            WorkflowContractMetadata mapping = registry.contractMetadata(ReinstatedCodeV1.class);
-            assertThat(mapping.definitionId()).isEqualTo(id);
-            assertThat(mapping.definitionVersion()).isEqualTo(1);
+            assertThat(registry.registeredDefinition(id, 1)).isPresent();
 
             // When a new instance is started through the workflow operations
             WorkflowInstanceId started = await(restarted
@@ -209,12 +193,11 @@ public class DefinitionReinstatementIT {
             scenario.ageStatus(key, coolingSeconds + 60);
             await(service.retire(key));
 
-            // Then the removal succeeds and clears the runtime and its contract mapping
+            // Then the removal succeeds and clears the runtime and its registered definition
             assertThat(scenario.stored(id, 1).status()).isEqualTo("RETIRED");
             assertThatThrownBy(() -> registry.resolvePinned(id, 1))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThatThrownBy(() -> registry.contractMetadata(ReinstatedCodeV1.class))
-                    .isInstanceOf(WorkflowProxyContractException.class);
+            assertThat(registry.registeredDefinition(id, 1)).isEmpty();
             assertThat(registeredVersions(registry, id)).isEmpty();
         }
     }
@@ -361,8 +344,7 @@ public class DefinitionReinstatementIT {
             assertThat(registeredVersions(registry, id)).isEmpty();
             assertThatThrownBy(() -> registry.resolvePinned(id, 1))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThatThrownBy(() -> registry.contractMetadata(DriftCodeV1.class))
-                    .isInstanceOf(WorkflowProxyContractException.class);
+            assertThat(registry.registeredDefinition(id, 1)).isEmpty();
         }
     }
 
@@ -463,8 +445,7 @@ public class DefinitionReinstatementIT {
             // And the membership and the cache are restored
             assertThat(registry.resolvePinned(id, 1).plan().planHash()).isEqualTo(loadedHash);
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(1);
-            assertThat(registry.contractMetadata(ReinstatedDocV1.class).definitionId())
-                    .isEqualTo(id);
+            assertThat(registry.registeredDefinition(id, 1)).isPresent();
             assertThat(restarted.app().workflowDefinitionStore().currentStatus(id, 1))
                     .isEqualTo(ActivationStatus.ACTIVE);
 
@@ -475,12 +456,11 @@ public class DefinitionReinstatementIT {
             scenario.ageStatus(key, coolingSeconds + 60);
             await(service.retire(key));
 
-            // Then the removal succeeds and clears the runtime and its contract mapping
+            // Then the removal succeeds and clears the runtime and its registered definition
             assertThat(scenario.stored(id, 1).status()).isEqualTo("RETIRED");
             assertThatThrownBy(() -> registry.resolvePinned(id, 1))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThatThrownBy(() -> registry.contractMetadata(ReinstatedDocV1.class))
-                    .isInstanceOf(WorkflowProxyContractException.class);
+            assertThat(registry.registeredDefinition(id, 1)).isEmpty();
             assertThat(registeredVersions(registry, id)).isEmpty();
         }
     }
@@ -496,11 +476,11 @@ public class DefinitionReinstatementIT {
         DefinitionKey v2 = new DefinitionKey(null, id, 2);
         DefinitionKey v3 = new DefinitionKey(null, id, 3);
         DefinitionKey preservedV1 = new DefinitionKey(null, preservedId, 1);
-        WorkflowDefinition<?, ?> codeV1 = code(id, 1, RollbackV1.class, "done");
-        WorkflowDefinition<?, ?> codeV2 = code(id, 2, RollbackV2.class, "done");
-        WorkflowDefinition<?, ?> codeV3 = code(id, 3, RollbackV3.class, "done");
-        WorkflowDefinition<?, ?> preservedCodeV1 = code(preservedId, 1, PreservedV1.class, "done");
-        WorkflowDefinition<?, ?> preservedCodeV2 = code(preservedId, 2, PreservedV2.class, "done");
+        WorkflowDefinition<?, ?> codeV1 = code(id, 1, Rollback.class, "done");
+        WorkflowDefinition<?, ?> codeV2 = code(id, 2, Rollback.class, "done");
+        WorkflowDefinition<?, ?> codeV3 = code(id, 3, Rollback.class, "done");
+        WorkflowDefinition<?, ?> preservedCodeV1 = code(preservedId, 1, Preserved.class, "done");
+        WorkflowDefinition<?, ?> preservedCodeV2 = code(preservedId, 2, Preserved.class, "done");
         String hash1 = planHashOf(codeV1);
         String hash2 = planHashOf(codeV2);
         String hash3 = planHashOf(codeV3);
@@ -545,8 +525,7 @@ public class DefinitionReinstatementIT {
             assertThat(registry.resolvePinned(id, 2)).isSameAs(activeRuntime);
             RuntimeWorkflow lowerRuntime = registry.resolvePinned(id, 1);
             assertThat(lowerRuntime.plan().planHash()).isEqualTo(hash1);
-            assertThat(registry.contractMetadata(RollbackV1.class).definitionVersion())
-                    .isEqualTo(1);
+            assertThat(registry.registeredDefinition(id, 1)).isPresent();
 
             // Given a database fault that fails the promotion of version 3, but only after the previous winner has
             // been demoted in the same transaction
@@ -571,7 +550,7 @@ public class DefinitionReinstatementIT {
 
             // And the admission still sees only the committed, retired row and is refused
             Throwable raced =
-                    failureOf(operations.start(startCommand(id, RollbackV3.class, "race-v3", 3), racer.connection()));
+                    failureOf(operations.start(startCommand(id, Rollback.class, "race-v3", 3), racer.connection()));
             assertThat(raced).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.key()).isEqualTo(v3);
             });
@@ -595,14 +574,14 @@ public class DefinitionReinstatementIT {
             // publication is still local, and the active version is admitted
             Tx refusedAdmission = Tx.begin(scenario, null);
             Throwable stillRetired = failureOf(
-                    operations.start(startCommand(id, RollbackV3.class, "gate-v3", 3), refusedAdmission.connection()));
+                    operations.start(startCommand(id, Rollback.class, "gate-v3", 3), refusedAdmission.connection()));
             refusedAdmission.rollback();
             assertThat(stillRetired).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.key()).isEqualTo(v3);
             });
             Tx admitted = Tx.begin(scenario, null);
             WorkflowInstanceId admittedId =
-                    await(operations.start(startCommand(id, RollbackV2.class, "gate-v2", 2), admitted.connection()));
+                    await(operations.start(startCommand(id, Rollback.class, "gate-v2", 2), admitted.connection()));
             admitted.commit();
             assertThat(await(boot.app().workflowOperations().query(admittedId))
                             .instance()
@@ -622,11 +601,10 @@ public class DefinitionReinstatementIT {
             assertThat(scenario.stored(id, 2)).isEqualTo(activeBefore);
             assertThat(scenario.stored(id, 3)).isEqualTo(higherBefore);
 
-            // And only the attempt's own publication was compensated, with its contract mapping
+            // And only the attempt's own publication was compensated, with its registered definition
             assertThatThrownBy(() -> registry.resolvePinned(id, 3))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThatThrownBy(() -> registry.contractMetadata(RollbackV3.class))
-                    .isInstanceOf(WorkflowProxyContractException.class);
+            assertThat(registry.registeredDefinition(id, 3)).isEmpty();
             assertThat(registry.resolvePinned(id, 2)).isSameAs(activeRuntime);
             assertThat(registry.resolvePinned(id, 1)).isSameAs(lowerRuntime);
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
@@ -646,8 +624,8 @@ public class DefinitionReinstatementIT {
 
             // And admission now accepts the committed version
             Tx afterCommit = Tx.begin(scenario, null);
-            WorkflowInstanceId pinned = await(
-                    operations.start(startCommand(id, RollbackV3.class, "after-v3", 3), afterCommit.connection()));
+            WorkflowInstanceId pinned =
+                    await(operations.start(startCommand(id, Rollback.class, "after-v3", 3), afterCommit.connection()));
             afterCommit.commit();
             assertThat(await(boot.app().workflowOperations().query(pinned))
                             .instance()
@@ -675,10 +653,9 @@ public class DefinitionReinstatementIT {
             assertThat(scenario.stored(preservedId, 1)).isEqualTo(preservedRetiredBefore);
             assertThat(scenario.stored(preservedId, 2)).isEqualTo(preservedActiveBefore);
 
-            // And the registration that existed before the attempt is preserved, with its contract mapping
+            // And the registration that existed before the attempt is preserved, with its registered definition
             assertThat(registry.resolvePinned(preservedId, 1)).isSameAs(preservedRuntime);
-            assertThat(registry.contractMetadata(PreservedV1.class).definitionVersion())
-                    .isEqualTo(1);
+            assertThat(registry.registeredDefinition(preservedId, 1)).isPresent();
         }
     }
 
@@ -1038,14 +1015,14 @@ public class DefinitionReinstatementIT {
 
             // Given version 1 retired and version 2 active, both documents
             String hash1 = await(service.load(
-                            documentBytes(id, 1, LowerDocV1.class),
+                            documentBytes(id, 1, LowerDoc.class),
                             DocumentFormat.YAML,
                             source("lower-v1", loadedAt),
                             null))
                     .planHash();
             await(service.activate(v1));
             await(service.load(
-                    documentBytes(id, 2, LowerDocV2.class), DocumentFormat.YAML, source("lower-v2", loadedAt), null));
+                    documentBytes(id, 2, LowerDoc.class), DocumentFormat.YAML, source("lower-v2", loadedAt), null));
             await(service.activate(v2));
             await(service.deprecate(v1));
             scenario.ageStatus(v1, coolingSeconds + 60);
@@ -1067,8 +1044,7 @@ public class DefinitionReinstatementIT {
 
             // And the lower version is served again from its stored text, and the cache agrees with the table
             assertThat(registry.resolvePinned(id, 1).plan().planHash()).isEqualTo(hash1);
-            assertThat(registry.contractMetadata(LowerDocV1.class).definitionVersion())
-                    .isEqualTo(1);
+            assertThat(registry.registeredDefinition(id, 1)).isPresent();
             assertThat(node.app().workflowDefinitionStore().currentStatus(id, 1))
                     .isEqualTo(ActivationStatus.SUPERSEDED);
             assertThat(node.app().workflowDefinitionStore().currentStatus(id, 2))

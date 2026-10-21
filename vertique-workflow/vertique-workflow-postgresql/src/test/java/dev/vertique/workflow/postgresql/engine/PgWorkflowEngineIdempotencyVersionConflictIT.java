@@ -78,17 +78,14 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
     record SimplePayload(String id) {}
 
     /** Contract for v1. */
-    interface IdempConflictContractV1 {}
-
-    /** Contract for v2 — must be distinct from V1. */
-    interface IdempConflictContractV2 {}
+    interface IdempConflictContract {}
 
     static final String DEF_ID = "idempotency-conflict-test";
 
-    static final WorkflowDefinition<SimplePayload, IdempConflictContractV1> DEF_V1 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<SimplePayload, IdempConflictContract> DEF_V1 = new WorkflowDefinition<>() {
         @Override
-        public Class<IdempConflictContractV1> contract() {
-            return IdempConflictContractV1.class;
+        public Class<IdempConflictContract> contract() {
+            return IdempConflictContract.class;
         }
 
         @Override
@@ -112,10 +109,10 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
         }
     };
 
-    static final WorkflowDefinition<SimplePayload, IdempConflictContractV2> DEF_V2 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<SimplePayload, IdempConflictContract> DEF_V2 = new WorkflowDefinition<>() {
         @Override
-        public Class<IdempConflictContractV2> contract() {
-            return IdempConflictContractV2.class;
+        public Class<IdempConflictContract> contract() {
+            return IdempConflictContract.class;
         }
 
         @Override
@@ -204,7 +201,7 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
         String ikey = "conflict-key-" + UUID.randomUUID();
         StartCommand firstCmd = new StartCommand(
                 DEF_ID,
-                IdempConflictContractV1.class.getName(),
+                IdempConflictContract.class.getName(),
                 new SimplePayload("p"),
                 ikey,
                 null,
@@ -214,7 +211,7 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
                 null);
         StartCommand conflictCmd = new StartCommand(
                 DEF_ID,
-                IdempConflictContractV2.class.getName(),
+                IdempConflictContract.class.getName(),
                 new SimplePayload("p"),
                 ikey,
                 null,
@@ -259,7 +256,7 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
         String ikey = "idempotent-key-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
                 DEF_ID,
-                IdempConflictContractV1.class.getName(),
+                IdempConflictContract.class.getName(),
                 new SimplePayload("p"),
                 ikey,
                 null,
@@ -289,7 +286,7 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
         String ikey = "lenient-no-version-" + UUID.randomUUID();
         StartCommand explicitV1 = new StartCommand(
                 DEF_ID,
-                IdempConflictContractV1.class.getName(),
+                IdempConflictContract.class.getName(),
                 new SimplePayload("p"),
                 ikey,
                 null,
@@ -300,7 +297,7 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
         // retry with no requested version (5-arg form)
         StartCommand noVersion = new StartCommand(
                 DEF_ID,
-                IdempConflictContractV2.class.getName(),
+                IdempConflictContract.class.getName(),
                 new SimplePayload("p"),
                 ikey,
                 null,
@@ -331,7 +328,7 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
         // First start: no requested version; registry's current is v2 (highest registered).
         StartCommand noVersion = new StartCommand(
                 DEF_ID,
-                IdempConflictContractV2.class.getName(),
+                IdempConflictContract.class.getName(),
                 new SimplePayload("p"),
                 ikey,
                 null,
@@ -342,7 +339,7 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
         // Retry with explicit v1.
         StartCommand explicitV1 = new StartCommand(
                 DEF_ID,
-                IdempConflictContractV1.class.getName(),
+                IdempConflictContract.class.getName(),
                 new SimplePayload("p"),
                 ikey,
                 null,

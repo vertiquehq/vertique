@@ -18,8 +18,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.WorkflowContract;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
+import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.service.ActivationStatus;
@@ -34,7 +34,6 @@ import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.exception.WorkflowPersistenceException;
-import dev.vertique.workflow.exception.WorkflowProxyContractException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -82,13 +81,10 @@ import org.junit.jupiter.params.provider.EnumSource;
 public class MixedDefinitionBootstrapIT {
 
     @WorkflowContract(definitionId = "mixed-bootstrap-text-drift-doc", definitionVersion = 1)
-    public interface TextDriftCaseV1 {}
+    public interface TextDriftCaseV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-code-order", definitionVersion = 1)
-    public interface OrderCodeV1 {}
-
-    @WorkflowContract(definitionId = "mixed-bootstrap-code-order", definitionVersion = 2)
-    public interface OrderCodeV2 {}
+    public interface OrderCode {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-rehash-pinned", definitionVersion = 1)
     public interface PinnedRehashCodeV1 {}
@@ -97,88 +93,64 @@ public class MixedDefinitionBootstrapIT {
     public interface FreeRehashCodeV1 {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-static-equal", definitionVersion = 1)
-    public interface StaticEqualV1 {}
+    public interface StaticEqualV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-static-drift", definitionVersion = 1)
-    public interface StaticDriftV1 {}
+    public interface StaticDriftV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-static-kind", definitionVersion = 1)
-    public interface StaticKindV1 {}
+    public interface StaticKindV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-static-held", definitionVersion = 1)
-    public interface StaticHeldV1 {}
+    public interface StaticHeldV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-code-held", definitionVersion = 1)
-    public interface CodeHeldV1 {}
-
-    @WorkflowContract(definitionId = "mixed-bootstrap-code-held", definitionVersion = 2)
-    public interface CodeHeldV2 {}
+    public interface CodeHeld extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-stale-doc", definitionVersion = 1)
-    public interface StaleDocV1 {}
-
-    @WorkflowContract(definitionId = "mixed-bootstrap-stale-doc", definitionVersion = 2)
-    public interface StaleDocV2 {}
-
-    @WorkflowContract(definitionId = "mixed-bootstrap-stale-doc", definitionVersion = 3)
-    public interface StaleDocV3 {}
+    public interface StaleDoc extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-stale-claimed-doc", definitionVersion = 1)
-    public interface StaleClaimedV1 {}
+    public interface StaleClaimedV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-stale-near-doc", definitionVersion = 1)
-    public interface StaleNearV1 {}
+    public interface StaleNearV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-stale-code", definitionVersion = 1)
-    public interface StaleCodeV1 {}
+    public interface StaleCodeV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-tenant-vs-code", definitionVersion = 1)
-    public interface TenantVsCodeV1 {}
+    public interface TenantVsCodeV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-rolling-rehash", definitionVersion = 1)
-    public interface RollingV1 {}
-
-    @WorkflowContract(definitionId = "mixed-bootstrap-rolling-rehash", definitionVersion = 2)
-    public interface RollingV2 {}
+    public interface Rolling {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-timeout-code", definitionVersion = 1)
     public interface TimeoutCodeV1 {}
 
     @WorkflowContract(definitionId = "tenant-active:mixed-bootstrap-tenant-active", definitionVersion = 1)
-    public interface TenantActiveV1 {}
+    public interface TenantActiveV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "tenant-superseded:mixed-bootstrap-tenant-superseded", definitionVersion = 1)
-    public interface TenantSupersededV1 {}
-
-    @WorkflowContract(definitionId = "tenant-superseded:mixed-bootstrap-tenant-superseded", definitionVersion = 2)
-    public interface TenantSupersededV2 {}
+    public interface TenantSuperseded extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "tenant-deprecated:mixed-bootstrap-tenant-deprecated", definitionVersion = 1)
-    public interface TenantDeprecatedV1 {}
-
-    @WorkflowContract(definitionId = "tenant-deprecated:mixed-bootstrap-tenant-deprecated", definitionVersion = 2)
-    public interface TenantDeprecatedV2 {}
+    public interface TenantDeprecated extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-tenant-shared", definitionVersion = 1)
-    public interface TenantSharedV1 {}
+    public interface TenantSharedV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "tenant-candidate:mixed-bootstrap-tenant-candidate", definitionVersion = 1)
-    public interface TenantCandidateV1 {}
+    public interface TenantCandidateV1 extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-packaged-deprecated", definitionVersion = 1)
-    public interface PackagedDeprecatedV1 {}
-
-    @WorkflowContract(definitionId = "mixed-bootstrap-packaged-deprecated", definitionVersion = 2)
-    public interface PackagedDeprecatedV2 {}
+    public interface PackagedDeprecated extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-rehash-isolation", definitionVersion = 1)
     public interface RehashIsolationCodeV1 {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-retired-code", definitionVersion = 1)
-    public interface RetiredCodeV1 {}
-
-    @WorkflowContract(definitionId = "mixed-bootstrap-retired-code", definitionVersion = 2)
-    public interface RetiredCodeV2 {}
+    public interface RetiredCode {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-key-rules\u0007id", definitionVersion = 7)
     public interface KeyRulesCodeV7 {}
@@ -307,8 +279,8 @@ public class MixedDefinitionBootstrapIT {
     void recordsAndOrdersCodeVersions(Vertx vertx) {
         String id = "mixed-bootstrap-code-order";
         DefinitionKey v1Key = new DefinitionKey(null, id, 1);
-        WorkflowDefinition<?, ?> codeV1 = code(id, 1, OrderCodeV1.class, "done");
-        WorkflowDefinition<?, ?> codeV2 = code(id, 2, OrderCodeV2.class, "done");
+        WorkflowDefinition<?, ?> codeV1 = code(id, 1, OrderCode.class, "done");
+        WorkflowDefinition<?, ?> codeV2 = code(id, 2, OrderCode.class, "done");
         String hashV1 = planHashOf(codeV1);
         String hashV2 = planHashOf(codeV2);
 
@@ -637,8 +609,8 @@ public class MixedDefinitionBootstrapIT {
                     1,
                     "6".repeat(64),
                     "ACTIVE",
-                    documentText(codeHeldId, 1, CodeHeldV1.class));
-            WorkflowDefinition<?, ?> heldCode = code(codeHeldId, 2, CodeHeldV2.class, "done");
+                    documentText(codeHeldId, 1, CodeHeld.class));
+            WorkflowDefinition<?, ?> heldCode = code(codeHeldId, 2, CodeHeld.class, "done");
 
             // When the application starts with that code
             Boot codeHeld = scenario.attempt(none(), unobserved(), List.of(heldCode), null, 10);
@@ -684,16 +656,13 @@ public class MixedDefinitionBootstrapIT {
             Boot first = scenario.node(none());
             WorkflowDefinitionService service = first.app().definitionService();
             CompiledDefinitionRef loadedV1 = await(service.load(
-                    documentBytes(docId, 1, StaleDocV1.class),
-                    DocumentFormat.YAML,
-                    source("stale-v1", loadedAt),
-                    null));
+                    documentBytes(docId, 1, StaleDoc.class), DocumentFormat.YAML, source("stale-v1", loadedAt), null));
             await(service.activate(v1));
             WorkflowInstanceId pinned = await(first.app()
                     .workflowOperations()
                     .start(new StartCommand(
                             docId,
-                            StaleDocV1.class.getName(),
+                            StaleDoc.class.getName(),
                             new PlaceOrderDoc("stale-order"),
                             "stale-pin",
                             null,
@@ -702,19 +671,13 @@ public class MixedDefinitionBootstrapIT {
                             null,
                             null)));
             CompiledDefinitionRef loadedV2 = await(service.load(
-                    documentBytes(docId, 2, StaleDocV2.class),
-                    DocumentFormat.YAML,
-                    source("stale-v2", loadedAt),
-                    null));
+                    documentBytes(docId, 2, StaleDoc.class), DocumentFormat.YAML, source("stale-v2", loadedAt), null));
             await(service.activate(v2));
 
             // And version 1 deprecated, an untouched candidate version 3, and a candidate of another global id
             await(service.deprecate(v1));
             CompiledDefinitionRef loadedV3 = await(service.load(
-                    documentBytes(docId, 3, StaleDocV3.class),
-                    DocumentFormat.YAML,
-                    source("stale-v3", loadedAt),
-                    null));
+                    documentBytes(docId, 3, StaleDoc.class), DocumentFormat.YAML, source("stale-v3", loadedAt), null));
             await(service.load(
                     documentBytes(claimedId, 1, StaleClaimedV1.class),
                     DocumentFormat.YAML,
@@ -820,7 +783,7 @@ public class MixedDefinitionBootstrapIT {
                     .workflowOperations()
                     .start(new StartCommand(
                             docId,
-                            StaleDocV1.class.getName(),
+                            StaleDoc.class.getName(),
                             new PlaceOrderDoc("stale-new"),
                             "stale-new",
                             null,
@@ -875,8 +838,7 @@ public class MixedDefinitionBootstrapIT {
             Stored candidateBefore = scenario.stored(tenant, id, 1);
             assertThat(candidateBefore.status()).isEqualTo("CANDIDATE");
             RuntimeWorkflow runtimeBefore = node.app().workflowRegistry().resolvePinned(id, 1);
-            WorkflowContractMetadata mappingBefore =
-                    node.app().workflowRegistry().contractMetadata(TenantVsCodeV1.class);
+            var definitionBefore = node.app().workflowRegistry().registeredDefinition(id, 1);
 
             // When the tenant activates its candidate through the real lifecycle
             Throwable refusal = failureOf(node.app().definitionService().activate(tenantKey));
@@ -895,8 +857,8 @@ public class MixedDefinitionBootstrapIT {
             assertThat(node.app().workflowRegistry().allRegistered())
                     .filteredOn(runtime -> runtime.plan().definitionId().equals(id))
                     .containsExactly(runtimeBefore);
-            assertThat(node.app().workflowRegistry().contractMetadata(TenantVsCodeV1.class))
-                    .isEqualTo(mappingBefore);
+            assertThat(node.app().workflowRegistry().registeredDefinition(id, 1))
+                    .isEqualTo(definitionBefore);
             assertThat(scenario.stored(id, 1)).isEqualTo(globalBefore);
             assertThat(scenario.stored(tenant, id, 1))
                     .usingRecursiveComparison()
@@ -910,9 +872,9 @@ public class MixedDefinitionBootstrapIT {
     void rejectsOldHashPinsAfterRollingRehash(Vertx vertx) {
         String id = "mixed-bootstrap-rolling-rehash";
         DefinitionKey v2Key = new DefinitionKey(null, id, 2);
-        WorkflowDefinition<?, ?> unchangedV1 = code(id, 1, RollingV1.class, "done");
-        WorkflowDefinition<?, ?> oldV2 = code(id, 2, RollingV2.class, "done");
-        WorkflowDefinition<?, ?> newV2 = code(id, 2, RollingV2.class, "finished");
+        WorkflowDefinition<?, ?> unchangedV1 = code(id, 1, Rolling.class, "done");
+        WorkflowDefinition<?, ?> oldV2 = code(id, 2, Rolling.class, "done");
+        WorkflowDefinition<?, ?> newV2 = code(id, 2, Rolling.class, "finished");
         String hashV1 = planHashOf(unchangedV1);
         String oldHashV2 = planHashOf(oldV2);
         String newHashV2 = planHashOf(newV2);
@@ -959,7 +921,7 @@ public class MixedDefinitionBootstrapIT {
                     .start(
                             new StartCommand(
                                     id,
-                                    RollingV2.class.getName(),
+                                    Rolling.class.getName(),
                                     new CodeStart("rolling"),
                                     "rolling-start",
                                     null,
@@ -1147,13 +1109,13 @@ public class MixedDefinitionBootstrapIT {
             WorkflowDefinitionService service = first.app().definitionService();
             CompiledDefinitionRef active = publish(service, "tenant-active", activeId, 1, TenantActiveV1.class);
             CompiledDefinitionRef supersededV1 =
-                    publish(service, "tenant-superseded", supersededId, 1, TenantSupersededV1.class);
+                    publish(service, "tenant-superseded", supersededId, 1, TenantSuperseded.class);
             CompiledDefinitionRef supersededV2 =
-                    publish(service, "tenant-superseded", supersededId, 2, TenantSupersededV2.class);
+                    publish(service, "tenant-superseded", supersededId, 2, TenantSuperseded.class);
             CompiledDefinitionRef deprecatedV1 =
-                    publish(service, "tenant-deprecated", deprecatedId, 1, TenantDeprecatedV1.class);
+                    publish(service, "tenant-deprecated", deprecatedId, 1, TenantDeprecated.class);
             CompiledDefinitionRef deprecatedV2 =
-                    publish(service, "tenant-deprecated", deprecatedId, 2, TenantDeprecatedV2.class);
+                    publish(service, "tenant-deprecated", deprecatedId, 2, TenantDeprecated.class);
             await(service.deprecate(new DefinitionKey("tenant-deprecated", deprecatedId, 1)));
             await(service.load(
                     documentBytes(candidateId, 1, TenantCandidateV1.class),
@@ -1210,7 +1172,7 @@ public class MixedDefinitionBootstrapIT {
             assertThat(observation.events()).containsExactly("bootstrap-complete", "bootstrap-verticle-deployed");
             WorkflowRegistry registry = second.app().workflowRegistry();
 
-            // And every live version resolves pinned with its own hash and contract mapping
+            // And every live version resolves pinned with its own hash and registered definition
             assertThat(registry.resolvePinned(activeId, 1).plan().planHash()).isEqualTo(active.planHash());
             assertThat(registry.resolvePinned(supersededId, 1).plan().planHash())
                     .isEqualTo(supersededV1.planHash());
@@ -1221,15 +1183,12 @@ public class MixedDefinitionBootstrapIT {
             assertThat(registry.resolvePinned(deprecatedId, 2).plan().planHash())
                     .isEqualTo(deprecatedV2.planHash());
             assertThat(registry.resolvePinned(sharedId, 1).plan().planHash()).isEqualTo(livePlanHash);
-            for (Class<?> contract : List.of(
-                    TenantActiveV1.class,
-                    TenantSupersededV1.class,
-                    TenantSupersededV2.class,
-                    TenantDeprecatedV1.class,
-                    TenantDeprecatedV2.class,
-                    TenantSharedV1.class)) {
-                assertThat(registry.contractMetadata(contract)).isNotNull();
-            }
+            assertThat(registry.registeredDefinition(activeId, 1)).isPresent();
+            assertThat(registry.registeredDefinition(supersededId, 1)).isPresent();
+            assertThat(registry.registeredDefinition(supersededId, 2)).isPresent();
+            assertThat(registry.registeredDefinition(deprecatedId, 1)).isPresent();
+            assertThat(registry.registeredDefinition(deprecatedId, 2)).isPresent();
+            assertThat(registry.registeredDefinition(sharedId, 1)).isPresent();
 
             // And current membership and the deprecated mark are the committed ones
             assertThat(registry.resolveCurrent(supersededId).plan().definitionVersion())
@@ -1240,7 +1199,7 @@ public class MixedDefinitionBootstrapIT {
             assertThat(registry.isDeprecated(deprecatedId, 2)).isFalse();
             assertThat(registry.isDeprecated(supersededId, 1)).isFalse();
 
-            // And the retired owner's row neither removed the other owner's runtime nor its contract mapping
+            // And the retired owner's row neither removed the other owner's runtime nor its registered definition
             assertThat(registry.allRegistered())
                     .filteredOn(runtime -> runtime.plan().definitionId().equals(sharedId))
                     .hasSize(1);
@@ -1267,8 +1226,8 @@ public class MixedDefinitionBootstrapIT {
         String id = "mixed-bootstrap-packaged-deprecated";
         DefinitionKey v1 = new DefinitionKey(null, id, 1);
         Instant loadedAt = Instant.parse("2026-10-18T12:00:00Z");
-        String textV1 = documentText(id, 1, PackagedDeprecatedV1.class);
-        String textV2 = documentText(id, 2, PackagedDeprecatedV2.class);
+        String textV1 = documentText(id, 1, PackagedDeprecated.class);
+        String textV2 = documentText(id, 2, PackagedDeprecated.class);
         WorkflowDefinitionSource packagedBoth = () -> List.of(
                 new DefinitionResource(
                         textV1.getBytes(StandardCharsets.UTF_8), DocumentFormat.YAML, source("packaged-v1", loadedAt)),
@@ -1290,7 +1249,7 @@ public class MixedDefinitionBootstrapIT {
                     .workflowOperations()
                     .start(new StartCommand(
                             id,
-                            PackagedDeprecatedV1.class.getName(),
+                            PackagedDeprecated.class.getName(),
                             new PlaceOrderDoc("packaged-order"),
                             "packaged-pin",
                             null,
@@ -1331,7 +1290,7 @@ public class MixedDefinitionBootstrapIT {
                     .workflowOperations()
                     .start(new StartCommand(
                             id,
-                            PackagedDeprecatedV1.class.getName(),
+                            PackagedDeprecated.class.getName(),
                             new PlaceOrderDoc("packaged-new"),
                             "packaged-new",
                             null,
@@ -1461,8 +1420,8 @@ public class MixedDefinitionBootstrapIT {
     @DisplayName("a retired code row whose code is still deployed is unregistered, next to a live version of its id")
     void unregistersRetiredCodeRowWhoseCodeIsStillDeployed(Vertx vertx) {
         String id = "mixed-bootstrap-retired-code";
-        WorkflowDefinition<?, ?> retiredCode = code(id, 1, RetiredCodeV1.class, "done");
-        WorkflowDefinition<?, ?> liveCode = code(id, 2, RetiredCodeV2.class, "done");
+        WorkflowDefinition<?, ?> retiredCode = code(id, 1, RetiredCode.class, "done");
+        WorkflowDefinition<?, ?> liveCode = code(id, 2, RetiredCode.class, "done");
         String retiredHash = planHashOf(retiredCode);
         String liveHash = planHashOf(liveCode);
 
@@ -1477,23 +1436,20 @@ public class MixedDefinitionBootstrapIT {
             Boot started = scenario.node(none(), observed(id, 2, liveHash), List.of(retiredCode, liveCode));
             WorkflowRegistry registry = started.app().workflowRegistry();
 
-            // Then the retired version is no longer registered and its contract mapping is gone
+            // Then the retired version is no longer registered and its registered definition is gone
             assertThatThrownBy(() -> registry.resolvePinned(id, 1))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThatThrownBy(() -> registry.contractMetadata(RetiredCodeV1.class))
-                    .isInstanceOf(WorkflowProxyContractException.class);
+            assertThat(registry.registeredDefinition(id, 1)).isEmpty();
             assertThat(scenario.stored(id, 1).status()).isEqualTo("RETIRED");
 
-            // And the live version keeps its runtime and its contract mapping
+            // And the live version keeps its runtime and its registered definition
             assertThat(registry.allRegistered())
                     .filteredOn(runtime -> runtime.plan().definitionId().equals(id))
                     .extracting(runtime -> runtime.plan().definitionVersion())
                     .containsExactly(2L);
             assertThat(registry.resolvePinned(id, 2).plan().planHash()).isEqualTo(liveHash);
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
-            WorkflowContractMetadata liveMapping = registry.contractMetadata(RetiredCodeV2.class);
-            assertThat(liveMapping.definitionId()).isEqualTo(id);
-            assertThat(liveMapping.definitionVersion()).isEqualTo(2);
+            assertThat(registry.registeredDefinition(id, 2)).isPresent();
             assertThat(scenario.stored(id, 2).status()).isEqualTo("ACTIVE");
         }
     }

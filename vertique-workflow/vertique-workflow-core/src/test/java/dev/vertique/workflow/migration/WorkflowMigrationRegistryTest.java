@@ -55,27 +55,18 @@ class WorkflowMigrationRegistryTest {
     // --- Contract interfaces ---
 
     @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
-    interface OrderSagaContractV1 {}
-
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 2)
-    interface OrderSagaContractV2 {}
-
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 3)
-    interface OrderSagaContractV3 {}
+    interface OrderSagaContract {}
 
     @WorkflowContract(definitionId = "payment-flow", definitionVersion = 1)
-    interface PaymentFlowContractV1 {}
-
-    @WorkflowContract(definitionId = "payment-flow", definitionVersion = 2)
-    interface PaymentFlowContractV2 {}
+    interface PaymentFlowContract {}
 
     // --- Workflow definitions ---
 
-    static WorkflowDefinition<StateV1, OrderSagaContractV1> orderSagaV1Def() {
+    static WorkflowDefinition<StateV1, OrderSagaContract> orderSagaV1Def() {
         return new WorkflowDefinition<>() {
             @Override
-            public Class<OrderSagaContractV1> contract() {
-                return OrderSagaContractV1.class;
+            public Class<OrderSagaContract> contract() {
+                return OrderSagaContract.class;
             }
 
             @Override
@@ -102,11 +93,11 @@ class WorkflowMigrationRegistryTest {
         };
     }
 
-    static WorkflowDefinition<StateV2, OrderSagaContractV2> orderSagaV2Def() {
+    static WorkflowDefinition<StateV2, OrderSagaContract> orderSagaV2Def() {
         return new WorkflowDefinition<>() {
             @Override
-            public Class<OrderSagaContractV2> contract() {
-                return OrderSagaContractV2.class;
+            public Class<OrderSagaContract> contract() {
+                return OrderSagaContract.class;
             }
 
             @Override
@@ -133,11 +124,11 @@ class WorkflowMigrationRegistryTest {
         };
     }
 
-    static WorkflowDefinition<StateV2, OrderSagaContractV3> orderSagaV3Def() {
+    static WorkflowDefinition<StateV2, OrderSagaContract> orderSagaV3Def() {
         return new WorkflowDefinition<>() {
             @Override
-            public Class<OrderSagaContractV3> contract() {
-                return OrderSagaContractV3.class;
+            public Class<OrderSagaContract> contract() {
+                return OrderSagaContract.class;
             }
 
             @Override
@@ -164,11 +155,11 @@ class WorkflowMigrationRegistryTest {
         };
     }
 
-    static WorkflowDefinition<StateV1, PaymentFlowContractV1> paymentFlowV1Def() {
+    static WorkflowDefinition<StateV1, PaymentFlowContract> paymentFlowV1Def() {
         return new WorkflowDefinition<>() {
             @Override
-            public Class<PaymentFlowContractV1> contract() {
-                return PaymentFlowContractV1.class;
+            public Class<PaymentFlowContract> contract() {
+                return PaymentFlowContract.class;
             }
 
             @Override
@@ -195,11 +186,11 @@ class WorkflowMigrationRegistryTest {
         };
     }
 
-    static WorkflowDefinition<StateV2, PaymentFlowContractV2> paymentFlowV2Def() {
+    static WorkflowDefinition<StateV2, PaymentFlowContract> paymentFlowV2Def() {
         return new WorkflowDefinition<>() {
             @Override
-            public Class<PaymentFlowContractV2> contract() {
-                return PaymentFlowContractV2.class;
+            public Class<PaymentFlowContract> contract() {
+                return PaymentFlowContract.class;
             }
 
             @Override

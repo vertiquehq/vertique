@@ -12,6 +12,7 @@ import dev.vertique.core.VertiqueRuntime;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.service.ActivationStatus;
@@ -61,25 +62,16 @@ import org.junit.jupiter.params.provider.EnumSource;
 public class DefinitionDeprecationIT {
 
     @WorkflowContract(definitionId = "deprecation-it-active-doc", definitionVersion = 1)
-    public interface ActiveCaseV1 {}
-
-    @WorkflowContract(definitionId = "deprecation-it-active-doc", definitionVersion = 2)
-    public interface ActiveCaseV2 {}
+    public interface ActiveCase extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "deprecation-it-superseded-doc", definitionVersion = 1)
-    public interface SupersededCaseV1 {}
-
-    @WorkflowContract(definitionId = "deprecation-it-superseded-doc", definitionVersion = 2)
-    public interface SupersededCaseV2 {}
+    public interface SupersededCase extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "deprecation-it-transition-doc", definitionVersion = 1)
-    public interface TransitionCaseV1 {}
-
-    @WorkflowContract(definitionId = "deprecation-it-transition-doc", definitionVersion = 2)
-    public interface TransitionCaseV2 {}
+    public interface TransitionCase extends OrderDocumentSignals {}
 
     @WorkflowContract(definitionId = "deprecation-it-owner-doc", definitionVersion = 1)
-    public interface OwnerCaseV1 {}
+    public interface OwnerCaseV1 extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_definition_deprecation_it")
@@ -96,8 +88,8 @@ public class DefinitionDeprecationIT {
         long targetVersion = targetIsActive ? 2 : 1;
         long otherVersion = targetIsActive ? 1 : 2;
         DefinitionStatus otherStatusBefore = targetIsActive ? DefinitionStatus.SUPERSEDED : DefinitionStatus.ACTIVE;
-        Class<?> contractV1 = targetIsActive ? ActiveCaseV1.class : SupersededCaseV1.class;
-        Class<?> contractV2 = targetIsActive ? ActiveCaseV2.class : SupersededCaseV2.class;
+        Class<?> contractV1 = targetIsActive ? ActiveCase.class : SupersededCase.class;
+        Class<?> contractV2 = targetIsActive ? ActiveCase.class : SupersededCase.class;
         DefinitionKey targetKey = new DefinitionKey(null, id, targetVersion);
         byte[] documentV1 = document(id, 1, contractV1);
         byte[] documentV2 = document(id, 2, contractV2);
@@ -235,10 +227,10 @@ public class DefinitionDeprecationIT {
 
             // Given version 1 SUPERSEDED and version 2 ACTIVE, committed through the service
             await(app.definitionService()
-                    .load(document(id, 1, TransitionCaseV1.class), DocumentFormat.YAML, source("transition-v1"), null));
+                    .load(document(id, 1, TransitionCase.class), DocumentFormat.YAML, source("transition-v1"), null));
             await(app.definitionService().activate(supersededKey));
             await(app.definitionService()
-                    .load(document(id, 2, TransitionCaseV2.class), DocumentFormat.YAML, source("transition-v2"), null));
+                    .load(document(id, 2, TransitionCase.class), DocumentFormat.YAML, source("transition-v2"), null));
             await(app.definitionService().activate(activeKey));
             Stored supersededBefore = fixture.stored(id, 1);
             Stored activeBefore = fixture.stored(id, 2);

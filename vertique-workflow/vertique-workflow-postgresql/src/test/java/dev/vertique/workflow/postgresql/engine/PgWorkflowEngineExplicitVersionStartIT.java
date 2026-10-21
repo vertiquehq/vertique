@@ -75,18 +75,15 @@ public class PgWorkflowEngineExplicitVersionStartIT {
     record SimplePayload(String id) {}
 
     /** Contract interface for v1 of the pin-test definition. */
-    interface PinTestContractV1 {}
-
-    /** Contract interface for v2 of the pin-test definition — must be distinct from V1. */
-    interface PinTestContractV2 {}
+    interface PinTestContract {}
 
     static final String DEF_ID = "explicit-version-pin-test";
 
     /** v1 definition: init + complete immediately. */
-    static final WorkflowDefinition<SimplePayload, PinTestContractV1> DEF_V1 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<SimplePayload, PinTestContract> DEF_V1 = new WorkflowDefinition<>() {
         @Override
-        public Class<PinTestContractV1> contract() {
-            return PinTestContractV1.class;
+        public Class<PinTestContract> contract() {
+            return PinTestContract.class;
         }
 
         @Override
@@ -111,10 +108,10 @@ public class PgWorkflowEngineExplicitVersionStartIT {
     };
 
     /** v2 definition: init + complete immediately, distinct contract. */
-    static final WorkflowDefinition<SimplePayload, PinTestContractV2> DEF_V2 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<SimplePayload, PinTestContract> DEF_V2 = new WorkflowDefinition<>() {
         @Override
-        public Class<PinTestContractV2> contract() {
-            return PinTestContractV2.class;
+        public Class<PinTestContract> contract() {
+            return PinTestContract.class;
         }
 
         @Override
@@ -203,7 +200,7 @@ public class PgWorkflowEngineExplicitVersionStartIT {
     void startWithRequestedVersionOnePinsToV1(VertxTestContext ctx) {
         String ikey = "pin-v1-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
-                DEF_ID, PinTestContractV1.class.getName(), new SimplePayload("p"), ikey, null, null, 1L, null, null);
+                DEF_ID, PinTestContract.class.getName(), new SimplePayload("p"), ikey, null, null, 1L, null, null);
 
         engine.start(cmd)
                 .compose(id -> engine.query(id))
@@ -224,7 +221,7 @@ public class PgWorkflowEngineExplicitVersionStartIT {
     void startWithRequestedVersionTwoPinsToV2(VertxTestContext ctx) {
         String ikey = "pin-v2-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
-                DEF_ID, PinTestContractV2.class.getName(), new SimplePayload("p"), ikey, null, null, 2L, null, null);
+                DEF_ID, PinTestContract.class.getName(), new SimplePayload("p"), ikey, null, null, 2L, null, null);
 
         engine.start(cmd)
                 .compose(id -> engine.query(id))
@@ -245,7 +242,7 @@ public class PgWorkflowEngineExplicitVersionStartIT {
         String ikey = "pin-current-" + UUID.randomUUID();
         // 5-arg backward-compat constructor: no requested version.
         StartCommand cmd = new StartCommand(
-                DEF_ID, PinTestContractV2.class.getName(), new SimplePayload("p"), ikey, null, null, null, null, null);
+                DEF_ID, PinTestContract.class.getName(), new SimplePayload("p"), ikey, null, null, null, null, null);
 
         engine.start(cmd)
                 .compose(id -> engine.query(id))
@@ -266,7 +263,7 @@ public class PgWorkflowEngineExplicitVersionStartIT {
     void startWithUnregisteredVersionFails(VertxTestContext ctx) {
         String ikey = "pin-missing-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
-                DEF_ID, PinTestContractV2.class.getName(), new SimplePayload("p"), ikey, null, null, 99L, null, null);
+                DEF_ID, PinTestContract.class.getName(), new SimplePayload("p"), ikey, null, null, 99L, null, null);
 
         engine.start(cmd)
                 .onComplete(ar -> ctx.verify(() -> {

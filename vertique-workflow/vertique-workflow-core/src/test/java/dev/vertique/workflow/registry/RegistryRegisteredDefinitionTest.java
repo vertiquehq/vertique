@@ -6,7 +6,6 @@ package dev.vertique.workflow.registry;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.workflow.contract.WorkflowContract;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import java.util.Collection;
@@ -77,11 +76,6 @@ class RegistryRegisteredDefinitionTest {
 
         @Override
         public RuntimeWorkflow resolvePinned(String definitionId, long version) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
             throw new UnsupportedOperationException();
         }
 

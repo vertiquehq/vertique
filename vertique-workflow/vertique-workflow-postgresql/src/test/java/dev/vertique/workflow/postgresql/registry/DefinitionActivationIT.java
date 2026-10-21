@@ -10,8 +10,6 @@ import dev.vertique.application.VertiqueApplicationHandle;
 import dev.vertique.core.VertiqueRuntime;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
-import dev.vertique.workflow.contract.WorkflowContract;
-import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV2;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
 import dev.vertique.workflow.definition.source.DefinitionResource;
@@ -47,9 +45,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 public class DefinitionActivationIT {
 
     private static final String COMPLETION_FAILURE_MARKER = "definition-activation-completion-gate";
-
-    @WorkflowContract(definitionId = "order-fulfillment-doc", definitionVersion = 3)
-    public interface OrderFulfillmentDocumentWorkflowV3 {}
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_definition_activation_it")
@@ -537,10 +532,7 @@ public class DefinitionActivationIT {
 
                         DefinitionKey queuedKey = new DefinitionKey(null, oldKey.definitionId(), 3);
                         String queuedJson = new String(originalJson, StandardCharsets.UTF_8)
-                                .replace("\"definitionVersion\": 2", "\"definitionVersion\": 3")
-                                .replace(
-                                        OrderFulfillmentDocumentWorkflowV2.class.getName(),
-                                        OrderFulfillmentDocumentWorkflowV3.class.getName());
+                                .replace("\"definitionVersion\": 2", "\"definitionVersion\": 3");
                         SourceMetadata queuedMetadata =
                                 new SourceMetadata("activation-test", "fixture-v3", "r3", null, null, Instant.now());
                         Future<Void> queuedActivation = app.definitionService()

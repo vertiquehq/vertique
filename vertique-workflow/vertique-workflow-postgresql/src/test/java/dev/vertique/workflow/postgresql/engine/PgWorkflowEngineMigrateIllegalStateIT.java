@@ -11,6 +11,8 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -31,6 +33,7 @@ import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.state.WorkflowStatus;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -110,26 +113,29 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
     record TargetState(String value) {}
 
     /** Marker contract for v1. */
-    interface IllegalStateContractV1 {}
-
-    /** Marker contract for v2. */
-    interface IllegalStateContractV2 {}
+    interface IllegalStateContract {
+        @WorkflowSignal("go")
+        Future<Void> go(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /** Marker contract for fork v1. */
-    interface ForkContractV1 {}
+    interface ForkContract {
+        @WorkflowSignal("sig-a")
+        Future<Void> sigA(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
 
-    /** Marker contract for fork v2. */
-    interface ForkContractV2 {}
+        @WorkflowSignal("sig-b")
+        Future<Void> sigB(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     static final String SIMPLE_DEF_ID = "migrate-illegal-simple";
     static final String FORK_DEF_ID = "migrate-illegal-fork";
 
     // --- Simple definition: init → waitForSignal("go") → complete ---
 
-    static final WorkflowDefinition<SimpleState, IllegalStateContractV1> SIMPLE_DEF_V1 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<SimpleState, IllegalStateContract> SIMPLE_DEF_V1 = new WorkflowDefinition<>() {
         @Override
-        public Class<IllegalStateContractV1> contract() {
-            return IllegalStateContractV1.class;
+        public Class<IllegalStateContract> contract() {
+            return IllegalStateContract.class;
         }
 
         @Override
@@ -159,10 +165,10 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         }
     };
 
-    static final WorkflowDefinition<TargetState, IllegalStateContractV2> SIMPLE_DEF_V2 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<TargetState, IllegalStateContract> SIMPLE_DEF_V2 = new WorkflowDefinition<>() {
         @Override
-        public Class<IllegalStateContractV2> contract() {
-            return IllegalStateContractV2.class;
+        public Class<IllegalStateContract> contract() {
+            return IllegalStateContract.class;
         }
 
         @Override
@@ -188,10 +194,10 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
 
     // --- Fork definition: fork → two branches waiting for signals → join → complete ---
 
-    static final WorkflowDefinition<SimpleState, ForkContractV1> FORK_DEF_V1 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<SimpleState, ForkContract> FORK_DEF_V1 = new WorkflowDefinition<>() {
         @Override
-        public Class<ForkContractV1> contract() {
-            return ForkContractV1.class;
+        public Class<ForkContract> contract() {
+            return ForkContract.class;
         }
 
         @Override
@@ -237,10 +243,10 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         }
     };
 
-    static final WorkflowDefinition<TargetState, ForkContractV2> FORK_DEF_V2 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<TargetState, ForkContract> FORK_DEF_V2 = new WorkflowDefinition<>() {
         @Override
-        public Class<ForkContractV2> contract() {
-            return ForkContractV2.class;
+        public Class<ForkContract> contract() {
+            return ForkContract.class;
         }
 
         @Override
@@ -461,7 +467,7 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         String key = "migrate-completed-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
                 SIMPLE_DEF_ID,
-                IllegalStateContractV2.class.getName(),
+                IllegalStateContract.class.getName(),
                 new SimpleState("x"),
                 key,
                 null,
@@ -508,7 +514,7 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         String key = "migrate-cancelled-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
                 SIMPLE_DEF_ID,
-                IllegalStateContractV2.class.getName(),
+                IllegalStateContract.class.getName(),
                 new SimpleState("y"),
                 key,
                 null,
@@ -557,7 +563,7 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
     void migrateInstanceWithActiveBranches(VertxTestContext ctx) {
         String key = "migrate-fork-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
-                FORK_DEF_ID, ForkContractV2.class.getName(), new SimpleState("z"), key, null, null, null, null, null);
+                FORK_DEF_ID, ForkContract.class.getName(), new SimpleState("z"), key, null, null, null, null, null);
 
         engineForkV1
                 .start(cmd)

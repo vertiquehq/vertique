@@ -6,7 +6,10 @@ package dev.vertique.workflow.dsl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.contract.WorkflowSignal;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.CompleteNode;
 import dev.vertique.workflow.plan.ServiceDispatchNode;
 import dev.vertique.workflow.plan.WaitSignalNode;
@@ -15,6 +18,7 @@ import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
+import io.vertx.core.Future;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -40,7 +44,10 @@ class WorkflowBuilderTest {
 
     /** Minimal contract required for definition registration. */
     @WorkflowContract(definitionId = "order-fulfillment", definitionVersion = 1)
-    interface OrderFulfillmentContract {}
+    interface OrderFulfillmentContract {
+        @WorkflowSignal("order.shipped")
+        Future<Void> orderShipped(WorkflowInstanceId id, ShippedEvent payload, @SignalDedupKey String dedupKey);
+    }
 
     // --- Helper: build a standard 4-node plan via the registry ---
 

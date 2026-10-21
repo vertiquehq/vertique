@@ -13,6 +13,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -27,6 +29,7 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -87,7 +90,10 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
 
     record State(String id) {}
 
-    interface FanoutCreationContract {}
+    interface FanoutCreationContract {
+        @WorkflowSignal("go-signal")
+        Future<Void> goSignal(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Fork plan:

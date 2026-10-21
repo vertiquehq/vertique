@@ -110,6 +110,10 @@ class WorkflowClientFactoryTest {
      */
     @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
     interface KeyedStartContract {
+        @WorkflowSignal("order.shipped")
+        Future<Void> orderShipped(
+                WorkflowInstanceId id, SignalPayloadWithInterface payload, @SignalDedupKey String dedupKey);
+
         /** Start with @IdempotencyKey parameter. */
         @WorkflowStart
         Future<WorkflowInstanceId> startWithKey(@IdempotencyKey String key, StartPayloadWithInterface payload);
@@ -128,6 +132,10 @@ class WorkflowClientFactoryTest {
      */
     @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
     interface FullStartContract {
+        @WorkflowSignal("order.shipped")
+        Future<Void> orderShipped(
+                WorkflowInstanceId id, SignalPayloadWithInterface payload, @SignalDedupKey String dedupKey);
+
         /** Start with @BusinessKey and @SubjectRef parameters (override interface). */
         @WorkflowStart
         Future<WorkflowInstanceId> startFull(

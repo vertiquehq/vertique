@@ -5,7 +5,6 @@ package dev.vertique.workflow.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
@@ -1243,11 +1242,6 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
             return Optional.empty();
         }
@@ -1400,11 +1394,6 @@ class DefaultWorkflowDefinitionLifecycleTest {
             RuntimeWorkflow found = registrations.get(definitionId + "@" + version);
             if (found == null) throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
             return found;
-        }
-
-        @Override
-        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

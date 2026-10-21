@@ -79,10 +79,7 @@ class DefaultWorkflowDefinitionServiceTest {
     record PlaceOrder(String id) {}
 
     @WorkflowContract(definitionId = "svc-order", definitionVersion = 1)
-    interface SvcOrderV1Contract {}
-
-    @WorkflowContract(definitionId = "svc-order", definitionVersion = 2)
-    interface SvcOrderV2Contract {}
+    interface SvcOrderContract {}
 
     @WorkflowContract(definitionId = "svc-item", definitionVersion = 1)
     interface SvcItemV1Contract {}
@@ -208,7 +205,7 @@ class DefaultWorkflowDefinitionServiceTest {
         @DisplayName("load then activate makes the definition resolvable via the registry")
         void loadThenActivateSucceeds() {
             ServiceTestHelpers.await(service.load(
-                    yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+                    yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
             ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
 
             RuntimeWorkflow rw = registry.resolveCurrent("svc-order");
@@ -240,7 +237,7 @@ class DefaultWorkflowDefinitionServiceTest {
         void invalidYamlDoesNotAffectPriorActive() {
             // Establish v1 as active
             ServiceTestHelpers.await(service.load(
-                    yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+                    yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
             ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
             assertThat(registry.resolveCurrent("svc-order").plan().definitionVersion())
                     .isEqualTo(1L);
@@ -281,11 +278,11 @@ class DefaultWorkflowDefinitionServiceTest {
                 "load+activate v2, then load+activate v1 — registry resolves v2, store shows v2 ACTIVE v1 SUPERSEDED")
         void activateLowerVersionAfterHigherIsSuperseded() {
             ServiceTestHelpers.await(service.load(
-                    yamlFor("svc-order", 2, SvcOrderV2Contract.class), DocumentFormat.YAML, testMeta(), null));
+                    yamlFor("svc-order", 2, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
             ServiceTestHelpers.await(service.activate(key("svc-order", 2)));
 
             ServiceTestHelpers.await(service.load(
-                    yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+                    yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
             ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
 
             // Registry must return the higher (v2) version
@@ -320,7 +317,7 @@ class DefaultWorkflowDefinitionServiceTest {
 
             futures.add(pool.submit(() -> {
                 ServiceTestHelpers.await(service.load(
-                        yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+                        yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
                 ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
                 return null;
             }));
@@ -356,7 +353,7 @@ class DefaultWorkflowDefinitionServiceTest {
         void concurrentActivateSameKeySerialized() throws Exception {
             // Load the candidate once
             ServiceTestHelpers.await(service.load(
-                    yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+                    yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
 
             int numThreads = 8;
             ExecutorService pool = Executors.newFixedThreadPool(numThreads);
@@ -432,11 +429,6 @@ class DefaultWorkflowDefinitionServiceTest {
                         }
 
                         @Override
-                        public dev.vertique.workflow.contract.WorkflowContractMetadata contractMetadata(Class<?> c) {
-                            throw new UnsupportedOperationException();
-                        }
-
-                        @Override
                         public java.util.Optional<dev.vertique.workflow.registry.RegisteredDefinitionClass>
                                 definitionClass(Class<?> definitionClass) {
                             return java.util.Optional.empty();
@@ -453,7 +445,7 @@ class DefaultWorkflowDefinitionServiceTest {
                     new DefaultWorkflowDefinitionService(buildPipeline(), errorStore, () -> throwingRegistry);
 
             ServiceTestHelpers.await(
-                    svc.load(yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+                    svc.load(yamlFor("svc-order", 1, SvcOrderContract.class), DocumentFormat.YAML, testMeta(), null));
 
             // activate() must propagate the RuntimeException (not swallow it)
             assertThatThrownBy(() -> ServiceTestHelpers.await(svc.activate(key("svc-order", 1))))

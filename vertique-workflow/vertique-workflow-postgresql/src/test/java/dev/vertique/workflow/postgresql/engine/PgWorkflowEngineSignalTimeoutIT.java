@@ -13,11 +13,14 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TimerFiringResult;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
@@ -137,9 +140,15 @@ public class PgWorkflowEngineSignalTimeoutIT {
         }
     }
 
-    interface FakeTimeoutContract {}
+    interface FakeTimeoutContract {
+        @WorkflowSignal("ok-signal")
+        Future<Void> okSignal(WorkflowInstanceId id, OkSignal payload, @SignalDedupKey String dedupKey);
+    }
 
-    interface FakeNoTimeoutContract {}
+    interface FakeNoTimeoutContract {
+        @WorkflowSignal("ok-signal")
+        Future<Void> okSignal(WorkflowInstanceId id, OkSignal payload, @SignalDedupKey String dedupKey);
+    }
 
     // --- Workflow definitions ---
 

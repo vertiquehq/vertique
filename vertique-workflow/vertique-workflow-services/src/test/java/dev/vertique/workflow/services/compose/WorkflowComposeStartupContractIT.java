@@ -17,7 +17,6 @@ import dev.vertique.inboxoutbox.OutboxEnvelope;
 import dev.vertique.inboxoutbox.OutboxPublishResult;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceTargetResolver;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
 import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -237,11 +236,6 @@ public class WorkflowComposeStartupContractIT {
 
         @Override
         public RuntimeWorkflow resolvePinned(String definitionId, long version) {
-            throw new UnsupportedOperationException("not used in startup-contract test");
-        }
-
-        @Override
-        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
             throw new UnsupportedOperationException("not used in startup-contract test");
         }
 

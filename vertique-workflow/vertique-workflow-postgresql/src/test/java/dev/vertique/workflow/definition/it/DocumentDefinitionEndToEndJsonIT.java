@@ -28,7 +28,7 @@ import dev.vertique.workflow.definition.callbacks.StateReducerContributor;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
 import dev.vertique.workflow.definition.it.fixture.OrderDocState;
-import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV2;
+import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV1;
 import dev.vertique.workflow.definition.it.fixture.PaymentCapturedDoc;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.it.fixture.ShipmentCreatedDoc;
@@ -94,8 +94,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>It owns its own PostgreSQL container (separate database name).</li>
  *   <li>It uses its own Dagger component (component B) and in-memory registry.</li>
  *   <li>It registers version 2 of {@code order-fulfillment-doc} (the JSON fixture uses
- *       {@link dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV2} as
- *       the contract class), so there is no conflict with the YAML IT's version 1 registration even
+ *       {@link dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV1} as
+ *       the contract class, which the YAML IT's version 1 shares), so the two versions coexist even
  *       if the two ITs somehow shared a registry (they do not).</li>
  * </ul>
  *
@@ -450,7 +450,7 @@ public class DocumentDefinitionEndToEndJsonIT {
         PlaceOrderDoc payload = new PlaceOrderDoc("json-order-" + UUID.randomUUID());
         StartCommand cmd = new StartCommand(
                 "order-fulfillment-doc",
-                OrderFulfillmentDocumentWorkflowV2.class.getName(),
+                OrderFulfillmentDocumentWorkflowV1.class.getName(),
                 payload,
                 payload.idempotencyKey(),
                 null,

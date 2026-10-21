@@ -276,11 +276,10 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
             }
         }
 
-        // Detect (id, version) duplicates and contract-class duplicates within the local successes
-        // list before any store mutation. Use LinkedHashMaps to preserve insertion order for
+        // Detect (id, version) duplicates within the local successes list before any store mutation. Any
+        // number of definitions may name one contract. Use LinkedHashMaps to preserve insertion order for
         // deterministic error messages.
         Map<String, CompiledDefinition> seenKeys = new LinkedHashMap<>();
-        Map<String, CompiledDefinition> seenContracts = new LinkedHashMap<>();
         for (CompiledDefinition compiled : successes) {
             String defId = compiled.definition().definitionId();
             long defVersion = compiled.definition().definitionVersion();
@@ -297,24 +296,6 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
                         "DUPLICATE_DEFINITION",
                         "definition '" + defId + "' v" + defVersion
                                 + " appears more than once across registered sources"));
-            }
-
-            // Contract class duplicate detection — one contract class may only map to one
-            // (definitionId, definitionVersion) pair. A collision here would cause a runtime
-            // exception when the registry resolves contract metadata.
-            String contractFqn = compiled.contractFqn();
-            CompiledDefinition priorByContract = seenContracts.putIfAbsent(contractFqn, compiled);
-            if (priorByContract != null) {
-                String priorDefId = priorByContract.definition().definitionId();
-                long priorDefVersion = priorByContract.definition().definitionVersion();
-                allViolations.add(new Violation(
-                        defId,
-                        defVersion,
-                        null,
-                        null,
-                        "DUPLICATE_CONTRACT",
-                        "contract class '" + contractFqn + "' for definition '" + defId + "' v" + defVersion
-                                + " is already bound to definition '" + priorDefId + "' v" + priorDefVersion));
             }
         }
 

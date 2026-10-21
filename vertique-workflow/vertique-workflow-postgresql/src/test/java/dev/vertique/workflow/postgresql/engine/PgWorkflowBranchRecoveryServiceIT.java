@@ -29,6 +29,8 @@ import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.postgresql.PgInboxOutboxRepository;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
@@ -146,7 +148,13 @@ public class PgWorkflowBranchRecoveryServiceIT {
 
     record State(String orderId) {}
 
-    interface FanoutContract {}
+    interface FanoutContract {
+        @WorkflowSignal("signal-a")
+        Future<Void> signalA(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("signal-b")
+        Future<Void> signalB(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Fork with two signal-wait branches under {@code ALL_REQUIRED}. After {@code start}, both
@@ -212,12 +220,18 @@ public class PgWorkflowBranchRecoveryServiceIT {
     record Ac2State(String orderId) {}
 
     /** Contract marker for the AC-2 single-branch fanout. */
-    interface Ac2Contract {}
+    interface Ac2Contract {
+        @WorkflowSignal("signal-a")
+        Future<Void> signalA(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /** Contract marker for the AC-2 live-fork-absorption fanout (distinct from {@link Ac2Contract}
      *  because {@link dev.vertique.workflow.registry.DefaultWorkflowRegistry#register} keys plans
      *  by contract type, not just definitionId). */
-    interface Ac2LiveContract {}
+    interface Ac2LiveContract {
+        @WorkflowSignal("signal-start")
+        Future<Void> signalStart(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Fork with a single {@code ALL_REQUIRED} branch: {@code wait-a} (signal wait) →
@@ -335,7 +349,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
 
     /** Contract marker for the AC-2 demote-terminal-evaluation fanout (distinct from
      *  {@link Ac2Contract} / {@link Ac2LiveContract} for the same registry-keying reason). */
-    interface Ac2DemoteContract {}
+    interface Ac2DemoteContract {
+        @WorkflowSignal("signal-a")
+        Future<Void> signalA(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Fork with a single {@code ALL_REQUIRED} branch and a <b>declared failure route</b>

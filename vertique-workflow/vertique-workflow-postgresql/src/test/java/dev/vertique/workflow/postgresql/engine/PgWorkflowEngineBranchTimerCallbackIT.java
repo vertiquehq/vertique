@@ -12,6 +12,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -98,9 +100,18 @@ public class PgWorkflowEngineBranchTimerCallbackIT {
 
     record State(String id) {}
 
-    interface StandaloneTimerContract {}
+    interface StandaloneTimerContract {
+        @WorkflowSignal("other-signal")
+        Future<Void> otherSignal(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
-    interface SignalTimeoutContract {}
+    interface SignalTimeoutContract {
+        @WorkflowSignal("my-signal")
+        Future<Void> mySignal(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("other-signal")
+        Future<Void> otherSignal(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Standalone-timer fork: branch-a waits on a TimerNode at "timer-step", branch-b waits on a

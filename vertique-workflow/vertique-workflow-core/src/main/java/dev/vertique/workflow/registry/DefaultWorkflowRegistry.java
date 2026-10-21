@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.registry;
 
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
@@ -20,6 +20,7 @@ import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -30,6 +31,7 @@ import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -43,6 +45,10 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * it also runs every contributed {@link WorkflowDefinitionValidator} against the candidate
  * definition.
  *
+ * <p>Any number of definition ids and versions may name one contract. A version must name the
+ * same contract as every earlier version of its id, and every signal its plan waits for must be
+ * declared on that contract.
+ *
  * <p>Internal storage:
  * <ul>
  *   <li>{@code byDefinition} — {@link ConcurrentHashMap} keyed by definitionId, inner
@@ -50,8 +56,6 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  *       version via {@code lastEntry()}.</li>
  *   <li>{@code sources} — the registered definition objects per id and version; also the source of
  *       {@link #definitionClass(Class)}.</li>
- *   <li>{@code byContract} — {@link ConcurrentHashMap} keyed by contract interface class; links
- *       the class to its definition metadata.</li>
  *   <li>{@code deprecated} — set of version numbers per definitionId that are marked deprecated;
  *       always a subset of the registered versions and mutated only under {@code writeLock}.</li>
  * </ul>
@@ -61,7 +65,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  *   <li>{@link #register(WorkflowDefinition)} is safe to call at any time after construction.
  *       Multiple callers can invoke it concurrently; the underlying publication is serialized by
  *       {@code writeLock}.</li>
- *   <li>Reads ({@link #resolveCurrent}, {@link #resolvePinned}, {@link #contractMetadata},
+ *   <li>Reads ({@link #resolveCurrent}, {@link #resolvePinned},
  *       {@link #allRegistered}) are non-blocking relative to each other (they hold only
  *       {@code readLock}) but block briefly when a concurrent {@code register()} is in its
  *       publish phase.</li>
@@ -76,11 +80,11 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * {@link #resolveCurrent} or {@link #resolvePinned} call) get a coherent per-definition view.
  *
  * <p>Why {@link ReentrantReadWriteLock} rather than lock-free structures alone:
- * {@code register()} is intrinsically multi-step — it inserts a version into {@code byDefinition},
- * then inserts into {@code byContract}, and rolls back {@code byDefinition} on a contract
- * conflict. Without a write-lock, a concurrent {@code resolveCurrent()} could observe the version
- * between the first insert and the rollback, then see it disappear — an invisible-update
- * anomaly. The write-lock serializes the publish phase, while allowing concurrent reads during
+ * {@code register()} is intrinsically multi-step — it checks the new version against the versions
+ * of its definition id that are already registered, then inserts it into {@code byDefinition} and
+ * {@code sources}. Without a write-lock, two concurrent registrations of one id could both pass the
+ * contract check, and a concurrent {@code resolveCurrent()} could observe a half-published
+ * version. The write-lock serializes the publish phase, while allowing concurrent reads during
  * the common steady-state.
  */
 public final class DefaultWorkflowRegistry implements WorkflowRegistry {
@@ -96,9 +100,6 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      * together with {@link #byDefinition}; it holds exactly the registered versions.
      */
     private final HashMap<String, HashMap<Long, WorkflowDefinition<?, ?>>> sources = new HashMap<>();
-
-    /** Keyed by contract interface class → contract metadata. */
-    private final ConcurrentHashMap<Class<?>, WorkflowContractMetadata> byContract = new ConcurrentHashMap<>();
 
     /**
      * Keyed by definitionId → versions marked deprecated. Only registered versions are ever present;
@@ -216,6 +217,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      *       {@link WorkflowDefinitionException} if not.</li>
      *   <li>Validates the plan graph shape via {@link #validatePlanGraph}.</li>
      *   <li>Verifies signal-name uniqueness across {@code WaitSignalNode}s.</li>
+     *   <li>Verifies that every awaited signal is declared by a {@code @WorkflowSignal} method of the
+     *       definition's contract, including methods the contract inherits; the exception names the
+     *       missing signals in sorted order.</li>
      *   <li>Computes {@code planHash}.</li>
      *   <li>Runs every contributed {@link WorkflowDefinitionValidator} on the calling thread, in
      *       no particular order; an exception it throws propagates unchanged and nothing is
@@ -224,11 +228,11 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      *
      * <p>Publish phase (inside {@code writeLock}):
      * <ol>
-     *   <li>Stores the {@link RuntimeWorkflow} keyed by {@code (definitionId, definitionVersion)};
-     *       throws if already present.</li>
-     *   <li>Stores {@link WorkflowContractMetadata} keyed by {@code def.contract()}; on conflict,
-     *       rolls back the version insert and rethrows — no half-committed state is visible to
-     *       concurrent readers.</li>
+     *   <li>Throws if {@code (definitionId, definitionVersion)} is already registered.</li>
+     *   <li>Throws if an earlier version of the same definition id names another contract; any
+     *       number of definition ids and versions may name one contract.</li>
+     *   <li>Stores the {@link RuntimeWorkflow} keyed by {@code (definitionId, definitionVersion)} —
+     *       no half-committed state is visible to concurrent readers.</li>
      * </ol>
      *
      * @param def the workflow definition to register
@@ -260,6 +264,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
 
         // Validate signal-name uniqueness
         validateSignalUniqueness(plan, definitionId, definitionVersion);
+
+        // Every awaited signal must be declared on the contract
+        validateDeclaredSignals(plan, def.contract(), definitionId, definitionVersion);
 
         // Build per-definition callbacks and validate callback-registry consistency
         WorkflowCallbackRegistry perDefCallbacks = builder.callbackRegistry();
@@ -302,27 +309,24 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             WorkflowDefinition<?, ?> def, String definitionId, long definitionVersion, RuntimeWorkflow rw) {
         rwLock.writeLock().lock();
         try {
-            // Store by (definitionId, version) — reject exact duplicates
-            ConcurrentSkipListMap<Long, RuntimeWorkflow> versions =
-                    byDefinition.computeIfAbsent(definitionId, k -> new ConcurrentSkipListMap<>());
-            if (versions.putIfAbsent(definitionVersion, rw) != null) {
-                throw new WorkflowDefinitionException("definition '" + definitionId + "' v" + definitionVersion
-                        + " is already registered; duplicate registrations are not allowed");
+            // Reject exact duplicates, and a version whose contract differs from its id's earlier versions
+            ConcurrentSkipListMap<Long, RuntimeWorkflow> registered = byDefinition.get(definitionId);
+            if (registered != null && !registered.isEmpty()) {
+                if (registered.containsKey(definitionVersion)) {
+                    throw new WorkflowDefinitionException("definition '" + definitionId + "' v" + definitionVersion
+                            + " is already registered; duplicate registrations are not allowed");
+                }
+                String earlierContract = registered.firstEntry().getValue().contractName();
+                if (!earlierContract.equals(rw.contractName())) {
+                    throw new WorkflowDefinitionException("definition '" + definitionId + "' v" + definitionVersion
+                            + " names contract '" + rw.contractName() + "' but earlier versions of '" + definitionId
+                            + "' name contract '" + earlierContract
+                            + "'; every version of a definition must name the same contract");
+                }
             }
-
-            // Store contract metadata — reject re-binding the same contract class to a different definition
-            WorkflowContractMetadata metadata =
-                    new WorkflowContractMetadata(def.contract(), definitionId, definitionVersion);
-            WorkflowContractMetadata existingContract = byContract.putIfAbsent(def.contract(), metadata);
-            if (existingContract != null) {
-                // Rollback the version we just inserted so no half-registered state persists.
-                versions.remove(definitionVersion);
-                throw new WorkflowDefinitionException(
-                        "contract " + def.contract().getName()
-                                + " is already registered to definition '" + existingContract.definitionId() + "' v"
-                                + existingContract.definitionVersion() + "'; cannot rebind to '" + definitionId + "' v"
-                                + definitionVersion + "'");
-            }
+            byDefinition
+                    .computeIfAbsent(definitionId, k -> new ConcurrentSkipListMap<>())
+                    .put(definitionVersion, rw);
             sources.computeIfAbsent(definitionId, k -> new HashMap<>()).put(definitionVersion, def);
         } finally {
             rwLock.writeLock().unlock();
@@ -564,6 +568,40 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     }
 
     /**
+     * Validates that every signal the plan waits for is declared by a {@link WorkflowSignal} method of the
+     * contract interface, including methods the contract inherits from other interfaces. Forward, branch and
+     * timeout-guarded waits are all {@link WaitSignalNode}s of the plan.
+     *
+     * @param plan the plan to validate
+     * @param contract the contract interface of the definition
+     * @param definitionId the definition id (for error messages)
+     * @param definitionVersion the definition version (for error messages)
+     * @throws WorkflowDefinitionException if the plan waits for a signal the contract does not declare
+     */
+    private static void validateDeclaredSignals(
+            WorkflowPlan plan, Class<?> contract, String definitionId, long definitionVersion) {
+        Set<String> declared = new HashSet<>();
+        for (Method method : contract.getMethods()) {
+            WorkflowSignal signal = method.getAnnotation(WorkflowSignal.class);
+            if (signal != null) {
+                declared.add(signal.value());
+            }
+        }
+        TreeSet<String> missing = new TreeSet<>();
+        for (WorkflowNode node : plan.nodes()) {
+            if (node instanceof WaitSignalNode wait && !declared.contains(wait.signalName())) {
+                missing.add(wait.signalName());
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw new WorkflowDefinitionException("definition '" + definitionId + "' v" + definitionVersion
+                    + " waits for signals that contract " + contract.getName() + " does not declare: "
+                    + String.join(", ", missing)
+                    + "; declare each awaited signal as a @WorkflowSignal method on the contract");
+        }
+    }
+
+    /**
      * {@inheritDoc}
      *
      * <p>Selects the highest registered version that is not marked deprecated. Deprecated
@@ -614,24 +652,6 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                 throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
             }
             return rw;
-        } finally {
-            rwLock.readLock().unlock();
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
-        rwLock.readLock().lock();
-        try {
-            WorkflowContractMetadata meta = byContract.get(contractInterface);
-            if (meta == null) {
-                throw new dev.vertique.workflow.exception.WorkflowProxyContractException(
-                        "No workflow definition registered for contract: " + contractInterface.getName());
-            }
-            return meta;
         } finally {
             rwLock.readLock().unlock();
         }
@@ -755,7 +775,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         }
     }
 
-    /** Removes the version, its deprecation mark and matching contract mapping under the publication lock. */
+    /** Removes the version and its deprecation mark under the publication lock. */
     @Override
     public void unregister(String definitionId, long version) {
         rwLock.writeLock().lock();
@@ -771,10 +791,6 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                 marked.remove(version);
                 return marked.isEmpty() ? null : marked;
             });
-            byContract
-                    .entrySet()
-                    .removeIf(e -> e.getValue().definitionId().equals(definitionId)
-                            && e.getValue().definitionVersion() == version);
         } finally {
             rwLock.writeLock().unlock();
         }

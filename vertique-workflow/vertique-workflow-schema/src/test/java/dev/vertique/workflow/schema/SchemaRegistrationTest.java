@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.schema.fixtures.Payloads;
 import io.vertx.core.json.JsonObject;
@@ -96,19 +97,19 @@ class SchemaRegistrationTest {
     @Test
     @DisplayName("the cache keeps an entry even when the registry later rejects the candidate")
     void theCacheKeepsAnEntryWhenTheRegistryLaterRejectsTheCandidate() {
-        // Given: a registry in which the Primary contract is already bound to another definition
+        // Given: a registry in which version 1 of a definition id names the Primary contract
         var registry = registry();
         registry.register(Definitions.withDecision("bound-saga", 1L, Payloads.PlainRecord.class));
 
-        // When: a second definition under the same contract passes the validator and is then rejected on publish
-        assertThatThrownBy(
-                        () -> registry.register(Definitions.withDecision("rebound-saga", 1L, Payloads.Comment.class)))
+        // When: version 2 of that id names another contract, passes the validator and is then rejected on publish
+        assertThatThrownBy(() -> registry.register(
+                        Definitions.withDecisionUnderSecondContract("bound-saga", 2L, Payloads.Comment.class)))
                 .isInstanceOf(WorkflowDefinitionException.class)
-                .hasMessageContaining("already registered");
+                .hasMessageContaining("'bound-saga' v2");
 
         // Then: the rejected candidate stays unresolvable while its payload entry remains cached
-        assertThatThrownBy(() -> registry.resolveCurrent("rebound-saga"))
-                .isInstanceOf(WorkflowDefinitionMissingException.class);
+        assertThatThrownBy(() -> registry.resolvePinned("bound-saga", 2L))
+                .isInstanceOf(WorkflowVersionPinUnavailableException.class);
         assertThat(cache.find(new SchemaKey(Payloads.Comment.class.getName(), JsonProfileId.of("vertique"))))
                 .isPresent();
     }

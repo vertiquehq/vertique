@@ -5,12 +5,16 @@ package dev.vertique.workflow.dsl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.contract.WorkflowSignal;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.types.WorkflowType;
+import io.vertx.core.Future;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -42,7 +46,13 @@ class WorkflowPlanHashTest {
     record GoldenDecision(boolean approved) {}
 
     @WorkflowContract(definitionId = "golden-saga", definitionVersion = 1)
-    interface GoldenContract {}
+    interface GoldenContract {
+        @WorkflowSignal("order.paid")
+        Future<Void> orderPaid(WorkflowInstanceId id, GoldenSignal payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("order.shipped")
+        Future<Void> orderShipped(WorkflowInstanceId id, GoldenSignal payload, @SignalDedupKey String dedupKey);
+    }
 
     // --- Fixture types for logical naming: annotated types and their unannotated twins ---
 
@@ -62,13 +72,22 @@ class WorkflowPlanHashTest {
     record PlainApproval(boolean approved) {}
 
     @WorkflowContract(definitionId = "typed-saga", definitionVersion = 1)
-    interface TypedContract {}
+    interface TypedContract {
+        @WorkflowSignal("order.paid")
+        Future<Void> orderPaid(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
     @WorkflowContract(value = "orders", definitionId = "x", definitionVersion = 1)
-    interface OrdersContract {}
+    interface OrdersContract {
+        @WorkflowSignal("order.paid")
+        Future<Void> orderPaid(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
     @WorkflowContract(value = "other", definitionId = "x", definitionVersion = 1)
-    interface OtherContract {}
+    interface OtherContract {
+        @WorkflowSignal("order.paid")
+        Future<Void> orderPaid(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
     /** Builds plan A: charge → ship → wait-signal → complete. */
     private static WorkflowPlan buildPlanA() {

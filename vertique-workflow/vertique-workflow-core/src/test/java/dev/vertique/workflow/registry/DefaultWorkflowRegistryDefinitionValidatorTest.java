@@ -12,7 +12,6 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
-import dev.vertique.workflow.exception.WorkflowProxyContractException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WorkflowNode;
@@ -200,8 +199,7 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
                 .isInstanceOf(WorkflowDefinitionMissingException.class);
         assertThatThrownBy(() -> registry.resolvePinned("validated-saga", 1L))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-        assertThatThrownBy(() -> registry.contractMetadata(definition.contract()))
-                .isInstanceOf(WorkflowProxyContractException.class);
+        assertThat(registry.registeredDefinition("validated-saga", 1L)).isEmpty();
         assertThat(registry.allRegistered()).isEmpty();
 
         // When: the validator passes and the same definition is registered again
@@ -212,8 +210,7 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
         assertThat(registry.resolveCurrent("validated-saga").plan().definitionVersion())
                 .isEqualTo(1L);
         assertThat(registry.resolvePinned("validated-saga", 1L)).isNotNull();
-        assertThat(registry.contractMetadata(definition.contract()).definitionId())
-                .isEqualTo("validated-saga");
+        assertThat(registry.registeredDefinition("validated-saga", 1L)).containsSame(definition);
     }
 
     @Test

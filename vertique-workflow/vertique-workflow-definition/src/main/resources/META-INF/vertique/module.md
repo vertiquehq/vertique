@@ -154,7 +154,7 @@ The full fixture also demonstrates timers, compensation, fork, join, due dates, 
 | `initialStep` | yes | Step id where execution begins |
 | `steps` | yes | Non-empty list of step definitions |
 
-The `contract` annotation values must match the document `definitionId` and `definitionVersion`.
+The `contract` class must carry `@WorkflowContract`. Its `definitionId` and `definitionVersion` attributes are not compared with the document, so any number of documents and versions may name one contract.
 
 ### Step Shape
 
@@ -319,8 +319,7 @@ BOOTSTRAP step has recorded it. Definition id and tenant key (255), source type 
 author and upload id (255) code-point limits apply in every mode, including when no store is installed. NUL and
 unpaired surrogates are rejected in every text field, ISO control characters in ids and tenant keys, and a
 version must be positive. Over-limit input is rejected before anything is registered. Invalid asynchronous
-arguments are failed Futures. Previously started instances keep their pinned version. Each coexisting
-document version needs its own contract interface class because registry contract mappings use that class.
+arguments are failed Futures. Previously started instances keep their pinned version. Coexisting versions of one document id name the same contract class, and a version that names another contract than the id's registered versions is refused at registration.
 
 ### Source Text And Size Policy
 

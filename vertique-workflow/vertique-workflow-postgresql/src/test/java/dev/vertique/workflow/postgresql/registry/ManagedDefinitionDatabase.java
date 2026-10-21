@@ -29,9 +29,9 @@ import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.it.fixture.FraudScreenedDoc;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
 import dev.vertique.workflow.definition.it.fixture.OrderDocState;
+import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.OrderFanOutState;
 import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV1;
-import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV2;
 import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentFanOutDocumentWorkflowV1;
 import dev.vertique.workflow.definition.it.fixture.PaymentAuthorizedDoc;
 import dev.vertique.workflow.definition.it.fixture.PaymentCapturedDoc;
@@ -351,8 +351,8 @@ public final class ManagedDefinitionDatabase {
             List<WorkflowTypeCatalogEntry> entries = new ArrayList<>();
             for (Class<?> contract : List.of(
                     OrderFulfillmentDocumentWorkflowV1.class,
-                    OrderFulfillmentDocumentWorkflowV2.class,
-                    OrderFulfillmentFanOutDocumentWorkflowV1.class)) {
+                    OrderFulfillmentFanOutDocumentWorkflowV1.class,
+                    RegistryProbeContract.class)) {
                 entries.add(new WorkflowTypeCatalogEntry(Kind.CONTRACT, contract.getName(), contract));
             }
             for (Class<?> type : List.of(
@@ -452,8 +452,12 @@ public final class ManagedDefinitionDatabase {
 
     private record RegistryProbeStart(String value) {}
 
-    @WorkflowContract(definitionId = "definition-policy-code", definitionVersion = 1)
-    private interface RegistryProbeContract {}
+    /**
+     * The contract of the contributed probe workflow, shared by the document version 2 that the retirement
+     * scenarios register under the same definition id.
+     */
+    @WorkflowContract(definitionId = "definition-policy-code", definitionVersion = 2)
+    private interface RegistryProbeContract extends OrderDocumentSignals {}
 
     private static final class RegistryProbeWorkflow
             implements WorkflowDefinition<RegistryProbeState, RegistryProbeContract> {
