@@ -5,10 +5,14 @@ package dev.vertique.workflow.registry.store;
 
 import jakarta.annotation.Nullable;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 
 /**
  * Metadata projection that never carries document source text.
+ *
+ * <p>The {@code nameBinding} is written with the plan hash and only with it: it records the names the hash was
+ * computed with, so that the same version keeps its hash when a class later gains or changes a logical name.
  *
  * <p>A {@link DefinitionKind#CODE} record belongs to the default scope and has no document format. The contract and
  * state type names are the logical names of the definition's contract and state type.
@@ -23,6 +27,8 @@ import java.util.Objects;
  * @param documentFormat the document format of a document definition, otherwise {@code null}
  * @param createdAt when the row was created
  * @param statusChangedAt when the status last changed
+ * @param nameBinding the binary name of each state and payload class the version's plan names, mapped to the name its
+ *     plan hash used; copied defensively; empty when no binding is kept
  */
 public record WorkflowDefinitionRecord(
         DefinitionKey key,
@@ -34,7 +40,8 @@ public record WorkflowDefinitionRecord(
         DefinitionProvenance provenance,
         @Nullable String documentFormat,
         Instant createdAt,
-        Instant statusChangedAt) {
+        Instant statusChangedAt,
+        Map<String, String> nameBinding) {
     public WorkflowDefinitionRecord {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(kind, "kind");
@@ -44,6 +51,7 @@ public record WorkflowDefinitionRecord(
         Objects.requireNonNull(provenance, "provenance");
         Objects.requireNonNull(createdAt, "createdAt");
         Objects.requireNonNull(statusChangedAt, "statusChangedAt");
+        nameBinding = Map.copyOf(nameBinding);
         if (planHash == null || !planHash.matches("[0-9a-f]{64}"))
             throw new IllegalArgumentException("planHash must be 64 lowercase hexadecimal characters");
         if (kind == DefinitionKind.DOCUMENT) DefinitionValues.format(documentFormat);

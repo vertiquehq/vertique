@@ -444,7 +444,7 @@ final class DefinitionPropagationPass {
                     String hash;
                     try {
                         definition = loader.load(record, source);
-                        hash = loader.planHash(definition);
+                        hash = DefinitionPublication.planHash(loader, definition, record);
                     } catch (RuntimeException failure) {
                         throw new WorkflowDefinitionException(
                                 "Cannot restore DOCUMENT " + key + " from stored source", failure);
@@ -469,7 +469,8 @@ final class DefinitionPropagationPass {
     private void publishAndMark(
             WorkflowRegistry local, WorkflowDefinitionRecord record, WorkflowDefinition<?, ?> definition) {
         DefinitionKey key = record.key();
-        RuntimeWorkflow published = DefinitionPublication.publish(local, registrations, key, definition);
+        RuntimeWorkflow published =
+                DefinitionPublication.publish(local, registrations, key, definition, record.nameBinding());
         if (record.status() != DefinitionStatus.DEPRECATED) return;
         try {
             local.markDeprecated(key);

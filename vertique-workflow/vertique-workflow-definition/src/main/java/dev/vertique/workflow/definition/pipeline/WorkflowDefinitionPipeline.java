@@ -12,6 +12,7 @@ import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentValidator;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadException;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
+import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.plan.WorkflowPlan;
@@ -19,6 +20,7 @@ import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -202,6 +204,21 @@ public final class WorkflowDefinitionPipeline {
                 resource.metadata(),
                 typeNames.nameOf(definition.stateType()),
                 typeNames.contractNameOf(definition.contract()));
+    }
+
+    /**
+     * INTERNAL framework seam — used by the definition service when it records a candidate; not an
+     * application contract and outside the maturity promise.
+     *
+     * <p>Returns the binding of the definition: the binary name of its state class and of every signal and
+     * decision payload class its plan names, mapped to the name this pipeline's type-name index gives it now,
+     * which is the name the plan hash {@link #load(DefinitionResource)} computed used.
+     *
+     * @param definition the compiled definition; must not be {@code null}
+     * @return the binding keyed by binary name; never {@code null}
+     */
+    public Map<String, String> nameBinding(WorkflowDefinition<?, ?> definition) {
+        return WorkflowBuilder.nameBindingOf(definition, typeNames);
     }
 
     // --- Private helpers ---

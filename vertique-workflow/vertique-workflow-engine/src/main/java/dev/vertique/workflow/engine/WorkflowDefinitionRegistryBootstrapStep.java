@@ -12,6 +12,7 @@ import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
+import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -27,6 +28,8 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.types.EchoedNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
@@ -60,6 +63,10 @@ import org.slf4j.LoggerFactory;
  *       A version that is inserted here for the first time and does not opt out of activation on deploy also
  *       becomes the default scope's current version, in the same transaction as its insert, when it is higher than
  *       the current one. A version that is already recorded is never activated by a restart.
+ *       A recorded version keeps the type names its plan hash was computed with: the registered plan is rebuilt
+ *       under the stored name binding when that gives the stored hash, so a class that gained a logical name since
+ *       does not change the hash. A recorded name that no longer resolves fails startup, except for a retired
+ *       version.
  *   <li>It restores every durable activation record into the node's view, including the records just written and
  *       those that name a version this node has no code for.
  *   <li>It restores every live document of every scope, deprecated ones included, and attributes each to its
@@ -88,6 +95,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     private final WorkflowCodeDefinitionCatalog catalog;
     private final DefaultWorkflowDefinitionRegistryView view;
     private final DefinitionActivations activations;
+    private final WorkflowTypeNames typeNames;
 
     @Inject
     WorkflowDefinitionRegistryBootstrapStep(
@@ -98,7 +106,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             ManagedRegistrations registrations,
             WorkflowCodeDefinitionCatalog catalog,
             DefaultWorkflowDefinitionRegistryView view,
-            DefinitionActivations activations) {
+            DefinitionActivations activations,
+            WorkflowTypeNames typeNames) {
+        this.typeNames = typeNames;
         this.activations = activations;
         this.view = view;
         this.store = store;
@@ -191,10 +201,14 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         origin.provenance(),
                         origin.document().documentFormat(),
                         origin.provenance().loadedAt(),
-                        origin.provenance().loadedAt());
-                return store.orElseThrow().find(origin.key()).compose(previous -> store.orElseThrow()
-                        .upsertDocument(source, origin.document(), !optedOut.contains(origin.key()))
-                        .compose(outcome -> reconcileResult(source, previous, outcome)));
+                        origin.provenance().loadedAt(),
+                        registry.get().nameBinding(origin.key()));
+                return store.orElseThrow().find(origin.key()).compose(previous -> {
+                    WorkflowDefinitionRecord bound = applyStoredBinding(source, previous);
+                    return store.orElseThrow()
+                            .upsertDocument(bound, origin.document(), !optedOut.contains(origin.key()))
+                            .compose(outcome -> reconcileResult(bound, previous, outcome));
+                });
             }));
         }
         return chain;
@@ -237,16 +251,80 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                                 startedAt),
                         null,
                         startedAt,
-                        startedAt);
-                return store.orElseThrow().find(key).compose(previous -> store.orElseThrow()
-                        .upsertCode(
-                                source,
-                                definition.definition() == null
-                                        || definition.definition().activateOnDeploy())
-                        .compose(outcome -> reconcileResult(source, previous, outcome)));
+                        startedAt,
+                        definition.nameBinding());
+                return store.orElseThrow().find(key).compose(previous -> {
+                    WorkflowDefinitionRecord bound = applyStoredBinding(source, previous);
+                    return store.orElseThrow()
+                            .upsertCode(
+                                    bound,
+                                    definition.definition() == null
+                                            || definition.definition().activateOnDeploy())
+                            .compose(outcome -> reconcileResult(bound, previous, outcome));
+                });
             }));
         }
         return chain;
+    }
+
+    /**
+     * Applies the name binding stored on the version's row to the plan this start registered. A version
+     * recorded with a binding keeps the plan hash it was recorded with when a class has gained a logical name
+     * since: the registered plan is rebuilt under the bound names, and the record to reconcile carries the stored
+     * hash and binding, so an unchanged step graph reconciles as unchanged. A changed step graph does not rebuild
+     * to the stored hash, keeps the plan registered under current names, and reconciles as a changed hash. A
+     * retired row is not registered, so its binding is neither resolved nor applied.
+     *
+     * @return the record to reconcile; {@code source} itself when no stored binding applies
+     * @throws WorkflowUnknownTypeNameException when the binding names a class that no longer resolves
+     */
+    private WorkflowDefinitionRecord applyStoredBinding(
+            WorkflowDefinitionRecord source, Optional<WorkflowDefinitionRecord> previous) {
+        if (previous.isEmpty()) return source;
+        WorkflowDefinitionRecord stored = previous.orElseThrow();
+        if (stored.kind() != source.kind()
+                || stored.status() == DefinitionStatus.RETIRED
+                || stored.nameBinding().isEmpty()) return source;
+        requireBoundNamesResolve(stored);
+        if (stored.planHash().equals(source.planHash())) return source;
+        DefinitionKey key = source.key();
+        Optional<RuntimeWorkflow> rebound = registry.get().rebind(key, stored.nameBinding(), stored.planHash());
+        if (rebound.isEmpty()) return source;
+        registrations.attribute(key.scopeKey(), key.definitionId(), key.definitionVersion(), rebound.get());
+        if (source.kind() == DefinitionKind.CODE)
+            catalog.rebound(key.definitionId(), key.definitionVersion(), stored.planHash());
+        return new WorkflowDefinitionRecord(
+                source.key(),
+                source.kind(),
+                source.contractName(),
+                source.stateTypeName(),
+                stored.planHash(),
+                source.status(),
+                source.provenance(),
+                source.documentFormat(),
+                source.createdAt(),
+                source.statusChangedAt(),
+                stored.nameBinding());
+    }
+
+    /**
+     * Fails when a name in the row's binding no longer resolves to a class, so a version bound to the binary name
+     * of a class that moved stops startup instead of failing its instances later. Names resolve only through the
+     * type-name index; no class is loaded by a stored name.
+     */
+    private void requireBoundNamesResolve(WorkflowDefinitionRecord row) {
+        List<String> unresolved = row.nameBinding().values().stream()
+                .distinct()
+                .filter(name -> typeNames.find(name).isEmpty())
+                .sorted()
+                .toList();
+        if (unresolved.isEmpty()) return;
+        DefinitionKey key = row.key();
+        throw new WorkflowUnknownTypeNameException("definition '" + printable(key.definitionId()) + "' version "
+                + key.definitionVersion() + " in scope '" + printable(key.scopeKey())
+                + "' was recorded with type names that no class resolves any more: "
+                + unresolved.stream().map(EchoedNames::bounded).collect(Collectors.joining(", "))
+                + "; keep the class under that name, or retire the version before moving the class");
     }
 
     /** Records every durable activation record in the node's view, whether or not this node has the code it names. */
@@ -500,11 +578,12 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                     .compose(document -> work(() -> {
                         WorkflowDefinitionDocument source = document.orElseThrow(
                                 () -> failure(Reason.LOADER_MISSING, key, "DOCUMENT source is missing"));
+                        requireBoundNamesResolve(record);
                         WorkflowDefinition<?, ?> definition;
                         String hash;
                         try {
                             definition = loader.load(record, source);
-                            hash = loader.planHash(definition);
+                            hash = DefinitionPublication.planHash(loader, definition, record);
                         } catch (RuntimeException failure) {
                             throw new WorkflowDefinitionException(
                                     "Cannot restore DOCUMENT " + key + " from stored source", failure);
@@ -527,7 +606,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                                         "DOCUMENT stored hash " + record.planHash() + " differs from registered hash "
                                                 + existing.orElseThrow().plan().planHash());
                         } else {
-                            DefinitionPublication.publish(local, registrations, key, definition);
+                            DefinitionPublication.publish(local, registrations, key, definition, record.nameBinding());
                         }
                         loader.onRestored(record, definition);
                         return Optional.of(new VerifiedDocument(loader, record, definition));

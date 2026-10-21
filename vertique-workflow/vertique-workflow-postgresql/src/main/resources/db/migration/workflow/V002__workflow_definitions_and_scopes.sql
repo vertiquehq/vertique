@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     contract_name VARCHAR(255) NOT NULL,
     state_type_name VARCHAR(255) NOT NULL,
     plan_hash VARCHAR(128) NOT NULL,
+    name_binding JSONB NOT NULL DEFAULT '{}',
     status VARCHAR(16) NOT NULL,
     document TEXT,
     document_format VARCHAR(16),

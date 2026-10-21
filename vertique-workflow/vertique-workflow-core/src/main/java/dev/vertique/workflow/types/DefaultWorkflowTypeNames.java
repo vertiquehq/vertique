@@ -92,6 +92,37 @@ public final class DefaultWorkflowTypeNames implements WorkflowTypeNames {
                         : "unknown workflow type name in document field " + field);
     }
 
+    /**
+     * INTERNAL framework seam — used by the workflow registry and the definition loaders to hash a version
+     * under the type names it was published with; not an application contract and outside the maturity
+     * promise.
+     *
+     * <p>Returns a view of this index that names a class by its entry in {@code binding}, keyed by binary
+     * name, and any class the binding does not hold by its current logical name. Resolution and contract
+     * naming are those of this index. The view reads this index at each call and indexes nothing.
+     *
+     * @param binding the binary name of a class mapped to the name to use for it; must not be {@code null}
+     * @return the view; never {@code null}
+     */
+    public WorkflowTypeNames bound(Map<String, String> binding) {
+        return bound(this, binding);
+    }
+
+    /**
+     * INTERNAL framework seam — the same view as {@link #bound(Map)} over any type-name index; not an
+     * application contract and outside the maturity promise.
+     *
+     * @param base the index that resolves names and names the classes the binding does not hold; must not be
+     *     {@code null}
+     * @param binding the binary name of a class mapped to the name to use for it; must not be {@code null}
+     * @return the view; never {@code null}
+     */
+    public static WorkflowTypeNames bound(WorkflowTypeNames base, Map<String, String> binding) {
+        Objects.requireNonNull(base, "base");
+        Map<String, String> copy = Map.copyOf(binding);
+        return copy.isEmpty() ? base : new BoundTypeNames(base, copy);
+    }
+
     @Override
     public String nameOf(Class<?> type) {
         Objects.requireNonNull(type, "type");
@@ -213,6 +244,37 @@ public final class DefaultWorkflowTypeNames implements WorkflowTypeNames {
             return false;
         }
         return name.codePoints().noneMatch(Character::isISOControl);
+    }
+
+    /** Names the classes of a binding by it and delegates everything else to the index it wraps. */
+    private record BoundTypeNames(WorkflowTypeNames base, Map<String, String> binding) implements WorkflowTypeNames {
+
+        @Override
+        public String nameOf(Class<?> type) {
+            Objects.requireNonNull(type, "type");
+            String bound = binding.get(type.getName());
+            return bound != null ? bound : base.nameOf(type);
+        }
+
+        @Override
+        public Class<?> resolve(String name) {
+            return base.resolve(name);
+        }
+
+        @Override
+        public Optional<Class<?>> find(String name) {
+            return base.find(name);
+        }
+
+        @Override
+        public String contractNameOf(Class<?> contract) {
+            return base.contractNameOf(contract);
+        }
+
+        @Override
+        public Optional<Class<?>> findContract(String name) {
+            return base.findContract(name);
+        }
     }
 
     /** A class under one name with the number of indexing calls that hold it; touched under the lock only. */

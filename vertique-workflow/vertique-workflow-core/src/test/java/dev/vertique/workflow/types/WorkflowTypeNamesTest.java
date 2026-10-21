@@ -17,6 +17,7 @@ import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -47,6 +48,12 @@ class WorkflowTypeNamesTest {
 
     @WorkflowType("order")
     record Beta(String id) {}
+
+    @WorkflowType("a")
+    record BoundA(String id) {}
+
+    @WorkflowType("b")
+    record BoundB(String id) {}
 
     @WorkflowType("shared")
     record SharedState(String id) {}
@@ -217,6 +224,30 @@ class WorkflowTypeNamesTest {
         // And: a name of exactly 255 code points is accepted
         assertThatCode(() -> startUp(registering(definition("limit-saga", FirstContract.class, LongestNamed.class))))
                 .doesNotThrowAnyException();
+    }
+
+    // --- Bound view ---
+
+    @Test
+    @DisplayName("the bound view names a bound class by its binding and any other class by its logical name")
+    void boundViewUsesBindingThenCurrentLogicalName() {
+        // Given: an index holding annotated classes A ("a") and B ("b"), and a binding of A's binary name to itself
+        DefaultWorkflowTypeNames names = startUp(
+                registering(definition("a-saga", FirstContract.class, BoundA.class)),
+                registering(definition("b-saga", SecondContract.class, BoundB.class)));
+        Map<String, String> binding = Map.of(BoundA.class.getName(), BoundA.class.getName());
+
+        // When: the bound view names both classes and resolves A's binary name
+        WorkflowTypeNames bound = names.bound(binding);
+
+        // Then: A is named by the binding, B by its current logical name, and the binary name resolves to A
+        assertThat(bound.nameOf(BoundA.class)).isEqualTo(BoundA.class.getName());
+        assertThat(bound.nameOf(BoundB.class)).isEqualTo("b");
+        assertThat(bound.resolve(BoundA.class.getName())).isEqualTo(BoundA.class);
+
+        // And: the unbound index still names A by its logical name
+        assertThat(names.nameOf(BoundA.class)).isEqualTo("a");
+        assertThat(names.nameOf(BoundB.class)).isEqualTo("b");
     }
 
     // --- Helpers ---

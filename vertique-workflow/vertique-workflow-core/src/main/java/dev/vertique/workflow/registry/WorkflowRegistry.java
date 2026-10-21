@@ -9,6 +9,7 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -224,5 +225,61 @@ public interface WorkflowRegistry {
      */
     default boolean isDeployed(DefinitionKey key) {
         return true;
+    }
+
+    /**
+     * Registers a workflow definition in the given scope under the type names its plan hash was first computed
+     * with.
+     *
+     * <p>This is an internal framework seam: the durable registry restores a version with the name binding
+     * stored on its row, so annotating a state or payload class with a logical name does not change the hash of
+     * a version published before. A class the binding holds is named by the bound name in the plan and its hash;
+     * any other class is named by its current logical name. Applications do not call it. The default
+     * implementation refuses the call.
+     *
+     * @param scopeKey the scope that owns the definition
+     * @param def the workflow definition to register
+     * @param nameBinding the binary name of a state or payload class mapped to the name to use for it
+     * @throws UnsupportedOperationException if this registry does not support name bindings
+     * @throws dev.vertique.workflow.exception.WorkflowDefinitionException under the rules of
+     *     {@link #register(String, WorkflowDefinition)}
+     */
+    default void register(String scopeKey, WorkflowDefinition<?, ?> def, Map<String, String> nameBinding) {
+        throw new UnsupportedOperationException(
+                getClass().getName() + " does not support registering a definition under a name binding");
+    }
+
+    /**
+     * Returns the binding of a registered version: the binary name of its state class and of every signal and
+     * decision payload class its plan names, mapped to the name its plan hash used.
+     *
+     * <p>This is an internal framework seam: the durable registry stores the binding with a version's plan hash
+     * when it first records the version. Applications do not call it. The default implementation returns an
+     * empty map.
+     *
+     * @param key the scope, definition id and exact plan version
+     * @return the binding, or an empty map when the version is not registered or this registry keeps none
+     */
+    default Map<String, String> nameBinding(DefinitionKey key) {
+        return Map.of();
+    }
+
+    /**
+     * Replaces the runtime of a registered version with one whose plan was built under a name binding, when that
+     * plan has the required hash.
+     *
+     * <p>This is an internal framework seam: at startup the durable registry rebuilds a version that deployed
+     * code or a packaged document registered under current logical names, so that it carries the plan hash
+     * stored on its row. The version keeps its deprecation mark and its deployed flag, and nothing changes when
+     * the hash differs. Applications do not call it. The default implementation changes nothing.
+     *
+     * @param key the scope, definition id and exact plan version
+     * @param nameBinding the binary name of a state or payload class mapped to the name to use for it
+     * @param requiredPlanHash the plan hash the rebuilt plan must have
+     * @return the runtime now registered, or empty when nothing was replaced
+     */
+    default Optional<RuntimeWorkflow> rebind(
+            DefinitionKey key, Map<String, String> nameBinding, String requiredPlanHash) {
+        return Optional.empty();
     }
 }

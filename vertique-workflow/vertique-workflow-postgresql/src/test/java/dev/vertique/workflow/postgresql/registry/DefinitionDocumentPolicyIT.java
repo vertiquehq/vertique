@@ -48,6 +48,7 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -756,7 +757,8 @@ public class DefinitionDocumentPolicyIT {
                 new DefinitionProvenance("non-utf8-test", null, null, null, null, Instant.now()),
                 "JSON",
                 Instant.now(),
-                Instant.now());
+                Instant.now(),
+                Map.of());
         WorkflowDefinitionDocument document = new WorkflowDefinitionDocument(documentKey, "{}", "JSON");
         var noSources = (dev.vertique.workflow.definition.source.WorkflowDefinitionSource) List::of;
         AppComponent app = ManagedDefinitionDatabase.app(

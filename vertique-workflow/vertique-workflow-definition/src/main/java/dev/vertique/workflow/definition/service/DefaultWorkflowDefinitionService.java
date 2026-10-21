@@ -31,6 +31,7 @@ import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -102,15 +103,16 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                         WorkflowDefinitionDocument text = durable.isPresent()
                                 ? DefinitionSourceText.decode(key, resource.content(), format, config)
                                 : null;
-                        return new Candidate(key, compiled, text, format.name());
+                        return new Candidate(
+                                key, compiled, text, format.name(), pipeline.nameBinding(compiled.definition()));
                     })
                     .compose(candidate -> {
                         if (durable.isEmpty()) {
                             store.candidate(candidate.key(), candidate.compiled(), candidate.format());
                             return Future.succeededFuture(reference(candidate.compiled()));
                         }
-                        WorkflowDefinitionRecord record =
-                                record(candidate.key(), candidate.compiled(), candidate.format());
+                        WorkflowDefinitionRecord record = record(
+                                candidate.key(), candidate.compiled(), candidate.format(), candidate.nameBinding());
                         return durable.orElseThrow()
                                 .insertCandidate(record, candidate.document())
                                 .map(ignored -> {
@@ -287,7 +289,8 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
         return new SourceMetadata(p.sourceType(), p.uri(), p.revision(), p.author(), p.uploadId(), p.loadedAt());
     }
 
-    static WorkflowDefinitionRecord record(DefinitionKey key, CompiledDefinition compiled, String format) {
+    static WorkflowDefinitionRecord record(
+            DefinitionKey key, CompiledDefinition compiled, String format, Map<String, String> nameBinding) {
         Instant now = Instant.now();
         return new WorkflowDefinitionRecord(
                 key,
@@ -299,7 +302,8 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                 provenance(compiled.source()),
                 format,
                 now,
-                now);
+                now,
+                nameBinding);
     }
 
     private static CompiledDefinitionRef reference(CompiledDefinition compiled) {
@@ -330,5 +334,9 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     }
 
     private record Candidate(
-            DefinitionKey key, CompiledDefinition compiled, WorkflowDefinitionDocument document, String format) {}
+            DefinitionKey key,
+            CompiledDefinition compiled,
+            WorkflowDefinitionDocument document,
+            String format,
+            Map<String, String> nameBinding) {}
 }

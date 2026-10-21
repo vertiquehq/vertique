@@ -116,6 +116,13 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     private final HashMap<ScopedId, HashMap<Long, WorkflowDefinition<?, ?>>> sources = new HashMap<>();
 
     /**
+     * Keyed by (scope, definitionId) → (version → the binding of the registered plan: the binary name of its state and
+     * payload classes mapped to the name its hash used). Guarded by {@link #rwLock} together with
+     * {@link #byDefinition}; it holds exactly the registered versions.
+     */
+    private final HashMap<ScopedId, HashMap<Long, Map<String, String>>> bindings = new HashMap<>();
+
+    /**
      * Keyed by (scope, definitionId) → versions marked deprecated. Only registered versions are ever
      * present; guarded by {@link #rwLock} together with {@link #byDefinition}.
      */
@@ -280,18 +287,74 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         register(scopeKey, def, false);
     }
 
-    @SuppressWarnings({"rawtypes", "unchecked"})
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The plan rules of {@link #register(String, WorkflowDefinition)} apply. The state class and every
+     * signal and decision payload class that {@code nameBinding} holds are named in the plan, and so in its
+     * hash, by the bound name; any other class is named by its current logical name.
+     */
+    @Override
+    public void register(String scopeKey, WorkflowDefinition<?, ?> def, Map<String, String> nameBinding) {
+        Objects.requireNonNull(nameBinding, "nameBinding");
+        register(scopeKey, def, false, DefaultWorkflowTypeNames.bound(typeNames, nameBinding));
+    }
+
     private void register(String scopeKey, WorkflowDefinition<?, ?> def, boolean deployment) {
+        register(scopeKey, def, deployment, typeNames);
+    }
+
+    /** A definition built into the plan and runtime that a registration or a rebinding publishes. */
+    private record Compiled(WorkflowBuilder<?> builder, RuntimeWorkflow runtime, Map<String, String> binding) {}
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private void register(String scopeKey, WorkflowDefinition<?, ?> def, boolean deployment, WorkflowTypeNames names) {
         Objects.requireNonNull(scopeKey, "scopeKey");
         // --- Pre-publish validation (no lock needed — produces only immutable local values) ---
-
-        WorkflowBuilder builder = new WorkflowBuilder<>();
-        def.define(builder);
 
         String definitionId = def.definitionId();
         long definitionVersion = def.definitionVersion();
         requireValidScope(scopeKey, definitionId, definitionVersion);
-        String stateTypeName = typeNames.nameOf(def.stateType());
+        Compiled compiled = compile(scopeKey, def, names);
+        WorkflowBuilder builder = compiled.builder();
+        WorkflowPlan plan = compiled.runtime().plan();
+        RuntimeWorkflow rw = compiled.runtime();
+
+        // The candidate's classes enter the shared index before the contributed validators run, so a
+        // validator can resolve the logical names the plan holds. Any later failure removes them again.
+        Runnable undoIndexing = indexCandidate(def, builder);
+        try {
+            // Contributed definition validators run last, before the publish phase; an exception
+            // propagates unchanged and the definition is never published.
+            RegisteredWorkflowDefinition candidate = new RegisteredWorkflowDefinition(plan, builder.startPayloadType());
+            for (WorkflowDefinitionValidator validator : definitionValidators) {
+                validator.validate(candidate);
+            }
+            publish(def, scopeKey, definitionId, definitionVersion, rw, compiled.binding(), deployment);
+        } catch (RuntimeException | Error e) {
+            undoIndexing.run();
+            throw e;
+        }
+
+        // Per-definition callbacks live on `rw.callbacks()` (used by the engine via
+        // RuntimeWorkflow.callbacks() during execution). We intentionally do NOT merge them into
+        // any global aggregate: callback ids are scoped to {stepId, role} which collides across
+        // definitions/versions, and a globally-keyed map would silently overwrite or require
+        // callers to know which definition a callback belongs to. Consumers must look up
+        // callbacks via {@link RuntimeWorkflow#callbacks()} on a resolved instance.
+    }
+
+    /**
+     * Runs the definition on a fresh builder that names classes through {@code names}, validates the plan and
+     * builds the runtime. Nothing is published and nothing is indexed.
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private Compiled compile(String scopeKey, WorkflowDefinition<?, ?> def, WorkflowTypeNames names) {
+        String definitionId = def.definitionId();
+        long definitionVersion = def.definitionVersion();
+        WorkflowBuilder builder = new WorkflowBuilder<>(names);
+        def.define(builder);
+        String stateTypeName = names.nameOf(def.stateType());
 
         // build() validates that init() was called; throws WorkflowDefinitionException if not
         WorkflowPlan plan = builder.build(definitionId, definitionVersion, stateTypeName);
@@ -323,29 +386,60 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                 builder.initialState(),
                 builder.signalPayloadTypes(),
                 perDefCallbacks);
+        return new Compiled(builder, rw, builder.nameBinding(def.stateType()));
+    }
 
-        // The candidate's classes enter the shared index before the contributed validators run, so a
-        // validator can resolve the logical names the plan holds. Any later failure removes them again.
-        Runnable undoIndexing = indexCandidate(def, builder);
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The runtime is built from the definition retained by {@link #registeredDefinition(DefinitionKey)} and
+     * replaces the registered one under the publication lock only when its plan hash equals
+     * {@code requiredPlanHash} and the version still holds that definition. The deprecation mark and the
+     * deployed flag of the version are kept.
+     */
+    @Override
+    public Optional<RuntimeWorkflow> rebind(
+            DefinitionKey key, Map<String, String> nameBinding, String requiredPlanHash) {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(nameBinding, "nameBinding");
+        Objects.requireNonNull(requiredPlanHash, "requiredPlanHash");
+        Optional<WorkflowDefinition<?, ?>> retained = registeredDefinition(key);
+        if (retained.isEmpty()) return Optional.empty();
+        WorkflowDefinition<?, ?> def = retained.orElseThrow();
+        Compiled compiled = compile(key.scopeKey(), def, DefaultWorkflowTypeNames.bound(typeNames, nameBinding));
+        if (!requiredPlanHash.equals(compiled.runtime().plan().planHash())) return Optional.empty();
+        ScopedId scopedId = new ScopedId(key.scopeKey(), key.definitionId());
+        long version = key.definitionVersion();
+        rwLock.writeLock().lock();
         try {
-            // Contributed definition validators run last, before the publish phase; an exception
-            // propagates unchanged and the definition is never published.
-            RegisteredWorkflowDefinition candidate = new RegisteredWorkflowDefinition(plan, builder.startPayloadType());
-            for (WorkflowDefinitionValidator validator : definitionValidators) {
-                validator.validate(candidate);
-            }
-            publish(def, scopeKey, definitionId, definitionVersion, rw, deployment);
-        } catch (RuntimeException | Error e) {
-            undoIndexing.run();
-            throw e;
+            var registered = sources.get(scopedId);
+            var versions = byDefinition.get(scopedId);
+            if (registered == null
+                    || registered.get(version) != def
+                    || versions == null
+                    || !versions.containsKey(version)) return Optional.empty();
+            versions.put(version, compiled.runtime());
+            bindings.computeIfAbsent(scopedId, k -> new HashMap<>()).put(version, compiled.binding());
+            return Optional.of(compiled.runtime());
+        } finally {
+            rwLock.writeLock().unlock();
         }
+    }
 
-        // Per-definition callbacks live on `rw.callbacks()` (used by the engine via
-        // RuntimeWorkflow.callbacks() during execution). We intentionally do NOT merge them into
-        // any global aggregate: callback ids are scoped to {stepId, role} which collides across
-        // definitions/versions, and a globally-keyed map would silently overwrite or require
-        // callers to know which definition a callback belongs to. Consumers must look up
-        // callbacks via {@link RuntimeWorkflow#callbacks()} on a resolved instance.
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Read under the same lock as the registration, so it is empty for a version that is not registered.
+     */
+    @Override
+    public Map<String, String> nameBinding(DefinitionKey key) {
+        rwLock.readLock().lock();
+        try {
+            var registered = bindings.get(new ScopedId(key.scopeKey(), key.definitionId()));
+            return registered == null ? Map.of() : registered.getOrDefault(key.definitionVersion(), Map.of());
+        } finally {
+            rwLock.readLock().unlock();
+        }
     }
 
     /**
@@ -376,6 +470,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             String definitionId,
             long definitionVersion,
             RuntimeWorkflow rw,
+            Map<String, String> nameBinding,
             boolean deployment) {
         ScopedId scopedId = new ScopedId(scopeKey, definitionId);
         rwLock.writeLock().lock();
@@ -402,6 +497,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                     .computeIfAbsent(scopedId, k -> new ConcurrentSkipListMap<>())
                     .put(definitionVersion, rw);
             sources.computeIfAbsent(scopedId, k -> new HashMap<>()).put(definitionVersion, def);
+            bindings.computeIfAbsent(scopedId, k -> new HashMap<>()).put(definitionVersion, nameBinding);
             if (deployment)
                 deployed.computeIfAbsent(scopedId, k -> new HashSet<>()).add(definitionVersion);
         } finally {
@@ -953,6 +1049,10 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             if (versions == null || versions.remove(version) == null) return;
             if (versions.isEmpty()) byDefinition.remove(scopedId, versions);
             sources.computeIfPresent(scopedId, (k, registered) -> {
+                registered.remove(version);
+                return registered.isEmpty() ? null : registered;
+            });
+            bindings.computeIfPresent(scopedId, (k, registered) -> {
                 registered.remove(version);
                 return registered.isEmpty() ? null : registered;
             });

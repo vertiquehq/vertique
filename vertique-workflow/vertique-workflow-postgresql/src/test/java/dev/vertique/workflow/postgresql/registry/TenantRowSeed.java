@@ -18,6 +18,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import io.vertx.core.Future;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Map;
 
 /**
  * Seeds tenant document rows of any id, including ids outside the tenant's namespace, the way an older release
@@ -62,7 +63,8 @@ final class TenantRowSeed {
                         source.loadedAt()),
                 format.name(),
                 now,
-                now);
+                now,
+                Map.of());
         WorkflowDefinitionDocument text =
                 new WorkflowDefinitionDocument(key, new String(document, StandardCharsets.UTF_8), format.name());
         return app.definitionRegistryStore().insertCandidate(record, text).map(key);

@@ -16,6 +16,7 @@ import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -60,7 +61,8 @@ final class DefaultVersionSeed {
                             new DefinitionProvenance("code", "test", null, null, null, now),
                             null,
                             now,
-                            now)));
+                            now,
+                            Map.of())));
                     await(lifecycle.activate(WorkflowScopes.DEFAULT, id, WorkflowScopes.DEFAULT, version));
                 });
     }

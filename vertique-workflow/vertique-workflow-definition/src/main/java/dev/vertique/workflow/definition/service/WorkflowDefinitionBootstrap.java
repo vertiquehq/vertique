@@ -247,7 +247,7 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
                             compiled.definition().definitionId(),
                             compiled.definition().definitionVersion());
                     WorkflowDefinitionRecord record = DefaultWorkflowDefinitionService.record(
-                            key, compiled, resource.format().name());
+                            key, compiled, resource.format().name(), pipeline.nameBinding(compiled.definition()));
                     if (durable) {
                         var document = DefinitionSourceText.decode(key, resource.content(), resource.format(), config);
                         loadedOrigins.add(new DocumentOrigin(

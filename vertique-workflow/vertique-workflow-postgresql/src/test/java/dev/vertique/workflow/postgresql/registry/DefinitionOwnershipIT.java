@@ -695,7 +695,8 @@ public class DefinitionOwnershipIT {
                 new DefinitionProvenance("static-source", "memory:static", "revision-static", null, null, now),
                 "YAML",
                 now,
-                now);
+                now,
+                Map.of());
     }
 
     private static WorkflowDefinitionDocument staticDocument(DefinitionKey key, byte[] document) {
@@ -718,7 +719,8 @@ public class DefinitionOwnershipIT {
                 new DefinitionProvenance(sourceLabel(key), null, null, null, null, now),
                 "YAML",
                 now,
-                now);
+                now,
+                Map.of());
     }
 
     private static WorkflowDefinitionDocument documentCarrier(DefinitionKey key) {

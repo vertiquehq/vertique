@@ -597,7 +597,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
                 new DefinitionProvenance("test", null, null, null, null, now),
                 "YAML",
                 now,
-                now);
+                now,
+                Map.of());
     }
 
     private static WorkflowDefinitionRecord row(DefinitionStatus status, String planHash) {
@@ -612,7 +613,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
                 new DefinitionProvenance("test", null, null, null, null, now),
                 "YAML",
                 now,
-                now);
+                now,
+                Map.of());
     }
 
     /** A registry that logs every deprecation mark into the shared event log. */
@@ -1622,7 +1624,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
                     new DefinitionProvenance("test", null, null, null, null, now),
                     "YAML",
                     now,
-                    now);
+                    now,
+                    Map.of());
         }
 
         @Override

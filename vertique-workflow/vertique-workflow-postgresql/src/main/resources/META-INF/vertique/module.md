@@ -118,7 +118,7 @@ The module owns workflow persistence tables, including:
 
 The migration files live with the module under `db/migration/workflow`. The shipped `V1__create_workflow_tables.sql` contains the instance/runtime tables, including branch tokens and durable metadata. The single additive `V002__workflow_definitions_and_scopes.sql` creates the definition registry and converts the released tables to scope keys:
 
-- `workflow_definitions` is keyed by `(scope_key, definition_id, definition_version)`; it carries the logical `contract_name` and `state_type_name`, the `document_digest` column and `kind VARCHAR(16)`, `plan_hash VARCHAR(128)`; a `CODE` row must be in the `default` scope.
+- `workflow_definitions` is keyed by `(scope_key, definition_id, definition_version)`; it carries the logical `contract_name` and `state_type_name`, the `document_digest` column and `kind VARCHAR(16)`, `plan_hash VARCHAR(128)` and `name_binding JSONB NOT NULL DEFAULT '{}'`; a `CODE` row must be in the `default` scope.
 - `workflow_definition_activations` is keyed by `(scope_key, definition_id)`, one record per scope and id, with `target_scope_key`, `definition_version` and `activated_at`. A check requires the target scope to be the scope itself or `default`, and `default` to name only itself; a foreign key from `(target_scope_key, definition_id, definition_version)` to `workflow_definitions` is `ON DELETE RESTRICT`, so a definition row that a record names cannot be deleted. No row means the scope follows the default scope.
 - `workflow_instances` gains `scope_key` (the start scope) and `definition_scope_key` (the scope of the pinned definition version), and `workflow_tasks` gains `scope_key`, each `VARCHAR(255) NOT NULL DEFAULT 'default'`. Existing rows read `default`; the script rewrites no row.
 - The business-key index `idx_workflow_instances_business_key` becomes unique per `(scope_key, definition_id, business_key)` where the business key is not null, and `idx_workflow_instances_scope_updated_at` and `idx_workflow_tasks_scope_updated_at` serve scope-filtered keyset queries on `(scope_key, updated_at DESC, <id>)`.
@@ -216,7 +216,17 @@ UTF-8 byte length and code-point count in the same SQL statement that conditiona
 Oversized rows return identity/counts with no body transfer, then fail with a sanitized key/limit
 message; they are not treated as absent. Metadata listing never selects the source body.
 
-The stored plan hash covers the compiled plan structure, not callback bodies. The `document_digest` column holds
+The stored plan hash covers the compiled plan structure, not callback bodies. `name_binding` holds, as a JSON
+object, the binary name of each state and payload class the plan names, mapped to the name the hash used. The
+adapter writes it in the same statement as the plan hash and never alone: when a version is first recorded (a code
+row, or a document candidate) and when a changed code hash replaces the stored one. Publication, deprecation,
+retirement, reinstatement and propagation leave it as it is. Every start hashes the version with the stored
+binding, so annotating a class after the version was published keeps the hash of that version, and a version first
+published afterwards records the logical name. A class that a non-retired version is bound to by its binary name
+cannot move until those versions are retired; startup fails naming the version and the recorded name. A version that
+instances of an earlier release started under is recorded by the first start of this release with the names its
+classes have then, so upgrade before you annotate a class those instances use.
+Annotate contracts and types before moving them. The `document_digest` column holds
 the lowercase hex SHA-256 of the stored UTF-8 text (present exactly on
 DOCUMENT rows). The adapter writes it with every document, treats an equal plan hash with a different text
 digest as drift when a packaged document is reconciled, and verifies it on every guarded source read (after the

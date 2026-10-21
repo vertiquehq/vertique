@@ -16,6 +16,7 @@ import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import jakarta.annotation.Nullable;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -53,6 +54,17 @@ final class DefinitionPublication {
     }
 
     /**
+     * The plan hash of the compiled definition under the type names the row was recorded with; a row without a
+     * binding hashes under current names.
+     */
+    static String planHash(
+            PersistedDefinitionLoader loader, WorkflowDefinition<?, ?> definition, WorkflowDefinitionRecord record) {
+        return record.nameBinding().isEmpty()
+                ? loader.planHash(definition)
+                : loader.planHash(definition, record.nameBinding());
+    }
+
+    /**
      * Returns the code definition the deployed code provides for the row, after its plan hash was checked against
      * the row's.
      *
@@ -81,14 +93,17 @@ final class DefinitionPublication {
      * Registers the definition and attributes the exact registered runtime to the key. When the
      * attribution cannot be recorded, the registration this call made is removed again.
      *
+     * @param nameBinding the names the row's plan hash used; an empty binding registers under current names
      * @return the runtime the registry now holds for the key
      */
     static RuntimeWorkflow publish(
             WorkflowRegistry local,
             ManagedRegistrations registrations,
             DefinitionKey key,
-            WorkflowDefinition<?, ?> definition) {
-        local.register(key.scopeKey(), definition);
+            WorkflowDefinition<?, ?> definition,
+            Map<String, String> nameBinding) {
+        if (nameBinding.isEmpty()) local.register(key.scopeKey(), definition);
+        else local.register(key.scopeKey(), definition, nameBinding);
         RuntimeWorkflow published = null;
         try {
             published = local.resolve(key);

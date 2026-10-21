@@ -231,6 +231,21 @@ public final class ManagedDefinitionDatabase {
             BootObservation observation,
             WorkflowDefinitionSource source,
             List<WorkflowDefinition<?, ?>> codeDefinitions) {
+        return appWithCode(vertx, pool, config, observation, source, codeDefinitions, List.of());
+    }
+
+    /**
+     * Builds a graph like {@link #appWithCode(Vertx, Pool, JsonObject, BootObservation, WorkflowDefinitionSource,
+     * List)} whose type catalog also lists the given entries, for types the test class does not nest.
+     */
+    static AppComponent appWithCode(
+            Vertx vertx,
+            Pool pool,
+            JsonObject config,
+            BootObservation observation,
+            WorkflowDefinitionSource source,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            List<WorkflowTypeCatalogEntry> extraCatalogEntries) {
         return DaggerManagedDefinitionDatabase_AppComponent.builder()
                 .vertxModule(new VertxModule(vertx, config))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
@@ -239,7 +254,7 @@ public final class ManagedDefinitionDatabase {
                 .codeCatalogModule(new CodeCatalogModule(false, codeDefinitions))
                 .largeUnicodeMapperModule(new LargeUnicodeMapperModule(false))
                 .parserModule(new WorkflowDefinitionParserProbe().module())
-                .typeCatalogModule(new TypeCatalogModule(callingTestClass()))
+                .typeCatalogModule(new TypeCatalogModule(callingTestClass(), extraCatalogEntries))
                 .build();
     }
 
@@ -346,9 +361,15 @@ public final class ManagedDefinitionDatabase {
     static class TypeCatalogModule {
 
         private final Class<?> testClass;
+        private final List<WorkflowTypeCatalogEntry> extraEntries;
 
         TypeCatalogModule(Class<?> testClass) {
+            this(testClass, List.of());
+        }
+
+        TypeCatalogModule(Class<?> testClass, List<WorkflowTypeCatalogEntry> extraEntries) {
             this.testClass = testClass;
+            this.extraEntries = List.copyOf(extraEntries);
         }
 
         @Provides
@@ -381,6 +402,7 @@ public final class ManagedDefinitionDatabase {
                 entries.add(
                         new WorkflowTypeCatalogEntry(contract ? Kind.CONTRACT : Kind.TYPE, member.getName(), member));
             }
+            entries.addAll(extraEntries);
             return () -> entries;
         }
     }
@@ -642,6 +664,8 @@ public final class ManagedDefinitionDatabase {
                         (state, signal) -> OrderDocState.applyShipmentCreated(
                                 (OrderDocState) state, coerce(signal, ShipmentCreatedDoc.class))));
                 builder.register(new NamedStateReducer<>(
+                        "doc.order.keepState", OrderDocState.class, (state, decision) -> state));
+                builder.register(new NamedStateReducer<>(
                         "doc.order.applyInventoryReservedDrift",
                         OrderDocState.class,
                         (state, signal) -> OrderDocState.applyInventoryReserved(
@@ -846,7 +870,8 @@ public final class ManagedDefinitionDatabase {
                             row.getOffsetDateTime("loaded_at").toInstant()),
                     row.getString("document_format"),
                     row.getOffsetDateTime("created_at").toInstant(),
-                    row.getOffsetDateTime("status_changed_at").toInstant());
+                    row.getOffsetDateTime("status_changed_at").toInstant(),
+                    Map.of());
         }
 
         private static void verifyMetadata(

@@ -48,6 +48,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -738,7 +739,8 @@ public class DefinitionRegistryBootstrapIT {
                         "author-test", "test://workflow-definition", "mutation-r1", "test-suite", null, now),
                 "YAML",
                 now,
-                now);
+                now,
+                Map.of());
     }
 
     private static WorkflowDefinitionDocument mutationDocument(DefinitionKey key) {

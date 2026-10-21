@@ -399,7 +399,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     var text =
                             source.orElseThrow(() -> failure(Reason.LOADER_MISSING, key, "stored source is missing"));
                     WorkflowDefinition<?, ?> definition = attempt.loader.load(attempt.record, text);
-                    String hash = attempt.loader.planHash(definition);
+                    String hash = DefinitionPublication.planHash(attempt.loader, definition, attempt.record);
                     if (!definition.definitionId().equals(key.definitionId())
                             || definition.definitionVersion() != key.definitionVersion()
                             || !attempt.record.planHash().equals(hash))
@@ -421,7 +421,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /** Registers the definition and records the exact runtime as this attempt's own, attributed publication. */
     private void publish(Reinstatement attempt, WorkflowRegistry local, WorkflowDefinition<?, ?> definition) {
-        attempt.publication = DefinitionPublication.publish(local, registrations, attempt.key, definition);
+        attempt.publication = DefinitionPublication.publish(
+                local, registrations, attempt.key, definition, attempt.record.nameBinding());
     }
 
     private PersistedDefinitionLoader loaderFor(WorkflowDefinitionRecord record) {
@@ -660,7 +661,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                                 var source = document.orElseThrow(
                                         () -> failure(Reason.LOADER_MISSING, key, "stored source is missing"));
                                 attempt.definition = attempt.loader.load(attempt.record, source);
-                                String hash = attempt.loader.planHash(attempt.definition);
+                                String hash = DefinitionPublication.planHash(
+                                        attempt.loader, attempt.definition, attempt.record);
                                 if (!attempt.definition.definitionId().equals(key.definitionId())
                                         || attempt.definition.definitionVersion() != key.definitionVersion()
                                         || !attempt.record.planHash().equals(hash))
@@ -678,7 +680,11 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                                 }
                                 // Stale: whatever the registry holds now is not the remembered runtime.
                                 if (remembered != null) uncertain.remove(key, remembered);
-                                local.register(attempt.key.scopeKey(), attempt.definition);
+                                if (attempt.record.nameBinding().isEmpty())
+                                    local.register(attempt.key.scopeKey(), attempt.definition);
+                                else
+                                    local.register(
+                                            attempt.key.scopeKey(), attempt.definition, attempt.record.nameBinding());
                                 attempt.publication = local.resolve(key);
                                 return (Void) null;
                             }))

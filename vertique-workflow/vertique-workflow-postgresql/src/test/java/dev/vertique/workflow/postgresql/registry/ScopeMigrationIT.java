@@ -176,6 +176,15 @@ public class ScopeMigrationIT {
             assertThat(catalog.columnShape("workflow_definitions", "state_type_name"))
                     .isEqualTo("character varying|255|NO|null");
 
+            // And a definition stores the type names its plan hash used, empty unless set
+            assertThat(catalog.rows("""
+                            SELECT data_type || '|' || is_nullable || '|' || COALESCE(column_default, 'null')
+                            FROM information_schema.columns
+                            WHERE table_schema = current_schema() AND table_name = 'workflow_definitions'
+                              AND column_name = 'name_binding'
+                            """)).containsExactly("jsonb|NO|'{}'::jsonb");
+            assertThat(catalog.columnNames("workflow_definitions")).contains("name_binding");
+
             // And activation records are keyed by scope and definition id, and name a version of the default scope or
             // of their own scope
             assertThat(catalog.columnNames("workflow_definition_activations"))

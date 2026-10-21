@@ -26,6 +26,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.VertxException;
+import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
@@ -39,8 +40,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -57,7 +60,7 @@ import java.util.function.Supplier;
 public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         implements WorkflowDefinitionRegistryStore {
     private static final String COLUMNS =
-            "scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, document_format, "
+            "scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, name_binding, status, document_format, "
                     + "source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, created_at, status_changed_at";
     private static final String LOCKED_COLUMNS = COLUMNS + ", document_digest";
     private static final String KEY = "scope_key = $1 AND definition_id = $2 AND definition_version = $3";
@@ -71,6 +74,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private final String sqlInsert;
     private final String sqlInsertCode;
     private final String sqlUpdateCodeProvenance;
+    private final String sqlRehashCode;
     private final String sqlResetStale;
     private final String sqlUpdateProvenance;
     private final String sqlClaim;
@@ -139,13 +143,18 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 "SELECT " + COLUMNS + " FROM " + definitions + " ORDER BY definition_id, scope_key, definition_version";
 
         this.sqlInsert = "INSERT INTO " + definitions
-                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)";
+                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)";
 
         this.sqlInsertCode = "INSERT INTO " + definitions
-                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at) VALUES ($1,$2,$3,'CODE',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)";
+                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding) VALUES ($1,$2,$3,'CODE',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)";
 
         this.sqlUpdateCodeProvenance = "UPDATE " + definitions
-                + " SET plan_hash=CASE WHEN $9::boolean THEN $10 ELSE plan_hash END, source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$11, contract_name=$12, state_type_name=$13 WHERE "
+                + " SET source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$9, contract_name=$10, state_type_name=$11 WHERE "
+                + KEY + " AND kind='CODE'";
+
+        // The only statement that replaces a stored plan hash; it replaces the name binding with it.
+        this.sqlRehashCode = "UPDATE " + definitions
+                + " SET plan_hash=$4, name_binding=$5::jsonb, source_type=$6, source_uri=$7, source_revision=$8, source_author=$9, source_upload_id=$10, loaded_at=$11, contract_name=$12, state_type_name=$13 WHERE "
                 + KEY + " AND kind='CODE'";
 
         this.sqlResetStale = "UPDATE " + definitions
@@ -330,12 +339,13 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 if (!"CODE".equals(old.getString("kind")))
                     return Future.succeededFuture(ReconcileOutcome.KIND_CONFLICT);
                 if (record.planHash().equals(old.getString("plan_hash")))
-                    return updateCodeProvenance(tx, record, false).map(ReconcileOutcome.UNCHANGED);
-                // The hash differs: only an exact version without a live pinned instance may take the new hash.
+                    return updateCodeProvenance(tx, record).map(ReconcileOutcome.UNCHANGED);
+                // The hash differs: only an exact version without a live pinned instance may take the new hash,
+                // and it takes the name binding the new hash was computed with.
                 return countNonTerminal(tx, key)
                         .compose(pinned -> pinned > 0
                                 ? Future.succeededFuture(ReconcileOutcome.DRIFT)
-                                : updateCodeProvenance(tx, record, true).map(ReconcileOutcome.REHASHED));
+                                : rehashCode(tx, record).map(ReconcileOutcome.REHASHED));
             });
         });
     }
@@ -613,12 +623,13 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .addString(p.revision())
                         .addString(p.author())
                         .addString(p.uploadId())
-                        .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC)))
+                        .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC))
+                        .addValue(bindingValue(record)))
                 .mapEmpty();
     }
 
-    /** Refreshes the provenance of a code row and, when asked, replaces its plan hash; the status is kept. */
-    private Future<Void> updateCodeProvenance(SqlConnection tx, WorkflowDefinitionRecord record, boolean replaceHash) {
+    /** Refreshes the provenance and logical names of a code row; its plan hash and name binding are kept. */
+    private Future<Void> updateCodeProvenance(SqlConnection tx, WorkflowDefinitionRecord record) {
         var p = record.provenance();
         return tx.preparedQuery(sqlUpdateCodeProvenance)
                 .execute(parameters(record.key())
@@ -627,12 +638,43 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .addString(p.revision())
                         .addString(p.author())
                         .addString(p.uploadId())
-                        .addBoolean(replaceHash)
-                        .addString(record.planHash())
                         .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC))
                         .addString(record.contractName())
                         .addString(record.stateTypeName()))
                 .mapEmpty();
+    }
+
+    /** Replaces the plan hash of a code row together with its name binding, and refreshes the rest of the row. */
+    private Future<Void> rehashCode(SqlConnection tx, WorkflowDefinitionRecord record) {
+        var p = record.provenance();
+        return tx.preparedQuery(sqlRehashCode)
+                .execute(parameters(record.key())
+                        .addString(record.planHash())
+                        .addValue(bindingValue(record))
+                        .addString(p.sourceType())
+                        .addString(p.uri())
+                        .addString(p.revision())
+                        .addString(p.author())
+                        .addString(p.uploadId())
+                        .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC))
+                        .addString(record.contractName())
+                        .addString(record.stateTypeName()))
+                .mapEmpty();
+    }
+
+    private static JsonObject bindingValue(WorkflowDefinitionRecord record) {
+        return new JsonObject(new TreeMap<String, Object>(record.nameBinding()));
+    }
+
+    /** Reads a stored binding; a stored value that is not a string maps to nothing and is never echoed. */
+    private static Map<String, String> storedBinding(Row r) {
+        JsonObject stored = r.getJsonObject("name_binding");
+        Map<String, String> binding = new TreeMap<>();
+        if (stored != null)
+            stored.forEach(entry -> {
+                if (entry.getValue() instanceof String name) binding.put(entry.getKey(), name);
+            });
+        return binding;
     }
 
     private Future<Void> insert(
@@ -655,7 +697,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .addString(p.revision())
                         .addString(p.author())
                         .addString(p.uploadId())
-                        .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC)))
+                        .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC))
+                        .addValue(bindingValue(record)))
                 .mapEmpty();
     }
 
@@ -743,7 +786,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         r.getOffsetDateTime("loaded_at").toInstant()),
                 r.getString("document_format"),
                 r.getOffsetDateTime("created_at").toInstant(),
-                r.getOffsetDateTime("status_changed_at").toInstant());
+                r.getOffsetDateTime("status_changed_at").toInstant(),
+                storedBinding(r));
     }
 
     private static DefinitionActivation activation(Row r) {

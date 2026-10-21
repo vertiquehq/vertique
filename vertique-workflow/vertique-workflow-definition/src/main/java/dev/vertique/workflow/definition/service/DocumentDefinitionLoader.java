@@ -21,6 +21,7 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /** Internal source compiler and cache adapter for durable YAML/JSON definitions. */
@@ -97,14 +98,21 @@ public final class DocumentDefinitionLoader implements PersistedDefinitionLoader
     }
 
     @Override
-    @SuppressWarnings({"rawtypes", "unchecked"})
     public String planHash(WorkflowDefinition<?, ?> definition) {
-        WorkflowBuilder builder = new WorkflowBuilder();
+        return planHash(definition, typeNames);
+    }
+
+    @Override
+    public String planHash(WorkflowDefinition<?, ?> definition, Map<String, String> nameBinding) {
+        return planHash(definition, DefaultWorkflowTypeNames.bound(typeNames, nameBinding));
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static String planHash(WorkflowDefinition<?, ?> definition, WorkflowTypeNames names) {
+        WorkflowBuilder builder = new WorkflowBuilder(names);
         definition.define(builder);
         return builder.build(
-                        definition.definitionId(),
-                        definition.definitionVersion(),
-                        typeNames.nameOf(definition.stateType()))
+                        definition.definitionId(), definition.definitionVersion(), names.nameOf(definition.stateType()))
                 .planHash();
     }
 

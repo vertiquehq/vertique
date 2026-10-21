@@ -79,6 +79,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -506,7 +507,8 @@ class DocumentRegistrationParityTest {
                 new DefinitionProvenance("test", "test://parity/store", null, null, null, now),
                 "YAML",
                 now,
-                now);
+                now,
+                Map.of());
         WorkflowDefinitionDocument decoded = DefinitionSourceText.decode(
                 KEY, bytes(document), DocumentFormat.YAML, WorkflowDefinitionsConfig.defaults());
 

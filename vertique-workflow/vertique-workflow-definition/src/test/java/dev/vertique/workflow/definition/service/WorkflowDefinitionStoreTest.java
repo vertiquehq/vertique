@@ -23,6 +23,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -454,7 +455,8 @@ class WorkflowDefinitionStoreTest {
                     new DefinitionProvenance("test", null, null, null, null, now),
                     "YAML",
                     now,
-                    now);
+                    now,
+                    Map.of());
         }
     }
 

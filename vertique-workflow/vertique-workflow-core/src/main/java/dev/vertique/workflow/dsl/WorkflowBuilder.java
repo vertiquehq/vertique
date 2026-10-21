@@ -112,8 +112,11 @@ public final class WorkflowBuilder<S> {
     /** State mutators keyed by CallbackId value. */
     private final Map<String, Function<Object, Object>> stateMutators = new HashMap<>();
 
-    /** Reads logical type names only; the builder never indexes. */
-    private static final WorkflowTypeNames TYPE_NAMES = new DefaultWorkflowTypeNames();
+    /** Names the state and payload classes the plan refers to; the builder only reads it and never indexes. */
+    private final WorkflowTypeNames typeNames;
+
+    /** The signal and decision payload classes this builder has named in the plan, in first-use order. */
+    private final Set<Class<?>> namedTypes = new LinkedHashSet<>();
 
     /** Decision payload classes in declaration order; populated by task decisions. */
     private final Set<Class<?>> decisionPayloadTypes = new LinkedHashSet<>();
@@ -152,7 +155,22 @@ public final class WorkflowBuilder<S> {
      * <p>Constructed by the {@code DefaultWorkflowRegistry} before passing to
      * {@link WorkflowDefinition#define(WorkflowBuilder)}.
      */
-    public WorkflowBuilder() {}
+    public WorkflowBuilder() {
+        this(new DefaultWorkflowTypeNames());
+    }
+
+    /**
+     * INTERNAL framework seam — used by the workflow registry and the definition pipeline to hash a
+     * version under the type names it was published with; not an application contract and outside the
+     * maturity promise.
+     *
+     * <p>Constructs a builder that names the payload classes of the plan through {@code typeNames}.
+     *
+     * @param typeNames the view that names the payload classes; must not be {@code null}
+     */
+    public WorkflowBuilder(WorkflowTypeNames typeNames) {
+        this.typeNames = Objects.requireNonNull(typeNames, "typeNames");
+    }
 
     // --- Initializer ---
 
@@ -292,7 +310,7 @@ public final class WorkflowBuilder<S> {
         CallbackId cbId = callbackId(stepId, "updater");
         stateUpdaters.put(cbId.value(), (BiFunction<Object, Object, Object>) (BiFunction<?, ?, ?>) stateUpdater);
         signalPayloadTypes.put(signalName, payloadClass);
-        nodes.add(new WaitSignalNode(stepId, signalName, TYPE_NAMES.nameOf(payloadClass), cbId, nextStepId, null));
+        nodes.add(new WaitSignalNode(stepId, signalName, payloadName(payloadClass), cbId, nextStepId, null));
         return this;
     }
 
@@ -825,6 +843,48 @@ public final class WorkflowBuilder<S> {
                 subjectResolverCallbackId);
     }
 
+    /** Names a signal or decision payload class for the plan and remembers that the plan refers to it. */
+    private String payloadName(Class<?> payloadType) {
+        namedTypes.add(payloadType);
+        return typeNames.nameOf(payloadType);
+    }
+
+    /**
+     * INTERNAL framework seam — used by the workflow registry and the definition pipeline to record the
+     * type names a version's plan hash used; not an application contract and outside the maturity promise.
+     *
+     * <p>Returns the binding of the plan this builder produced: the binary name of the state class and of
+     * every signal and decision payload class the plan names, mapped to the name its hash used. The start
+     * payload class is not part of the hash and is not included.
+     *
+     * @param stateType the state class of the definition; must not be {@code null}
+     * @return the binding keyed by binary name; never {@code null}
+     */
+    public Map<String, String> nameBinding(Class<?> stateType) {
+        Map<String, String> binding = new java.util.TreeMap<>();
+        binding.put(stateType.getName(), typeNames.nameOf(stateType));
+        for (Class<?> named : namedTypes) binding.put(named.getName(), typeNames.nameOf(named));
+        return Collections.unmodifiableMap(binding);
+    }
+
+    /**
+     * INTERNAL framework seam — used by the definition pipeline when it records a candidate document; not an
+     * application contract and outside the maturity promise.
+     *
+     * <p>Runs {@code definition} on a fresh builder that names classes through {@code typeNames} and returns
+     * the binding that results; see {@link #nameBinding(Class)}.
+     *
+     * @param definition the definition to run; must not be {@code null}
+     * @param typeNames the view that names the classes; must not be {@code null}
+     * @return the binding keyed by binary name; never {@code null}
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    public static Map<String, String> nameBindingOf(WorkflowDefinition<?, ?> definition, WorkflowTypeNames typeNames) {
+        WorkflowBuilder builder = new WorkflowBuilder(typeNames);
+        definition.define(builder);
+        return builder.nameBinding(definition.stateType());
+    }
+
     /**
      * Returns the start payload class declared via {@link #init(Class, Function)}.
      *
@@ -1139,7 +1199,7 @@ public final class WorkflowBuilder<S> {
          */
         public WorkflowBuilder<S> build() {
             nodes.add(new WaitSignalNode(
-                    stepId, signalName, TYPE_NAMES.nameOf(payloadType), stateUpdaterCbId, nextStepId, null));
+                    stepId, signalName, payloadName(payloadType), stateUpdaterCbId, nextStepId, null));
             return WorkflowBuilder.this;
         }
 
@@ -1259,7 +1319,7 @@ public final class WorkflowBuilder<S> {
             WaitSignalNode.TimeoutBranch branch =
                     new WaitSignalNode.TimeoutBranch(timeoutSpec, cbId, timeoutNextStepId);
             nodes.add(new WaitSignalNode(
-                    stepId, signalName, TYPE_NAMES.nameOf(payloadType), stateUpdaterCbId, nextStepId, branch));
+                    stepId, signalName, payloadName(payloadType), stateUpdaterCbId, nextStepId, branch));
             return WorkflowBuilder.this;
         }
     }
@@ -1317,7 +1377,7 @@ public final class WorkflowBuilder<S> {
             WaitSignalNode.TimeoutBranch branch =
                     new WaitSignalNode.TimeoutBranch(timeoutSpec, timeoutMutatorCbId, timeoutNextStepId);
             nodes.add(new WaitSignalNode(
-                    stepId, signalName, TYPE_NAMES.nameOf(payloadType), stateUpdaterCbId, nextStepId, branch));
+                    stepId, signalName, payloadName(payloadType), stateUpdaterCbId, nextStepId, branch));
             return WorkflowBuilder.this;
         }
     }
@@ -1742,7 +1802,7 @@ public final class WorkflowBuilder<S> {
             }
             decisionPayloadTypes.add(payloadType);
             parent.addDecision(
-                    new HumanTaskNode.TaskDecision(name, TYPE_NAMES.nameOf(payloadType), applicatorCbId, nextStepId));
+                    new HumanTaskNode.TaskDecision(name, payloadName(payloadType), applicatorCbId, nextStepId));
             return parent;
         }
     }

@@ -341,7 +341,13 @@ through the shared per-definition queue, and fails startup (nothing deploys) on 
    text digest reconcile; a different hash, or the same hash with different text, is drift), every other
    registered definition is a global CODE row. A changed code hash is rehashed only while no RUNNING, WAITING
    or COMPENSATING instance is pinned to that exact version (decided inside the store transaction, WARN logs both
-   hashes); with a live pin startup fails naming both hashes. A kind conflict fails naming both rows; a CODE row
+   hashes); with a live pin startup fails naming both hashes. A row recorded with a name binding keeps the
+   type names its hash used: the registered plan is rebuilt under that binding, so annotating a state or payload
+   class after the version was published does not change its hash, and a rehash replaces the binding together
+   with the hash. A non-retired row whose binding names a class that no longer resolves (for example one moved
+   while the version is bound to its binary name) fails startup with `WorkflowUnknownTypeNameException`
+   naming the scope, the definition, the version and the name; a retired row is exempt. A document restored
+   from the store, at startup and on a peer, is compiled and hashed with the row's binding. A kind conflict fails naming both rows; a CODE row
    in AVAILABLE or DEPRECATED state whose code is no longer deployed fails with `CODE_UNAVAILABLE`. Rows of other
    scopes for the same id and version never conflict.
 3. It restores every live DOCUMENT row of every scope (AVAILABLE and DEPRECATED)

@@ -50,6 +50,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
@@ -505,7 +506,8 @@ public class DefinitionPropagationIT {
                                 new DefinitionProvenance("code", null, null, null, null, now),
                                 null,
                                 now,
-                                now)));
+                                now,
+                                Map.of())));
                 assertThat(outcome).isEqualTo(ReconcileOutcome.REHASHED);
                 assertThat(scenario.stored(id, 1).status()).isEqualTo("RETIRED");
                 assertThat(scenario.stored(id, 1).planHash()).isEqualTo(hash);

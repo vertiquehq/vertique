@@ -776,7 +776,8 @@ class DefinitionPropagationPassTest {
                 PROVENANCE,
                 "YAML",
                 T0,
-                changedAt);
+                changedAt,
+                Map.of());
     }
 
     private static WorkflowDefinitionRecord code(String id, DefinitionStatus status, Instant changedAt) {
@@ -790,7 +791,8 @@ class DefinitionPropagationPassTest {
                 PROVENANCE,
                 null,
                 T0,
-                changedAt);
+                changedAt,
+                Map.of());
     }
 
     /** The pass under test together with its fakes. */

@@ -24,6 +24,7 @@ import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStatus;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -259,7 +260,8 @@ class ScopeKeyRecordsTest {
                 new DefinitionProvenance("test", null, null, null, null, T0),
                 documentFormat,
                 T0,
-                T0);
+                T0,
+                Map.of());
     }
 
     private static WorkflowInstance instanceWithoutScopes() {

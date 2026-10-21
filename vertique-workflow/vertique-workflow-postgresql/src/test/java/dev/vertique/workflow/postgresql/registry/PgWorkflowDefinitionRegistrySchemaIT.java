@@ -395,6 +395,78 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         }
     }
 
+    private record BindingInsert(String label, String bindingColumn, String bindingValue, String expectedSqlState) {}
+
+    @Test
+    @DisplayName("the name binding column is a not-null jsonb that defaults to an empty object")
+    void nameBindingColumnDefaultsToEmptyObject() throws Exception {
+        // Given: a migrated database
+        Flyway.configure()
+                .dataSource(db.jdbcUrl(), db.username(), db.password())
+                .locations(WORKFLOW_LOCATION)
+                .load()
+                .migrate();
+        List<BindingInsert> inserts = List.of(
+                new BindingInsert("omitted", "", "", null),
+                new BindingInsert("an explicit object", ", name_binding", ", '{\"a.B\":\"b\"}'::jsonb", null),
+                new BindingInsert("an explicit null", ", name_binding", ", NULL", "23502"));
+
+        try (Connection connection = connection()) {
+            // Then: the column is jsonb and not null
+            assertEquals(
+                    List.of("jsonb|NO"),
+                    queryStrings(
+                            connection,
+                            "SELECT data_type || '|' || is_nullable FROM information_schema.columns"
+                                    + " WHERE table_name = 'workflow_definitions' AND column_name = 'name_binding'"));
+
+            // When: one raw row is inserted per case
+            for (int index = 0; index < inserts.size(); index++) {
+                BindingInsert insert = inserts.get(index);
+                String id = "binding-case-" + index;
+                if (insert.expectedSqlState() == null) {
+                    insertBindingRow(connection, id, insert);
+                } else {
+                    // Then: a null binding is rejected by the not-null constraint
+                    DefinitionTableRows.assertSqlState(
+                            insert.expectedSqlState(), () -> insertBindingRow(connection, id, insert));
+                }
+            }
+
+            // Then: the omitted column reads back as an empty object and an explicit object is kept
+            assertEquals(
+                    List.of("{}"),
+                    queryStrings(
+                            connection,
+                            "SELECT name_binding::text FROM workflow_definitions WHERE definition_id = 'binding-case-0'"));
+            assertEquals(
+                    List.of("{\"a.B\": \"b\"}"),
+                    queryStrings(
+                            connection,
+                            "SELECT name_binding::text FROM workflow_definitions WHERE definition_id = 'binding-case-1'"));
+            assertEquals(
+                    List.of("0"),
+                    queryStrings(
+                            connection,
+                            "SELECT count(*) FROM workflow_definitions WHERE definition_id = 'binding-case-2'"));
+        }
+    }
+
+    private static void insertBindingRow(Connection connection, String definitionId, BindingInsert insert)
+            throws SQLException {
+        try (PreparedStatement statement =
+                connection.prepareStatement("""
+                INSERT INTO workflow_definitions
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
+                     source_type, loaded_at%s)
+                VALUES ('default', ?, 1, 'CODE', 'example.Contract', 'example.State', repeat('a', 64), 'AVAILABLE',
+                        'code', now()%s)
+                """.formatted(insert.bindingColumn(), insert.bindingValue()))) {
+            statement.setString(1, definitionId);
+            statement.executeUpdate();
+        }
+    }
+
     private static void insertStatusRow(
             Connection connection, String definitionId, long version, String status, boolean withToken)
             throws SQLException {
@@ -482,7 +554,8 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
                 new DefinitionProvenance("code", "memory://code", null, null, null, now),
                 null,
                 now,
-                now);
+                now,
+                Map.of());
     }
 
     private static WorkflowInstance instance(String planHash, WorkflowStatus status, long version) {
@@ -558,7 +631,8 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
                 new DefinitionProvenance("test", "memory://" + version, null, null, null, now),
                 "JSON",
                 now,
-                now);
+                now,
+                Map.of());
     }
 
     private static WorkflowDefinitionDocument document(long version) {

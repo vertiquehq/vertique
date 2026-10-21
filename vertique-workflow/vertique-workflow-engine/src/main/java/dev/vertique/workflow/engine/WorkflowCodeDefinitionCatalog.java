@@ -56,7 +56,8 @@ final class WorkflowCodeDefinitionCatalog {
                                 runtime.contractName(),
                                 runtime.plan().stateTypeName(),
                                 runtime.plan().planHash(),
-                                registeredDefinition(registry, versionKey(runtime)))));
+                                registeredDefinition(registry, versionKey(runtime)),
+                                nameBinding(registry, versionKey(runtime)))));
         entries = snapshot;
         return ordered(snapshot);
     }
@@ -77,6 +78,36 @@ final class WorkflowCodeDefinitionCatalog {
         } catch (IllegalArgumentException invalidKey) {
             return null;
         }
+    }
+
+    /** The binding of the plan the registry holds for a default-scope version, empty for a key no key can hold. */
+    private static Map<String, String> nameBinding(WorkflowRegistry registry, VersionKey key) {
+        try {
+            return registry.nameBinding(new DefinitionKey(WorkflowScopes.DEFAULT, key.definitionId(), key.version()));
+        } catch (IllegalArgumentException invalidKey) {
+            return Map.of();
+        }
+    }
+
+    /**
+     * Records that the registry now holds a rebuilt plan of the version, so that later checks compare the hash
+     * the registry serves. Nothing changes for a version the snapshot does not hold.
+     */
+    void rebound(String definitionId, long version, String planHash) {
+        VersionKey key = new VersionKey(definitionId, version);
+        entries = entries.entrySet().stream().collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, entry -> {
+            CodeDefinition code = entry.getValue();
+            return entry.getKey().equals(key)
+                    ? new CodeDefinition(
+                            code.definitionId(),
+                            code.version(),
+                            code.contractName(),
+                            code.stateTypeName(),
+                            planHash,
+                            code.definition(),
+                            code.nameBinding())
+                    : code;
+        }));
     }
 
     /** Returns the code definition the deployed code provides for the exact id and version, if any. */
@@ -107,6 +138,8 @@ final class WorkflowCodeDefinitionCatalog {
      * @param stateTypeName the logical name of the state type of the registered runtime's plan
      * @param planHash the plan hash of the registered runtime
      * @param definition the definition as it was registered, or {@code null} when the registry does not retain it
+     * @param nameBinding the binary name of each state and payload class of the registered plan, mapped to the name
+     *     the registered plan hash used
      */
     record CodeDefinition(
             String definitionId,
@@ -114,5 +147,6 @@ final class WorkflowCodeDefinitionCatalog {
             String contractName,
             String stateTypeName,
             String planHash,
-            @Nullable WorkflowDefinition<?, ?> definition) {}
+            @Nullable WorkflowDefinition<?, ?> definition,
+            Map<String, String> nameBinding) {}
 }

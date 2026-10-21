@@ -16,6 +16,7 @@ import jakarta.inject.Singleton;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -323,7 +324,7 @@ public final class WorkflowDefinitionStore {
     }
 
     void candidate(DefinitionKey key, CompiledDefinition compiled, String format) {
-        candidate(DefaultWorkflowDefinitionService.record(key, compiled, format), compiled);
+        candidate(DefaultWorkflowDefinitionService.record(key, compiled, format, Map.of()), compiled);
     }
 
     void candidate(WorkflowDefinitionRecord record, CompiledDefinition compiled) {
@@ -350,7 +351,8 @@ public final class WorkflowDefinitionStore {
                             previous.provenance(),
                             previous.documentFormat(),
                             previous.createdAt(),
-                            Instant.now());
+                            Instant.now(),
+                            previous.nameBinding());
         });
     }
 
@@ -371,7 +373,8 @@ public final class WorkflowDefinitionStore {
                                 r.provenance(),
                                 r.documentFormat(),
                                 r.createdAt(),
-                                r.statusChangedAt()))
+                                r.statusChangedAt(),
+                                r.nameBinding()))
                         .orElse(r))
                 .filter(r -> filter.statuses() == null || filter.statuses().contains(r.status()))
                 .sorted(java.util.Comparator.comparing(

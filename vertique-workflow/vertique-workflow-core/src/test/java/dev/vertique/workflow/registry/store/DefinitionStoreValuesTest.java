@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -73,7 +74,8 @@ class DefinitionStoreValuesTest {
                 provenance,
                 null,
                 NOW,
-                NOW);
+                NOW,
+                Map.of());
 
         assertThat(code.key()).isEqualTo(globalKey);
         assertThatThrownBy(() -> new DefinitionProvenance(" ", null, null, null, null, NOW))
@@ -98,7 +100,8 @@ class DefinitionStoreValuesTest {
                         provenance,
                         null,
                         NOW,
-                        NOW))
+                        NOW,
+                        Map.of()))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         globalKey,
@@ -110,7 +113,8 @@ class DefinitionStoreValuesTest {
                         provenance,
                         null,
                         NOW,
-                        NOW))
+                        NOW,
+                        Map.of()))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         globalKey,
@@ -122,7 +126,8 @@ class DefinitionStoreValuesTest {
                         provenance,
                         null,
                         NOW,
-                        NOW))
+                        NOW,
+                        Map.of()))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         globalKey,
@@ -134,7 +139,8 @@ class DefinitionStoreValuesTest {
                         null,
                         null,
                         NOW,
-                        NOW))
+                        NOW,
+                        Map.of()))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         globalKey,
@@ -146,7 +152,8 @@ class DefinitionStoreValuesTest {
                         provenance,
                         null,
                         null,
-                        NOW))
+                        NOW,
+                        Map.of()))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         globalKey,
@@ -158,7 +165,8 @@ class DefinitionStoreValuesTest {
                         provenance,
                         null,
                         NOW,
-                        NOW))
+                        NOW,
+                        Map.of()))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         globalKey,
@@ -170,7 +178,8 @@ class DefinitionStoreValuesTest {
                         provenance,
                         null,
                         NOW,
-                        NOW))
+                        NOW,
+                        Map.of()))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         globalKey,
@@ -182,7 +191,8 @@ class DefinitionStoreValuesTest {
                         provenance,
                         null,
                         NOW,
-                        NOW))
+                        NOW,
+                        Map.of()))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         new DefinitionKey("tenant-a", "orders", 1),
@@ -194,7 +204,8 @@ class DefinitionStoreValuesTest {
                         provenance,
                         null,
                         NOW,
-                        NOW))
+                        NOW,
+                        Map.of()))
                 .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> new WorkflowDefinitionRecord(
                         globalKey,
@@ -206,7 +217,8 @@ class DefinitionStoreValuesTest {
                         provenance,
                         "YAML",
                         NOW,
-                        NOW))
+                        NOW,
+                        Map.of()))
                 .isInstanceOf(RuntimeException.class);
     }
 
@@ -246,7 +258,8 @@ class DefinitionStoreValuesTest {
                 provenance,
                 "JSON",
                 NOW,
-                NOW);
+                NOW,
+                Map.of());
         WorkflowDefinitionDocument body = new WorkflowDefinitionDocument(key, "{}", "JSON");
 
         assertThat(documentRecord.key()).isEqualTo(body.key());
@@ -260,7 +273,8 @@ class DefinitionStoreValuesTest {
                         provenance,
                         null,
                         NOW,
-                        NOW))
+                        NOW,
+                        Map.of()))
                 .isInstanceOf(RuntimeException.class);
         assertThatCode(() -> new WorkflowDefinitionDocument(
                         new DefinitionKey(WorkflowScopes.DEFAULT, "other", 1), body.document(), body.documentFormat()))

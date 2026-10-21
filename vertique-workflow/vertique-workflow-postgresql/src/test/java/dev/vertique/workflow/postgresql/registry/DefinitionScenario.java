@@ -16,6 +16,7 @@ import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppCo
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -162,6 +163,37 @@ final class DefinitionScenario implements AutoCloseable {
         return boot;
     }
 
+    /**
+     * Starts a graph that must start with the given application config, code definitions and extra type catalog
+     * entries.
+     */
+    Boot node(
+            WorkflowDefinitionSource source,
+            BootObservation observation,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            JsonObject config,
+            List<WorkflowTypeCatalogEntry> catalogEntries) {
+        Boot boot = begin(source, observation, codeDefinitions, null, 10, config, catalogEntries)
+                .await();
+        if (boot.failure() != null) {
+            boot.close();
+            throw new AssertionError("The application graph was expected to start", boot.failure());
+        }
+        return boot;
+    }
+
+    /** Starts a graph like {@link #node} with extra type catalog entries and reports its startup failure, if any. */
+    Boot attempt(
+            WorkflowDefinitionSource source,
+            BootObservation observation,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            WorkflowDefinitionSqlObserver observer,
+            JsonObject config,
+            List<WorkflowTypeCatalogEntry> catalogEntries) {
+        return begin(source, observation, codeDefinitions, observer, 10, config, catalogEntries)
+                .await();
+    }
+
     /** Starts a graph and reports its startup failure, if any; a graph that did start is closed with the scenario. */
     Boot attempt(WorkflowDefinitionSource source, BootObservation observation) {
         return attempt(source, observation, List.of(), null, 10);
@@ -225,11 +257,24 @@ final class DefinitionScenario implements AutoCloseable {
             WorkflowDefinitionSqlObserver observer,
             int poolSize,
             JsonObject config) {
+        return begin(source, observation, codeDefinitions, observer, poolSize, config, List.of());
+    }
+
+    /** Requests a startup like {@link #attempt} whose type catalog also lists the given entries. */
+    PendingBoot begin(
+            WorkflowDefinitionSource source,
+            BootObservation observation,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            WorkflowDefinitionSqlObserver observer,
+            int poolSize,
+            JsonObject config,
+            List<WorkflowTypeCatalogEntry> catalogEntries) {
         Pool raw = ManagedDefinitionDatabase.openPool(vertx, db, poolSize);
         Pool pool = observer == null ? raw : observer.observe(raw);
         AppComponent app;
         try {
-            app = ManagedDefinitionDatabase.appWithCode(vertx, pool, config, observation, source, codeDefinitions);
+            app = ManagedDefinitionDatabase.appWithCode(
+                    vertx, pool, config, observation, source, codeDefinitions, catalogEntries);
         } catch (RuntimeException | Error failure) {
             await(pool.close());
             throw failure;

@@ -1225,7 +1225,8 @@ public class PgWorkflowSchemaIT {
                 new DefinitionProvenance("test", "memory://" + key.definitionVersion(), null, null, null, now),
                 "JSON",
                 now,
-                now);
+                now,
+                Map.of());
     }
 
     private static WorkflowDefinitionDocument registryDocument(DefinitionKey key) {

@@ -48,6 +48,7 @@ import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -236,7 +237,8 @@ class DefinitionCacheScopeTest {
                 changed,
                 "YAML",
                 LOADED,
-                LOADED));
+                LOADED,
+                Map.of()));
         assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.DEPRECATED);
         assertThat(cache.sourceMetadata(TENANT_B_V1))
                 .contains(new SourceMetadata("tenant-b-reloaded", "uri:tenant-b-2", "rev-b-2", null, null, LOADED));
@@ -341,7 +343,8 @@ class DefinitionCacheScopeTest {
                 DefaultWorkflowDefinitionService.provenance(compiled.source()),
                 "YAML",
                 LOADED,
-                LOADED);
+                LOADED,
+                Map.of());
     }
 
     private static CompiledDefinition compiled(
