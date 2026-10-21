@@ -144,7 +144,7 @@ class SchemaActivationTest {
 
         // When: it is activated
         // Then: activation fails with the registration wording and the registry does not resolve the id
-        assertThatThrownBy(() -> await(definitions.activate(REVIEW_NOTE_V1)))
+        assertThatThrownBy(() -> await(definitions.publish(REVIEW_NOTE_V1)))
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessage(SCALAR_DECISION_MESSAGE);
         assertThatThrownBy(() -> platform.registry().resolveCurrent("review-note"))
@@ -164,14 +164,14 @@ class SchemaActivationTest {
                 metadata()));
 
         // When: activation fails once
-        assertThatThrownBy(() -> await(definitions.activate(REVIEW_NOTE_V1)))
+        assertThatThrownBy(() -> await(definitions.publish(REVIEW_NOTE_V1)))
                 .isInstanceOf(WorkflowDefinitionException.class);
 
         // Then: the candidate is still a candidate, and a second activation fails the same way
         assertThat(await(definitions.list(GLOBAL)))
                 .extracting(WorkflowDefinitionRecord::status)
                 .containsExactly(DefinitionStatus.CANDIDATE);
-        assertThatThrownBy(() -> await(definitions.activate(REVIEW_NOTE_V1)))
+        assertThatThrownBy(() -> await(definitions.publish(REVIEW_NOTE_V1)))
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessage(SCALAR_DECISION_MESSAGE);
     }
@@ -189,7 +189,7 @@ class SchemaActivationTest {
                 metadata()));
 
         // When / Then: activation fails naming the start payload
-        assertThatThrownBy(() -> await(definitions.activate(REVIEW_NOTE_V1)))
+        assertThatThrownBy(() -> await(definitions.publish(REVIEW_NOTE_V1)))
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessageStartingWith("definition 'review-note' v1 start payload")
                 .hasMessageContaining("payload type 'java.lang.String' is not object-shaped (root type string)");
@@ -208,14 +208,14 @@ class SchemaActivationTest {
                 metadata()));
 
         // When: it is activated
-        await(definitions.activate(REVIEW_NOTE_V1));
+        await(definitions.publish(REVIEW_NOTE_V1));
 
         // Then: the registry resolves it and the service reports it active
         assertThat(platform.registry().resolveCurrent("review-note").plan().definitionVersion())
                 .isEqualTo(1L);
         assertThat(await(definitions.list(GLOBAL)))
                 .extracting(WorkflowDefinitionRecord::status)
-                .containsExactly(DefinitionStatus.ACTIVE);
+                .containsExactly(DefinitionStatus.AVAILABLE);
     }
 
     // --- Helpers ---
