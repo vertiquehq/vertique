@@ -38,6 +38,9 @@ Workflow events use a JSON envelope:
   "eventType": "WORKFLOW_STARTED",
   "workflowId": "00000000-0000-0000-0000-000000000000",
   "definitionId": "order-fulfillment",
+  "definitionVersion": 1,
+  "definitionScopeKey": "default",
+  "scopeKey": "default",
   "occurredAt": "2026-05-13T12:00:00Z",
   "attributes": {}
 }
@@ -49,8 +52,10 @@ Consumer rules:
 - Tolerate unknown `eventType` values.
 - Tolerate unknown top-level fields.
 - Treat `attributes` as event-specific data.
+- Filter or route by scope with `definitionScopeKey` (the scope of the definition the instance is pinned to) and `scopeKey` (the scope the instance was started in). Both keys are plain labels, not an isolation or authorization boundary.
+- Read `definitionScopeKey` and `scopeKey` as optional: envelopes written before the fields existed carry neither, and they read as `null`.
 
-Adding fields or event types is intended to be non-breaking. Removing or renaming existing fields requires a new schema version.
+The two scope fields were added without changing `schemaVersion`. Adding fields or event types is intended to be non-breaking. Removing or renaming existing fields requires a new schema version.
 
 ---
 

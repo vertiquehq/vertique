@@ -75,7 +75,6 @@ CONSTRUCTOR|dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload|public|[
 CONSTRUCTOR|dev.vertique.workflow.engine.WorkflowReminderComposeValidator|public|[]|[dev.vertique.workflow.registry.WorkflowRegistry,java.util.Set<dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient>>]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.engine.spi.DedupClaim|public|[]|[boolean,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.engine.spi.StartDedupResult|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,boolean,java.lang.String]|[]|false
-CONSTRUCTOR|dev.vertique.workflow.events.WorkflowEventIntent|public|[]|[dev.vertique.workflow.events.WorkflowEventType,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,long,dev.vertique.workflow.subject.WorkflowSubjectRef,java.lang.String,java.time.Instant,long,java.util.UUID,java.lang.String,java.util.Map<java.lang.String, java.lang.Object>,java.lang.String,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowClientProxyLinkageException|public|[]|[java.lang.String,java.lang.Throwable]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowClientProxyLinkageException|public|[]|[java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowConfigurationException|public|[]|[java.lang.String,java.lang.Throwable]|[]|false
@@ -178,7 +177,6 @@ CONSTRUCTOR|dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult
 CONSTRUCTOR|dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult|public|[]|[int,boolean]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.sideeffect.RecorderResult$Empty|public|[]|[]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.sideeffect.RecorderResult$Timer|public|[]|[java.util.UUID]|[]|false
-CONSTRUCTOR|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,long,java.lang.String,java.lang.String,java.util.UUID,java.lang.String,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent|public|[]|[dev.vertique.workflow.sideeffect.IntentKind,java.lang.String,java.lang.Object,java.util.Map<java.lang.String, java.lang.String>,dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.state.BranchTokenFilter|public|[]|[dev.vertique.workflow.state.BranchStatus,dev.vertique.workflow.state.WaitType,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.state.BranchToken|public|[]|[java.util.UUID,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,java.lang.String,dev.vertique.workflow.state.BranchStatus,dev.vertique.workflow.state.WaitType,java.lang.String,java.util.UUID,java.lang.String,java.lang.String,java.lang.String,int,int,java.time.Instant,java.lang.String,java.lang.String,java.time.Instant,long,java.time.Instant,java.time.Instant,dev.vertique.core.context.DurableMetadata]|[]|false
@@ -1442,7 +1440,6 @@ METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|equ
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|forkStepId|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|hashCode|public final|[]|[]|int|[]|false
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|sequence|public|[]|[]|long|[]|false
-METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|singlePath|public static|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,long,java.lang.String,java.lang.String]|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|[]|false
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|stepId|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|toString|public final|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|workflowId|public|[]|[]|dev.vertique.workflow.ops.WorkflowInstanceId|[]|false

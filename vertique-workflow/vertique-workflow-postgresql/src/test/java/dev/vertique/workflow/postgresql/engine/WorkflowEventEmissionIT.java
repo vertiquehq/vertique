@@ -38,6 +38,7 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
@@ -66,6 +67,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -120,6 +122,10 @@ public class WorkflowEventEmissionIT {
     static WorkflowEngineHandle engine;
     static PgWorkflowInstanceRepository instanceRepo;
     static PgTimerStore timerStore;
+    static DefaultWorkflowRegistry registry;
+
+    /** Collects the service-dispatch intents the engine hands to the SERVICE recorder. */
+    static final List<WorkflowSideEffectIntent> dispatchedIntents = new CopyOnWriteArrayList<>();
 
     /** Captures the latest timer id from the WORKFLOW_TIMER recorder for task/timer tests. */
     static final AtomicReference<UUID> lastTimerId = new AtomicReference<>();
@@ -252,6 +258,31 @@ public class WorkflowEventEmissionIT {
         }
     };
 
+    /**
+     * The scoped approval definition: wait for {@code submit}, dispatch to a service, then a human task assigned
+     * to {@code reviewRole}, then complete. The default and {@code acme} copies share the id and version and the
+     * steps up to the first wait and differ in the role, so their plan hashes differ.
+     */
+    private static WorkflowDefinition<ScopedApprovalFixture.ApprovalState, ScopedApprovalFixture.ApprovalContract>
+            purchaseApproval(String reviewRole) {
+        return new ScopedApprovalFixture.ApprovalDefinition(ScopedApprovalFixture.APPROVAL_ID, 1L, wf -> wf.init(
+                        ScopedApprovalFixture.StartApproval.class,
+                        p -> new ScopedApprovalFixture.ApprovalState(p.key(), List.of()))
+                .initialStep("submit")
+                .waitForSignal("submit", "submit", String.class)
+                .onSignal((s, p) -> s)
+                .toStepOnSignal("notify")
+                .build()
+                .dispatch("notify", "integration.purchase.notify", s -> s.key(), "review")
+                .task("review")
+                .assignToRole(reviewRole)
+                .decision("approve", void.class)
+                .onDecision((s, p) -> s)
+                .toStep("done")
+                .build()
+                .complete("done"));
+    }
+
     // --- Test setup ---
 
     @BeforeAll
@@ -318,10 +349,12 @@ public class WorkflowEventEmissionIT {
         };
 
         // --- Registry ---
-        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
+        registry = new DefaultWorkflowRegistry();
         registry.register(COMPLETE_DEF);
         registry.register(FAIL_DEF);
         registry.register(TASK_DEF);
+        registry.register(purchaseApproval("clerk"));
+        registry.register(ScopedApprovalFixture.ACME, purchaseApproval("finance"));
 
         // --- WorkflowEventsComposeValidator and recorder ---
         WorkflowEventsComposeValidator eventsValidator =
@@ -375,6 +408,20 @@ public class WorkflowEventEmissionIT {
             }
         };
 
+        // --- SERVICE recorder (stub, keeps the dispatched intents for the assertions) ---
+        WorkflowSideEffectRecorder<SqlClient> serviceRecorder = new WorkflowSideEffectRecorder<>() {
+            @Override
+            public IntentKind kind() {
+                return IntentKind.SERVICE;
+            }
+
+            @Override
+            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
+                dispatchedIntents.add(intent);
+                return Future.succeededFuture(RecorderResult.empty());
+            }
+        };
+
         // --- Engine ---
         engine = PgWorkflowEngineTestSupport.create(
                 pool,
@@ -382,7 +429,7 @@ public class WorkflowEventEmissionIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(eventRecorder, timerRecorder),
+                Set.of(eventRecorder, timerRecorder, serviceRecorder),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -394,6 +441,7 @@ public class WorkflowEventEmissionIT {
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
         lastTimerId.set(null);
+        dispatchedIntents.clear();
         pool.query("TRUNCATE TABLE outbox, workflow_timers, workflow_tasks, workflow_history,"
                         + " workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
@@ -984,5 +1032,111 @@ public class WorkflowEventEmissionIT {
                     if (ar.failed()) ctx.failNow(ar.cause());
                     else ctx.completeNow();
                 });
+    }
+
+    /**
+     * An instance pinned to the {@code acme} definition and started in scope {@code tenant-1} emits events that
+     * name both scopes; the event written before the stamp names the default scope for both.
+     */
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    @DisplayName("events carry the instance's definition scope and start scope")
+    void eventsCarryTheInstancesDefinitionScopeAndStartScope() throws Exception {
+        // Given: an instance started in the default scope, then stamped as pinned to the acme plan of the same
+        // id and version and as started in scope tenant-1
+        WorkflowInstanceId id = startPurchaseApproval("events");
+        List<Row> rowsAtStart = await(readOutboxRowsForWorkflow(id.value()));
+        ScopedApprovalFixture.stampScope(pool, id, ScopedApprovalFixture.ACME, "tenant-1", acmePlanHash());
+
+        // When: the signal advances the instance through the dispatch step to the task, and the task completes
+        await(engine.signal(id, "submit", "payload", "k-submit-" + id.value()));
+        UUID taskId = UUID.fromString(await(pool.withTransaction(tx -> instanceRepo.findById(id, tx)))
+                .orElseThrow()
+                .waitKey());
+        TaskCompletionCommand completeCmd = new TaskCompletionCommand(
+                taskId, "approve", null, "idem-" + id.value(), new WorkflowActor.User("alice"), null);
+        assertEquals(
+                dev.vertique.workflow.ops.TaskMutationResult.APPLIED,
+                await(pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx))));
+        List<Row> allRows = await(readOutboxRowsForWorkflow(id.value()));
+        List<Row> rowsAfterStamp = allRows.subList(rowsAtStart.size(), allRows.size());
+
+        // Then: the rows written at start name the default scope for both
+        assertEquals(
+                List.of(WorkflowEventType.WORKFLOW_STARTED.name()),
+                rowsAtStart.stream().map(r -> r.getString("event_type")).toList());
+        for (Row row : rowsAtStart) {
+            WorkflowEventEnvelope envelope = deserializeEnvelope(row);
+            assertEquals("default", envelope.definitionScopeKey(), "definition scope at start");
+            assertEquals("default", envelope.scopeKey(), "start scope at start");
+        }
+
+        // and: every row written after the stamp names the acme definition scope and the tenant-1 start scope
+        List<String> eventTypesAfterStamp =
+                rowsAfterStamp.stream().map(r -> r.getString("event_type")).toList();
+        assertTrue(
+                eventTypesAfterStamp.containsAll(List.of(
+                        WorkflowEventType.TASK_CREATED.name(),
+                        WorkflowEventType.TASK_COMPLETED.name(),
+                        WorkflowEventType.WORKFLOW_COMPLETED.name())),
+                "task and completion events must follow the stamp; got: " + eventTypesAfterStamp);
+        for (Row row : rowsAfterStamp) {
+            WorkflowEventEnvelope envelope = deserializeEnvelope(row);
+            assertEquals(ScopedApprovalFixture.ACME, envelope.definitionScopeKey(), row.getString("event_type"));
+            assertEquals("tenant-1", envelope.scopeKey(), row.getString("event_type"));
+        }
+    }
+
+    /**
+     * The service-dispatch intent of an instance pinned to the {@code acme} definition and started in scope
+     * {@code tenant-1} names both scopes and the definition id in its correlation.
+     */
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    @DisplayName("service-dispatch records carry the instance's definition scope and start scope")
+    void dispatchRecordsCarryTheInstancesDefinitionScopeAndStartScope() throws Exception {
+        // Given: an instance stamped as pinned to the acme plan and as started in scope tenant-1, waiting for the
+        // signal that leads to the service-dispatch step
+        WorkflowInstanceId id = startPurchaseApproval("dispatch");
+        ScopedApprovalFixture.stampScope(pool, id, ScopedApprovalFixture.ACME, "tenant-1", acmePlanHash());
+        assertTrue(dispatchedIntents.isEmpty(), "nothing is dispatched before the signal");
+
+        // When: the signal advances the instance through the dispatch step
+        await(engine.signal(id, "submit", "payload", "k-submit-" + id.value()));
+
+        // Then: the one recorded dispatch names the instance's scopes and its definition id
+        assertEquals(1, dispatchedIntents.size(), "one dispatch must be recorded");
+        WorkflowSideEffectIntent.Correlation correlation =
+                dispatchedIntents.get(0).correlation();
+        assertEquals(ScopedApprovalFixture.ACME, correlation.definitionScopeKey());
+        assertEquals("tenant-1", correlation.scopeKey());
+        assertEquals(ScopedApprovalFixture.APPROVAL_ID, correlation.definitionId());
+        assertEquals(id, correlation.workflowId());
+    }
+
+    // --- Scoped approval helpers ---
+
+    private static String acmePlanHash() {
+        return registry.resolve(new DefinitionKey(ScopedApprovalFixture.ACME, ScopedApprovalFixture.APPROVAL_ID, 1L))
+                .plan()
+                .planHash();
+    }
+
+    private static WorkflowInstanceId startPurchaseApproval(String key) throws Exception {
+        StartCommand command = new StartCommand(
+                ScopedApprovalFixture.APPROVAL_ID,
+                ScopedApprovalFixture.ApprovalContract.class.getName(),
+                new ScopedApprovalFixture.StartApproval(key),
+                "k-start-" + key + "-" + UUID.randomUUID(),
+                null,
+                null,
+                null,
+                null,
+                null);
+        return await(engine.start(command));
+    }
+
+    private static <T> T await(Future<T> future) throws Exception {
+        return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
     }
 }

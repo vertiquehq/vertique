@@ -245,7 +245,12 @@ final class CompensationService {
                     compPayload,
                     Map.of(),
                     WorkflowSideEffectIntent.Correlation.singlePath(
-                            inst.id(), seq, inst.definitionId(), compNode.stepId()));
+                            inst.id(),
+                            seq,
+                            inst.definitionId(),
+                            inst.definitionScopeKey(),
+                            inst.scopeKey(),
+                            compNode.stepId()));
 
             return recorders
                     .route(intent, tx)

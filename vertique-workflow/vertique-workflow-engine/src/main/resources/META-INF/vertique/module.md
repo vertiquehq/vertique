@@ -276,6 +276,8 @@ public interface AppComponent {
 
 Every lookup of an instance's plan (signals, tasks, timers, retries, branch and join recovery, queries and migration) resolves the instance's full pin: its definition scope, definition id and definition version. An instance pinned to a definition scope never runs the plan that another scope holds under the same id and version, and migration resolves its target version in the instance's definition scope. The lifecycle, the startup restoration and the propagation pass register, mark and remove a runtime under the scope of the stored row they apply.
 
+Every event and side-effect correlation the engine records, single-path and branch, takes both scopes from the owning instance row, so events and outbox records name the scopes the instance really holds rather than a default. A branch drive reads them from the instance; `WorkflowRecoveryBridge.driveRecoveredBranch` loads the owning instance to do so.
+
 ### Document Activation And Startup Restoration
 
 The engine orchestrates `WorkflowDefinitionLifecycle.activate` through the optional SQL-free registry

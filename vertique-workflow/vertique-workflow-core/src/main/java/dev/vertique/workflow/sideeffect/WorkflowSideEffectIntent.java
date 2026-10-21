@@ -39,8 +39,10 @@ public record WorkflowSideEffectIntent(
      * @param sequence monotonically increasing sequence number within the instance at the point
      *     this intent was recorded
      * @param definitionId id of the workflow definition; included for observability
+     * @param definitionScopeKey scope of the definition the instance is pinned to
+     * @param scopeKey scope the instance was started in
      * @param stepId id of the {@link dev.vertique.workflow.plan.ServiceDispatchNode} that emitted
-     *     this intent; mandatory for all callers (PRD-WF-002 D8a)
+     *     this intent; mandatory for all callers
      * @param branchTokenId optional branch token id when the dispatch originates from a fan-out
      *     branch; null in single-path workflows
      * @param forkStepId optional fork step id paired with {@code branchTokenId}/{@code branchId}
@@ -50,6 +52,8 @@ public record WorkflowSideEffectIntent(
             WorkflowInstanceId workflowId,
             long sequence,
             String definitionId,
+            String definitionScopeKey,
+            String scopeKey,
             String stepId,
             @Nullable UUID branchTokenId,
             @Nullable String forkStepId,
@@ -61,12 +65,20 @@ public record WorkflowSideEffectIntent(
          * @param workflowId workflow instance id
          * @param sequence sequence number
          * @param definitionId definition id
+         * @param definitionScopeKey scope of the definition the instance is pinned to
+         * @param scopeKey scope the instance was started in
          * @param stepId step id (mandatory)
          * @return a correlation with all branch fields null
          */
         public static Correlation singlePath(
-                WorkflowInstanceId workflowId, long sequence, String definitionId, String stepId) {
-            return new Correlation(workflowId, sequence, definitionId, stepId, null, null, null);
+                WorkflowInstanceId workflowId,
+                long sequence,
+                String definitionId,
+                String definitionScopeKey,
+                String scopeKey,
+                String stepId) {
+            return new Correlation(
+                    workflowId, sequence, definitionId, definitionScopeKey, scopeKey, stepId, null, null, null);
         }
     }
 }

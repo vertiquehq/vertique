@@ -307,6 +307,8 @@ Common recorders:
 
 Missing required recorders fail the workflow transition rather than silently dropping work.
 
+`WorkflowSideEffectIntent.Correlation` carries `String definitionScopeKey` and `String scopeKey` directly after `definitionId`, and `Correlation.singlePath(...)` takes them in the same position: the scope of the definition the instance is pinned to and the scope the instance was started in. `WorkflowEventIntent` carries the same two components directly after `definitionVersion`, and neither may be `null`. There is no overload without them, so an emitter must name both scopes; recorders stamp them on event envelopes and on outbox headers. Callers that construct these records by component list must add the two values.
+
 ---
 
 ## Required Wiring

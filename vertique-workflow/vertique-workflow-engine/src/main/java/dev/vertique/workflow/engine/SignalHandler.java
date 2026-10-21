@@ -220,6 +220,7 @@ final class SignalHandler {
                                                 updatedInst.stateJson(),
                                                 parentSubjectVersionForBranch,
                                                 rw,
+                                                BranchTransitionEngine.InstanceScope.of(updatedInst),
                                                 tx,
                                                 effectiveBaseOverride)
                                         .compose(advanced -> {

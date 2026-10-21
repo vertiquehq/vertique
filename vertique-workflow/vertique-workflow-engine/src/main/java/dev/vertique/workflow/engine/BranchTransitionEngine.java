@@ -34,6 +34,7 @@ import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
+import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.payload.TaskCreatedHistoryPayload;
 import dev.vertique.workflow.tasks.TaskAssignment;
 import dev.vertique.workflow.tasks.TaskDecisionDescriptor;
@@ -87,6 +88,26 @@ final class BranchTransitionEngine {
     private final RecorderRouter recorders;
     private final TaskStore<SqlClient> taskStore;
     private final Clock clock;
+
+    /**
+     * The scopes of the owning workflow instance, stamped on every side-effect correlation a branch
+     * drive records.
+     *
+     * @param definitionScopeKey scope of the definition the instance is pinned to
+     * @param scopeKey scope the instance was started in
+     */
+    record InstanceScope(String definitionScopeKey, String scopeKey) {
+
+        /**
+         * Reads both scopes from the owning instance.
+         *
+         * @param inst the owning workflow instance
+         * @return the instance's scopes
+         */
+        static InstanceScope of(WorkflowInstance inst) {
+            return new InstanceScope(inst.definitionScopeKey(), inst.scopeKey());
+        }
+    }
 
     /**
      * Durable context propagator used at branch-dispatch to bind the persisted
@@ -193,6 +214,7 @@ final class BranchTransitionEngine {
      * @param parentSubjectVersion the parent instance's subject-ref version at dispatch time,
      *     or {@code null} if the instance has no subject ref
      * @param rw the resolved runtime workflow (defines the plan + callbacks)
+     * @param instanceScope the definition scope and start scope of the owning instance
      * @param tx the active transaction
      * @param effectiveBaseOverride when non-null, the already-computed effective durable context
      *     document to bind for this drive instead of {@link BranchToken#metadata()} (Contract
@@ -207,6 +229,7 @@ final class BranchTransitionEngine {
             String parentStateJson,
             @Nullable String parentSubjectVersion,
             RuntimeWorkflow rw,
+            InstanceScope instanceScope,
             SqlClient tx,
             @Nullable DurableMetadata effectiveBaseOverride) {
         // Bind the branch's persisted durable metadata for the entire drive so every transition
@@ -235,7 +258,9 @@ final class BranchTransitionEngine {
             // implements the install/try/close shape shared with WorkflowContextBinder.withBound
             // and PgWorkflowBranchRecoveryService.withBranchDurableBound.
             return inboundExecScope.installDurableAndRun(
-                    meta, DispatchBoundary.WORKFLOW, () -> step(token, parentStateJson, parentSubjectVersion, rw, tx));
+                    meta,
+                    DispatchBoundary.WORKFLOW,
+                    () -> step(token, parentStateJson, parentSubjectVersion, rw, instanceScope, tx));
         }
         // Test-support fallback: no substrate lifecycle helper wired (legacy ctor) — bind via the
         // plain propagator when present, or run fully unbound when neither is wired.
@@ -245,7 +270,7 @@ final class BranchTransitionEngine {
                 scope = propagator.bindFrom(meta, DispatchBoundary.WORKFLOW);
             }
             final ContextHolder.Scope finalScope = scope;
-            Future<BranchToken> driveFuture = step(token, parentStateJson, parentSubjectVersion, rw, tx);
+            Future<BranchToken> driveFuture = step(token, parentStateJson, parentSubjectVersion, rw, instanceScope, tx);
             return finalScope == null
                     ? driveFuture
                     : driveFuture.eventually(() -> {
@@ -267,6 +292,7 @@ final class BranchTransitionEngine {
             String parentStateJson,
             @Nullable String parentSubjectVersion,
             RuntimeWorkflow rw,
+            InstanceScope instanceScope,
             SqlClient tx) {
         if (token.status() != BranchStatus.RUNNING) {
             // Caller handed us a token that is no longer eligible to advance (WAITING /
@@ -280,22 +306,23 @@ final class BranchTransitionEngine {
                     + "' not found in plan '" + rw.plan().definitionId() + "'"));
         }
         if (node instanceof ServiceDispatchNode sdn) {
-            return branchHandleServiceDispatch(token, sdn, parentStateJson, parentSubjectVersion, rw, tx);
+            return branchHandleServiceDispatch(
+                    token, sdn, parentStateJson, parentSubjectVersion, rw, instanceScope, tx);
         }
         if (node instanceof WaitSignalNode wsn) {
             if (wsn.timeout() != null) {
-                return branchHandleWaitSignalWithTimeout(token, wsn, parentStateJson, rw, tx);
+                return branchHandleWaitSignalWithTimeout(token, wsn, parentStateJson, rw, instanceScope, tx);
             }
             return branchHandleWaitSignal(token, wsn, tx);
         }
         if (node instanceof HumanTaskNode htn) {
-            return branchHandleHumanTaskNode(token, htn, parentStateJson, parentSubjectVersion, rw, tx);
+            return branchHandleHumanTaskNode(token, htn, parentStateJson, parentSubjectVersion, rw, instanceScope, tx);
         }
         if (node instanceof TimerNode tn) {
-            return branchHandleTimerNode(token, tn, parentStateJson, rw, tx);
+            return branchHandleTimerNode(token, tn, parentStateJson, rw, instanceScope, tx);
         }
         if (node instanceof DecisionNode dn) {
-            return branchHandleDecision(token, dn, parentStateJson, parentSubjectVersion, rw, tx);
+            return branchHandleDecision(token, dn, parentStateJson, parentSubjectVersion, rw, instanceScope, tx);
         }
         if (node instanceof CompleteNode cn) {
             return branchHandleComplete(token, cn, tx);
@@ -315,6 +342,7 @@ final class BranchTransitionEngine {
             String parentStateJson,
             @Nullable String parentSubjectVersion,
             RuntimeWorkflow rw,
+            InstanceScope instanceScope,
             SqlClient tx) {
         // PRD-WF-002 §D6: dispatch-dedup gate runs FIRST so retried branch transitions skip
         // re-emission when an earlier attempt already recorded the intent.
@@ -325,9 +353,10 @@ final class BranchTransitionEngine {
             if (!claimed) {
                 // Already recorded — append BRANCH_RESUMED noting the deduped dispatch and
                 // advance the branch's currentStepId.
-                return advanceBranchSkippingDispatch(token, sdn, parentStateJson, parentSubjectVersion, rw, tx);
+                return advanceBranchSkippingDispatch(
+                        token, sdn, parentStateJson, parentSubjectVersion, rw, instanceScope, tx);
             }
-            return runBranchDispatch(token, sdn, parentStateJson, parentSubjectVersion, rw, tx);
+            return runBranchDispatch(token, sdn, parentStateJson, parentSubjectVersion, rw, instanceScope, tx);
         });
     }
 
@@ -337,6 +366,7 @@ final class BranchTransitionEngine {
             String parentStateJson,
             @Nullable String parentSubjectVersion,
             RuntimeWorkflow rw,
+            InstanceScope instanceScope,
             SqlClient tx) {
         // The branch's durable metadata is already bound by driveBranchTransitions (the public
         // entry point) for the entire drive lifetime — see driveBranchTransitions's
@@ -367,6 +397,8 @@ final class BranchTransitionEngine {
                             token.workflowId(),
                             seq,
                             rw.plan().definitionId(),
+                            instanceScope.definitionScopeKey(),
+                            instanceScope.scopeKey(),
                             sdn.stepId(),
                             token.id(),
                             token.forkStepId(),
@@ -385,8 +417,8 @@ final class BranchTransitionEngine {
                                         clock.instant()),
                                 tx);
                     })
-                    .compose(v ->
-                            advanceBranchSkippingDispatch(token, sdn, parentStateJson, parentSubjectVersion, rw, tx));
+                    .compose(v -> advanceBranchSkippingDispatch(
+                            token, sdn, parentStateJson, parentSubjectVersion, rw, instanceScope, tx));
         });
     }
 
@@ -400,6 +432,7 @@ final class BranchTransitionEngine {
      * @param parentStateJson     the parent instance's state JSON (passed through to the next step)
      * @param parentSubjectVersion the parent instance's subject-ref version (passed through)
      * @param rw                  the resolved runtime workflow
+     * @param instanceScope the definition scope and start scope of the owning instance
      * @param tx                  the active transaction
      * @return a {@link Future} of the post-advance branch token
      */
@@ -409,10 +442,11 @@ final class BranchTransitionEngine {
             String parentStateJson,
             @Nullable String parentSubjectVersion,
             RuntimeWorkflow rw,
+            InstanceScope instanceScope,
             SqlClient tx) {
         BranchToken advanced = token.withStep(sdn.nextStepId(), token.version() + 1, clock.instant());
         return casUpdate(advanced, token.version(), tx, "ServiceDispatch advance", sdn.stepId())
-                .compose(t -> step(t, parentStateJson, parentSubjectVersion, rw, tx));
+                .compose(t -> step(t, parentStateJson, parentSubjectVersion, rw, instanceScope, tx));
     }
 
     // --- WaitSignal (no timeout) ---
@@ -440,11 +474,17 @@ final class BranchTransitionEngine {
      * @param parentStateJson the parent instance's {@code state_json} (used by
      *     {@link TimerSpec.FromState} resolvers)
      * @param rw              the resolved runtime workflow
+     * @param instanceScope the definition scope and start scope of the owning instance
      * @param tx              the active transaction
      * @return a {@link Future} of the post-transition branch token
      */
     private Future<BranchToken> branchHandleWaitSignalWithTimeout(
-            BranchToken token, WaitSignalNode wsn, String parentStateJson, RuntimeWorkflow rw, SqlClient tx) {
+            BranchToken token,
+            WaitSignalNode wsn,
+            String parentStateJson,
+            RuntimeWorkflow rw,
+            InstanceScope instanceScope,
+            SqlClient tx) {
         Instant fireAt = resolveFireAt(wsn.timeout().timeout(), parentStateJson, rw);
         return history.nextSequence(token.workflowId(), tx).compose(seq -> {
             WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
@@ -456,6 +496,8 @@ final class BranchTransitionEngine {
                             token.workflowId(),
                             seq,
                             rw.plan().definitionId(),
+                            instanceScope.definitionScopeKey(),
+                            instanceScope.scopeKey(),
                             wsn.stepId(),
                             token.id(),
                             token.forkStepId(),
@@ -507,6 +549,7 @@ final class BranchTransitionEngine {
      * @param parentStateJson      the parent instance's {@code state_json}
      * @param parentSubjectVersion the parent instance's subject-ref version, or {@code null}
      * @param rw                   the resolved runtime workflow
+     * @param instanceScope the definition scope and start scope of the owning instance
      * @param tx                   the active transaction
      * @return a {@link Future} of the post-transition branch token
      */
@@ -516,6 +559,7 @@ final class BranchTransitionEngine {
             String parentStateJson,
             @Nullable String parentSubjectVersion,
             RuntimeWorkflow rw,
+            InstanceScope instanceScope,
             SqlClient tx) {
         // Fail fast if version stability is required but the parent has no versioned subject ref.
         if (htn.requireVersionStability() && parentSubjectVersion == null) {
@@ -541,7 +585,17 @@ final class BranchTransitionEngine {
 
         if (htn.dueDate() != null) {
             return branchHandleHumanTaskNodeWithDueDate(
-                    token, htn, parentStateJson, rw, tx, assignment, taskId, descriptors, parentSubjectVersion, now);
+                    token,
+                    htn,
+                    parentStateJson,
+                    rw,
+                    instanceScope,
+                    tx,
+                    assignment,
+                    taskId,
+                    descriptors,
+                    parentSubjectVersion,
+                    now);
         }
 
         // No due-date — simple branch task wait.
@@ -552,7 +606,7 @@ final class BranchTransitionEngine {
                     token.withWait(WaitType.TASK, taskId.toString(), null, token.version() + 1, clock.instant());
             return casUpdate(waiting, token.version(), tx, "HumanTaskNode", htn.stepId())
                     .compose(t -> appendBranchTaskCreatedHistory(t, htn.stepId(), taskId, assignment, null, tx))
-                    .compose(t -> scheduleBranchReminderTimers(t, htn, taskId, rw, now, tx));
+                    .compose(t -> scheduleBranchReminderTimers(t, htn, taskId, rw, now, instanceScope, tx));
         });
     }
 
@@ -563,6 +617,7 @@ final class BranchTransitionEngine {
      * @param token                the current branch token
      * @param htn                  the node with a non-null {@code dueDate()} triplet
      * @param rw                   the resolved runtime workflow
+     * @param instanceScope the definition scope and start scope of the owning instance
      * @param tx                   the active transaction
      * @param assignment           the resolved literal task assignment
      * @param taskId               the new task UUID
@@ -576,6 +631,7 @@ final class BranchTransitionEngine {
             HumanTaskNode htn,
             String parentStateJson,
             RuntimeWorkflow rw,
+            InstanceScope instanceScope,
             SqlClient tx,
             TaskAssignment assignment,
             UUID taskId,
@@ -593,6 +649,8 @@ final class BranchTransitionEngine {
                             token.workflowId(),
                             seq,
                             rw.plan().definitionId(),
+                            instanceScope.definitionScopeKey(),
+                            instanceScope.scopeKey(),
                             htn.stepId(),
                             token.id(),
                             token.forkStepId(),
@@ -637,7 +695,8 @@ final class BranchTransitionEngine {
                             return casUpdate(waiting, token.version(), tx, "HumanTaskNodeWithDueDate", htn.stepId())
                                     .compose(t -> appendBranchTaskCreatedHistory(
                                             t, htn.stepId(), taskId, assignment, fireAt, tx))
-                                    .compose(t -> scheduleBranchReminderTimers(t, htn, taskId, rw, now, tx));
+                                    .compose(t ->
+                                            scheduleBranchReminderTimers(t, htn, taskId, rw, now, instanceScope, tx));
                         });
             });
         });
@@ -655,11 +714,17 @@ final class BranchTransitionEngine {
      * @param token the current branch token
      * @param tn    the timer node
      * @param rw    the resolved runtime workflow
+     * @param instanceScope the definition scope and start scope of the owning instance
      * @param tx    the active transaction
      * @return a {@link Future} of the post-transition branch token
      */
     private Future<BranchToken> branchHandleTimerNode(
-            BranchToken token, TimerNode tn, String parentStateJson, RuntimeWorkflow rw, SqlClient tx) {
+            BranchToken token,
+            TimerNode tn,
+            String parentStateJson,
+            RuntimeWorkflow rw,
+            InstanceScope instanceScope,
+            SqlClient tx) {
         Instant fireAt = resolveFireAt(tn.spec(), parentStateJson, rw);
         return history.nextSequence(token.workflowId(), tx).compose(seq -> {
             WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
@@ -671,6 +736,8 @@ final class BranchTransitionEngine {
                             token.workflowId(),
                             seq,
                             rw.plan().definitionId(),
+                            instanceScope.definitionScopeKey(),
+                            instanceScope.scopeKey(),
                             tn.stepId(),
                             token.id(),
                             token.forkStepId(),
@@ -709,6 +776,7 @@ final class BranchTransitionEngine {
             String parentStateJson,
             @Nullable String parentSubjectVersion,
             RuntimeWorkflow rw,
+            InstanceScope instanceScope,
             SqlClient tx) {
         String nextStepId;
         try {
@@ -728,7 +796,7 @@ final class BranchTransitionEngine {
         }
         BranchToken advanced = token.withStep(nextStepId, token.version() + 1, clock.instant());
         return casUpdate(advanced, token.version(), tx, "Decision", dn.stepId())
-                .compose(t -> step(t, parentStateJson, parentSubjectVersion, rw, tx));
+                .compose(t -> step(t, parentStateJson, parentSubjectVersion, rw, instanceScope, tx));
     }
 
     // --- Complete (terminal success) ---
@@ -1009,6 +1077,7 @@ final class BranchTransitionEngine {
      * @param htn           the human-task node
      * @param taskId        the new task UUID
      * @param rw            the resolved runtime workflow
+     * @param instanceScope the definition scope and start scope of the owning instance
      * @param taskCreatedAt the task-creation instant (anchor for offset/interval calculations)
      * @param tx            the active transaction
      * @return a {@link Future} of the unchanged branch token
@@ -1019,6 +1088,7 @@ final class BranchTransitionEngine {
             UUID taskId,
             RuntimeWorkflow rw,
             Instant taskCreatedAt,
+            InstanceScope instanceScope,
             SqlClient tx) {
         ReminderSpec spec = htn.reminders();
         if (spec == null) {
@@ -1028,11 +1098,12 @@ final class BranchTransitionEngine {
         if (spec instanceof ReminderSpec.OneShotOffsets osu) {
             for (Duration offset : osu.offsetsFromTaskCreation()) {
                 Instant fireAt = taskCreatedAt.plus(offset);
-                chain = chain.compose(v -> scheduleBranchReminderTimer(token, htn, taskId, rw, fireAt, tx));
+                chain = chain.compose(
+                        v -> scheduleBranchReminderTimer(token, htn, taskId, rw, fireAt, instanceScope, tx));
             }
         } else if (spec instanceof ReminderSpec.RecurringInterval ri) {
             Instant fireAt = taskCreatedAt.plus(ri.interval());
-            chain = chain.compose(v -> scheduleBranchReminderTimer(token, htn, taskId, rw, fireAt, tx));
+            chain = chain.compose(v -> scheduleBranchReminderTimer(token, htn, taskId, rw, fireAt, instanceScope, tx));
         }
         return chain.map(v -> token);
     }
@@ -1044,12 +1115,19 @@ final class BranchTransitionEngine {
      * @param htn    the human-task node
      * @param taskId the task UUID
      * @param rw     the resolved runtime workflow
+     * @param instanceScope the definition scope and start scope of the owning instance
      * @param fireAt the absolute fire instant
      * @param tx     the active transaction
      * @return a {@link Future} that completes when the timer intent and history entry are persisted
      */
     private Future<Void> scheduleBranchReminderTimer(
-            BranchToken token, HumanTaskNode htn, UUID taskId, RuntimeWorkflow rw, Instant fireAt, SqlClient tx) {
+            BranchToken token,
+            HumanTaskNode htn,
+            UUID taskId,
+            RuntimeWorkflow rw,
+            Instant fireAt,
+            InstanceScope instanceScope,
+            SqlClient tx) {
         return history.nextSequence(token.workflowId(), tx).compose(seq -> {
             WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
                     IntentKind.WORKFLOW_TIMER,
@@ -1060,6 +1138,8 @@ final class BranchTransitionEngine {
                             token.workflowId(),
                             seq,
                             rw.plan().definitionId(),
+                            instanceScope.definitionScopeKey(),
+                            instanceScope.scopeKey(),
                             htn.stepId(),
                             token.id(),
                             token.forkStepId(),

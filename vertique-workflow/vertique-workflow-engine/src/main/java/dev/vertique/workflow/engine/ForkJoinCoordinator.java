@@ -162,7 +162,14 @@ final class ForkJoinCoordinator {
         String parentSubjectVersion =
                 inst.subjectRef() == null ? null : inst.subjectRef().version();
         return branchEngine
-                .driveBranchTransitions(cleared, inst.stateJson(), parentSubjectVersion, rw, tx, null)
+                .driveBranchTransitions(
+                        cleared,
+                        inst.stateJson(),
+                        parentSubjectVersion,
+                        rw,
+                        BranchTransitionEngine.InstanceScope.of(inst),
+                        tx,
+                        null)
                 .compose(advanced -> {
                     if (isBranchTerminal(advanced.status())) {
                         return evaluateJoinForRecoveredBranch(inst, advanced, rw, tx);
@@ -429,6 +436,7 @@ final class ForkJoinCoordinator {
                                         ? null
                                         : inst.subjectRef().version(),
                                 rw,
+                                BranchTransitionEngine.InstanceScope.of(inst),
                                 tx,
                                 null)
                         .compose(advanced -> {

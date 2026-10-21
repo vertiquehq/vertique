@@ -196,6 +196,28 @@ final class ScopedApprovalFixture {
                 .get(10, TimeUnit.SECONDS);
     }
 
+    /**
+     * Stamps an instance row as pinned to a plan of another scope and as started in a given scope: the row gets the
+     * definition scope and the plan hash of that scope's plan, and the start scope.
+     *
+     * @param pool the pool of the database that holds the instance
+     * @param id the instance
+     * @param definitionScopeKey the definition scope to pin
+     * @param startScopeKey the scope the instance was started in
+     * @param planHash the plan hash of the plan of the definition scope
+     * @throws Exception if the update fails
+     */
+    static void stampScope(
+            Pool pool, WorkflowInstanceId id, String definitionScopeKey, String startScopeKey, String planHash)
+            throws Exception {
+        pool.preparedQuery("UPDATE workflow_instances SET definition_scope_key = $1, scope_key = $2, plan_hash = $3"
+                        + " WHERE id = $4")
+                .execute(Tuple.of(definitionScopeKey, startScopeKey, planHash, id.value()))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(10, TimeUnit.SECONDS);
+    }
+
     // --- Graphs ---
 
     /**

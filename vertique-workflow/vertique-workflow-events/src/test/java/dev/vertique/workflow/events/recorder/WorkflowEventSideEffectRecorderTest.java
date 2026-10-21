@@ -92,14 +92,16 @@ class WorkflowEventSideEffectRecorderTest {
             UUID taskId = UUID.randomUUID();
             Instant now = Instant.parse("2026-05-09T10:00:00Z");
             WorkflowInstanceId workflowId = new WorkflowInstanceId(instanceId);
-            WorkflowSideEffectIntent.Correlation correlation =
-                    WorkflowSideEffectIntent.Correlation.singlePath(workflowId, 5L, "order-fulfillment", "review");
+            WorkflowSideEffectIntent.Correlation correlation = WorkflowSideEffectIntent.Correlation.singlePath(
+                    workflowId, 5L, "order-fulfillment", "acme", "tenant-1", "review");
 
             WorkflowEventIntent eventIntent = new WorkflowEventIntent(
                     WorkflowEventType.TASK_CREATED,
                     workflowId,
                     "order-fulfillment",
                     1L,
+                    "acme",
+                    "tenant-1",
                     null,
                     "BK-12345",
                     now,
@@ -269,7 +271,21 @@ class WorkflowEventSideEffectRecorderTest {
     private static WorkflowEventIntent minimalEventIntent(WorkflowEventType eventType) {
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
         return new WorkflowEventIntent(
-                eventType, workflowId, "test-def", 1L, null, null, Instant.now(), 1L, null, null, null, null, null);
+                eventType,
+                workflowId,
+                "test-def",
+                1L,
+                "acme",
+                "tenant-1",
+                null,
+                null,
+                Instant.now(),
+                1L,
+                null,
+                null,
+                null,
+                null,
+                null);
     }
 
     /**
@@ -279,7 +295,7 @@ class WorkflowEventSideEffectRecorderTest {
      */
     private static WorkflowSideEffectIntent.Correlation minimalCorrelation() {
         return WorkflowSideEffectIntent.Correlation.singlePath(
-                new WorkflowInstanceId(UUID.randomUUID()), 1L, "test-def", "test-step");
+                new WorkflowInstanceId(UUID.randomUUID()), 1L, "test-def", "acme", "tenant-1", "test-step");
     }
 
     /**
@@ -295,6 +311,8 @@ class WorkflowEventSideEffectRecorderTest {
                 eventIntent.workflowId(),
                 1L,
                 eventIntent.definitionId(),
+                eventIntent.definitionScopeKey(),
+                eventIntent.scopeKey(),
                 eventIntent.stepId() != null ? eventIntent.stepId() : "test-step");
         return new WorkflowSideEffectIntent(IntentKind.WORKFLOW_EVENT, null, eventIntent, headers, correlation);
     }

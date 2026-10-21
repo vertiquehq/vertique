@@ -35,7 +35,21 @@ class WorkflowEventIntentTest {
         void nullEventType() {
             assertThatNullPointerException()
                     .isThrownBy(() -> new WorkflowEventIntent(
-                            null, WORKFLOW_ID, "def-1", 1L, null, null, OCCURRED_AT, 0L, null, null, null, null, null))
+                            null,
+                            WORKFLOW_ID,
+                            "def-1",
+                            1L,
+                            "acme",
+                            "tenant-1",
+                            null,
+                            null,
+                            OCCURRED_AT,
+                            0L,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null))
                     .withMessageContaining("eventType");
         }
 
@@ -48,6 +62,8 @@ class WorkflowEventIntentTest {
                             null,
                             "def-1",
                             1L,
+                            "acme",
+                            "tenant-1",
                             null,
                             null,
                             OCCURRED_AT,
@@ -69,6 +85,8 @@ class WorkflowEventIntentTest {
                             WORKFLOW_ID,
                             null,
                             1L,
+                            "acme",
+                            "tenant-1",
                             null,
                             null,
                             OCCURRED_AT,
@@ -82,6 +100,52 @@ class WorkflowEventIntentTest {
         }
 
         @Test
+        @DisplayName("null definitionScopeKey throws NullPointerException")
+        void nullDefinitionScopeKey() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> new WorkflowEventIntent(
+                            WorkflowEventType.WORKFLOW_STARTED,
+                            WORKFLOW_ID,
+                            "def-1",
+                            1L,
+                            null,
+                            "tenant-1",
+                            null,
+                            null,
+                            OCCURRED_AT,
+                            0L,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null))
+                    .withMessageContaining("definitionScopeKey");
+        }
+
+        @Test
+        @DisplayName("null scopeKey throws NullPointerException")
+        void nullScopeKey() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> new WorkflowEventIntent(
+                            WorkflowEventType.WORKFLOW_STARTED,
+                            WORKFLOW_ID,
+                            "def-1",
+                            1L,
+                            "acme",
+                            null,
+                            null,
+                            null,
+                            OCCURRED_AT,
+                            0L,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null))
+                    .withMessageContaining("scopeKey");
+        }
+
+        @Test
         @DisplayName("null occurredAt throws NullPointerException")
         void nullOccurredAt() {
             assertThatNullPointerException()
@@ -90,6 +154,8 @@ class WorkflowEventIntentTest {
                             WORKFLOW_ID,
                             "def-1",
                             1L,
+                            "acme",
+                            "tenant-1",
                             null,
                             null,
                             null,
@@ -120,6 +186,8 @@ class WorkflowEventIntentTest {
                     WORKFLOW_ID,
                     "def-1",
                     1L,
+                    "acme",
+                    "tenant-1",
                     null,
                     null,
                     OCCURRED_AT,
@@ -144,6 +212,8 @@ class WorkflowEventIntentTest {
                     WORKFLOW_ID,
                     "def-1",
                     1L,
+                    "acme",
+                    "tenant-1",
                     null,
                     null,
                     OCCURRED_AT,
@@ -165,6 +235,8 @@ class WorkflowEventIntentTest {
                     WORKFLOW_ID,
                     "def-1",
                     1L,
+                    "acme",
+                    "tenant-1",
                     null,
                     null,
                     OCCURRED_AT,

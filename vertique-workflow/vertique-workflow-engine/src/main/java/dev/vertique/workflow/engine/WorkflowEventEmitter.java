@@ -78,6 +78,8 @@ final class WorkflowEventEmitter {
                 inst.id(),
                 inst.definitionId(),
                 inst.definitionVersion(),
+                inst.definitionScopeKey(),
+                inst.scopeKey(),
                 inst.subjectRef(),
                 inst.businessKey(),
                 clock.instant(),
@@ -93,7 +95,12 @@ final class WorkflowEventEmitter {
                 eventIntent,
                 Map.of(),
                 WorkflowSideEffectIntent.Correlation.singlePath(
-                        inst.id(), sequence, inst.definitionId(), stepId != null ? stepId : inst.currentStepId()));
+                        inst.id(),
+                        sequence,
+                        inst.definitionId(),
+                        inst.definitionScopeKey(),
+                        inst.scopeKey(),
+                        stepId != null ? stepId : inst.currentStepId()));
         return recorders.route(intent, tx).mapEmpty();
     }
 

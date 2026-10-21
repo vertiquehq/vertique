@@ -76,6 +76,19 @@ public final class WorkflowEventEnvelope {
     private final long definitionVersion;
 
     /**
+     * Scope of the workflow definition the instance is pinned to. Null in envelopes written before
+     * the field existed.
+     */
+    @Nullable
+    private final String definitionScopeKey;
+
+    /**
+     * Scope the instance was started in. Null in envelopes written before the field existed.
+     */
+    @Nullable
+    private final String scopeKey;
+
+    /**
      * Optional reference to the domain entity that the workflow is acting on.
      */
     @Nullable
