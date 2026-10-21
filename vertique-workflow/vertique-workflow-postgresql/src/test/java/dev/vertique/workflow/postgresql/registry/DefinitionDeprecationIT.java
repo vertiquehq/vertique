@@ -61,16 +61,16 @@ import org.junit.jupiter.params.provider.EnumSource;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionDeprecationIT {
 
-    @WorkflowContract(definitionId = "deprecation-it-active-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface ActiveCase extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "deprecation-it-superseded-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface SupersededCase extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "deprecation-it-transition-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface TransitionCase extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "deprecation-it-owner-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface OwnerCaseV1 extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()

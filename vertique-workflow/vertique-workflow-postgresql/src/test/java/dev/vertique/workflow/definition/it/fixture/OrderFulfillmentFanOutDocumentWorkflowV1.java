@@ -17,7 +17,7 @@ import io.vertx.core.Future;
  * definition. It is distinct from {@link OrderFulfillmentDocumentWorkflowV1} (which is for the
  * linear saga in Slice H) because it declares the signals of a different document.
  */
-@WorkflowContract(definitionId = "order-fulfillment-fanout-doc", definitionVersion = 1)
+@WorkflowContract
 public interface OrderFulfillmentFanOutDocumentWorkflowV1 {
     @WorkflowSignal("fraud.screened.doc")
     Future<Void> fraudScreenedDoc(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);

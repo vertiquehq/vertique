@@ -82,34 +82,34 @@ import org.junit.jupiter.params.provider.EnumSource;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionRetirementIT {
 
-    @WorkflowContract(definitionId = "retirement-it-pinned-doc", definitionVersion = 7)
+    @WorkflowContract
     public interface PinnedCaseV7 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-count-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface CountCase extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-candidate-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface CandidateCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-owner-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface OwnerCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-static-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface StaticCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-restore-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface RestoreCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-replaced-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface ReplacedCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-unknown-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface UnknownCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-default-isolation-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface DefaultIsolationCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-candidate-pins-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface CandidatePinsCaseV1 extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()
@@ -697,49 +697,49 @@ public class DefinitionRetirementIT {
         }
     }
 
-    @WorkflowContract(definitionId = "retirement-it-stale-pin-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface StalePinCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-stale-gone-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface StaleGoneCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-retry-first-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface RetryFirstCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-retry-snapshot-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface RetrySnapshotCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-retry-rollback-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface RetryRollbackCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-migrate-admit-doc", definitionVersion = 2)
+    @WorkflowContract
     public interface MigrateAdmitCaseV2 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-snapshot-start-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface SnapshotStartCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-snapshot-migrate-doc", definitionVersion = 2)
+    @WorkflowContract
     public interface SnapshotMigrateCaseV2 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-snapshot-eligible-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface SnapshotEligibleCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-concurrent-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface ConcurrentCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-resurrect-race-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface ResurrectRaceCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-autocommit-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface AutocommitCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-timeout-advisory-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface TimeoutAdvisoryCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-timeout-row-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface TimeoutRowCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "retirement-it-timeout-static-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface TimeoutStaticCaseV1 extends OrderDocumentSignals {}
 
     @Test

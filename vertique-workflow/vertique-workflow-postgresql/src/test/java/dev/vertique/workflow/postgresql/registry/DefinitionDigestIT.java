@@ -49,10 +49,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionDigestIT {
 
-    @WorkflowContract(definitionId = "digest-guarded-read-active-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface ActiveCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "digest-guarded-read-edited-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface EditedCaseV1 extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()

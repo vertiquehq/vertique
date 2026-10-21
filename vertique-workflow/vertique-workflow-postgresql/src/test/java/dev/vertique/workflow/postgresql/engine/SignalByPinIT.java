@@ -92,7 +92,7 @@ public class SignalByPinIT {
     }
 
     /** Contract {@code approval}: declares both signals; the pinned version decides which it awaits. */
-    @WorkflowContract(value = "approval", definitionId = "purchase-approval", definitionVersion = 1)
+    @WorkflowContract("approval")
     interface ApprovalContract {
 
         @WorkflowStart
@@ -109,7 +109,7 @@ public class SignalByPinIT {
     }
 
     /** Contract {@code other}: declares {@code approve} with the same payload type as {@code approval}. */
-    @WorkflowContract(value = "other", definitionId = "refund-flow", definitionVersion = 1)
+    @WorkflowContract("other")
     interface OtherContract {
 
         @WorkflowStart

@@ -17,5 +17,5 @@ import dev.vertique.workflow.contract.WorkflowContract;
  * one contract, since every version of a definition names the same contract. Each IT uses its own
  * Dagger component and its own database table state.
  */
-@WorkflowContract(definitionId = "order-fulfillment-doc", definitionVersion = 1)
+@WorkflowContract
 public interface OrderFulfillmentDocumentWorkflowV1 extends OrderDocumentSignals {}

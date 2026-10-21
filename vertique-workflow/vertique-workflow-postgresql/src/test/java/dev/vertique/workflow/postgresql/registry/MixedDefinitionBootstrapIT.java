@@ -80,79 +80,79 @@ import org.junit.jupiter.params.provider.EnumSource;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class MixedDefinitionBootstrapIT {
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-text-drift-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface TextDriftCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-code-order", definitionVersion = 1)
+    @WorkflowContract
     public interface OrderCode {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-rehash-pinned", definitionVersion = 1)
+    @WorkflowContract
     public interface PinnedRehashCodeV1 {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-rehash-free", definitionVersion = 1)
+    @WorkflowContract
     public interface FreeRehashCodeV1 {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-static-equal", definitionVersion = 1)
+    @WorkflowContract
     public interface StaticEqualV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-static-drift", definitionVersion = 1)
+    @WorkflowContract
     public interface StaticDriftV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-static-kind", definitionVersion = 1)
+    @WorkflowContract
     public interface StaticKindV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-static-held", definitionVersion = 1)
+    @WorkflowContract
     public interface StaticHeldV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-code-held", definitionVersion = 1)
+    @WorkflowContract
     public interface CodeHeld extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-stale-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface StaleDoc extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-stale-claimed-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface StaleClaimedV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-stale-near-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface StaleNearV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-stale-code", definitionVersion = 1)
+    @WorkflowContract
     public interface StaleCodeV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-tenant-vs-code", definitionVersion = 1)
+    @WorkflowContract
     public interface TenantVsCodeV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-rolling-rehash", definitionVersion = 1)
+    @WorkflowContract
     public interface Rolling {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-timeout-code", definitionVersion = 1)
+    @WorkflowContract
     public interface TimeoutCodeV1 {}
 
-    @WorkflowContract(definitionId = "tenant-active:mixed-bootstrap-tenant-active", definitionVersion = 1)
+    @WorkflowContract
     public interface TenantActiveV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "tenant-superseded:mixed-bootstrap-tenant-superseded", definitionVersion = 1)
+    @WorkflowContract
     public interface TenantSuperseded extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "tenant-deprecated:mixed-bootstrap-tenant-deprecated", definitionVersion = 1)
+    @WorkflowContract
     public interface TenantDeprecated extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-tenant-shared", definitionVersion = 1)
+    @WorkflowContract
     public interface TenantSharedV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "tenant-candidate:mixed-bootstrap-tenant-candidate", definitionVersion = 1)
+    @WorkflowContract
     public interface TenantCandidateV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-packaged-deprecated", definitionVersion = 1)
+    @WorkflowContract
     public interface PackagedDeprecated extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-rehash-isolation", definitionVersion = 1)
+    @WorkflowContract
     public interface RehashIsolationCodeV1 {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-retired-code", definitionVersion = 1)
+    @WorkflowContract
     public interface RetiredCode {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-key-rules\u0007id", definitionVersion = 7)
+    @WorkflowContract
     public interface KeyRulesCodeV7 {}
 
     static final PostgresContainer db = new PostgresContainer()

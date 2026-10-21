@@ -72,46 +72,46 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionReinstatementIT {
 
-    @WorkflowContract(definitionId = "reinstatement-it-code", definitionVersion = 1)
+    @WorkflowContract
     public interface ReinstatedCodeV1 {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-missing-code", definitionVersion = 2)
+    @WorkflowContract
     public interface MissingCodeV2 {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-drift-code", definitionVersion = 1)
+    @WorkflowContract
     public interface DriftCodeV1 {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-owner-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface OwnerDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface ReinstatedDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-drift-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface DriftDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-rollback", definitionVersion = 1)
+    @WorkflowContract
     public interface Rollback {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-preserved", definitionVersion = 1)
+    @WorkflowContract
     public interface Preserved {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-stale-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface StaleDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-isolation", definitionVersion = 1)
+    @WorkflowContract
     public interface IsolationDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-reconcile-isolation", definitionVersion = 1)
+    @WorkflowContract
     public interface ReconcileIsolationDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-store-owner", definitionVersion = 1)
+    @WorkflowContract
     public interface StoreOwnerDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-store-pairs", definitionVersion = 1)
+    @WorkflowContract
     public interface StorePairsDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "reinstatement-it-lower-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface LowerDoc extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()

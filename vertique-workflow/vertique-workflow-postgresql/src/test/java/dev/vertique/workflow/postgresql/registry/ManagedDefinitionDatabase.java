@@ -456,7 +456,7 @@ public final class ManagedDefinitionDatabase {
      * The contract of the contributed probe workflow, shared by the document version 2 that the retirement
      * scenarios register under the same definition id.
      */
-    @WorkflowContract(definitionId = "definition-policy-code", definitionVersion = 2)
+    @WorkflowContract
     private interface RegistryProbeContract extends OrderDocumentSignals {}
 
     private static final class RegistryProbeWorkflow

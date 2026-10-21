@@ -76,37 +76,37 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionOwnershipIT {
 
-    @WorkflowContract(definitionId = "ownership-race-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface RaceV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "ownership-held-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface HeldV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "tenant-a:ownership-v3-first-doc", definitionVersion = 3)
+    @WorkflowContract
     public interface V3FirstVersion3 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "tenant-a:ownership-v3-first-doc", definitionVersion = 4)
+    @WorkflowContract
     public interface V3FirstVersion4 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "tenant-a:ownership-v4-first-doc", definitionVersion = 3)
+    @WorkflowContract
     public interface V4FirstVersion3 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "tenant-a:ownership-v4-first-doc", definitionVersion = 4)
+    @WorkflowContract
     public interface V4FirstVersion4 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "ownership-stale-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface StaleV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "ownership-candidates-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface CandidatesV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "ownership-reconcile-held-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface ReconcileHeldV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "ownership-reconcile-fresh-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface ReconcileFreshV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "ownership-reconcile-race-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface ReconcileRaceV1 extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()

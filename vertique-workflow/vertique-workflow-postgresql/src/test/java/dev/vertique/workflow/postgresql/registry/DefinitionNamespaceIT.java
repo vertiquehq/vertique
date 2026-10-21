@@ -47,22 +47,22 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionNamespaceIT {
 
-    @WorkflowContract(definitionId = "namespace-load-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface UnprefixedV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "t1:namespace-load-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface NamespacedV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "namespace-squatter-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface SquatterV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "namespace-legacy-candidate-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface LegacyCandidateV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "namespace-legacy-active-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface LegacyActiveV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "namespace-legacy-deprecated-doc", definitionVersion = 1)
+    @WorkflowContract
     public interface LegacyDeprecatedV1 extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()

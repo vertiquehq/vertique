@@ -71,19 +71,19 @@ import org.junit.jupiter.params.provider.MethodSource;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionPropagationIT {
 
-    @WorkflowContract(definitionId = "propagation-it-lifecycle", definitionVersion = 1)
+    @WorkflowContract
     public interface LifecycleDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "propagation-it-deprecated-first", definitionVersion = 1)
+    @WorkflowContract
     public interface DeprecatedFirstDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "propagation-it-oversized", definitionVersion = 1)
+    @WorkflowContract
     public interface OversizedDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "propagation-it-owner", definitionVersion = 1)
+    @WorkflowContract
     public interface OwnerDocV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "propagation-it-code", definitionVersion = 1)
+    @WorkflowContract
     public interface PeerCode {}
 
     /** A contract that no document or deployed code of these tests names. */
