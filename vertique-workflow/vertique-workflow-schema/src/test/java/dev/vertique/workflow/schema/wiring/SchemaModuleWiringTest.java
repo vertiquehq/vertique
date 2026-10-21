@@ -43,7 +43,7 @@ class SchemaModuleWiringTest {
 
     record Note(String text) {}
 
-    @WorkflowContract(definitionId = "wired-note", definitionVersion = 1)
+    @WorkflowContract
     interface WiredNoteContract {}
 
     static WorkflowDefinition<State, WiredNoteContract> definition(Class<?> decisionType) {

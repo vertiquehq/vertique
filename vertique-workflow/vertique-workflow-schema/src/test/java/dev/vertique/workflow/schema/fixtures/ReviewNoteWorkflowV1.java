@@ -6,5 +6,5 @@ package dev.vertique.workflow.schema.fixtures;
 import dev.vertique.workflow.contract.WorkflowContract;
 
 /** Contract of the document-defined review workflow. */
-@WorkflowContract(definitionId = "review-note", definitionVersion = 1)
+@WorkflowContract
 public interface ReviewNoteWorkflowV1 {}
