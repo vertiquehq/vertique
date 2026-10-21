@@ -120,7 +120,7 @@ class DefinitionCacheScopeTest {
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessageContaining("no entry");
         cache.resetToCandidate(ID, 1);
-        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.ACTIVATING);
+        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.PUBLISHING);
         assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.CANDIDATE);
 
         // When the legacy store call adds the global candidate for the same id and version
@@ -144,62 +144,63 @@ class DefinitionCacheScopeTest {
         // When the unscoped claim, reset and activation run while tenant a is still activating
         // Then only the global entry moves
         assertThat(cache.tryClaimForActivation(ID, 1)).isTrue();
-        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.ACTIVATING);
-        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.ACTIVATING);
+        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.PUBLISHING);
+        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.PUBLISHING);
         assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.CANDIDATE);
         cache.resetToCandidate(ID, 1);
         assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.CANDIDATE);
-        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.ACTIVATING);
+        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.PUBLISHING);
         assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(cache.tryClaimForActivation(ID, 1)).isTrue();
         assertThat(cache.markActive(ID, 1)).isTrue();
-        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.ACTIVE);
-        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.ACTIVATING);
+        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.AVAILABLE);
+        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.PUBLISHING);
         assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(cache.list()).singleElement().satisfies(ref -> {
-            assertThat(ref.status()).isEqualTo(ActivationStatus.ACTIVE);
+            assertThat(ref.status()).isEqualTo(ActivationStatus.AVAILABLE);
             assertThat(ref.planHash()).isEqualTo(GLOBAL_HASH);
         });
 
         // When the scoped claim, reset and activation run for the tenants
         // Then the global entry and the other tenant never change
         assertThat(cache.markActive(TENANT_A_V1)).isTrue();
-        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.ACTIVE);
-        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.ACTIVE);
+        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.AVAILABLE);
+        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.AVAILABLE);
         assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(cache.tryClaimForActivation(TENANT_B_V1)).isTrue();
-        assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.ACTIVATING);
+        assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.PUBLISHING);
         cache.resetToCandidate(TENANT_B_V1);
         assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.CANDIDATE);
-        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.ACTIVE);
-        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.ACTIVE);
+        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.AVAILABLE);
+        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.AVAILABLE);
         assertThat(cache.tryClaimForActivation(TENANT_B_V1)).isTrue();
         assertThat(cache.markActive(TENANT_B_V1)).isTrue();
 
         // When tenant a activates a higher version
-        // Then only tenant a's lower version is superseded
+        // Then every earlier version stays available beside it
         cache.candidate(record(TENANT_A_V2, tenantAV2, DefinitionStatus.CANDIDATE), tenantAV2);
         assertThat(cache.tryClaimForActivation(TENANT_A_V2)).isTrue();
         assertThat(cache.markActive(TENANT_A_V2)).isTrue();
-        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.SUPERSEDED);
-        assertThat(cache.currentStatus(TENANT_A_V2)).isEqualTo(ActivationStatus.ACTIVE);
-        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.ACTIVE);
-        assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.ACTIVE);
+        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.AVAILABLE);
+        assertThat(cache.currentStatus(TENANT_A_V2)).isEqualTo(ActivationStatus.AVAILABLE);
+        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.AVAILABLE);
+        assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.AVAILABLE);
 
-        // When the legacy members activate a higher global version
-        // Then only the global lower version is superseded
+        // When the legacy members publish a higher global version
+        // Then the global lower version stays available beside it
         cache.storeCandidate(globalV2);
         cache.metadata(record(GLOBAL_V2, globalV2, DefinitionStatus.CANDIDATE));
         assertThat(cache.tryClaimForActivation(ID, 2)).isTrue();
         assertThat(cache.markActive(ID, 2)).isTrue();
-        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.SUPERSEDED);
-        assertThat(cache.currentStatus(ID, 2)).isEqualTo(ActivationStatus.ACTIVE);
-        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.SUPERSEDED);
-        assertThat(cache.currentStatus(TENANT_A_V2)).isEqualTo(ActivationStatus.ACTIVE);
-        assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.ACTIVE);
+        assertThat(cache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.AVAILABLE);
+        assertThat(cache.currentStatus(ID, 2)).isEqualTo(ActivationStatus.AVAILABLE);
+        assertThat(cache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.AVAILABLE);
+        assertThat(cache.currentStatus(TENANT_A_V2)).isEqualTo(ActivationStatus.AVAILABLE);
+        assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.AVAILABLE);
         assertThat(cache.list())
                 .extracting(CompiledDefinitionRef::definitionVersion, CompiledDefinitionRef::status)
-                .containsExactlyInAnyOrder(tuple(1L, ActivationStatus.SUPERSEDED), tuple(2L, ActivationStatus.ACTIVE));
+                .containsExactlyInAnyOrder(
+                        tuple(1L, ActivationStatus.AVAILABLE), tuple(2L, ActivationStatus.AVAILABLE));
         assertThat(cache.list()).allSatisfy(ref -> assertThat(ref.source()).isEqualTo(GLOBAL_SOURCE));
 
         // Then the scoped metadata views return exactly each scope's rows with its own provenance
@@ -209,10 +210,10 @@ class DefinitionCacheScopeTest {
         assertThat(records(cache, "tenant-a", null)).containsExactlyInAnyOrder(TENANT_A_V1, TENANT_A_V2);
         assertThat(records(cache, "tenant-b", null)).containsExactly(TENANT_B_V1);
         assertThat(records(cache, "tenant-c", null)).isEmpty();
-        assertThat(records(cache, null, Set.of(DefinitionStatus.ACTIVE)))
-                .containsExactlyInAnyOrder(GLOBAL_V2, TENANT_A_V2, TENANT_B_V1);
-        assertThat(records(cache, WorkflowScopes.DEFAULT, Set.of(DefinitionStatus.SUPERSEDED)))
-                .containsExactly(GLOBAL_V1);
+        assertThat(records(cache, null, Set.of(DefinitionStatus.AVAILABLE)))
+                .containsExactlyInAnyOrder(GLOBAL_V1, GLOBAL_V2, TENANT_A_V1, TENANT_A_V2, TENANT_B_V1);
+        assertThat(records(cache, WorkflowScopes.DEFAULT, Set.of(DefinitionStatus.AVAILABLE)))
+                .containsExactlyInAnyOrder(GLOBAL_V1, GLOBAL_V2);
         assertThat(records(cache, "tenant-a", Set.of())).isEmpty();
         assertThat(cache.sourceMetadata(ID, 1)).contains(GLOBAL_SOURCE);
         assertThat(cache.sourceMetadata(TENANT_A_V1)).contains(TENANT_A_SOURCE);
@@ -241,22 +242,22 @@ class DefinitionCacheScopeTest {
                 .contains(new SourceMetadata("tenant-b-reloaded", "uri:tenant-b-2", "rev-b-2", null, null, LOADED));
         assertThat(cache.sourceMetadata(TENANT_A_V1)).contains(TENANT_A_SOURCE);
         assertThat(cache.sourceMetadata(ID, 1)).contains(GLOBAL_SOURCE);
-        assertThat(cache.currentStatus(ID, 2)).isEqualTo(ActivationStatus.ACTIVE);
-        assertThat(cache.currentStatus(TENANT_A_V2)).isEqualTo(ActivationStatus.ACTIVE);
+        assertThat(cache.currentStatus(ID, 2)).isEqualTo(ActivationStatus.AVAILABLE);
+        assertThat(cache.currentStatus(TENANT_A_V2)).isEqualTo(ActivationStatus.AVAILABLE);
 
         // When the loader restores an active tenant row and receives metadata for another tenant
         WorkflowDefinitionStore restored = new WorkflowDefinitionStore();
         DocumentDefinitionLoader loader = new DocumentDefinitionLoader(null, null, restored, Optional.empty());
         restored.storeCandidate(globalV1);
         restored.metadata(record(GLOBAL_V1, globalV1, DefinitionStatus.CANDIDATE));
-        loader.onRestored(record(TENANT_A_V1, tenantAV1, DefinitionStatus.ACTIVE), tenantAV1.definition());
+        loader.onRestored(record(TENANT_A_V1, tenantAV1, DefinitionStatus.AVAILABLE), tenantAV1.definition());
         loader.onMetadata(record(TENANT_B_V1, tenantBV1, DefinitionStatus.CANDIDATE));
 
         // Then the restored tenant row is cached under its own key with its own provenance
         assertThat(restored.get(TENANT_A_V1).orElseThrow().compiled().planHash())
                 .isEqualTo(TENANT_A_HASH);
         assertThat(restored.get(TENANT_A_V1).orElseThrow().compiled().source()).isEqualTo(TENANT_A_SOURCE);
-        assertThat(restored.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.ACTIVE);
+        assertThat(restored.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.AVAILABLE);
         assertThat(restored.sourceMetadata(TENANT_A_V1)).contains(TENANT_A_SOURCE);
 
         // And the metadata-only tenant has a metadata row but no executable cache entry
@@ -310,10 +311,10 @@ class DefinitionCacheScopeTest {
                 .containsExactlyInAnyOrder(GLOBAL_V1, TENANT_A_V1, TENANT_B_V1);
 
         // When one tenant activates through the service
-        ServiceTestHelpers.await(service.activate(TENANT_A_V1));
+        ServiceTestHelpers.await(service.publish(TENANT_A_V1));
 
         // Then only that tenant's cache entry becomes active
-        assertThat(serviceCache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.ACTIVE);
+        assertThat(serviceCache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.AVAILABLE);
         assertThat(serviceCache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(serviceCache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(serviceCache.list()).singleElement().satisfies(ref -> assertThat(ref.status())

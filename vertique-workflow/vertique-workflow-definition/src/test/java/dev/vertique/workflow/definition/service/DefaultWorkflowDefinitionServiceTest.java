@@ -68,14 +68,14 @@ import org.mockito.Mockito;
  * Verifies {@link DefaultWorkflowDefinitionService}:
  * <ul>
  *   <li>{@link WorkflowDefinitionService#load} then
- *       {@link WorkflowDefinitionService#activate} succeeds and makes the definition
+ *       {@link WorkflowDefinitionService#publish} succeeds and makes the definition
  *       resolvable via the registry.</li>
  *   <li>A load failure with invalid YAML leaves the store untouched; a prior active version
  *       remains accessible.</li>
- *   <li>{@link WorkflowDefinitionService#activate} without prior load fails its Future.</li>
+ *   <li>{@link WorkflowDefinitionService#publish} without prior load fails its Future.</li>
  *   <li>Two distinct definitionIds loaded and activated concurrently both appear in the
  *       registry.</li>
- *   <li>A {@link RuntimeException} from {@code registry.register()} resets the ACTIVATING claim
+ *   <li>A {@link RuntimeException} from {@code registry.register()} resets the PUBLISHING claim
  *       back to CANDIDATE so the caller can retry.</li>
  * </ul>
  */
@@ -219,7 +219,7 @@ class DefaultWorkflowDefinitionServiceTest {
                 "acme", yamlFor("acme:order", 1, SvcScopedOrderContract.class), DocumentFormat.YAML, testMeta()));
 
         // When: the loaded key is activated
-        ServiceTestHelpers.await(service.activate(acmeKey));
+        ServiceTestHelpers.await(service.publish(acmeKey));
 
         // Then: the registry holds the definition under the acme key and reports that scope
         assertThat(registry.find(acmeKey)).hasValueSatisfying(registered -> assertThat(registered.definitionScopeKey())
@@ -228,6 +228,30 @@ class DefaultWorkflowDefinitionServiceTest {
         // and: it holds nothing under the default scope
         assertThat(registry.find(new DefinitionKey(WorkflowScopes.DEFAULT, "acme:order", 1L)))
                 .isEmpty();
+    }
+
+    @Test
+    @DisplayName("publishing without a durable store makes the candidate available in memory")
+    void publishWithoutStoreMakesCandidateAvailable() {
+        // Given: a service without a durable store and a document loaded as a candidate
+        DefinitionKey key = key("svc-order", 1);
+        CompiledDefinitionRef loaded = ServiceTestHelpers.await(service.load(
+                WorkflowScopes.DEFAULT,
+                yamlFor("svc-order", 1, SvcOrderContract.class),
+                DocumentFormat.YAML,
+                testMeta()));
+        assertThat(loaded.status()).isEqualTo(ActivationStatus.CANDIDATE);
+        assertThat(registry.find(key)).isEmpty();
+
+        // When: the candidate is published
+        ServiceTestHelpers.await(service.publish(key));
+
+        // Then: the reference is available and the registry resolves the key
+        assertThat(store.list())
+                .filteredOn(ref -> ref.definitionId().equals("svc-order"))
+                .singleElement()
+                .satisfies(ref -> assertThat(ref.status()).isEqualTo(ActivationStatus.AVAILABLE));
+        assertThat(registry.resolve(key).plan().planHash()).isEqualTo(loaded.planHash());
     }
 
     static Stream<Arguments> invalidScopeKeys() {
@@ -339,7 +363,7 @@ class DefaultWorkflowDefinitionServiceTest {
                     yamlFor("svc-order", 1, SvcOrderContract.class),
                     DocumentFormat.YAML,
                     testMeta()));
-            ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
+            ServiceTestHelpers.await(service.publish(key("svc-order", 1)));
 
             RuntimeWorkflow rw = registry.resolveCurrent("svc-order");
             assertThat(rw.plan().definitionId()).isEqualTo("svc-order");
@@ -349,7 +373,7 @@ class DefaultWorkflowDefinitionServiceTest {
             List<WorkflowDefinitionRecord> records = ServiceTestHelpers.await(service.list(globalFilter()));
             assertThat(records).hasSize(1);
             assertThat(records.get(0).key()).isEqualTo(key("svc-order", 1));
-            assertThat(records.get(0).status()).isEqualTo(DefinitionStatus.ACTIVE);
+            assertThat(records.get(0).status()).isEqualTo(DefinitionStatus.AVAILABLE);
             assertThatThrownBy(records::clear).isInstanceOf(UnsupportedOperationException.class);
 
             ServiceTestHelpers.await(service.load(
@@ -377,7 +401,7 @@ class DefaultWorkflowDefinitionServiceTest {
                     yamlFor("svc-order", 1, SvcOrderContract.class),
                     DocumentFormat.YAML,
                     testMeta()));
-            ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
+            ServiceTestHelpers.await(service.publish(key("svc-order", 1)));
             assertThat(registry.resolveCurrent("svc-order").plan().definitionVersion())
                     .isEqualTo(1L);
 
@@ -402,39 +426,38 @@ class DefaultWorkflowDefinitionServiceTest {
         @Test
         @DisplayName("activate without prior load throws WorkflowDefinitionException")
         void activateWithoutLoadThrows() {
-            assertThatThrownBy(() -> ServiceTestHelpers.await(service.activate(key("svc-order", 99))))
+            assertThatThrownBy(() -> ServiceTestHelpers.await(service.publish(key("svc-order", 99))))
                     .isInstanceOf(WorkflowDefinitionException.class)
                     .hasMessageContaining("not found in the store");
         }
     }
 
     @Nested
-    @DisplayName("activate lower version when higher already active")
-    class ActivateLowerVersionAfterHigher {
+    @DisplayName("publish lower version when higher already available")
+    class PublishLowerVersionAfterHigher {
 
         @Test
-        @DisplayName(
-                "load+activate v2, then load+activate v1 — registry resolves v2, store shows v2 ACTIVE v1 SUPERSEDED")
-        void activateLowerVersionAfterHigherIsSuperseded() {
+        @DisplayName("load+publish v2, then load+publish v1 — registry resolves v2, store shows both AVAILABLE")
+        void publishLowerVersionAfterHigherLeavesBothAvailable() {
             ServiceTestHelpers.await(service.load(
                     WorkflowScopes.DEFAULT,
                     yamlFor("svc-order", 2, SvcOrderContract.class),
                     DocumentFormat.YAML,
                     testMeta()));
-            ServiceTestHelpers.await(service.activate(key("svc-order", 2)));
+            ServiceTestHelpers.await(service.publish(key("svc-order", 2)));
 
             ServiceTestHelpers.await(service.load(
                     WorkflowScopes.DEFAULT,
                     yamlFor("svc-order", 1, SvcOrderContract.class),
                     DocumentFormat.YAML,
                     testMeta()));
-            ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
+            ServiceTestHelpers.await(service.publish(key("svc-order", 1)));
 
             // Registry must return the higher (v2) version
             assertThat(registry.resolveCurrent("svc-order").plan().definitionVersion())
                     .isEqualTo(2L);
 
-            // Store must reflect: v2 ACTIVE, v1 SUPERSEDED
+            // Store must reflect: both versions AVAILABLE
             List<WorkflowDefinitionRecord> records = ServiceTestHelpers.await(service.list(globalFilter()));
             assertThat(records).hasSize(2);
             WorkflowDefinitionRecord v2Ref = records.stream()
@@ -445,8 +468,8 @@ class DefaultWorkflowDefinitionServiceTest {
                     .filter(r -> r.key().definitionVersion() == 1)
                     .findFirst()
                     .orElseThrow();
-            assertThat(v2Ref.status()).isEqualTo(DefinitionStatus.ACTIVE);
-            assertThat(v1Ref.status()).isEqualTo(DefinitionStatus.SUPERSEDED);
+            assertThat(v2Ref.status()).isEqualTo(DefinitionStatus.AVAILABLE);
+            assertThat(v1Ref.status()).isEqualTo(DefinitionStatus.AVAILABLE);
         }
     }
 
@@ -466,7 +489,7 @@ class DefaultWorkflowDefinitionServiceTest {
                         yamlFor("svc-order", 1, SvcOrderContract.class),
                         DocumentFormat.YAML,
                         testMeta()));
-                ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
+                ServiceTestHelpers.await(service.publish(key("svc-order", 1)));
                 return null;
             }));
             futures.add(pool.submit(() -> {
@@ -475,7 +498,7 @@ class DefaultWorkflowDefinitionServiceTest {
                         yamlFor("svc-item", 1, SvcItemV1Contract.class),
                         DocumentFormat.YAML,
                         testMeta()));
-                ServiceTestHelpers.await(service.activate(key("svc-item", 1)));
+                ServiceTestHelpers.await(service.publish(key("svc-item", 1)));
                 return null;
             }));
 
@@ -500,7 +523,7 @@ class DefaultWorkflowDefinitionServiceTest {
 
         @Test
         @DisplayName(
-                "8 threads calling activate for same key — exactly one wins; final state is ACTIVE in registry and store")
+                "8 threads calling activate for same key — exactly one wins; final state is AVAILABLE in registry and store")
         void concurrentActivateSameKeySerialized() throws Exception {
             // Load the candidate once
             ServiceTestHelpers.await(service.load(
@@ -516,7 +539,7 @@ class DefaultWorkflowDefinitionServiceTest {
             for (int i = 0; i < numThreads; i++) {
                 outcomes.add(pool.submit(() -> {
                     try {
-                        ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
+                        ServiceTestHelpers.await(service.publish(key("svc-order", 1)));
                         return "ok";
                     } catch (Exception ex) {
                         return "err:" + ex.getMessage();
@@ -534,7 +557,7 @@ class DefaultWorkflowDefinitionServiceTest {
                 if ("ok".equals(result)) {
                     okCount++;
                 } else {
-                    // Error messages are allowed (concurrent ACTIVATING detection) but NEVER
+                    // Error messages are allowed (concurrent PUBLISHING detection) but NEVER
                     // the registry-level "already registered" duplicate error
                     assertThat(result).doesNotContain("already registered");
                 }
@@ -543,18 +566,18 @@ class DefaultWorkflowDefinitionServiceTest {
             // At least one thread must have succeeded
             assertThat(okCount).isGreaterThanOrEqualTo(1);
 
-            // Final state: exactly one ACTIVE in store; registry resolves the definition
+            // Final state: exactly one AVAILABLE in store; registry resolves the definition
             assertThat(registry.resolveCurrent("svc-order").plan().definitionId())
                     .isEqualTo("svc-order");
             long activeCount = ServiceTestHelpers.await(service.list(globalFilter())).stream()
-                    .filter(r -> r.status() == DefinitionStatus.ACTIVE)
+                    .filter(r -> r.status() == DefinitionStatus.AVAILABLE)
                     .count();
             assertThat(activeCount).isEqualTo(1);
         }
     }
 
     @Nested
-    @DisplayName("activate — ACTIVATING reset on RuntimeException")
+    @DisplayName("publish — PUBLISHING reset on RuntimeException")
     class ActivatingResetOnRuntimeException {
 
         @Test
@@ -623,11 +646,11 @@ class DefaultWorkflowDefinitionServiceTest {
                     testMeta()));
 
             // activate() must propagate the RuntimeException (not swallow it)
-            assertThatThrownBy(() -> ServiceTestHelpers.await(svc.activate(key("svc-order", 1))))
+            assertThatThrownBy(() -> ServiceTestHelpers.await(svc.publish(key("svc-order", 1))))
                     .isInstanceOf(WorkflowDefinitionException.class)
                     .hasMessageContaining("simulated registration failure");
 
-            // The store entry must have been reset to CANDIDATE (not stuck in ACTIVATING)
+            // The store entry must have been reset to CANDIDATE (not stuck in PUBLISHING)
             ActivationStatus status = errorStore.currentStatus("svc-order", 1);
             assertThat(status)
                     .as("store entry must be CANDIDATE after RuntimeException so the activation can be retried")

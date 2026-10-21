@@ -189,7 +189,7 @@ class WorkflowDefinitionBootstrapTest {
 
             assertThat(reg.resolveCurrent("boot-alpha").plan().definitionId()).isEqualTo("boot-alpha");
             assertThat(store.list()).hasSize(1);
-            assertThat(store.list().iterator().next().status()).isEqualTo(ActivationStatus.ACTIVE);
+            assertThat(store.list().iterator().next().status()).isEqualTo(ActivationStatus.AVAILABLE);
         }
     }
 

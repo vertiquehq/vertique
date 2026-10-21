@@ -12,7 +12,7 @@ import io.vertx.core.Future;
 import java.util.List;
 import java.util.Optional;
 
-/** Asynchronous management of document candidates and their executable activation. */
+/** Asynchronous management of document candidates and their publication. */
 public interface WorkflowDefinitionService {
     /**
      * Parses and compiles a candidate into the named scope without publishing it.
@@ -31,10 +31,19 @@ public interface WorkflowDefinitionService {
      * naming the document field and the name when it is a valid name; no class is loaded by name.
      */
     Future<CompiledDefinitionRef> load(String scopeKey, byte[] content, DocumentFormat format, SourceMetadata metadata);
-    /** Activates an existing candidate, preserving the prior publication when activation fails. */
-    Future<Void> activate(DefinitionKey key);
     /**
-     * Deprecates an active or superseded definition so it is skipped by current resolution and refused for new
+     * Publishes an existing candidate through a fenced claim, so that the version becomes available and can be
+     * started and resolved, in addition to every other version and scope of the same id. A version that is
+     * already available is accepted without a change; a failed publication leaves the candidate a candidate.
+     */
+    Future<Void> publish(DefinitionKey key);
+
+    /** Publishes an existing candidate; the name is replaced by {@link #publish(DefinitionKey)}. */
+    default Future<Void> activate(DefinitionKey key) {
+        return publish(key);
+    }
+    /**
+     * Deprecates an available definition so it is skipped by current resolution and refused for new
      * explicit starts and migration targets, while instances already pinned to it keep running. The status is
      * committed durably before it is projected into the local cache and registry. A durable registry is
      * required; without one the returned future fails.
@@ -42,7 +51,7 @@ public interface WorkflowDefinitionService {
     Future<Void> deprecate(DefinitionKey key);
     /**
      * Retires a candidate, or a deprecated definition once it has cooled and no instance is pinned to it, so it
-     * can no longer be activated or resolved. The durable status is committed first, together with the cooling
+     * can no longer be published or resolved. The durable status is committed first, together with the cooling
      * and pin checks, and then projected into the local cache; a refused retirement fails typed and changes
      * nothing. The local runtime is removed only when it is the registration published for this key's owner. A
      * durable registry is required; without one the returned future fails.

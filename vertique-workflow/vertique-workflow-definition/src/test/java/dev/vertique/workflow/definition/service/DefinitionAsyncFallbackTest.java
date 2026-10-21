@@ -120,7 +120,7 @@ class DefinitionAsyncFallbackTest {
         assertThat(loaded.status()).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(component.workflowRegistry().allRegistered()).isEmpty();
 
-        ServiceTestHelpers.await(service.activate(key));
+        ServiceTestHelpers.await(service.publish(key));
         assertThat(component
                         .workflowRegistry()
                         .resolveCurrent("fallback-order")
@@ -132,7 +132,7 @@ class DefinitionAsyncFallbackTest {
         java.util.List<WorkflowDefinitionRecord> records = ServiceTestHelpers.await(service.list(global));
         assertThat(records).hasSize(1);
         assertThat(records.get(0).key()).isEqualTo(key);
-        assertThat(records.get(0).status()).isEqualTo(DefinitionStatus.ACTIVE);
+        assertThat(records.get(0).status()).isEqualTo(DefinitionStatus.AVAILABLE);
         assertThat(ServiceTestHelpers.await(service.sourceMetadata(key))).contains(provenance);
         assertThatThrownBy(records::clear).isInstanceOf(UnsupportedOperationException.class);
         ServiceTestHelpers.await(service.load(
@@ -162,7 +162,7 @@ class DefinitionAsyncFallbackTest {
         Future<CompiledDefinitionRef> invalidArgument =
                 service.load(WorkflowScopes.DEFAULT, null, DocumentFormat.YAML, provenance);
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidArgument)).isInstanceOf(NullPointerException.class);
-        Future<Void> invalidActivation = service.activate(null);
+        Future<Void> invalidActivation = service.publish(null);
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidActivation)).isInstanceOf(RuntimeException.class);
         Future<List<WorkflowDefinitionRecord>> invalidFilter = service.list(null);
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidFilter)).isInstanceOf(RuntimeException.class);

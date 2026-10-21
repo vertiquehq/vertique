@@ -22,11 +22,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Thread-safe store for candidate and active document-backed workflow definitions.
+ * Thread-safe store for candidate and available document-backed workflow definitions.
  *
  * <p>The store tracks the lifecycle of each loaded definition using an {@link ActivationStatus}
  * that is separate from the {@link dev.vertique.workflow.registry.WorkflowRegistry}'s version
- * ordering. The store's status is informational — it never overrides registry semantics.
+ * ordering. The store's status is informational: it never overrides registry semantics, and any
+ * number of versions of one id are available at once.
  *
  * <p>Internal storage: a {@link ConcurrentHashMap} keyed on {@link DefinitionKey} (scope, id
  * and version). Public legacy methods address only default-scope entries; internal paths retain the scope. Each entry is a {@link StoredEntry} holding the compiled definition and
@@ -36,17 +37,13 @@ import java.util.concurrent.atomic.AtomicReference;
  * <ul>
  *   <li>{@link #storeCandidate} fails atomically on duplicate key — the store either accepts the
  *       entry or throws, with no partial state.</li>
- *   <li>{@link #tryClaimForActivation} atomically CAS-flips {@code CANDIDATE -> ACTIVATING}. Only
+ *   <li>{@link #tryClaimForActivation} atomically CAS-flips {@code CANDIDATE -> PUBLISHING}. Only
  *       one concurrent caller wins the claim; others see the current status and must decide whether
  *       to wait, return idempotently, or throw.</li>
- *   <li>{@link #markActive} atomically transitions {@code ACTIVATING -> ACTIVE} and then marks all
- *       lower-version {@code ACTIVE} entries for the same id as {@code SUPERSEDED}. A post-CAS
- *       re-scan (W2 fix) closes the concurrent race where two threads both pass the pre-CAS check
- *       while their peer is still {@code ACTIVATING}: the lower-version thread self-CASes back to
- *       {@code SUPERSEDED}, ensuring exactly one {@code ACTIVE} entry per definitionId at all
- *       times.</li>
- *   <li>{@link #resetToCandidate} atomically transitions {@code ACTIVATING -> CANDIDATE} so that a
- *       failed activation can be retried.</li>
+ *   <li>{@link #markActive} atomically transitions {@code PUBLISHING -> AVAILABLE}. It changes no
+ *       other entry.</li>
+ *   <li>{@link #resetToCandidate} atomically transitions {@code PUBLISHING -> CANDIDATE} so that a
+ *       failed publication can be retried.</li>
  *   <li>{@link #list} returns a snapshot; mutations after the call are not reflected.</li>
  * </ul>
  */
@@ -77,21 +74,6 @@ public final class WorkflowDefinitionStore {
 
     /** Keyed by (definitionId, definitionVersion). */
     private final ConcurrentHashMap<DefinitionKey, StoredEntry> byKey = new ConcurrentHashMap<>();
-
-    // --- Test hook (package-private) ---
-
-    /**
-     * Test-only hook invoked inside {@link #markActive} between the pre-CAS scan and the CAS step.
-     *
-     * <p>Used by concurrency tests to deterministically pin the race window between the point where
-     * a thread decides "no higher ACTIVE entry exists" and the point where it flips
-     * {@code ACTIVATING → ACTIVE}. This allows tests to reproduce the exact interleaving that the
-     * post-CAS re-scan (W2 fix) is designed to close.
-     *
-     * <p>Production code never sets this field. Package-private so only tests in the same package
-     * ({@code dev.vertique.workflow.definition.service}) can wire it.
-     */
-    volatile Runnable preCasHookForTesting = null;
 
     // --- Construction ---
 
@@ -169,8 +151,8 @@ public final class WorkflowDefinitionStore {
 
     /**
      * Atomically tries to claim the entry at {@code (definitionId, definitionVersion)} for
-     * activation by CAS-flipping its status from {@link ActivationStatus#CANDIDATE} to
-     * {@link ActivationStatus#ACTIVATING}.
+     * publication by CAS-flipping its status from {@link ActivationStatus#CANDIDATE} to
+     * {@link ActivationStatus#PUBLISHING}.
      *
      * <p>Only one concurrent caller wins the claim. The winner receives {@code true} and must
      * subsequently call either {@link #markActive} (on successful registry registration) or
@@ -179,7 +161,7 @@ public final class WorkflowDefinitionStore {
      *
      * @param definitionId the definition id; must not be {@code null}
      * @param definitionVersion the version to claim
-     * @return {@code true} if this caller won the CAS (CANDIDATE to ACTIVATING); {@code false} if
+     * @return {@code true} if this caller won the CAS (CANDIDATE to PUBLISHING); {@code false} if
      *     the CAS failed because another thread already changed the status
      * @throws WorkflowDefinitionException if no entry is found for the given id/version
      */
@@ -201,8 +183,8 @@ public final class WorkflowDefinitionStore {
             throw new WorkflowDefinitionException("cannot activate definition '" + definitionId + "' v"
                     + definitionVersion + ": not found in the store; call load() first");
         }
-        // Attempt atomic CANDIDATE -> ACTIVATING flip; return true only if this caller won
-        boolean claimed = entry.status().compareAndSet(ActivationStatus.CANDIDATE, ActivationStatus.ACTIVATING);
+        // Attempt atomic CANDIDATE -> PUBLISHING flip; return true only if this caller won
+        boolean claimed = entry.status().compareAndSet(ActivationStatus.CANDIDATE, ActivationStatus.PUBLISHING);
         if (claimed) refreshCachedStatus(key);
         return claimed;
     }
@@ -212,7 +194,7 @@ public final class WorkflowDefinitionStore {
      * {@code (definitionId, definitionVersion)}, or {@code null} if not found.
      *
      * <p>Used by callers after a failed {@link #tryClaimForActivation} to determine why the CAS
-     * did not succeed (already ACTIVE, SUPERSEDED, or ACTIVATING by another thread). A version that
+     * did not succeed (already AVAILABLE, or PUBLISHING by another thread). A version that
      * the store holds only as persisted metadata, because it was not compiled on this node, reports
      * its persisted status.
      *
@@ -240,8 +222,8 @@ public final class WorkflowDefinitionStore {
 
     /**
      * Resets the status of the entry at {@code (definitionId, definitionVersion)} from
-     * {@link ActivationStatus#ACTIVATING} back to {@link ActivationStatus#CANDIDATE}, allowing a
-     * subsequent activation attempt to retry.
+     * {@link ActivationStatus#PUBLISHING} back to {@link ActivationStatus#CANDIDATE}, allowing a
+     * subsequent publication attempt to retry.
      *
      * <p>Called by {@link DefaultWorkflowDefinitionService} when {@code registry.register(...)}
      * throws after the claim was won, to release the claim so the caller can retry.
@@ -258,61 +240,29 @@ public final class WorkflowDefinitionStore {
         Objects.requireNonNull(definitionId, "definitionId");
         StoredEntry entry = byKey.get(key);
         if (entry != null) {
-            entry.status().compareAndSet(ActivationStatus.ACTIVATING, ActivationStatus.CANDIDATE);
+            entry.status().compareAndSet(ActivationStatus.PUBLISHING, ActivationStatus.CANDIDATE);
             refreshCachedStatus(key);
         }
     }
 
     /**
      * Atomically transitions the status of the entry at {@code (definitionId, definitionVersion)}
-     * from {@link ActivationStatus#ACTIVATING} to either {@link ActivationStatus#ACTIVE} or
-     * {@link ActivationStatus#SUPERSEDED}, depending on whether a higher-version active entry
-     * exists for the same {@code definitionId}.
+     * from {@link ActivationStatus#PUBLISHING} to {@link ActivationStatus#AVAILABLE}.
      *
-     * <h2>Activation lifecycle semantics</h2>
-     * <ul>
-     *   <li>If no other {@code ACTIVE} entry exists for {@code definitionId}, or the existing
-     *       {@code ACTIVE} entry has a <em>lower</em> version, this entry is marked
-     *       {@code ACTIVE} and all lower-version {@code ACTIVE} entries are superseded.</li>
-     *   <li>If an {@code ACTIVE} entry with a <em>higher</em> version already exists (detected
-     *       either before or after the CAS), this entry is immediately marked
-     *       {@code SUPERSEDED}. The higher-version entry remains {@code ACTIVE}. The entry is
-     *       still recorded for audit — the store tracks every activation attempt regardless of
-     *       whether it becomes the current active version.</li>
-     * </ul>
+     * <p>The name is kept from the first release. The call changes no other entry: any number of
+     * versions of one id are available at once, and which of them starts by default is not decided
+     * here.
      *
-     * <h2>Race-safety: post-CAS re-scan (W2 fix)</h2>
-     * <p>Without additional checks, two threads activating v1 and v2 concurrently could both
-     * pass the pre-CAS "no higher ACTIVE" scan (both peers are still ACTIVATING), then both
-     * CAS-flip to ACTIVE, leaving two concurrent ACTIVE entries — an invariant violation. The
-     * fix adds a <em>post-CAS re-scan</em>:
-     * <ol>
-     *   <li>Pre-CAS: scan for a higher-version ACTIVE entry. If found, CAS to SUPERSEDED and
-     *       return.</li>
-     *   <li>CAS ACTIVATING to ACTIVE.</li>
-     *   <li>Post-CAS re-scan: scan for any other ACTIVE entry of the same definitionId.
-     *       <ul>
-     *         <li>If a peer with {@code version > mine} is ACTIVE (won the race): CAS my own
-     *             status {@code ACTIVE} to {@code SUPERSEDED} and return {@code false}.</li>
-     *         <li>If a peer with {@code version < mine} is ACTIVE (slower concurrent activation):
-     *             CAS that peer's status {@code ACTIVE} to {@code SUPERSEDED}.</li>
-     *       </ul>
-     *   </li>
-     * </ol>
-     * <p>This protocol is lock-free. Both threads converge to the invariant (exactly one ACTIVE
-     * per definitionId) regardless of interleaving order.
-     *
-     * @param definitionId the definition id to activate; must not be {@code null}
-     * @param definitionVersion the version to activate
-     * @return {@code true} if the entry became {@code ACTIVE} and remains ACTIVE after the
-     *     post-CAS re-scan; {@code false} if the entry was already ACTIVE, was superseded
-     *     before the CAS, or was self-superseded in the post-CAS re-scan
+     * @param definitionId the definition id to mark available; must not be {@code null}
+     * @param definitionVersion the version to mark available
+     * @return {@code true} if the entry became {@code AVAILABLE}; {@code false} if it was not
+     *     {@code PUBLISHING}, for instance because it was already available
      * @throws WorkflowDefinitionException if no entry is found for the given id/version
      */
     public boolean markActive(String definitionId, long definitionVersion) {
         Optional<DefinitionKey> key = legacyKey(definitionId, definitionVersion);
         if (key.isEmpty()) {
-            throw new WorkflowDefinitionException("cannot activate definition '" + definitionId + "' v"
+            throw new WorkflowDefinitionException("cannot publish definition '" + definitionId + "' v"
                     + definitionVersion + ": no entry found in the store");
         }
         return markActive(key.get());
@@ -324,69 +274,12 @@ public final class WorkflowDefinitionStore {
         Objects.requireNonNull(definitionId, "definitionId");
         StoredEntry entry = byKey.get(key);
         if (entry == null) {
-            throw new WorkflowDefinitionException("cannot activate definition '" + definitionId + "' v"
+            throw new WorkflowDefinitionException("cannot publish definition '" + definitionId + "' v"
                     + definitionVersion + ": no entry found in the store");
         }
-
-        // Step 1 — Pre-CAS scan: if a higher-version ACTIVE entry already exists, supersede
-        // immediately without attempting the CAS.
-        boolean higherActiveExists = byKey.entrySet().stream()
-                .anyMatch(e -> Objects.equals(e.getKey().scopeKey(), key.scopeKey())
-                        && e.getKey().definitionId().equals(definitionId)
-                        && e.getKey().definitionVersion() > definitionVersion
-                        && e.getValue().status().get() == ActivationStatus.ACTIVE);
-
-        if (higherActiveExists) {
-            // Transition ACTIVATING -> SUPERSEDED: registry resolves the higher-version active.
-            entry.status().compareAndSet(ActivationStatus.ACTIVATING, ActivationStatus.SUPERSEDED);
-            refreshCachedStatus(key);
-            return false;
-        }
-
-        // Test-only hook: invoked after the pre-CAS scan but before the CAS. Production code
-        // never sets this; it is used by concurrency tests to pin the race window deterministically.
-        Runnable hook = preCasHookForTesting;
-        if (hook != null) {
-            hook.run();
-        }
-
-        // Step 2 — CAS ACTIVATING -> ACTIVE.
-        boolean flipped = entry.status().compareAndSet(ActivationStatus.ACTIVATING, ActivationStatus.ACTIVE);
-        if (!flipped) {
-            return false;
-        }
-        refreshCachedStatus(key);
-
-        // Step 3 — Post-CAS re-scan (W2 fix): a concurrent thread for a different version may
-        // have raced through steps 1-2 simultaneously (both saw "no higher ACTIVE" before either
-        // flipped). Re-scan now that we hold ACTIVE and reconcile.
-        for (ConcurrentHashMap.Entry<DefinitionKey, StoredEntry> e : byKey.entrySet()) {
-            DefinitionKey k = e.getKey();
-            if (!Objects.equals(k.scopeKey(), key.scopeKey())
-                    || !k.definitionId().equals(definitionId)
-                    || k.definitionVersion() == definitionVersion) {
-                continue;
-            }
-            ActivationStatus peerStatus = e.getValue().status().get();
-            if (peerStatus != ActivationStatus.ACTIVE) {
-                continue;
-            }
-            if (k.definitionVersion() > definitionVersion) {
-                // A higher-version peer is also ACTIVE — we lost the race. CAS ourselves back to
-                // SUPERSEDED and return false. The higher-version peer will sweep us on its own
-                // post-CAS pass (or already has), but we must not leave two ACTIVE entries.
-                entry.status().compareAndSet(ActivationStatus.ACTIVE, ActivationStatus.SUPERSEDED);
-                refreshCachedStatus(key);
-                return false;
-            } else {
-                // A lower-version peer is still ACTIVE (its ACTIVATING->ACTIVE CAS beat the
-                // supersession sweep from its own markActive call, or it raced in concurrently).
-                // CAS it to SUPERSEDED — we are the higher version.
-                e.getValue().status().compareAndSet(ActivationStatus.ACTIVE, ActivationStatus.SUPERSEDED);
-                refreshCachedStatus(k);
-            }
-        }
-        return true;
+        boolean flipped = entry.status().compareAndSet(ActivationStatus.PUBLISHING, ActivationStatus.AVAILABLE);
+        if (flipped) refreshCachedStatus(key);
+        return flipped;
     }
 
     /**
@@ -427,22 +320,6 @@ public final class WorkflowDefinitionStore {
         metadataByKey.put(record.key(), record);
         get(record.key()).ifPresent(entry -> entry.status()
                 .set(ActivationStatus.valueOf(record.status().name())));
-        if (record.status() == DefinitionStatus.ACTIVE) {
-            supersedeLowerActive(record.key());
-        }
-    }
-
-    /** Marks lower versions of the same scope and id that the cache holds as ACTIVE as SUPERSEDED. */
-    private void supersedeLowerActive(DefinitionKey active) {
-        for (ConcurrentHashMap.Entry<DefinitionKey, StoredEntry> e : byKey.entrySet()) {
-            DefinitionKey k = e.getKey();
-            if (Objects.equals(k.scopeKey(), active.scopeKey())
-                    && k.definitionId().equals(active.definitionId())
-                    && k.definitionVersion() < active.definitionVersion()
-                    && e.getValue().status().compareAndSet(ActivationStatus.ACTIVE, ActivationStatus.SUPERSEDED)) {
-                refreshCachedStatus(k);
-            }
-        }
     }
 
     void candidate(DefinitionKey key, CompiledDefinition compiled, String format) {

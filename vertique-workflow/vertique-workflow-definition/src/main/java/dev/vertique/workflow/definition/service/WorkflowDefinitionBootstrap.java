@@ -57,7 +57,7 @@ import java.util.Set;
  *       duplicate contract classes are also detected in this phase.</li>
  *   <li><strong>Commit phase</strong> — executed only when every resource succeeded and no
  *       cross-source duplicates were detected. Each compiled definition is stored as a candidate,
- *       claimed atomically for activation, registered into the registry, and marked active —
+ *       claimed atomically for publication, registered into the registry, and marked available —
  *       one definition at a time.</li>
  * </ol>
  *
@@ -71,23 +71,23 @@ import java.util.Set;
  * <p>Phase 2 commits definitions to the registry <em>one at a time</em>. If a registration throws
  * a {@link RuntimeException} after the Phase 1 pre-flight checks pass (e.g., a Dagger-time race
  * with another {@link WorkflowContributor} that contributed the same definition via the code-based
- * multibinding), the activation claim is released back to {@link ActivationStatus#CANDIDATE} and
+ * multibinding), the publication claim is released back to {@link ActivationStatus#CANDIDATE} and
  * the exception propagates from {@link #contribute}. Dagger graph construction fails — application
  * startup aborts. The store may contain a partial set of definitions at that point, but application
  * startup does not reach the serving phase so no inconsistent state is exposed to callers.
  *
  * <h2>Error (OOM / StackOverflow) semantics</h2>
  * <p>Phase 2 recovers only from {@link RuntimeException}. {@link Error} throwables (e.g.,
- * {@link OutOfMemoryError}, {@link StackOverflowError}) are not caught and the ACTIVATING claim is
+ * {@link OutOfMemoryError}, {@link StackOverflowError}) are not caught and the PUBLISHING claim is
  * not reset. This is intentional: the JVM is typically unrecoverable after such errors, and
  * {@link dev.vertique.workflow.registry.DefaultWorkflowRegistry#register} is itself not
  * Error-atomic — attempting a store reset while the heap is exhausted can produce
  * store/registry inconsistency that is worse than the leaked claim. The process should be
  * restarted rather than attempting recovery from JVM-level {@code Error}s.
  *
- * <p>Runtime activation through
+ * <p>Runtime publication through
  * {@link dev.vertique.workflow.definition.service.WorkflowDefinitionService} uses a local CAS in
- * standalone graphs and delegates durable activation to the engine's per-id publication queue.
+ * standalone graphs and delegates durable publication to the engine's per-id publication queue.
  *
  * <h2>Parse failure attribution</h2>
  * <p>{@link WorkflowDefinitionParseException} extends {@link WorkflowDefinitionException}, so
@@ -134,7 +134,7 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
      * Constructs the bootstrap with all required collaborators.
      *
      * @param pipeline the parse → validate → compile pipeline; must not be {@code null}
-     * @param store the candidate/active store used to persist and activate compiled definitions;
+     * @param store the candidate/available store used to persist and publish compiled definitions;
      *     must not be {@code null}
      * @param sources the set of all registered definition sources; must not be {@code null}
      */
@@ -202,7 +202,7 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
      *   <li>Parse + validate + compile every resource. Failures are accumulated as structured
      *       violations; successes are held locally. The store and registry are not mutated.</li>
      *   <li>If all resources succeeded and no cross-source duplicates were found, store each
-     *       compiled definition as a candidate, register it, and mark it active.</li>
+     *       compiled definition as a candidate, register it, and mark it available.</li>
      * </ol>
      *
      * @param registry the registry to register definitions into; must not be {@code null}
@@ -210,7 +210,7 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
      *     compilation, if a definition id or its source metadata exceeds the length limits, or if
      *     duplicate {@code (definitionId, definitionVersion)} pairs are detected across sources
      * @throws WorkflowDefinitionException if a registry registration fails during Phase 2 (after
-     *     all resources successfully compiled); the failed entry's ACTIVATING claim is released
+     *     all resources successfully compiled); the failed entry's PUBLISHING claim is released
      *     back to CANDIDATE before rethrowing
      */
     @Override
@@ -316,8 +316,8 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
         origins = List.copyOf(loadedOrigins);
 
         // --- Phase 2: commit — all resources succeeded, no duplicates ---
-        // Each definition is stored as CANDIDATE, claimed for activation (CANDIDATE → ACTIVATING),
-        // registered into the registry, then marked active (ACTIVATING → ACTIVE).
+        // Each definition is stored as CANDIDATE, claimed for publication (CANDIDATE → PUBLISHING),
+        // registered into the registry, then marked available (PUBLISHING → AVAILABLE).
         // If registry.register() throws (e.g., a Dagger-time race with another WorkflowContributor),
         // the claim is released back to CANDIDATE and the exception propagates from contribute(),
         // causing Dagger graph construction to fail and aborting application startup.
@@ -328,10 +328,10 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
             store.candidate(records.get(compiled), compiled);
             boolean claimed = store.tryClaimForActivation(defId, defVersion);
             if (!claimed) {
-                // Should not happen during bootstrap (no concurrent activations before startup),
+                // Should not happen during bootstrap (no concurrent publications before startup),
                 // but guard defensively.
                 throw new WorkflowDefinitionException("failed to claim definition '" + defId + "' v" + defVersion
-                        + " for activation during bootstrap");
+                        + " for publication during bootstrap");
             }
             // On RuntimeException: reset the claim to CANDIDATE so the failure is diagnosable.
             // On Error (OOM, StackOverflow): do NOT reset — see class-level javadoc for rationale.

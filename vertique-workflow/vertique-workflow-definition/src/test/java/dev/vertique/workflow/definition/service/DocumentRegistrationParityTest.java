@@ -621,7 +621,7 @@ class DocumentRegistrationParityTest {
         assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION, 1L))
                         .contractName())
                 .isEqualTo(CONTRACT_NAME);
-        assertThat(store.currentStatus(DOCUMENT_DEFINITION, 1L)).isEqualTo(ActivationStatus.ACTIVE);
+        assertThat(store.currentStatus(DOCUMENT_DEFINITION, 1L)).isEqualTo(ActivationStatus.AVAILABLE);
         assertThat(registration.recorder.seen).containsExactly("parity-doc v1");
 
         // and: the second document is neither registered nor active; its claim was released to candidate

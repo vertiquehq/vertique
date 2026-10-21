@@ -38,10 +38,10 @@ import java.util.function.Supplier;
  *
  * <p>Lazy registry resolution preserves contributor wiring. Runtime byte admission precedes the
  * ordinary pipeline. Durable loads then validate the complete source representation before any
- * candidate write. Without a store, the existing in-memory compilation and activation outcomes
+ * candidate write. Without a store, the existing in-memory compilation and publication outcomes
  * remain available through failed or successful Futures. Compilation invoked on a Vert.x context
  * uses that context's worker executor; standalone callers without a context use their caller thread.
- * JVM fatal Errors are not treated as ordinary recoverable load or activation failures.
+ * JVM fatal Errors are not treated as ordinary recoverable load or publication failures.
  */
 @Singleton
 public final class DefaultWorkflowDefinitionService implements WorkflowDefinitionService {
@@ -130,7 +130,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     }
 
     @Override
-    public Future<Void> activate(DefinitionKey key) {
+    public Future<Void> publish(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
             if (durable.isPresent()) {
@@ -139,13 +139,13 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                             WorkflowDefinitionLifecycleException.Reason.LOADER_MISSING,
                             key,
                             "No lifecycle implementation for " + key);
-                return lifecycle.orElseThrow().activate(key);
+                return lifecycle.orElseThrow().publish(key);
             }
             boolean claimed = store.tryClaimForActivation(key);
             if (!claimed) {
                 ActivationStatus status = store.currentStatus(key);
-                if (status == ActivationStatus.ACTIVE) return Future.succeededFuture();
-                throw new WorkflowDefinitionException("cannot activate " + key + ": status is " + status);
+                if (status == ActivationStatus.AVAILABLE) return Future.succeededFuture();
+                throw new WorkflowDefinitionException("cannot publish " + key + ": status is " + status);
             }
             try {
                 registryProvider

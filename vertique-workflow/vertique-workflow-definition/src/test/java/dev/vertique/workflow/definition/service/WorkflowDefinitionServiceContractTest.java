@@ -31,7 +31,7 @@ class WorkflowDefinitionServiceContractTest {
                 new Class<?>[] {String.class, byte[].class, DocumentFormat.class, SourceMetadata.class},
                 CompiledDefinitionRef.class);
         assertFutureMethod(
-                WorkflowDefinitionService.class, "activate", new Class<?>[] {DefinitionKey.class}, Void.class);
+                WorkflowDefinitionService.class, "publish", new Class<?>[] {DefinitionKey.class}, Void.class);
         assertFutureMethod(
                 WorkflowDefinitionService.class, "list", new Class<?>[] {DefinitionFilter.class}, List.class);
         assertFutureMethod(
@@ -46,7 +46,7 @@ class WorkflowDefinitionServiceContractTest {
                 new Class<?>[] {String.class, byte[].class, DocumentFormat.class, SourceMetadata.class},
                 CompiledDefinitionRef.class);
         assertFutureMethod(
-                DefaultWorkflowDefinitionService.class, "activate", new Class<?>[] {DefinitionKey.class}, Void.class);
+                DefaultWorkflowDefinitionService.class, "publish", new Class<?>[] {DefinitionKey.class}, Void.class);
         assertFutureMethod(
                 DefaultWorkflowDefinitionService.class, "list", new Class<?>[] {DefinitionFilter.class}, List.class);
         assertFutureMethod(

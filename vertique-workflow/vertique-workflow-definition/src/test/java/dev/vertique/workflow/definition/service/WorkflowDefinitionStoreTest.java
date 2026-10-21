@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -41,15 +40,15 @@ import org.junit.jupiter.api.Test;
  *   <li>{@link WorkflowDefinitionStore#storeCandidate} stores a definition as CANDIDATE and rejects
  *       duplicates.</li>
  *   <li>{@link WorkflowDefinitionStore#tryClaimForActivation} atomically CAS-flips
- *       {@code CANDIDATE → ACTIVATING}; only one concurrent caller wins the claim.</li>
- *   <li>{@link WorkflowDefinitionStore#markActive} atomically transitions ACTIVATING → ACTIVE and
- *       marks lower-version ACTIVE entries as SUPERSEDED.</li>
- *   <li>{@link WorkflowDefinitionStore#resetToCandidate} releases a held ACTIVATING claim back to
+ *       {@code CANDIDATE → PUBLISHING}; only one concurrent caller wins the claim.</li>
+ *   <li>{@link WorkflowDefinitionStore#markActive} atomically transitions PUBLISHING → AVAILABLE and
+ *       changes no other entry.</li>
+ *   <li>{@link WorkflowDefinitionStore#resetToCandidate} releases a held PUBLISHING claim back to
  *       CANDIDATE.</li>
  *   <li>{@link WorkflowDefinitionStore#list} returns a snapshot that does not reflect subsequent
  *       mutations.</li>
- *   <li>Concurrent {@code markActive} calls for distinct versions converge: exactly one winner
- *       per definitionId ends up ACTIVE; all others are SUPERSEDED.</li>
+ *   <li>Concurrent {@code markActive} calls for distinct versions all succeed: every version of a
+ *       definitionId ends up AVAILABLE.</li>
  * </ul>
  */
 class WorkflowDefinitionStoreTest {
@@ -149,12 +148,12 @@ class WorkflowDefinitionStoreTest {
     class TryClaimTests {
 
         @Test
-        @DisplayName("claim on CANDIDATE entry returns true and transitions status to ACTIVATING")
+        @DisplayName("claim on CANDIDATE entry returns true and transitions status to PUBLISHING")
         void claimOnCandidateReturnsTrue() {
             store.storeCandidate(compiled("order", 1, OrderV1Contract.class));
             boolean won = store.tryClaimForActivation("order", 1);
             assertThat(won).isTrue();
-            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.ACTIVATING);
+            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.PUBLISHING);
         }
 
         @Test
@@ -166,16 +165,16 @@ class WorkflowDefinitionStoreTest {
         }
 
         @Test
-        @DisplayName("second claim attempt on ACTIVATING entry returns false")
+        @DisplayName("second claim attempt on PUBLISHING entry returns false")
         void secondClaimOnActivatingReturnsFalse() {
             store.storeCandidate(compiled("order", 1, OrderV1Contract.class));
             store.tryClaimForActivation("order", 1); // first winner
 
             boolean secondResult = store.tryClaimForActivation("order", 1);
-            // CAS fails (already ACTIVATING); loser gets false
+            // CAS fails (already PUBLISHING); loser gets false
             assertThat(secondResult).isFalse();
-            // Status remains ACTIVATING (unchanged)
-            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.ACTIVATING);
+            // Status remains PUBLISHING (unchanged)
+            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.PUBLISHING);
         }
     }
 
@@ -186,11 +185,11 @@ class WorkflowDefinitionStoreTest {
     class ResetToCandidateTests {
 
         @Test
-        @DisplayName("reset releases ACTIVATING claim back to CANDIDATE")
-        void resetReleasesActivatingClaim() {
+        @DisplayName("reset releases PUBLISHING claim back to CANDIDATE")
+        void resetReleasesPublishingClaim() {
             store.storeCandidate(compiled("order", 1, OrderV1Contract.class));
             store.tryClaimForActivation("order", 1);
-            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.ACTIVATING);
+            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.PUBLISHING);
 
             store.resetToCandidate("order", 1);
             assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.CANDIDATE);
@@ -210,44 +209,44 @@ class WorkflowDefinitionStoreTest {
     @DisplayName("markActive")
     class MarkActiveTests {
 
-        /** Helper: store + claim (CANDIDATE → ACTIVATING) to reach the markActive precondition. */
+        /** Helper: store + claim (CANDIDATE → PUBLISHING) to reach the markActive precondition. */
         private void storeAndClaim(String defId, long version, Class<?> contract) {
             store.storeCandidate(compiled(defId, version, contract));
             store.tryClaimForActivation(defId, version);
         }
 
         @Test
-        @DisplayName("markActive transitions ACTIVATING to ACTIVE and returns true")
-        void markActiveFromActivatingReturnsTrue() {
+        @DisplayName("markActive transitions PUBLISHING to AVAILABLE and returns true")
+        void markActiveFromPublishingReturnsTrue() {
             storeAndClaim("order", 1, OrderV1Contract.class);
             boolean flipped = store.markActive("order", 1);
             assertThat(flipped).isTrue();
 
             Optional<WorkflowDefinitionStore.StoredEntry> entry = store.get("order", 1);
-            assertThat(entry.get().status().get()).isEqualTo(ActivationStatus.ACTIVE);
+            assertThat(entry.get().status().get()).isEqualTo(ActivationStatus.AVAILABLE);
         }
 
         @Test
-        @DisplayName("second markActive on already-ACTIVE entry returns false (CAS misses ACTIVATING)")
+        @DisplayName("second markActive on already-AVAILABLE entry returns false (CAS misses PUBLISHING)")
         void secondMarkActiveReturnsFalse() {
             storeAndClaim("order", 1, OrderV1Contract.class);
-            store.markActive("order", 1); // first activation
+            store.markActive("order", 1); // first publication
             boolean secondFlip = store.markActive("order", 1);
             assertThat(secondFlip).isFalse();
         }
 
         @Test
-        @DisplayName("activating v2 marks prior v1 ACTIVE entry as SUPERSEDED")
-        void activatingHigherVersionSupersedesLowerActive() {
+        @DisplayName("publishing v2 leaves the AVAILABLE v1 entry unchanged")
+        void publishingHigherVersionLeavesLowerAvailable() {
             storeAndClaim("order", 1, OrderV1Contract.class);
             storeAndClaim("order", 2, OrderV2Contract.class);
 
             store.markActive("order", 1);
-            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.ACTIVE);
+            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.AVAILABLE);
 
             store.markActive("order", 2);
-            assertThat(store.get("order", 2).get().status().get()).isEqualTo(ActivationStatus.ACTIVE);
-            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.SUPERSEDED);
+            assertThat(store.get("order", 2).get().status().get()).isEqualTo(ActivationStatus.AVAILABLE);
+            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.AVAILABLE);
         }
 
         @Test
@@ -259,35 +258,34 @@ class WorkflowDefinitionStoreTest {
         }
 
         @Test
-        @DisplayName("activating lower version when higher already ACTIVE results in SUPERSEDED status")
-        void activatingLowerVersionWhenHigherAlreadyActiveIsSuperseded() {
+        @DisplayName("publishing a lower version when a higher one is AVAILABLE leaves both AVAILABLE")
+        void publishingLowerVersionWhenHigherAlreadyAvailableLeavesBothAvailable() {
             storeAndClaim("order", 1, OrderV1Contract.class);
             storeAndClaim("order", 2, OrderV2Contract.class);
 
-            // Activate v2 first
+            // Publish v2 first
             store.markActive("order", 2);
-            assertThat(store.get("order", 2).get().status().get()).isEqualTo(ActivationStatus.ACTIVE);
+            assertThat(store.get("order", 2).get().status().get()).isEqualTo(ActivationStatus.AVAILABLE);
 
-            // Then activate v1 — v2 is already ACTIVE with higher version, so v1 is superseded
+            // Then publish v1 — a version does not depend on any other version's status
             boolean flipped = store.markActive("order", 1);
-            assertThat(flipped).isFalse();
-            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.SUPERSEDED);
-            // v2 must remain ACTIVE
-            assertThat(store.get("order", 2).get().status().get()).isEqualTo(ActivationStatus.ACTIVE);
+            assertThat(flipped).isTrue();
+            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.AVAILABLE);
+            assertThat(store.get("order", 2).get().status().get()).isEqualTo(ActivationStatus.AVAILABLE);
         }
     }
 
-    // --- Concurrent activation (A5) ---
+    // --- Concurrent publication ---
 
     @Nested
     @DisplayName("concurrent markActive for distinct versions")
     class ConcurrentMarkActiveTests {
 
         @Test
-        @DisplayName("8 threads activating distinct versions — exactly one ACTIVE, rest SUPERSEDED, no exceptions")
+        @DisplayName("8 threads publishing distinct versions — every version AVAILABLE, no exceptions")
         @SuppressWarnings("unchecked")
-        void eightDistinctVersionsConcurrentlyActivated() throws Exception {
-            // Pre-load 8 distinct versions (v1..v8) and claim all for activation
+        void eightDistinctVersionsConcurrentlyPublished() throws Exception {
+            // Pre-load 8 distinct versions (v1..v8) and claim all for publication
             int numVersions = 8;
             for (int v = 1; v <= numVersions; v++) {
                 store.storeCandidate(compiled("order", v, v == 1 ? OrderV1Contract.class : OrderV2Contract.class));
@@ -321,116 +319,12 @@ class WorkflowDefinitionStoreTest {
             // No thread should have thrown
             assertThat(exceptionCount.get()).isZero();
 
-            // After all threads complete: exactly one version is ACTIVE, rest are SUPERSEDED
-            long activeCount = 0;
-            long supersededCount = 0;
+            // After all threads complete: every version is AVAILABLE
             for (int v = 1; v <= numVersions; v++) {
-                ActivationStatus st =
-                        store.get("order", v).orElseThrow().status().get();
-                if (st == ActivationStatus.ACTIVE) {
-                    activeCount++;
-                } else if (st == ActivationStatus.SUPERSEDED) {
-                    supersededCount++;
-                }
+                assertThat(store.get("order", v).orElseThrow().status().get())
+                        .as("version %d", v)
+                        .isEqualTo(ActivationStatus.AVAILABLE);
             }
-            assertThat(activeCount).isEqualTo(1);
-            assertThat(supersededCount).isEqualTo(numVersions - 1L);
-        }
-
-        /**
-         * Deterministic hook test for the post-CAS re-scan fix (W2).
-         *
-         * <p>Both threads (v=1 and v=2) are pinned by {@code preCasHookForTesting} after their
-         * pre-CAS scan (which sees "no higher ACTIVE") but before the ACTIVATING→ACTIVE CAS. The
-         * hook ensures both threads have independently concluded "I can become ACTIVE" before
-         * either executes the CAS. Without the post-CAS re-scan both would flip to ACTIVE,
-         * violating the single-ACTIVE invariant. With the fix, the lower-version thread detects
-         * the winner in the post-CAS re-scan and CAS-flips itself to SUPERSEDED.
-         *
-         * <p>The race is pinned as follows:
-         * <ol>
-         *   <li>Hook installed: each invocation (one per thread) signals an arrival latch, then
-         *       blocks on a per-thread release latch.</li>
-         *   <li>Both threads are spawned. Each reaches the hook after its pre-CAS scan and pins
-         *       (the hook blocks).</li>
-         *   <li>Main thread waits until both are pinned (arrival latch reaches 0).</li>
-         *   <li>Main thread releases v2's thread first, waits for it to complete (v2 becomes
-         *       ACTIVE), then releases v1's thread.</li>
-         *   <li>v1's thread CAS-flips to ACTIVE (stale pre-CAS scan), then post-CAS re-scan
-         *       sees v2 is ACTIVE (higher version) and self-supersedes.</li>
-         * </ol>
-         *
-         * <p>The {@code preCasHookForTesting} field is volatile and package-private. It is
-         * {@code null} in production; only tests in this package can set it.
-         */
-        @Test
-        @DisplayName("post-CAS re-scan (W2): preCasHook-pinned race — v2 wins, v1 is SUPERSEDED")
-        void postCasRescanEnsuresSingleActiveUnderPinnedConcurrentRace() throws Exception {
-            // Pre-load v1 and v2; claim both (CANDIDATE → ACTIVATING)
-            store.storeCandidate(compiled("order", 1, OrderV1Contract.class));
-            store.storeCandidate(compiled("order", 2, OrderV2Contract.class));
-            store.tryClaimForActivation("order", 1);
-            store.tryClaimForActivation("order", 2);
-
-            // Latches used by the hook to pin both threads between pre-CAS scan and the CAS.
-            // arrivalLatch: counts down each time a thread reaches the hook (initially 2).
-            // releaseV1, releaseV2: each thread waits on its own release latch.
-            CountDownLatch arrivalLatch = new CountDownLatch(2);
-            CountDownLatch releaseV1 = new CountDownLatch(1);
-            CountDownLatch releaseV2 = new CountDownLatch(1);
-
-            // The hook is called by each thread after it has passed the pre-CAS scan but before
-            // it executes the ACTIVATING→ACTIVE CAS. We need to distinguish which thread is which;
-            // we use the version number embedded in the thread name.
-            store.preCasHookForTesting = () -> {
-                arrivalLatch.countDown();
-                // Determine which release latch to block on by inspecting the definitionVersion
-                // being activated. We use the thread name set below for coordination.
-                String threadName = Thread.currentThread().getName();
-                CountDownLatch release = threadName.contains("v2") ? releaseV2 : releaseV1;
-                try {
-                    release.await(5, TimeUnit.SECONDS);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                }
-            };
-
-            ExecutorService pool = Executors.newFixedThreadPool(2);
-
-            Future<Void> t1 = pool.submit(() -> {
-                Thread.currentThread().setName("markActive-v1");
-                store.markActive("order", 1);
-                return null;
-            });
-            Future<Void> t2 = pool.submit(() -> {
-                Thread.currentThread().setName("markActive-v2");
-                store.markActive("order", 2);
-                return null;
-            });
-
-            // Wait until both threads are pinned inside the hook (past the pre-CAS scan)
-            assertThat(arrivalLatch.await(5, TimeUnit.SECONDS))
-                    .as("both threads should reach the preCasHook within 5 s")
-                    .isTrue();
-
-            // Release v2 first and wait for it to complete fully (v2 becomes ACTIVE, sweeps
-            // any lower ACTIVE in its post-CAS re-scan)
-            releaseV2.countDown();
-            t2.get(5, TimeUnit.SECONDS);
-
-            // Now release v1. Its pre-CAS scan was stale (saw no ACTIVE at that point). Its CAS
-            // flips to ACTIVE, then the post-CAS re-scan sees v2 ACTIVE (higher) and self-supersedes.
-            releaseV1.countDown();
-            t1.get(5, TimeUnit.SECONDS);
-
-            pool.shutdown();
-
-            // Invariant: v2 ACTIVE, v1 SUPERSEDED (higher version wins)
-            ActivationStatus st1 = store.get("order", 1).orElseThrow().status().get();
-            ActivationStatus st2 = store.get("order", 2).orElseThrow().status().get();
-
-            assertThat(st2).as("v2 (higher version) must be ACTIVE").isEqualTo(ActivationStatus.ACTIVE);
-            assertThat(st1).as("v1 (lower version) must be SUPERSEDED").isEqualTo(ActivationStatus.SUPERSEDED);
         }
 
         @Test
@@ -460,8 +354,8 @@ class WorkflowDefinitionStoreTest {
                     .sum();
             assertThat(winners).isEqualTo(1);
 
-            // The entry is in ACTIVATING state
-            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.ACTIVATING);
+            // The entry is in PUBLISHING state
+            assertThat(store.get("order", 1).get().status().get()).isEqualTo(ActivationStatus.PUBLISHING);
         }
     }
 
@@ -479,14 +373,14 @@ class WorkflowDefinitionStoreTest {
             assertThat(snapshot).hasSize(1);
             assertThat(snapshot.iterator().next().status()).isEqualTo(ActivationStatus.CANDIDATE);
 
-            // Activate after the snapshot was taken — should not change the snapshot
+            // Publish after the snapshot was taken — should not change the snapshot
             store.tryClaimForActivation("order", 1);
             store.markActive("order", 1);
             assertThat(snapshot.iterator().next().status()).isEqualTo(ActivationStatus.CANDIDATE);
 
             // A fresh list() call sees the updated status
             Collection<CompiledDefinitionRef> fresh = store.list();
-            assertThat(fresh.iterator().next().status()).isEqualTo(ActivationStatus.ACTIVE);
+            assertThat(fresh.iterator().next().status()).isEqualTo(ActivationStatus.AVAILABLE);
         }
 
         @Test
@@ -528,27 +422,27 @@ class WorkflowDefinitionStoreTest {
     // --- Durable metadata delivery ---
 
     @Nested
-    @DisplayName("delivered ACTIVE metadata")
+    @DisplayName("delivered AVAILABLE metadata")
     class DeliveredMetadataTests {
 
         @Test
-        @DisplayName("an ACTIVE version 2 supersedes the cached ACTIVE version 1")
-        void activeSuccessorSupersedesCachedPredecessor() {
-            // Given versions 1 and 2 of one id, version 1 delivered as ACTIVE
+        @DisplayName("an AVAILABLE version 2 leaves the cached AVAILABLE version 1 alone")
+        void availableSuccessorLeavesCachedPredecessorAvailable() {
+            // Given versions 1 and 2 of one id, version 1 delivered as AVAILABLE
             store.storeCandidate(compiled("order", 1, OrderV1Contract.class));
             store.storeCandidate(compiled("order", 2, OrderV2Contract.class));
-            store.metadata(activeRecord("order", 1));
-            assertThat(store.currentStatus("order", 1)).isEqualTo(ActivationStatus.ACTIVE);
+            store.metadata(availableRecord("order", 1));
+            assertThat(store.currentStatus("order", 1)).isEqualTo(ActivationStatus.AVAILABLE);
 
-            // When version 2 is delivered as ACTIVE
-            store.metadata(activeRecord("order", 2));
+            // When version 2 is delivered as AVAILABLE
+            store.metadata(availableRecord("order", 2));
 
-            // Then version 1 is SUPERSEDED and version 2 is ACTIVE
-            assertThat(store.currentStatus("order", 1)).isEqualTo(ActivationStatus.SUPERSEDED);
-            assertThat(store.currentStatus("order", 2)).isEqualTo(ActivationStatus.ACTIVE);
+            // Then both versions are AVAILABLE
+            assertThat(store.currentStatus("order", 1)).isEqualTo(ActivationStatus.AVAILABLE);
+            assertThat(store.currentStatus("order", 2)).isEqualTo(ActivationStatus.AVAILABLE);
         }
 
-        private WorkflowDefinitionRecord activeRecord(String id, long version) {
+        private WorkflowDefinitionRecord availableRecord(String id, long version) {
             Instant now = Instant.parse("2026-01-01T00:00:00Z");
             return new WorkflowDefinitionRecord(
                     new DefinitionKey(WorkflowScopes.DEFAULT, id, version),
@@ -556,7 +450,7 @@ class WorkflowDefinitionStoreTest {
                     "example.Contract",
                     "example.State",
                     "a".repeat(64),
-                    DefinitionStatus.ACTIVE,
+                    DefinitionStatus.AVAILABLE,
                     new DefinitionProvenance("test", null, null, null, null, now),
                     "YAML",
                     now,
