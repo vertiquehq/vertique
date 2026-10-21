@@ -396,15 +396,14 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             if (row.status() == DefinitionStatus.DEPRECATED)
                 chain = chain.compose(ignored -> queue.submit(key.definitionId(), () -> {
                     RuntimeWorkflow held = held(local, key);
-                    if (standing(key, held) == ManagedRegistrations.Standing.OWN)
-                        local.markDeprecated(key.definitionId(), key.definitionVersion());
+                    if (standing(key, held) == ManagedRegistrations.Standing.OWN) local.markDeprecated(key);
                     return Future.<Void>succeededFuture();
                 }));
             else if (row.status() == DefinitionStatus.RETIRED)
                 chain = chain.compose(ignored -> queue.submit(key.definitionId(), () -> {
                     RuntimeWorkflow held = held(local, key);
                     if (standing(key, held) == ManagedRegistrations.Standing.OWN) {
-                        local.unregister(key.definitionId(), key.definitionVersion());
+                        local.unregister(key);
                         registrations.clear(key.definitionId(), key.definitionVersion(), held);
                     }
                     return Future.<Void>succeededFuture();
@@ -447,7 +446,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
 
     private static @Nullable RuntimeWorkflow held(WorkflowRegistry local, DefinitionKey key) {
         try {
-            return local.resolvePinned(key.definitionId(), key.definitionVersion());
+            return local.resolve(key);
         } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException absent) {
             return null;
         }

@@ -45,6 +45,7 @@ import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -539,8 +540,10 @@ public class WorkflowTenantKeyIT {
     @DisplayName("migration and resurrection keep the instance scopes")
     void migrationAndResurrectionKeepTheInstanceScopes() throws Exception {
         // Given a waiting instance and a failed instance of version 1, both started in t1 through the repository
-        String sourceHash =
-                host.workflowRegistry().resolvePinned(MIGRATE_ID, 1L).plan().planHash();
+        String sourceHash = host.workflowRegistry()
+                .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, MIGRATE_ID, 1L))
+                .plan()
+                .planHash();
         Instant created = Instant.parse("2026-05-08T09:00:00Z");
         WorkflowInstanceId running = new WorkflowInstanceId(UUID.randomUUID());
         WorkflowInstanceId finished = new WorkflowInstanceId(UUID.randomUUID());

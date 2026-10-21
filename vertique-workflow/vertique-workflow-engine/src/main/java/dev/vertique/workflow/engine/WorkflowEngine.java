@@ -652,6 +652,18 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
+     * The default-scope key of an explicit start version. A start runs in the default scope; an id or version that
+     * no key can hold names no registered version.
+     */
+    private static DefinitionKey requestedKey(String definitionId, long version) {
+        try {
+            return new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version);
+        } catch (IllegalArgumentException e) {
+            throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
+        }
+    }
+
+    /**
      * Compares the caller's contract with the contract of the version the instance is pinned to. A pin
      * that is not registered on this node skips the comparison.
      */
@@ -659,7 +671,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowInstance inst, String callerContractName) {
         RuntimeWorkflow pinned;
         try {
-            pinned = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+            pinned = registry.resolve(
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
         } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException e) {
             return null;
         }
@@ -691,10 +704,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         try {
             if (cmd.requestedDefinitionVersion() != null) {
                 // Explicit version pin (FR-WF-DEF-069): resolve the requested version exactly.
-                rw = registry.resolvePinned(cmd.definitionId(), cmd.requestedDefinitionVersion());
+                DefinitionKey requested = requestedKey(cmd.definitionId(), cmd.requestedDefinitionVersion());
+                rw = registry.resolve(requested);
                 // A deprecated version admits no new work; refuse before any dedup claim or write.
-                if (registry.isDeprecated(cmd.definitionId(), cmd.requestedDefinitionVersion())) {
-                    return Future.failedFuture(deprecatedRefusal(cmd.definitionId(), cmd.requestedDefinitionVersion()));
+                if (registry.isDeprecated(requested)) {
+                    return Future.failedFuture(deprecatedRefusal(requested));
                 }
             } else {
                 // Default: resolve the current (highest registered) version.
@@ -737,15 +751,14 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * Builds the typed refusal for admitting new work onto a deprecated definition version. Shared
      * by explicit-version starts and migration targets.
      *
-     * @param definitionId the deprecated definition's id
-     * @param version the deprecated version
+     * @param key the scope, id and version of the deprecated definition
      * @return the lifecycle exception to fail the caller's future with
      */
-    static WorkflowDefinitionLifecycleException deprecatedRefusal(String definitionId, long version) {
+    static WorkflowDefinitionLifecycleException deprecatedRefusal(DefinitionKey key) {
         return new WorkflowDefinitionLifecycleException(
                 WorkflowDefinitionLifecycleException.Reason.DEPRECATED,
-                new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version),
-                "Definition '" + definitionId + "' version " + version
+                key,
+                "Definition '" + key.definitionId() + "' version " + key.definitionVersion()
                         + " is deprecated and does not accept new starts or migrations");
     }
 
@@ -1025,7 +1038,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 WorkflowInstance inst = optInst.get();
                 RuntimeWorkflow rw;
                 try {
-                    rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+                    rw = registry.resolve(new DefinitionKey(
+                            inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
                     // Codex review fix H2: every other engine entry-point that resolves rw
                     // also asserts plan-hash drift. Branch signals must do the same so a
                     // redeployed-but-same-version plan doesn't silently run new callbacks
@@ -1251,7 +1265,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 WorkflowInstance inst = optInst.get();
                 RuntimeWorkflow rw;
                 try {
-                    rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+                    rw = registry.resolve(new DefinitionKey(
+                            inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
                     requirePlanHashMatches(inst, rw);
                 } catch (Exception e) {
                     return Future.<Void>failedFuture(e);
@@ -1494,10 +1509,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private Future<Void> doRetry(WorkflowInstanceId id, WorkflowInstance inst, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+            rw = registry.resolve(
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
         } catch (WorkflowVersionPinUnavailableException e) {
             return Future.failedFuture(
-                    new WorkflowVersionPinUnavailableException(e.definitionId(), e.version(), inst.id()));
+                    new WorkflowVersionPinUnavailableException(e.scopeKey(), e.definitionId(), e.version(), inst.id()));
         } catch (Exception e) {
             return Future.failedFuture(e);
         }

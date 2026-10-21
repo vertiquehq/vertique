@@ -263,7 +263,7 @@ public class MixedDefinitionBootstrapIT {
                     .hasSize(1);
             assertThat(redeploy.app()
                             .workflowRegistry()
-                            .resolvePinned(id, 1)
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
                             .plan()
                             .planHash())
                     .isEqualTo(planHash);
@@ -332,13 +332,15 @@ public class MixedDefinitionBootstrapIT {
             assertThat(scenario.rowCount(id)).isEqualTo(2);
 
             // And the deprecation mark is applied again, so current resolution keeps skipping version 1
-            assertThat(second.app().workflowRegistry().isDeprecated(id, 1)).isTrue();
-            assertThat(second.app().workflowRegistry().isDeprecated(id, 2)).isFalse();
+            assertThat(second.app().workflowRegistry().isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isTrue();
+            assertThat(second.app().workflowRegistry().isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
+                    .isFalse();
             assertThat(second.app().workflowRegistry().resolveCurrent(id).plan().definitionVersion())
                     .isEqualTo(2);
             assertThat(second.app()
                             .workflowRegistry()
-                            .resolvePinned(id, 1)
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
                             .plan()
                             .planHash())
                     .isEqualTo(hashV1);
@@ -403,7 +405,7 @@ public class MixedDefinitionBootstrapIT {
                 Boot accepted = scenario.node(none(), observed(freeId, 1, freeHash), List.of(freeCode));
                 assertThat(accepted.app()
                                 .workflowRegistry()
-                                .resolvePinned(freeId, 1)
+                                .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, freeId, 1))
                                 .plan()
                                 .planHash())
                         .isEqualTo(freeHash);
@@ -758,11 +760,17 @@ public class MixedDefinitionBootstrapIT {
                     .isEqualTo(ActivationStatus.DEPRECATED);
 
             // And before traffic the deprecated version is marked, resolves pinned and current resolution skips it
-            assertThat(second.app().workflowRegistry().isDeprecated(docId, 1)).isTrue();
-            assertThat(second.app().workflowRegistry().isDeprecated(docId, 2)).isFalse();
             assertThat(second.app()
                             .workflowRegistry()
-                            .resolvePinned(docId, 1)
+                            .isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, docId, 1)))
+                    .isTrue();
+            assertThat(second.app()
+                            .workflowRegistry()
+                            .isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, docId, 2)))
+                    .isFalse();
+            assertThat(second.app()
+                            .workflowRegistry()
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, docId, 1))
                             .plan()
                             .planHash())
                     .isEqualTo(loadedV1.planHash());
@@ -774,7 +782,7 @@ public class MixedDefinitionBootstrapIT {
                     .isEqualTo(2);
             assertThat(second.app()
                             .workflowRegistry()
-                            .resolvePinned(docId, 2)
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, docId, 2))
                             .plan()
                             .planHash())
                     .isEqualTo(loadedV2.planHash());
@@ -839,8 +847,11 @@ public class MixedDefinitionBootstrapIT {
                     DefinitionStatus.CANDIDATE);
             Stored candidateBefore = scenario.stored(tenant, id, 1);
             assertThat(candidateBefore.status()).isEqualTo("CANDIDATE");
-            RuntimeWorkflow runtimeBefore = node.app().workflowRegistry().resolvePinned(id, 1);
-            var definitionBefore = node.app().workflowRegistry().registeredDefinition(id, 1);
+            RuntimeWorkflow runtimeBefore =
+                    node.app().workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
+            var definitionBefore = node.app()
+                    .workflowRegistry()
+                    .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
 
             // When the tenant activates its candidate through the real lifecycle
             Throwable refusal = failureOf(node.app().definitionService().activate(scopeKey));
@@ -855,11 +866,14 @@ public class MixedDefinitionBootstrapIT {
                     });
 
             // And the executable registry and both rows are unchanged
-            assertThat(node.app().workflowRegistry().resolvePinned(id, 1)).isSameAs(runtimeBefore);
+            assertThat(node.app().workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isSameAs(runtimeBefore);
             assertThat(node.app().workflowRegistry().allRegistered())
                     .filteredOn(runtime -> runtime.plan().definitionId().equals(id))
                     .containsExactly(runtimeBefore);
-            assertThat(node.app().workflowRegistry().registeredDefinition(id, 1))
+            assertThat(node.app()
+                            .workflowRegistry()
+                            .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isEqualTo(definitionBefore);
             assertThat(scenario.stored(id, 1)).isEqualTo(globalBefore);
             assertThat(scenario.stored(tenant, id, 1))
@@ -896,7 +910,7 @@ public class MixedDefinitionBootstrapIT {
             Boot oldNode = scenario.node(none(), unobserved(), List.of(unchangedV1, oldV2));
             assertThat(oldNode.app()
                             .workflowRegistry()
-                            .resolvePinned(id, 2)
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2))
                             .plan()
                             .planHash())
                     .isEqualTo(oldHashV2);
@@ -910,7 +924,7 @@ public class MixedDefinitionBootstrapIT {
             assertThat(scenario.stored(id, 1).planHash()).isEqualTo(hashV1);
             assertThat(newNode.app()
                             .workflowRegistry()
-                            .resolvePinned(id, 2)
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2))
                             .plan()
                             .planHash())
                     .isEqualTo(newHashV2);
@@ -1175,42 +1189,71 @@ public class MixedDefinitionBootstrapIT {
             WorkflowRegistry registry = second.app().workflowRegistry();
 
             // And every live version resolves pinned with its own hash and registered definition
-            assertThat(registry.resolvePinned(activeId, 1).plan().planHash()).isEqualTo(active.planHash());
-            assertThat(registry.resolvePinned(supersededId, 1).plan().planHash())
+            assertThat(registry.resolve(new DefinitionKey("tenant-active", activeId, 1))
+                            .plan()
+                            .planHash())
+                    .isEqualTo(active.planHash());
+            assertThat(registry.resolve(new DefinitionKey("tenant-superseded", supersededId, 1))
+                            .plan()
+                            .planHash())
                     .isEqualTo(supersededV1.planHash());
-            assertThat(registry.resolvePinned(supersededId, 2).plan().planHash())
+            assertThat(registry.resolve(new DefinitionKey("tenant-superseded", supersededId, 2))
+                            .plan()
+                            .planHash())
                     .isEqualTo(supersededV2.planHash());
-            assertThat(registry.resolvePinned(deprecatedId, 1).plan().planHash())
+            assertThat(registry.resolve(new DefinitionKey("tenant-deprecated", deprecatedId, 1))
+                            .plan()
+                            .planHash())
                     .isEqualTo(deprecatedV1.planHash());
-            assertThat(registry.resolvePinned(deprecatedId, 2).plan().planHash())
+            assertThat(registry.resolve(new DefinitionKey("tenant-deprecated", deprecatedId, 2))
+                            .plan()
+                            .planHash())
                     .isEqualTo(deprecatedV2.planHash());
-            assertThat(registry.resolvePinned(sharedId, 1).plan().planHash()).isEqualTo(livePlanHash);
-            assertThat(registry.registeredDefinition(activeId, 1)).isPresent();
-            assertThat(registry.registeredDefinition(supersededId, 1)).isPresent();
-            assertThat(registry.registeredDefinition(supersededId, 2)).isPresent();
-            assertThat(registry.registeredDefinition(deprecatedId, 1)).isPresent();
-            assertThat(registry.registeredDefinition(deprecatedId, 2)).isPresent();
-            assertThat(registry.registeredDefinition(sharedId, 1)).isPresent();
+            assertThat(registry.resolve(new DefinitionKey(order.liveTenant, sharedId, 1))
+                            .plan()
+                            .planHash())
+                    .isEqualTo(livePlanHash);
+            assertThat(registry.registeredDefinition(new DefinitionKey("tenant-active", activeId, 1)))
+                    .isPresent();
+            assertThat(registry.registeredDefinition(new DefinitionKey("tenant-superseded", supersededId, 1)))
+                    .isPresent();
+            assertThat(registry.registeredDefinition(new DefinitionKey("tenant-superseded", supersededId, 2)))
+                    .isPresent();
+            assertThat(registry.registeredDefinition(new DefinitionKey("tenant-deprecated", deprecatedId, 1)))
+                    .isPresent();
+            assertThat(registry.registeredDefinition(new DefinitionKey("tenant-deprecated", deprecatedId, 2)))
+                    .isPresent();
+            assertThat(registry.registeredDefinition(new DefinitionKey(order.liveTenant, sharedId, 1)))
+                    .isPresent();
 
             // And current membership and the deprecated mark are the committed ones
-            assertThat(registry.resolveCurrent(supersededId).plan().definitionVersion())
-                    .isEqualTo(2);
-            assertThat(registry.resolveCurrent(deprecatedId).plan().definitionVersion())
-                    .isEqualTo(2);
-            assertThat(registry.isDeprecated(deprecatedId, 1)).isTrue();
-            assertThat(registry.isDeprecated(deprecatedId, 2)).isFalse();
-            assertThat(registry.isDeprecated(supersededId, 1)).isFalse();
+            assertThat(registry.keysFor(supersededId))
+                    .containsExactly(
+                            new DefinitionKey("tenant-superseded", supersededId, 1),
+                            new DefinitionKey("tenant-superseded", supersededId, 2));
+            assertThat(registry.keysFor(deprecatedId))
+                    .containsExactly(
+                            new DefinitionKey("tenant-deprecated", deprecatedId, 1),
+                            new DefinitionKey("tenant-deprecated", deprecatedId, 2));
+            assertThat(registry.isDeprecated(new DefinitionKey("tenant-deprecated", deprecatedId, 1)))
+                    .isTrue();
+            assertThat(registry.isDeprecated(new DefinitionKey("tenant-deprecated", deprecatedId, 2)))
+                    .isFalse();
+            assertThat(registry.isDeprecated(new DefinitionKey("tenant-superseded", supersededId, 1)))
+                    .isFalse();
 
             // And the retired owner's row neither removed the other owner's runtime nor its registered definition
             assertThat(registry.allRegistered())
                     .filteredOn(runtime -> runtime.plan().definitionId().equals(sharedId))
                     .hasSize(1);
+            assertThat(registry.find(liveKey)).isPresent();
+            assertThat(registry.find(retiredKey)).isEmpty();
             assertThat(scenario.stored(order.retiredTenant, sharedId, 1).status())
                     .isEqualTo("RETIRED");
             assertThat(scenario.stored(order.liveTenant, sharedId, 1).status()).isEqualTo("ACTIVE");
 
             // And the candidate stays metadata only
-            assertThatThrownBy(() -> registry.resolvePinned(candidateId, 1))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey("tenant-candidate", candidateId, 1)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
             assertThat(scenario.stored("tenant-candidate", candidateId, 1).status())
                     .isEqualTo("CANDIDATE");
@@ -1274,14 +1317,19 @@ public class MixedDefinitionBootstrapIT {
             assertThat(scenario.stored(id, 2).status()).isEqualTo("ACTIVE");
 
             // And the deprecation mark is applied again, so current resolution serves version 2
-            assertThat(registry.isDeprecated(id, 1)).isTrue();
-            assertThat(registry.isDeprecated(id, 2)).isFalse();
+            assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isTrue();
+            assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
+                    .isFalse();
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
             assertThat(second.app().workflowDefinitionStore().currentStatus(id, 1))
                     .isEqualTo(ActivationStatus.DEPRECATED);
 
             // And version 1 is still served to the instances pinned to it, with each version registered once
-            assertThat(registry.resolvePinned(id, 1).plan().planHash()).isEqualTo(hashV1);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
+                            .plan()
+                            .planHash())
+                    .isEqualTo(hashV1);
             assertThat(registry.allRegistered())
                     .filteredOn(runtime -> runtime.plan().definitionId().equals(id))
                     .extracting(runtime -> runtime.plan().definitionVersion())
@@ -1439,9 +1487,10 @@ public class MixedDefinitionBootstrapIT {
             WorkflowRegistry registry = started.app().workflowRegistry();
 
             // Then the retired version is no longer registered and its registered definition is gone
-            assertThatThrownBy(() -> registry.resolvePinned(id, 1))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThat(registry.registeredDefinition(id, 1)).isEmpty();
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isEmpty();
             assertThat(scenario.stored(id, 1).status()).isEqualTo("RETIRED");
 
             // And the live version keeps its runtime and its registered definition
@@ -1449,9 +1498,13 @@ public class MixedDefinitionBootstrapIT {
                     .filteredOn(runtime -> runtime.plan().definitionId().equals(id))
                     .extracting(runtime -> runtime.plan().definitionVersion())
                     .containsExactly(2L);
-            assertThat(registry.resolvePinned(id, 2).plan().planHash()).isEqualTo(liveHash);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2))
+                            .plan()
+                            .planHash())
+                    .isEqualTo(liveHash);
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
-            assertThat(registry.registeredDefinition(id, 2)).isPresent();
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
+                    .isPresent();
             assertThat(scenario.stored(id, 2).status()).isEqualTo("ACTIVE");
         }
     }

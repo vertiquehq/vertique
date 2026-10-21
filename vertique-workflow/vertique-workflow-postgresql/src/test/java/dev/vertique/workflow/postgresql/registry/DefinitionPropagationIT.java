@@ -148,7 +148,7 @@ public class DefinitionPropagationIT {
             assertThat(b.app().definitionRegistryView().applyFailures()).isEqualTo(1);
 
             // When the other runtime is removed and B reconciles again
-            bRegistry.unregister(id, 2);
+            bRegistry.unregister(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2));
             await(b.app().definitionPropagationPoller().pollNow());
 
             // Then the retry applies the row: nothing fails, and the view reports its key, status, hash and change time
@@ -159,8 +159,13 @@ public class DefinitionPropagationIT {
                 assertThat(record.statusChangedAt())
                         .isEqualTo(activated.changedAt().toInstant());
             });
-            assertThat(bRegistry.resolvePinned(id, 1).plan().planHash()).isEqualTo(hash);
-            assertThat(bRegistry.registeredDefinition(id, 1)).isPresent();
+            assertThat(bRegistry
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
+                            .plan()
+                            .planHash())
+                    .isEqualTo(hash);
+            assertThat(bRegistry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isPresent();
             assertThat(log.informational()).anySatisfy(text -> assertThat(text).contains(id));
 
             // When A deprecates the document and B reconciles
@@ -176,8 +181,13 @@ public class DefinitionPropagationIT {
                 assertThat(record.statusChangedAt())
                         .isEqualTo(deprecated.changedAt().toInstant());
             });
-            assertThat(bRegistry.isDeprecated(id, 1)).isTrue();
-            assertThat(bRegistry.resolvePinned(id, 1).plan().planHash()).isEqualTo(hash);
+            assertThat(bRegistry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isTrue();
+            assertThat(bRegistry
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
+                            .plan()
+                            .planHash())
+                    .isEqualTo(hash);
             assertThatThrownBy(() -> bRegistry.resolveCurrent(id))
                     .isInstanceOf(WorkflowDefinitionMissingException.class);
             assertThat(b.app().definitionRegistryView().applyFailures()).isZero();
@@ -190,7 +200,8 @@ public class DefinitionPropagationIT {
             // Then B no longer serves it, with its registered definition, and the view no longer lists it
             assertThat(scenario.stored(id, 1).status()).isEqualTo("RETIRED");
             assertThat(registeredVersions(bRegistry, id)).isEmpty();
-            assertThat(bRegistry.registeredDefinition(id, 1)).isEmpty();
+            assertThat(bRegistry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isEmpty();
             assertThat(viewed(b, key)).isEmpty();
             assertThat(b.app().definitionRegistryView().applyFailures()).isZero();
 
@@ -210,9 +221,13 @@ public class DefinitionPropagationIT {
             await(b.app().definitionPropagationPoller().pollNow());
 
             // Then B restored it and marked it deprecated, so instances pinned to it can resume
-            assertThat(bRegistry.resolvePinned(deprecatedId, 1).plan().planHash())
+            assertThat(bRegistry
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, deprecatedId, 1))
+                            .plan()
+                            .planHash())
                     .isEqualTo(deprecatedHash);
-            assertThat(bRegistry.isDeprecated(deprecatedId, 1)).isTrue();
+            assertThat(bRegistry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, deprecatedId, 1)))
+                    .isTrue();
             assertThat(viewed(b, deprecatedKey)).hasValueSatisfying(record -> {
                 assertThat(record.status()).isEqualTo(DefinitionStatus.DEPRECATED);
                 assertThat(record.planHash()).isEqualTo(deprecatedHash);
@@ -279,7 +294,10 @@ public class DefinitionPropagationIT {
                 assertThat(record.status()).isEqualTo(DefinitionStatus.ACTIVE);
                 assertThat(record.planHash()).isEqualTo(oversizedHash);
             });
-            assertThat(bRegistry.resolvePinned(oversizedId, 1).plan().planHash())
+            assertThat(bRegistry
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, oversizedId, 1))
+                            .plan()
+                            .planHash())
                     .isEqualTo(oversizedHash);
 
             // And no diagnostic carried any source text
@@ -337,7 +355,7 @@ public class DefinitionPropagationIT {
                             source("retiring-owner", loadedAt)))
                     .planHash();
             await(aService.activate(retiredKey));
-            RuntimeWorkflow staleRuntime = aRegistry.resolvePinned(id, 1);
+            RuntimeWorkflow staleRuntime = aRegistry.resolve(retiredKey);
 
             // And node B, which never held it, durably retired that version
             await(bService.deprecate(retiredKey));
@@ -362,17 +380,17 @@ public class DefinitionPropagationIT {
             assertThat(current.planHash()).isEqualTo(hash);
 
             // And before A reconciles it still serves the stale runtime of the retired owner
-            assertThat(aRegistry.resolvePinned(id, 1)).isSameAs(staleRuntime);
+            assertThat(aRegistry.resolve(retiredKey)).isSameAs(staleRuntime);
 
             // When A reconciles
             await(a.app().definitionPropagationPoller().pollNow());
 
             // Then the genuinely stale runtime is gone and the current owner's is published in its place
-            RuntimeWorkflow currentRuntime = aRegistry.resolvePinned(id, 1);
+            RuntimeWorkflow currentRuntime = aRegistry.resolve(currentKey);
             assertThat(currentRuntime).isNotSameAs(staleRuntime);
             assertThat(currentRuntime.plan().planHash()).isEqualTo(hash);
-            assertThat(aRegistry.resolveCurrent(id)).isSameAs(currentRuntime);
-            var registeredDefinition = aRegistry.registeredDefinition(id, 1);
+            assertThat(aRegistry.find(retiredKey)).isEmpty();
+            var registeredDefinition = aRegistry.registeredDefinition(currentKey);
             assertThat(registeredDefinition).isPresent();
 
             // And the view reports the current owner only, with nothing failing
@@ -392,9 +410,8 @@ public class DefinitionPropagationIT {
             await(a.app().definitionPropagationPoller().pollNow());
 
             // Then the retired row never evicts the current owner or its registered definition
-            assertThat(aRegistry.resolvePinned(id, 1)).isSameAs(currentRuntime);
-            assertThat(aRegistry.resolveCurrent(id)).isSameAs(currentRuntime);
-            assertThat(aRegistry.registeredDefinition(id, 1)).isEqualTo(registeredDefinition);
+            assertThat(aRegistry.resolve(currentKey)).isSameAs(currentRuntime);
+            assertThat(aRegistry.registeredDefinition(currentKey)).isEqualTo(registeredDefinition);
             assertThat(recordsOf(a, id))
                     .extracting(WorkflowDefinitionRecord::key)
                     .containsExactly(currentKey);
@@ -461,8 +478,9 @@ public class DefinitionPropagationIT {
             Boot b = scenario.node(none(), unobserved(), codeOnB);
             WorkflowRegistry bRegistry = b.app().workflowRegistry();
             assertThat(registeredVersions(bRegistry, id)).isEqualTo(higherLive ? List.of(2L) : List.of());
-            assertThat(bRegistry.registeredDefinition(id, 1)).isEmpty();
-            assertThatThrownBy(() -> bRegistry.resolvePinned(id, 1))
+            assertThat(bRegistry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isEmpty();
+            assertThatThrownBy(() -> bRegistry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isInstanceOfAny(
                             WorkflowVersionPinUnavailableException.class, WorkflowDefinitionMissingException.class);
 
@@ -526,7 +544,8 @@ public class DefinitionPropagationIT {
 
                 // And nothing was published for it, and the committed row and its hash were not touched
                 assertThat(registeredVersions(bRegistry, id)).isEmpty();
-                assertThat(bRegistry.registeredDefinition(id, 1)).isEmpty();
+                assertThat(bRegistry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                        .isEmpty();
                 assertThat(viewed(b, key)).isEmpty();
                 assertThat(scenario.stored(id, 1)).isEqualTo(committed);
                 assertThat(scenario.stored(id, 1).planHash()).isEqualTo(hash);
@@ -546,12 +565,13 @@ public class DefinitionPropagationIT {
                 // Then the actual registration failure is counted, nothing is published, and the row is intact
                 assertThat(b.app().definitionRegistryView().applyFailures()).isEqualTo(1);
                 assertThat(registeredVersions(bRegistry, id)).containsExactly(2L);
-                assertThat(bRegistry.registeredDefinition(id, 1)).isEmpty();
+                assertThat(bRegistry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                        .isEmpty();
                 assertThat(viewed(b, key)).isEmpty();
                 assertThat(scenario.stored(id, 1)).isEqualTo(committed);
 
                 // When the other runtime is removed between polls
-                bRegistry.unregister(id, 2);
+                bRegistry.unregister(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2));
             }
 
             // And B reconciles, restoring from its unchanged deployed code
@@ -559,9 +579,10 @@ public class DefinitionPropagationIT {
 
             // Then the version is restored from B's own deployed definition, with its hash and registered definition
             assertThat(b.app().definitionRegistryView().applyFailures()).isZero();
-            RuntimeWorkflow restored = bRegistry.resolvePinned(id, 1);
+            RuntimeWorkflow restored = bRegistry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
             assertThat(restored.plan().planHash()).isEqualTo(hash);
-            assertThat(bRegistry.registeredDefinition(id, 1)).containsSame(deployedOnB);
+            assertThat(bRegistry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .containsSame(deployedOnB);
 
             // And the view reports its key, status, hash and change time
             assertThat(viewed(b, key)).hasValueSatisfying(record -> {
@@ -574,7 +595,8 @@ public class DefinitionPropagationIT {
             assertThat(scenario.stored(id, 1)).isEqualTo(committed);
 
             // And current and pinned resolution respect the higher version and the deprecation
-            assertThat(bRegistry.isDeprecated(id, 1)).isEqualTo(peerCase == PeerCase.DEPRECATED_FIRST);
+            assertThat(bRegistry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isEqualTo(peerCase == PeerCase.DEPRECATED_FIRST);
             if (peerCase == PeerCase.ACTIVE) {
                 assertThat(bRegistry.resolveCurrent(id)).isSameAs(restored);
             } else if (peerCase == PeerCase.SUPERSEDED) {
@@ -639,10 +661,11 @@ public class DefinitionPropagationIT {
 
             // Then B removes the runtime it restored, with its registered definition, and drops it from the view
             assertThat(registeredVersions(bRegistry, id)).isEqualTo(higherLive ? List.of(2L) : List.of());
-            assertThatThrownBy(() -> bRegistry.resolvePinned(id, 1))
+            assertThatThrownBy(() -> bRegistry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isInstanceOfAny(
                             WorkflowVersionPinUnavailableException.class, WorkflowDefinitionMissingException.class);
-            assertThat(bRegistry.registeredDefinition(id, 1)).isEmpty();
+            assertThat(bRegistry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isEmpty();
             assertThat(viewed(b, key)).isEmpty();
             assertThat(b.app().definitionRegistryView().applyFailures()).isZero();
             assertThat(registeredVersions(aRegistry, id)).isEqualTo(higherLive ? List.of(2L) : List.of());

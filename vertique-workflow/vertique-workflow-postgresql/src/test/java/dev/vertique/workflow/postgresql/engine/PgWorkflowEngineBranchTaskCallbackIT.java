@@ -30,6 +30,8 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
@@ -245,7 +247,8 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
 
     private WorkflowInstanceId seedInstance() {
         UUID id = UUID.randomUUID();
-        String planHash = registry.resolvePinned(DEFINITION.definitionId(), DEFINITION.definitionVersion())
+        String planHash = registry.resolve(new DefinitionKey(
+                        WorkflowScopes.DEFAULT, DEFINITION.definitionId(), DEFINITION.definitionVersion()))
                 .plan()
                 .planHash();
         // Park the parent at current_step_id='join' with wait_key='fork-step' — production

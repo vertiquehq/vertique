@@ -31,6 +31,7 @@ import dev.vertique.workflow.plan.ReminderSpec;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -523,10 +524,11 @@ final class TaskLifecycleService {
             TaskCompletionCommand cmd, TaskRecord task, WorkflowInstance inst, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+            rw = registry.resolve(
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
         } catch (WorkflowVersionPinUnavailableException e) {
             return Future.failedFuture(
-                    new WorkflowVersionPinUnavailableException(e.definitionId(), e.version(), inst.id()));
+                    new WorkflowVersionPinUnavailableException(e.scopeKey(), e.definitionId(), e.version(), inst.id()));
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -1411,7 +1413,8 @@ final class TaskLifecycleService {
             WorkflowInstance inst, TaskRecord task, UUID taskId, Instant now, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+            rw = registry.resolve(
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
             // Same plan-hash drift gate as completion / signal / timer paths: if the
             // pinned-version plan in the registry has drifted from the snapshot the
             // instance was started against, refuse to apply the due-date mutator
@@ -1702,7 +1705,8 @@ final class TaskLifecycleService {
         // task was already loaded — re-use it below.
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+            rw = registry.resolve(
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -1816,7 +1820,8 @@ final class TaskLifecycleService {
      * @throws WorkflowPlanHashDriftException if the stored plan hash differs from the resolved plan
      */
     private RuntimeWorkflow resolveAndCheckPlanHash(WorkflowInstance inst) {
-        RuntimeWorkflow rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+        RuntimeWorkflow rw = registry.resolve(
+                new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
         WorkflowPayloads.requirePlanHashMatches(inst, rw);
         return rw;
     }

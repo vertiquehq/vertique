@@ -130,7 +130,7 @@ public class DefinitionDocumentPolicyIT {
                     handles.add(handle);
                     assertThat(initialParserProbe.calls()).isGreaterThan(parserCallsBeforeStartup);
                     assertThat(first.workflowRegistry()
-                                    .resolvePinned("order-fulfillment-doc", 1)
+                                    .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "order-fulfillment-doc", 1))
                                     .plan()
                                     .planHash())
                             .isEqualTo(yamlPlanHash);
@@ -247,14 +247,18 @@ public class DefinitionDocumentPolicyIT {
                                         .compose(restoredHandle -> {
                                             handles.add(restoredHandle);
                                             assertThat(restored.workflowRegistry()
-                                                            .resolvePinned(
-                                                                    yamlKey.definitionId(), yamlKey.definitionVersion())
+                                                            .resolve(new DefinitionKey(
+                                                                    WorkflowScopes.DEFAULT,
+                                                                    yamlKey.definitionId(),
+                                                                    yamlKey.definitionVersion()))
                                                             .plan()
                                                             .planHash())
                                                     .isEqualTo(yamlPlanHash);
                                             assertThat(restored.workflowRegistry()
-                                                            .resolvePinned(
-                                                                    jsonKey.definitionId(), jsonKey.definitionVersion())
+                                                            .resolve(new DefinitionKey(
+                                                                    WorkflowScopes.DEFAULT,
+                                                                    jsonKey.definitionId(),
+                                                                    jsonKey.definitionVersion()))
                                                             .plan()
                                                             .planHash())
                                                     .isEqualTo(jsonPlanHash.get());
@@ -411,7 +415,8 @@ public class DefinitionDocumentPolicyIT {
             assertThat(document.documentFormat()).isEqualTo(format.name());
             assertThat(component
                             .workflowRegistry()
-                            .resolvePinned(key.definitionId(), key.definitionVersion())
+                            .resolve(new DefinitionKey(
+                                    WorkflowScopes.DEFAULT, key.definitionId(), key.definitionVersion()))
                             .plan()
                             .planHash())
                     .isEqualTo(expectedPlanHash);

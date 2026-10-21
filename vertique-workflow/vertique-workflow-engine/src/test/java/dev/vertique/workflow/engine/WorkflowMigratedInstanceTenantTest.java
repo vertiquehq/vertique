@@ -25,6 +25,7 @@ import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -143,9 +144,11 @@ class WorkflowMigratedInstanceTenantTest {
         WorkflowMigrationRegistry migrations = mock();
         when(migrations.find(DEFINITION_ID, 1L, 2L)).thenReturn(Optional.<WorkflowMigrationHandler<?, ?>>of(HANDLER));
         WorkflowRegistry registry = mock();
-        when(registry.resolvePinned(DEFINITION_ID, 1L)).thenReturn(runtimeWorkflow(1L, SOURCE_HASH, "source-step"));
+        when(registry.resolve(new DefinitionKey(source.definitionScopeKey(), DEFINITION_ID, 1L)))
+                .thenReturn(runtimeWorkflow(1L, SOURCE_HASH, "source-step"));
         RuntimeWorkflow target = runtimeWorkflow(2L, TARGET_HASH, "target-step");
-        when(registry.resolvePinned(DEFINITION_ID, 2L)).thenReturn(target);
+        when(registry.resolve(new DefinitionKey(source.definitionScopeKey(), DEFINITION_ID, 2L)))
+                .thenReturn(target);
         WorkflowInstanceRepository<SqlClient> instances = mock();
         when(instances.findById(eq(source.id()), any())).thenReturn(Future.succeededFuture(Optional.of(source)));
         when(instances.migratePinAndState(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));

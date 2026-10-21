@@ -147,7 +147,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                 return commitDeprecation(key, true).compose(ignored -> {
                     // A registration published for another owner is not this definition's to mark.
                     if (standing == ManagedRegistrations.Standing.OTHER_OWNER) return Future.<Void>succeededFuture();
-                    registry.get().markDeprecated(key.definitionId(), key.definitionVersion());
+                    registry.get().markDeprecated(key);
                     return refreshView(key);
                 });
             });
@@ -232,14 +232,13 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         RuntimeWorkflow remembered = unresolvedReinstatements.get(key);
         if (remembered == null) return false;
         WorkflowRegistry local = registry.get();
-        RuntimeWorkflow held = held(local, key.definitionId(), key.definitionVersion());
+        RuntimeWorkflow held = held(local, key);
         if (held != remembered
                 || registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held)
                         != ManagedRegistrations.Standing.OWN
                 || !attempt.record.planHash().equals(held.plan().planHash())) return false;
         if (attempt.record.kind() == DefinitionKind.DOCUMENT) attempt.loader = loaderFor(attempt.record);
-        attempt.definition = local.registeredDefinition(key.definitionId(), key.definitionVersion())
-                .orElse(null);
+        attempt.definition = local.registeredDefinition(key).orElse(null);
         return true;
     }
 
@@ -249,8 +248,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         if (remembered == null) return;
         try {
             WorkflowRegistry local = registry.get();
-            if (isRegistered(local, remembered))
-                local.unregister(attempt.key.definitionId(), attempt.key.definitionVersion());
+            if (isRegistered(local, remembered)) local.unregister(attempt.key);
             registrations.clear(attempt.key.definitionId(), attempt.key.definitionVersion(), remembered);
         } catch (RuntimeException compensation) {
             if (compensation != original) original.addSuppressed(compensation);
@@ -284,7 +282,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private Future<Void> publishSource(Reinstatement attempt) {
         DefinitionKey key = attempt.key;
         WorkflowRegistry local = registry.get();
-        RuntimeWorkflow held = held(local, key.definitionId(), key.definitionVersion());
+        RuntimeWorkflow held = held(local, key);
         ManagedRegistrations.Standing standing =
                 registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
         if (standing == ManagedRegistrations.Standing.UNATTRIBUTED
@@ -310,8 +308,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                         Reason.DRIFT,
                         key,
                         "stored hash " + attempt.record.planHash() + " differs from registered hash " + registered);
-            attempt.definition = local.registeredDefinition(key.definitionId(), key.definitionVersion())
-                    .orElse(null);
+            attempt.definition = local.registeredDefinition(key).orElse(null);
             // A registration that an earlier unresolved attempt of this lifecycle published is this attempt's to
             // remove.
             if (remembered == held) attempt.publication = held;
@@ -397,8 +394,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         if (attempt.publication == null) return;
         try {
             WorkflowRegistry local = registry.get();
-            if (isRegistered(local, attempt.publication))
-                local.unregister(attempt.key.definitionId(), attempt.key.definitionVersion());
+            if (isRegistered(local, attempt.publication)) local.unregister(attempt.key);
             registrations.clear(attempt.key.definitionId(), attempt.key.definitionVersion(), attempt.publication);
         } catch (RuntimeException compensation) {
             if (compensation != original) original.addSuppressed(compensation);
@@ -454,9 +450,9 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         WorkflowRegistry local = registry.get();
         String id = key.definitionId();
         long version = key.definitionVersion();
-        RuntimeWorkflow held = held(local, id, version);
+        RuntimeWorkflow held = held(local, key);
         if (registrations.classify(key.scopeKey(), id, version, held) == ManagedRegistrations.Standing.OWN) {
-            local.unregister(id, version);
+            local.unregister(key);
             registrations.clear(id, version, held);
             uncertain.remove(key, held);
             unresolvedReinstatements.remove(key, held);
@@ -471,10 +467,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
      */
     private ManagedRegistrations.Standing preflight(DefinitionKey key) {
         ManagedRegistrations.Standing standing = registrations.classify(
-                key.scopeKey(),
-                key.definitionId(),
-                key.definitionVersion(),
-                held(registry.get(), key.definitionId(), key.definitionVersion()));
+                key.scopeKey(), key.definitionId(), key.definitionVersion(), held(registry.get(), key));
         if (standing == ManagedRegistrations.Standing.UNATTRIBUTED)
             throw failure(
                     Reason.INVALID_TRANSITION,
@@ -484,8 +477,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     }
 
     /** The runtime the registry holds for the exact id and version, or {@code null} when it holds none. */
-    private static @Nullable RuntimeWorkflow held(WorkflowRegistry local, String definitionId, long version) {
-        return DefinitionPublication.held(local, definitionId, version);
+    private static @Nullable RuntimeWorkflow held(WorkflowRegistry local, DefinitionKey key) {
+        return DefinitionPublication.held(local, key);
     }
 
     private void attribute(Attempt attempt) {
@@ -586,8 +579,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                                 }
                                 // Stale: whatever the registry holds now is not the remembered runtime.
                                 if (remembered != null) uncertain.remove(key, remembered);
-                                local.register(attempt.definition);
-                                attempt.publication = local.resolvePinned(key.definitionId(), key.definitionVersion());
+                                local.register(attempt.key.scopeKey(), attempt.definition);
+                                attempt.publication = local.resolve(key);
                                 return (Void) null;
                             }))
                             .compose(ignored -> complete(attempt))
@@ -669,8 +662,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             if (attempt.publication != null) {
                 try {
                     WorkflowRegistry local = registry.get();
-                    if (isRegistered(local, attempt.publication))
-                        local.unregister(attempt.key.definitionId(), attempt.key.definitionVersion());
+                    if (isRegistered(local, attempt.publication)) local.unregister(attempt.key);
                     registrations.clear(
                             attempt.key.definitionId(), attempt.key.definitionVersion(), attempt.publication);
                     // Forget the runtime only once it is gone; a failed removal leaves it to be adopted by a retry.
@@ -696,10 +688,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     .<Void>map(found -> {
                         WorkflowRegistry local = registry.get();
                         boolean own = registrations.classify(
-                                        key.scopeKey(),
-                                        key.definitionId(),
-                                        key.definitionVersion(),
-                                        held(local, key.definitionId(), key.definitionVersion()))
+                                        key.scopeKey(), key.definitionId(), key.definitionVersion(), held(local, key))
                                 == ManagedRegistrations.Standing.OWN;
                         found.filter(row -> HOLDING.contains(row.status()))
                                 .filter(row -> own)

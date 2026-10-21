@@ -274,6 +274,8 @@ public interface AppComponent {
 
 `WorkflowEngine.doCreateInstance` starts every instance in the default scope (`WorkflowScopes.DEFAULT`, for both the start scope and the definition scope); no engine setting selects another scope yet. `MigrationExecutor` carries both scopes of the instance into the re-pinned snapshot, and resurrection keeps them, so a scope written by another writer stays with the instance. The scopes are information and a filter, not an isolation boundary.
 
+Every lookup of an instance's plan (signals, tasks, timers, retries, branch and join recovery, queries and migration) resolves the instance's full pin: its definition scope, definition id and definition version. An instance pinned to a definition scope never runs the plan that another scope holds under the same id and version, and migration resolves its target version in the instance's definition scope. The lifecycle, the startup restoration and the propagation pass register, mark and remove a runtime under the scope of the stored row they apply.
+
 ### Document Activation And Startup Restoration
 
 The engine orchestrates `WorkflowDefinitionLifecycle.activate` through the optional SQL-free registry

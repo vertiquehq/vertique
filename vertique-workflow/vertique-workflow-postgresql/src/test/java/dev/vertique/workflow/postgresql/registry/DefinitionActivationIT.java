@@ -106,7 +106,8 @@ public class DefinitionActivationIT {
                                         assertThat(record.orElseThrow().status())
                                                 .isEqualTo(DefinitionStatus.ACTIVE);
                                         assertThat(app.workflowRegistry()
-                                                        .resolvePinned(definitionId, 1)
+                                                        .resolve(new DefinitionKey(
+                                                                WorkflowScopes.DEFAULT, definitionId, 1))
                                                         .plan()
                                                         .planHash())
                                                 .isEqualTo(loaded.planHash());
@@ -272,7 +273,8 @@ public class DefinitionActivationIT {
                                         assertThat(record.orElseThrow().planHash())
                                                 .isEqualTo(pair.loaded().planHash());
                                         assertThat(app.workflowRegistry()
-                                                        .resolvePinned(definitionId, 1)
+                                                        .resolve(new DefinitionKey(
+                                                                WorkflowScopes.DEFAULT, definitionId, 1))
                                                         .plan()
                                                         .planHash())
                                                 .isEqualTo(pair.loaded().planHash());
@@ -328,8 +330,8 @@ public class DefinitionActivationIT {
                     assertThat(state.status()).isEqualTo(DefinitionStatus.ACTIVATING.name());
                     assertThat(state.activationToken()).isNotBlank();
                     assertThat(state.planHash()).isEqualTo(pending.loaded().planHash());
-                    RuntimeWorkflow publicationA =
-                            appA.workflowRegistry().resolvePinned(definitionId, key.definitionVersion());
+                    RuntimeWorkflow publicationA = appA.workflowRegistry()
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, key.definitionVersion()));
                     assertThat(publicationA).isNotNull();
                     assertThat(publicationA.plan().planHash()).isEqualTo(state.planHash());
                     return new HeldPublication(
@@ -358,8 +360,8 @@ public class DefinitionActivationIT {
                     assertThat(state.activationToken())
                             .isNotEqualTo(pendingB.original().activationToken());
                     assertThat(state.planHash()).isEqualTo(pendingB.original().planHash());
-                    RuntimeWorkflow publicationB =
-                            appB.workflowRegistry().resolvePinned(definitionId, key.definitionVersion());
+                    RuntimeWorkflow publicationB = appB.workflowRegistry()
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, key.definitionVersion()));
                     assertThat(publicationB).isNotNull();
                     assertThat(publicationB).isNotSameAs(pendingB.original().publication());
                     assertThat(publicationB.plan().planHash()).isEqualTo(state.planHash());
@@ -374,7 +376,9 @@ public class DefinitionActivationIT {
                     assertThat(state.status()).isEqualTo(DefinitionStatus.ACTIVE.name());
                     assertThat(state.activationToken()).isNull();
                     assertThat(state.planHash()).isEqualTo(heldB.original().planHash());
-                    assertThat(appB.workflowRegistry().resolvePinned(definitionId, key.definitionVersion()))
+                    assertThat(appB.workflowRegistry()
+                                    .resolve(new DefinitionKey(
+                                            WorkflowScopes.DEFAULT, definitionId, key.definitionVersion())))
                             .isSameAs(heldB.publication());
                     return heldB;
                 }))
@@ -396,7 +400,9 @@ public class DefinitionActivationIT {
                     assertThat(state.planHash()).isEqualTo(heldB.original().planHash());
                     assertThat(appA.workflowRegistry().allRegistered())
                             .noneMatch(runtime -> runtime == heldB.original().publication());
-                    assertThat(appB.workflowRegistry().resolvePinned(definitionId, key.definitionVersion()))
+                    assertThat(appB.workflowRegistry()
+                                    .resolve(new DefinitionKey(
+                                            WorkflowScopes.DEFAULT, definitionId, key.definitionVersion())))
                             .isSameAs(heldB.publication());
                     assertThat(heldB.publication().plan().planHash()).isEqualTo(state.planHash());
                     return (Void) null;
@@ -459,7 +465,8 @@ public class DefinitionActivationIT {
                                         assertThat(state.planHash()).isEqualTo(loaded.planHash());
                                         RuntimeWorkflow publication = activation
                                                 .workflowRegistry()
-                                                .resolvePinned(definitionId, key.definitionVersion());
+                                                .resolve(new DefinitionKey(
+                                                        WorkflowScopes.DEFAULT, definitionId, key.definitionVersion()));
                                         assertThat(publication).isNotNull();
                                         assertThat(publication.plan().planHash())
                                                 .isEqualTo(loaded.planHash());
@@ -512,11 +519,17 @@ public class DefinitionActivationIT {
                         ActivationClaim newClaim = reclaimed.newClaim();
                         assertThat(newClaim.token().toString()).isNotEqualTo(reclaimed.oldToken());
                         assertThat(app.workflowRegistry()
-                                        .resolvePinned(oldKey.definitionId(), oldKey.definitionVersion()))
+                                        .resolve(new DefinitionKey(
+                                                WorkflowScopes.DEFAULT,
+                                                oldKey.definitionId(),
+                                                oldKey.definitionVersion())))
                                 .isNotNull();
-                        RuntimeWorkflow oldPublication =
-                                app.workflowRegistry().resolvePinned(oldKey.definitionId(), oldKey.definitionVersion());
-                        app.workflowRegistry().unregister(oldKey.definitionId(), oldKey.definitionVersion());
+                        RuntimeWorkflow oldPublication = app.workflowRegistry()
+                                .resolve(new DefinitionKey(
+                                        WorkflowScopes.DEFAULT, oldKey.definitionId(), oldKey.definitionVersion()));
+                        app.workflowRegistry()
+                                .unregister(new DefinitionKey(
+                                        WorkflowScopes.DEFAULT, oldKey.definitionId(), oldKey.definitionVersion()));
                         String replacementJson = new String(originalJson, StandardCharsets.UTF_8);
                         var replacement = app.definitionPipeline()
                                 .load(new DefinitionResource(
@@ -524,8 +537,9 @@ public class DefinitionActivationIT {
                                         DocumentFormat.JSON,
                                         oldMetadata));
                         app.workflowRegistry().register(replacement.definition());
-                        RuntimeWorkflow replacementPublication =
-                                app.workflowRegistry().resolvePinned(oldKey.definitionId(), oldKey.definitionVersion());
+                        RuntimeWorkflow replacementPublication = app.workflowRegistry()
+                                .resolve(new DefinitionKey(
+                                        WorkflowScopes.DEFAULT, oldKey.definitionId(), oldKey.definitionVersion()));
                         assertThat(replacementPublication).isNotSameAs(oldPublication);
                         assertThat(replacementPublication.plan().planHash()).isEqualTo(replacement.planHash());
                         assertThat(replacementPublication.plan().planHash())
@@ -577,12 +591,16 @@ public class DefinitionActivationIT {
                                             assertThat(row.getString("activation_token"))
                                                     .isEqualTo(newClaim.token().toString());
                                             assertThat(app.workflowRegistry()
-                                                            .resolvePinned(
-                                                                    oldKey.definitionId(), oldKey.definitionVersion()))
+                                                            .resolve(new DefinitionKey(
+                                                                    WorkflowScopes.DEFAULT,
+                                                                    oldKey.definitionId(),
+                                                                    oldKey.definitionVersion())))
                                                     .isSameAs(replacementPublication);
                                             assertThat(app.workflowRegistry()
-                                                            .resolvePinned(
-                                                                    oldKey.definitionId(), oldKey.definitionVersion())
+                                                            .resolve(new DefinitionKey(
+                                                                    WorkflowScopes.DEFAULT,
+                                                                    oldKey.definitionId(),
+                                                                    oldKey.definitionVersion()))
                                                             .plan()
                                                             .planHash())
                                                     .isEqualTo(replacement.planHash());
@@ -597,12 +615,16 @@ public class DefinitionActivationIT {
                                             assertThat(record.orElseThrow().status())
                                                     .isEqualTo(DefinitionStatus.SUPERSEDED);
                                             assertThat(app.workflowRegistry()
-                                                            .resolvePinned(
-                                                                    oldKey.definitionId(), oldKey.definitionVersion()))
+                                                            .resolve(new DefinitionKey(
+                                                                    WorkflowScopes.DEFAULT,
+                                                                    oldKey.definitionId(),
+                                                                    oldKey.definitionVersion())))
                                                     .isSameAs(replacementPublication);
                                             assertThat(app.workflowRegistry()
-                                                            .resolvePinned(
-                                                                    oldKey.definitionId(), oldKey.definitionVersion())
+                                                            .resolve(new DefinitionKey(
+                                                                    WorkflowScopes.DEFAULT,
+                                                                    oldKey.definitionId(),
+                                                                    oldKey.definitionVersion()))
                                                             .plan()
                                                             .planHash())
                                                     .isEqualTo(replacement.planHash());

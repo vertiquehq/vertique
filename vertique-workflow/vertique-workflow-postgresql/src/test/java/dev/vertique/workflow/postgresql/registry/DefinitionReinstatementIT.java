@@ -137,9 +137,10 @@ public class DefinitionReinstatementIT {
             // definition
             Boot restarted = scenario.node(none(), unobserved(), List.of(deployed));
             WorkflowRegistry registry = restarted.app().workflowRegistry();
-            assertThatThrownBy(() -> registry.resolvePinned(id, 1))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThat(registry.registeredDefinition(id, 1)).isEmpty();
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isEmpty();
             Stored retired = scenario.stored(id, 1);
             assertThat(retired.status()).isEqualTo("RETIRED");
             WorkflowDefinitionService service = restarted.app().definitionService();
@@ -157,10 +158,15 @@ public class DefinitionReinstatementIT {
             assertThat(reinstated.planHash()).isEqualTo(hash);
 
             // And both current and pinned resolution serve the deployed code, with the registered definition restored
-            assertThat(registry.resolvePinned(id, 1).plan().planHash()).isEqualTo(hash);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
+                            .plan()
+                            .planHash())
+                    .isEqualTo(hash);
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(1);
-            assertThat(registry.isDeprecated(id, 1)).isFalse();
-            assertThat(registry.registeredDefinition(id, 1)).isPresent();
+            assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isFalse();
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isPresent();
 
             // When a new instance is started through the workflow operations
             WorkflowInstanceId started = await(restarted
@@ -190,15 +196,17 @@ public class DefinitionReinstatementIT {
             long coolingSeconds = restarted.app().workflowDefinitionsConfig().maxStalenessSeconds();
             await(service.deprecate(key));
             assertThat(scenario.stored(id, 1).status()).isEqualTo("DEPRECATED");
-            assertThat(registry.isDeprecated(id, 1)).isTrue();
+            assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isTrue();
             scenario.ageStatus(key, coolingSeconds + 60);
             await(service.retire(key));
 
             // Then the removal succeeds and clears the runtime and its registered definition
             assertThat(scenario.stored(id, 1).status()).isEqualTo("RETIRED");
-            assertThatThrownBy(() -> registry.resolvePinned(id, 1))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThat(registry.registeredDefinition(id, 1)).isEmpty();
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isEmpty();
             assertThat(registeredVersions(registry, id)).isEmpty();
         }
     }
@@ -243,7 +251,7 @@ public class DefinitionReinstatementIT {
             assertThat(scenario.stored(missingId, 1)).isEqualTo(missingBefore);
             assertThat(scenario.stored(missingId, 2)).isEqualTo(neighbourBefore);
             assertThat(registeredVersions(registry, missingId)).containsExactly(2L);
-            assertThatThrownBy(() -> registry.resolvePinned(missingId, 1))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, missingId, 1)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
 
             // Given a tenant that retired the id and a second tenant that has since activated the same id
@@ -269,7 +277,7 @@ public class DefinitionReinstatementIT {
             Stored holderBefore = scenario.stored("tenant-two", ownerId, 1);
             assertThat(retiredBefore.status()).isEqualTo("RETIRED");
             assertThat(holderBefore.status()).isEqualTo("ACTIVE");
-            RuntimeWorkflow holderRuntime = registry.resolvePinned(ownerId, 1);
+            RuntimeWorkflow holderRuntime = registry.resolve(tenantTwoKey);
 
             // When the first tenant's retired version is reinstated
             Throwable held = failureOf(service.reinstate(tenantOneKey));
@@ -284,7 +292,7 @@ public class DefinitionReinstatementIT {
             // And both rows are unchanged and the holder's runtime is still the only one registered for the id
             assertThat(scenario.stored("tenant-one", ownerId, 1)).isEqualTo(retiredBefore);
             assertThat(scenario.stored("tenant-two", ownerId, 1)).isEqualTo(holderBefore);
-            assertThat(registry.resolvePinned(ownerId, 1)).isSameAs(holderRuntime);
+            assertThat(registry.resolve(tenantTwoKey)).isSameAs(holderRuntime);
             assertThat(registeredVersions(registry, ownerId)).containsExactly(1L);
         }
     }
@@ -343,9 +351,10 @@ public class DefinitionReinstatementIT {
 
             // And nothing was left registered or published for the key
             assertThat(registeredVersions(registry, id)).isEmpty();
-            assertThatThrownBy(() -> registry.resolvePinned(id, 1))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThat(registry.registeredDefinition(id, 1)).isEmpty();
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isEmpty();
         }
     }
 
@@ -405,9 +414,9 @@ public class DefinitionReinstatementIT {
             assertThat(driftBefore.status()).isEqualTo("RETIRED");
             assertThat(restarted.app().workflowDefinitionStore().currentStatus(id, 1))
                     .isEqualTo(ActivationStatus.RETIRED);
-            assertThatThrownBy(() -> registry.resolvePinned(id, 1))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThatThrownBy(() -> registry.resolvePinned(driftId, 1))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, driftId, 1)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
             ActivationStatus driftCacheBefore =
                     restarted.app().workflowDefinitionStore().currentStatus(driftId, 1);
@@ -444,9 +453,13 @@ public class DefinitionReinstatementIT {
                     .isEqualTo(retired);
 
             // And the membership and the cache are restored
-            assertThat(registry.resolvePinned(id, 1).plan().planHash()).isEqualTo(loadedHash);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
+                            .plan()
+                            .planHash())
+                    .isEqualTo(loadedHash);
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(1);
-            assertThat(registry.registeredDefinition(id, 1)).isPresent();
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isPresent();
             assertThat(restarted.app().workflowDefinitionStore().currentStatus(id, 1))
                     .isEqualTo(ActivationStatus.ACTIVE);
 
@@ -459,9 +472,10 @@ public class DefinitionReinstatementIT {
 
             // Then the removal succeeds and clears the runtime and its registered definition
             assertThat(scenario.stored(id, 1).status()).isEqualTo("RETIRED");
-            assertThatThrownBy(() -> registry.resolvePinned(id, 1))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThat(registry.registeredDefinition(id, 1)).isEmpty();
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isEmpty();
             assertThat(registeredVersions(registry, id)).isEmpty();
         }
     }
@@ -510,7 +524,7 @@ public class DefinitionReinstatementIT {
             WorkflowRegistry registry = boot.app().workflowRegistry();
             WorkflowDefinitionService service = boot.app().definitionService();
             TransactionalWorkflowOperations<SqlClient> operations = boot.app().transactionalOperations();
-            RuntimeWorkflow activeRuntime = registry.resolvePinned(id, 2);
+            RuntimeWorkflow activeRuntime = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2));
             assertThat(registeredVersions(registry, id)).containsExactly(2L);
             assertThat(scenario.stored(id, 3).status()).isEqualTo("RETIRED");
 
@@ -523,10 +537,12 @@ public class DefinitionReinstatementIT {
             assertThat(scenario.stored(id, 3).status()).isEqualTo("RETIRED");
             assertThat(activeCount(scenario, id)).isEqualTo(1);
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
-            assertThat(registry.resolvePinned(id, 2)).isSameAs(activeRuntime);
-            RuntimeWorkflow lowerRuntime = registry.resolvePinned(id, 1);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
+                    .isSameAs(activeRuntime);
+            RuntimeWorkflow lowerRuntime = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
             assertThat(lowerRuntime.plan().planHash()).isEqualTo(hash1);
-            assertThat(registry.registeredDefinition(id, 1)).isPresent();
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isPresent();
 
             // Given a database fault that fails the promotion of version 3, but only after the previous winner has
             // been demoted in the same transaction
@@ -547,7 +563,10 @@ public class DefinitionReinstatementIT {
 
             // Then the reinstatement waits behind the admission, with its local publication already visible
             assertThat(failing.isComplete()).isFalse();
-            assertThat(registry.resolvePinned(id, 3).plan().planHash()).isEqualTo(hash3);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 3))
+                            .plan()
+                            .planHash())
+                    .isEqualTo(hash3);
 
             // And the admission still sees only the committed, retired row and is refused
             Throwable raced =
@@ -603,11 +622,14 @@ public class DefinitionReinstatementIT {
             assertThat(scenario.stored(id, 3)).isEqualTo(higherBefore);
 
             // And only the attempt's own publication was compensated, with its registered definition
-            assertThatThrownBy(() -> registry.resolvePinned(id, 3))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 3)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThat(registry.registeredDefinition(id, 3)).isEmpty();
-            assertThat(registry.resolvePinned(id, 2)).isSameAs(activeRuntime);
-            assertThat(registry.resolvePinned(id, 1)).isSameAs(lowerRuntime);
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 3)))
+                    .isEmpty();
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
+                    .isSameAs(activeRuntime);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isSameAs(lowerRuntime);
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
 
             // When the fault is gone and the higher version is reinstated again
@@ -620,8 +642,12 @@ public class DefinitionReinstatementIT {
             assertThat(scenario.stored(id, 1).status()).isEqualTo("SUPERSEDED");
             assertThat(activeCount(scenario, id)).isEqualTo(1);
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(3);
-            assertThat(registry.resolvePinned(id, 3).plan().planHash()).isEqualTo(hash3);
-            assertThat(registry.resolvePinned(id, 2)).isSameAs(activeRuntime);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 3))
+                            .plan()
+                            .planHash())
+                    .isEqualTo(hash3);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
+                    .isSameAs(activeRuntime);
 
             // And admission now accepts the committed version
             Tx afterCommit = Tx.begin(scenario, null);
@@ -634,7 +660,8 @@ public class DefinitionReinstatementIT {
                     .isEqualTo(3);
 
             // Given another node retired version 1 of the second id while this node still serves its registration
-            RuntimeWorkflow preservedRuntime = registry.resolvePinned(preservedId, 1);
+            RuntimeWorkflow preservedRuntime =
+                    registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, preservedId, 1));
             scenario.execute("""
                     UPDATE workflow_definitions
                     SET status = 'RETIRED', status_changed_at = clock_timestamp()
@@ -655,8 +682,10 @@ public class DefinitionReinstatementIT {
             assertThat(scenario.stored(preservedId, 2)).isEqualTo(preservedActiveBefore);
 
             // And the registration that existed before the attempt is preserved, with its registered definition
-            assertThat(registry.resolvePinned(preservedId, 1)).isSameAs(preservedRuntime);
-            assertThat(registry.registeredDefinition(preservedId, 1)).isPresent();
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, preservedId, 1)))
+                    .isSameAs(preservedRuntime);
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, preservedId, 1)))
+                    .isPresent();
         }
     }
 
@@ -729,7 +758,7 @@ public class DefinitionReinstatementIT {
                     .usingRecursiveComparison()
                     .ignoringFields("status", "changedAt")
                     .isEqualTo(retiredBefore);
-            assertThat(registry.resolvePinned(id, 1).plan().planHash()).isEqualTo(loadedHash);
+            assertThat(registry.resolve(tenantOneKey).plan().planHash()).isEqualTo(loadedHash);
 
             // And the other tenant's claim is untouched
             assertThat(scenario.stored("tenant-two", id, 1)).isEqualTo(staleBefore);
@@ -1030,7 +1059,7 @@ public class DefinitionReinstatementIT {
             await(service.deprecate(v1));
             scenario.ageStatus(v1, coolingSeconds + 60);
             await(service.retire(v1));
-            RuntimeWorkflow activeRuntime = registry.resolvePinned(id, 2);
+            RuntimeWorkflow activeRuntime = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2));
             assertThat(scenario.stored(id, 1).status()).isEqualTo("RETIRED");
             assertThat(scenario.stored(id, 2).status()).isEqualTo("ACTIVE");
             assertThat(registeredVersions(registry, id)).containsExactly(2L);
@@ -1043,11 +1072,16 @@ public class DefinitionReinstatementIT {
             assertThat(scenario.stored(id, 2).status()).isEqualTo("ACTIVE");
             assertThat(activeCount(scenario, id)).isEqualTo(1);
             assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
-            assertThat(registry.resolvePinned(id, 2)).isSameAs(activeRuntime);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
+                    .isSameAs(activeRuntime);
 
             // And the lower version is served again from its stored text, and the cache agrees with the table
-            assertThat(registry.resolvePinned(id, 1).plan().planHash()).isEqualTo(hash1);
-            assertThat(registry.registeredDefinition(id, 1)).isPresent();
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
+                            .plan()
+                            .planHash())
+                    .isEqualTo(hash1);
+            assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                    .isPresent();
             assertThat(node.app().workflowDefinitionStore().currentStatus(id, 1))
                     .isEqualTo(ActivationStatus.SUPERSEDED);
             assertThat(node.app().workflowDefinitionStore().currentStatus(id, 2))

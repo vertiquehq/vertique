@@ -87,7 +87,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
         FakeStore store = new FakeStore();
         store.completion = Future.failedFuture(new IllegalStateException("commit outcome unknown"));
         WorkflowRegistry registry = Mockito.mock(WorkflowRegistry.class);
-        Mockito.when(registry.resolvePinned("wf", 1)).thenReturn(Mockito.mock(RuntimeWorkflow.class));
+        Mockito.when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1)))
+                .thenReturn(Mockito.mock(RuntimeWorkflow.class));
         DefaultWorkflowDefinitionLifecycle lifecycle = lifecycle(store, Set.of(publishingLoader()), registry);
 
         // When the reread of the row fails after the publication
@@ -580,17 +581,19 @@ class DefaultWorkflowDefinitionLifecycleTest {
     private static WorkflowRegistry recordingRegistry(List<String> events) {
         WorkflowRegistry registry = Mockito.mock(WorkflowRegistry.class);
         Mockito.doAnswer(invocation -> {
-                    events.add("mark " + invocation.getArgument(0) + " " + invocation.getArgument(1));
+                    DefinitionKey key = invocation.getArgument(0);
+                    events.add("mark " + key.definitionId() + " " + key.definitionVersion());
                     return null;
                 })
                 .when(registry)
-                .markDeprecated(Mockito.anyString(), Mockito.anyLong());
+                .markDeprecated(Mockito.any(DefinitionKey.class));
         Mockito.doAnswer(invocation -> {
-                    events.add("unregister " + invocation.getArgument(0) + " " + invocation.getArgument(1));
+                    DefinitionKey key = invocation.getArgument(0);
+                    events.add("unregister " + key.definitionId() + " " + key.definitionVersion());
                     return null;
                 })
                 .when(registry)
-                .unregister(Mockito.anyString(), Mockito.anyLong());
+                .unregister(Mockito.any(DefinitionKey.class));
         return registry;
     }
 
@@ -623,7 +626,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         /** Makes the registry hold the given runtime for the test key, as a published or direct registration. */
         void registryHolds(RuntimeWorkflow runtime) {
-            Mockito.when(registry.resolvePinned("wf", 1)).thenReturn(runtime);
+            Mockito.when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1)))
+                    .thenReturn(runtime);
         }
     }
 
@@ -725,7 +729,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         Future<Void> first = lifecycle.activate(KEY);
 
         assertThat(first.failed()).isTrue();
-        RuntimeWorkflow published = registry.resolvePinned("wf", 1);
+        RuntimeWorkflow published = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
         assertThat(registry.allRegistered()).containsExactly(published);
         assertThat(registry.unregistered).isEmpty();
 
@@ -739,7 +743,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
                 .isTrue();
         assertThat(store.completes).isEqualTo(2);
         assertThat(registry.allRegistered()).hasSize(1);
-        assertThat(registry.resolvePinned("wf", 1)).isSameAs(published);
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1)))
+                .isSameAs(published);
         assertThat(registry.unregistered).isEmpty();
     }
 
@@ -754,7 +759,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         Mockito.when(foreignDefinition.definitionId()).thenReturn("wf");
         Mockito.when(foreignDefinition.definitionVersion()).thenReturn(1L);
         registry.register(foreignDefinition);
-        RuntimeWorkflow foreign = registry.resolvePinned("wf", 1);
+        RuntimeWorkflow foreign = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
         DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
                 Optional.of(store), () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
 
@@ -780,7 +785,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
                 Optional.of(store), () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
         assertThat(lifecycle.activate(KEY).succeeded()).isTrue();
-        RuntimeWorkflow published = registry.resolvePinned("wf", 1);
+        RuntimeWorkflow published = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
 
         // When it is activated again
         Future<Void> again = lifecycle.activate(KEY);
@@ -807,7 +812,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         ReinstateWorld world = new ReinstateWorld(store);
         Future<Void> first = world.lifecycle.reinstate(KEY);
         assertThat(first.failed()).isTrue();
-        RuntimeWorkflow published = world.registry.resolvePinned("wf", 1);
+        RuntimeWorkflow published = world.registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
         assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf", 1, published))
                 .isEqualTo(ManagedRegistrations.Standing.OWN);
         assertThat(world.registry.unregistered).isEmpty();
@@ -843,7 +848,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         });
         ReinstateWorld world = new ReinstateWorld(store);
         assertThat(world.lifecycle.reinstate(KEY).failed()).isTrue();
-        RuntimeWorkflow published = world.registry.resolvePinned("wf", 1);
+        RuntimeWorkflow published = world.registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
         assertThat(world.registry.allRegistered()).containsExactly(published);
 
         // And the row is still retired, and the store now refuses the change for good
@@ -875,7 +880,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         });
         ReinstateWorld world = new ReinstateWorld(store);
         assertThat(world.lifecycle.reinstate(KEY).failed()).isTrue();
-        RuntimeWorkflow published = world.registry.resolvePinned("wf", 1);
+        RuntimeWorkflow published = world.registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
         assertThat(world.registry.allRegistered()).containsExactly(published);
         store.events.clear();
 
@@ -1018,7 +1023,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         Mockito.when(foreign.definitionId()).thenReturn("wf");
         Mockito.when(foreign.definitionVersion()).thenReturn(1L);
         world.registry.register(foreign);
-        RuntimeWorkflow registered = world.registry.resolvePinned("wf", 1);
+        RuntimeWorkflow registered = world.registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
         if (standing == ManagedRegistrations.Standing.OTHER_OWNER)
             world.registrations.attribute("tenant-other", "wf", 1, registered);
 

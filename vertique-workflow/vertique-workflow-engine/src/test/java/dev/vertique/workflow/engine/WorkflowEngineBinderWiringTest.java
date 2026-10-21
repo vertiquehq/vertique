@@ -42,6 +42,8 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -358,7 +360,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -421,7 +424,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         // Gate opened via the tenant namespace only; no correlation namespace on the instance and
         // no ambient correlation bound — the seeder must fire because the effective document has no
@@ -468,7 +472,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -539,7 +544,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = new WorkflowInstance(
                 new WorkflowInstanceId(UUID.randomUUID()),
@@ -616,8 +622,10 @@ class WorkflowEngineBinderWiringTest {
                 payload -> Map.of(),
                 Map.of(),
                 stubCallbacks());
-        when(registry.resolvePinned(DEFINITION_ID, 1L)).thenReturn(sourceRw);
-        when(registry.resolvePinned(DEFINITION_ID, 2L)).thenReturn(targetRw);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(sourceRw);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2L)))
+                .thenReturn(targetRw);
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, null, null, null, tenantMetadata("T1"));
         when(instances.findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -676,7 +684,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, tenantMetadata("T1"));
@@ -770,7 +779,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         UUID dueTimerId = UUID.randomUUID();
@@ -875,7 +885,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         UUID dueTimerId = UUID.randomUUID();
@@ -911,7 +922,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildReminderRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         UUID reminderTimerId = UUID.randomUUID();
@@ -1040,7 +1052,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildReminderRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         UUID reminderTimerId = UUID.randomUUID();
@@ -1073,7 +1086,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID timerId = UUID.randomUUID();
         WorkflowInstance inst =
@@ -1238,7 +1252,8 @@ class WorkflowEngineBinderWiringTest {
         // pulling join evaluation (ForkNode/JoinNode resolution) into this binder-wiring-focused
         // test; only the branch drive's own context bind is under test here.
         RuntimeWorkflow rw = buildBranchTimerToWaitSignalRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
         UUID timerId = UUID.randomUUID();
@@ -1382,7 +1397,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, null);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -1493,7 +1509,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = new WorkflowInstance(
                 new WorkflowInstanceId(UUID.randomUUID()),
@@ -1576,8 +1593,10 @@ class WorkflowEngineBinderWiringTest {
                 payload -> Map.of(),
                 Map.of(),
                 stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(sourceRw);
-        when(h.registry().resolvePinned(DEFINITION_ID, 2L)).thenReturn(targetRw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(sourceRw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2L)))
+                .thenReturn(targetRw);
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, null, null, null, null);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -1642,7 +1661,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, null);

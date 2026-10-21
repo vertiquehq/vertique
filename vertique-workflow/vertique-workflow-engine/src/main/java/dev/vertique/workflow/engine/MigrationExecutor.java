@@ -10,6 +10,7 @@ import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
@@ -137,7 +138,7 @@ final class MigrationExecutor {
      *       (enriches {@link dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException}
      *       with the instance id). Assert plan-hash matches.</li>
      *   <li>Resolve the target {@link RuntimeWorkflow} via
-     *       {@code registry.resolvePinned(definitionId, targetVersion)}.</li>
+     *       {@code registry.resolve(key)} of the instance's definition scope, id and the target version.</li>
      *   <li>Reject a deprecated target version with a typed deprecated-version failure before any
      *       handler call or write.</li>
      *   <li>Look up the migration handler from the registry; throw
@@ -206,19 +207,27 @@ final class MigrationExecutor {
         }
 
         // --- Step 3: Resolve target RuntimeWorkflow ---
+        DefinitionKey targetKey;
+        try {
+            targetKey = new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), targetVersion);
+        } catch (IllegalArgumentException e) {
+            // A version no key can hold is not registered.
+            return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException(
+                    inst.definitionScopeKey(), inst.definitionId(), targetVersion, inst.id()));
+        }
         RuntimeWorkflow targetRw;
         try {
-            targetRw = registry.resolvePinned(inst.definitionId(), targetVersion);
+            targetRw = registry.resolve(targetKey);
         } catch (dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException e) {
             return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException(
-                    e.definitionId(), e.version(), inst.id()));
+                    e.scopeKey(), e.definitionId(), e.version(), inst.id()));
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
 
         // A deprecated target admits no new work; refuse before any handler call or write.
-        if (registry.isDeprecated(inst.definitionId(), targetVersion)) {
-            return Future.failedFuture(WorkflowEngine.deprecatedRefusal(inst.definitionId(), targetVersion));
+        if (registry.isDeprecated(targetKey)) {
+            return Future.failedFuture(WorkflowEngine.deprecatedRefusal(targetKey));
         }
 
         // --- Step 4: Look up migration handler ---
@@ -419,7 +428,8 @@ final class MigrationExecutor {
      */
     private RuntimeWorkflow resolvePinnedForInstance(WorkflowInstance inst) {
         try {
-            return registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+            return registry.resolve(
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
         } catch (dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException e) {
             org.slf4j.LoggerFactory.getLogger(MigrationExecutor.class)
                     .warn(

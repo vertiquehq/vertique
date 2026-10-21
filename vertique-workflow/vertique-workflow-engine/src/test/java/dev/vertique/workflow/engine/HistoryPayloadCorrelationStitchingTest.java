@@ -44,6 +44,8 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
@@ -351,7 +353,8 @@ class HistoryPayloadCorrelationStitchingTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, null, null, WorkflowStatus.FAILED);
         when(h.instances().findByIdForUpdate(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -411,8 +414,10 @@ class HistoryPayloadCorrelationStitchingTest {
                 payload -> Map.of(),
                 Map.of(),
                 stubCallbacks());
-        when(registry.resolvePinned(DEFINITION_ID, 1L)).thenReturn(sourceRw);
-        when(registry.resolvePinned(DEFINITION_ID, 2L)).thenReturn(targetRw);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(sourceRw);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2L)))
+                .thenReturn(targetRw);
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, null, null, WorkflowStatus.WAITING);
         when(instances.findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -473,7 +478,8 @@ class HistoryPayloadCorrelationStitchingTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         // Instance metadata carries a different (irrelevant here since this record has no
@@ -622,7 +628,8 @@ class HistoryPayloadCorrelationStitchingTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildBranchRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         UUID branchTokenId = UUID.randomUUID();
@@ -675,7 +682,8 @@ class HistoryPayloadCorrelationStitchingTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildBranchRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         UUID branchTokenId = UUID.randomUUID();
@@ -752,7 +760,8 @@ class HistoryPayloadCorrelationStitchingTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildBranchRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         UUID branchTokenId = UUID.randomUUID();

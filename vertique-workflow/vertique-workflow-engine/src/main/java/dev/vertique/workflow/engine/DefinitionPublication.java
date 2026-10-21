@@ -29,10 +29,10 @@ final class DefinitionPublication {
 
     private DefinitionPublication() {}
 
-    /** The runtime the registry holds for the exact id and version, or {@code null} when it holds none. */
-    static @Nullable RuntimeWorkflow held(WorkflowRegistry local, String definitionId, long version) {
+    /** The runtime the registry holds for the exact key, or {@code null} when it holds none. */
+    static @Nullable RuntimeWorkflow held(WorkflowRegistry local, DefinitionKey key) {
         try {
-            return local.resolvePinned(definitionId, version);
+            return local.resolve(key);
         } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException absent) {
             return null;
         }
@@ -88,16 +88,16 @@ final class DefinitionPublication {
             ManagedRegistrations registrations,
             DefinitionKey key,
             WorkflowDefinition<?, ?> definition) {
-        local.register(definition);
+        local.register(key.scopeKey(), definition);
         RuntimeWorkflow published = null;
         try {
-            published = local.resolvePinned(key.definitionId(), key.definitionVersion());
+            published = local.resolve(key);
             registrations.attribute(key.scopeKey(), key.definitionId(), key.definitionVersion(), published);
             return published;
         } catch (RuntimeException e) {
             // The registration was made by this call, so it is removed whatever the registry holds under the key.
             try {
-                local.unregister(key.definitionId(), key.definitionVersion());
+                local.unregister(key);
                 if (published != null) registrations.clear(key.definitionId(), key.definitionVersion(), published);
             } catch (RuntimeException compensation) {
                 if (compensation != e) e.addSuppressed(compensation);

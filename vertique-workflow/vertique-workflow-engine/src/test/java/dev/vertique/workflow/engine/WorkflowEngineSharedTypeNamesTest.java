@@ -26,6 +26,8 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -160,7 +162,7 @@ class WorkflowEngineSharedTypeNamesTest {
         real.register(definition());
         WorkflowRegistry wrapped =
                 wrapRegistry ? mock(WorkflowRegistry.class, AdditionalAnswers.delegatesTo(real)) : real;
-        RuntimeWorkflow rw = real.resolvePinned(DEFINITION_ID, 1L);
+        RuntimeWorkflow rw = real.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L));
         assertThat(rw.plan().nodes().toString()).contains("shared.approval");
 
         WorkflowTransactionRunner<SqlClient> txRunner = mock();

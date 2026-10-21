@@ -116,16 +116,19 @@ public class DefinitionDeprecationIT {
             assertThat(targetBefore.planHash()).isEqualTo(loadedTarget.planHash());
             assertThat(targetBefore.document()).isNotBlank();
             assertThat(app.workflowRegistry()
-                            .resolvePinned(id, targetVersion)
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion))
                             .plan()
                             .planHash())
                     .isEqualTo(loadedTarget.planHash());
-            assertThat(app.workflowRegistry().resolvePinned(id, otherVersion)).isNotNull();
+            assertThat(app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, otherVersion)))
+                    .isNotNull();
             assertThat(app.workflowDefinitionStore().currentStatus(id, targetVersion))
                     .isEqualTo(ActivationStatus.valueOf(targetStatusBefore.name()));
             assertThat(app.workflowDefinitionStore().currentStatus(id, otherVersion))
                     .isEqualTo(ActivationStatus.valueOf(otherStatusBefore.name()));
-            assertThat(app.workflowRegistry().isDeprecated(id, targetVersion)).isFalse();
+            assertThat(app.workflowRegistry()
+                            .isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion)))
+                    .isFalse();
 
             // When the target version is deprecated through the public service
             await(app.definitionService().deprecate(targetKey));
@@ -167,12 +170,15 @@ public class DefinitionDeprecationIT {
                             tuple(otherVersion, ActivationStatus.valueOf(otherStatusBefore.name())));
 
             // And the registry marks only the target, skips it for current resolution and still serves it pinned
-            assertThat(app.workflowRegistry().isDeprecated(id, targetVersion)).isTrue();
-            assertThat(app.workflowRegistry().isDeprecated(id, otherVersion)).isFalse();
+            assertThat(app.workflowRegistry()
+                            .isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion)))
+                    .isTrue();
+            assertThat(app.workflowRegistry().isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, otherVersion)))
+                    .isFalse();
             assertThat(app.workflowRegistry().resolveCurrent(id).plan().definitionVersion())
                     .isEqualTo(otherVersion);
             assertThat(app.workflowRegistry()
-                            .resolvePinned(id, targetVersion)
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion))
                             .plan()
                             .planHash())
                     .isEqualTo(loadedTarget.planHash());

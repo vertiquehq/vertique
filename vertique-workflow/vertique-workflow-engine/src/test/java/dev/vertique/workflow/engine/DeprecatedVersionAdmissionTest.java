@@ -38,6 +38,8 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -201,12 +203,18 @@ class DeprecatedVersionAdmissionTest {
         RuntimeWorkflow version2 = runtimeWorkflow(2, PLAN_HASH_V2);
         RuntimeWorkflow version3 = runtimeWorkflow(3, PLAN_HASH_V3);
         when(registry.resolveCurrent(DEFINITION_ID)).thenReturn(version1);
-        when(registry.resolvePinned(DEFINITION_ID, 1)).thenReturn(version1);
-        when(registry.resolvePinned(DEFINITION_ID, 2)).thenReturn(version2);
-        when(registry.resolvePinned(DEFINITION_ID, 3)).thenReturn(version3);
-        when(registry.isDeprecated(DEFINITION_ID, 2)).thenReturn(true);
-        when(registry.isDeprecated(DEFINITION_ID, 1)).thenReturn(false);
-        when(registry.isDeprecated(DEFINITION_ID, 3)).thenReturn(false);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1)))
+                .thenReturn(version1);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2)))
+                .thenReturn(version2);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 3)))
+                .thenReturn(version3);
+        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2)))
+                .thenReturn(true);
+        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1)))
+                .thenReturn(false);
+        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 3)))
+                .thenReturn(false);
 
         WorkflowInstance pinnedToDeprecated = waitingInstance(2, PLAN_HASH_V2);
         WorkflowInstance onVersion1 = waitingInstance(1, PLAN_HASH_V1);

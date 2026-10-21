@@ -107,7 +107,8 @@ class DefinitionPropagationPassTest {
 
         // Then the new status was handed over and the runtime is marked
         assertThat(world.loader.restored).containsExactly(active, deprecated);
-        assertThat(world.registry.isDeprecated("wf-held", 1)).isTrue();
+        assertThat(world.registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, "wf-held", 1)))
+                .isTrue();
         assertThat(world.view.applyFailures()).isZero();
     }
 
@@ -331,7 +332,8 @@ class DefinitionPropagationPassTest {
         // Then both were re-read once and the deprecation was applied
         assertThat(world.store.findCount(live.key())).isEqualTo(1);
         assertThat(world.store.findCount(retired.key())).isEqualTo(1);
-        assertThat(world.registry.isDeprecated("wf-live", 1)).isTrue();
+        assertThat(world.registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, "wf-live", 1)))
+                .isTrue();
     }
 
     @Test
@@ -458,7 +460,8 @@ class DefinitionPropagationPassTest {
         world.runOk();
 
         // Then the runtime is marked deprecated and the row is counted as drift
-        assertThat(world.registry.isDeprecated("wf-drift", 1)).isTrue();
+        assertThat(world.registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, "wf-drift", 1)))
+                .isTrue();
         assertThat(world.view.applyFailures()).isEqualTo(1);
         assertThat(log.warnings())
                 .singleElement()
@@ -837,7 +840,8 @@ class DefinitionPropagationPassTest {
         void hold(String tenant, String id, long version, String hash) {
             registry.hashes.put(id + "@" + version, hash);
             registry.register(registry.definition(id, version));
-            registrations.attribute(tenant, id, version, registry.resolvePinned(id, version));
+            registrations.attribute(
+                    tenant, id, version, registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)));
         }
 
         void holdWithoutDefinition(String tenant, String id, long version, String hash) {
@@ -997,6 +1001,7 @@ class DefinitionPropagationPassTest {
             Mockito.when(plan.definitionVersion()).thenReturn(version);
             RuntimeWorkflow runtime = Mockito.mock(RuntimeWorkflow.class);
             Mockito.when(runtime.plan()).thenReturn(plan);
+            Mockito.when(runtime.definitionScopeKey()).thenReturn(WorkflowScopes.DEFAULT);
             history.add(runtime);
             return runtime;
         }

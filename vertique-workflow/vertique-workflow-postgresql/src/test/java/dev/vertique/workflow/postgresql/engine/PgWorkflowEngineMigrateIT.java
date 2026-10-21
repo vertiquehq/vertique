@@ -31,6 +31,8 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
@@ -258,8 +260,14 @@ public class PgWorkflowEngineMigrateIT {
         registryBoth.register(DEF_V1);
         registryBoth.register(DEF_V2);
 
-        v1PlanHash = registryV1.resolvePinned(DEF_ID, 1L).plan().planHash();
-        v2PlanHash = registryBoth.resolvePinned(DEF_ID, 2L).plan().planHash();
+        v1PlanHash = registryV1
+                .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEF_ID, 1L))
+                .plan()
+                .planHash();
+        v2PlanHash = registryBoth
+                .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEF_ID, 2L))
+                .plan()
+                .planHash();
 
         DefaultWorkflowMigrationRegistry migrationRegistry =
                 new DefaultWorkflowMigrationRegistry(Set.of(HANDLER), registryBoth);

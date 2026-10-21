@@ -19,6 +19,7 @@ import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -379,10 +380,11 @@ final class TimerLifecycleService {
     private Future<TimerFiringResult> handleTimerFiredStandalone(WorkflowInstance inst, UUID timerId, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+            rw = registry.resolve(
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
         } catch (WorkflowVersionPinUnavailableException e) {
             return Future.failedFuture(
-                    new WorkflowVersionPinUnavailableException(e.definitionId(), e.version(), inst.id()));
+                    new WorkflowVersionPinUnavailableException(e.scopeKey(), e.definitionId(), e.version(), inst.id()));
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -442,10 +444,11 @@ final class TimerLifecycleService {
     private Future<TimerFiringResult> handleTimerFiredTimeout(WorkflowInstance inst, UUID timerId, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+            rw = registry.resolve(
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
         } catch (WorkflowVersionPinUnavailableException e) {
             return Future.failedFuture(
-                    new WorkflowVersionPinUnavailableException(e.definitionId(), e.version(), inst.id()));
+                    new WorkflowVersionPinUnavailableException(e.scopeKey(), e.definitionId(), e.version(), inst.id()));
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -863,7 +866,8 @@ final class TimerLifecycleService {
      * @throws WorkflowPlanHashDriftException if the stored plan hash differs from the resolved plan
      */
     private RuntimeWorkflow resolveAndCheckPlanHash(WorkflowInstance inst) {
-        RuntimeWorkflow rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+        RuntimeWorkflow rw = registry.resolve(
+                new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
         WorkflowPayloads.requirePlanHashMatches(inst, rw);
         return rw;
     }

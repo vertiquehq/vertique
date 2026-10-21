@@ -11,6 +11,7 @@ import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -894,7 +895,10 @@ final class ForkJoinCoordinator {
                         .get()
                         .driveTransitionsStep(
                                 advanced,
-                                registry.resolvePinned(advanced.definitionId(), advanced.definitionVersion()),
+                                registry.resolve(new DefinitionKey(
+                                        advanced.definitionScopeKey(),
+                                        advanced.definitionId(),
+                                        advanced.definitionVersion())),
                                 tx);
             });
         });

@@ -20,6 +20,8 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -126,7 +128,8 @@ class BoundedEchoTest {
     /** A handler whose collaborators the tested refusals never reach. */
     private static SignalHandler handlerResolving(RuntimeWorkflow pinned) {
         WorkflowRegistry registry = mock(WorkflowRegistry.class);
-        when(registry.resolvePinned(DEFINITION_ID, 3L)).thenReturn(pinned);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 3L)))
+                .thenReturn(pinned);
         return new SignalHandler(
                 registry, null, null, null, null, null, null, null, null, Clock.fixed(NOW, ZoneOffset.UTC));
     }

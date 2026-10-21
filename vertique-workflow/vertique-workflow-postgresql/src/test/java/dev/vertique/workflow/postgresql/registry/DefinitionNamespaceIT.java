@@ -119,8 +119,7 @@ public class DefinitionNamespaceIT {
 
             // And it is active and registered, and the tenant listing returns exactly that row
             assertThat(scenario.stored("t1", namespacedId, 1).status()).isEqualTo("ACTIVE");
-            assertThat(node.app().workflowRegistry().resolvePinned(namespacedId, 1))
-                    .isNotNull();
+            assertThat(node.app().workflowRegistry().resolve(namespacedKey)).isNotNull();
             List<WorkflowDefinitionRecord> listed =
                     await(node.app().definitionService().list(new DefinitionFilter("t1", null, null)));
             assertThat(listed).extracting(WorkflowDefinitionRecord::key).containsExactly(namespacedKey);
@@ -199,15 +198,14 @@ public class DefinitionNamespaceIT {
 
             // Then it is ACTIVE and registered
             assertThat(scenario.stored("t1", candidateId, 1).status()).isEqualTo("ACTIVE");
-            assertThat(node.app().workflowRegistry().resolvePinned(candidateId, 1))
-                    .isNotNull();
+            assertThat(node.app().workflowRegistry().resolve(candidateKey)).isNotNull();
 
             // When the active row is deprecated
             await(node.app().definitionService().deprecate(activeKey));
 
             // Then it is DEPRECATED and stays pinnable
             assertThat(scenario.stored("t1", activeId, 1).status()).isEqualTo("DEPRECATED");
-            assertThat(node.app().workflowRegistry().resolvePinned(activeId, 1)).isNotNull();
+            assertThat(node.app().workflowRegistry().resolve(activeKey)).isNotNull();
 
             // When the deprecated row is retired after its cooling window
             scenario.ageStatus(deprecatedKey, coolingSeconds + 60);
@@ -221,8 +219,7 @@ public class DefinitionNamespaceIT {
 
             // Then it is the only version of its owner, so it is ACTIVE and registered again
             assertThat(scenario.stored("t1", deprecatedId, 1).status()).isEqualTo("ACTIVE");
-            assertThat(node.app().workflowRegistry().resolvePinned(deprecatedId, 1))
-                    .isNotNull();
+            assertThat(node.app().workflowRegistry().resolve(deprecatedKey)).isNotNull();
         }
     }
 

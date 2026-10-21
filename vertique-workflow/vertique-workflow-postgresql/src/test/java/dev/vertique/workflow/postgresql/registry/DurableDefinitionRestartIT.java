@@ -112,7 +112,8 @@ public class DurableDefinitionRestartIT {
                             .compose(secondHandle -> {
                                 handles.add(secondHandle);
                                 assertThat(second.workflowRegistry()
-                                                .resolvePinned(definitionId, version)
+                                                .resolve(new DefinitionKey(
+                                                        WorkflowScopes.DEFAULT, definitionId, version))
                                                 .plan()
                                                 .planHash())
                                         .isEqualTo(compiled.planHash());
@@ -169,7 +170,8 @@ public class DurableDefinitionRestartIT {
                                     first.definitionService().activate(key).map(loaded))
                             .compose(loaded -> {
                                 assertThat(first.workflowRegistry()
-                                                .resolvePinned(definitionId, version)
+                                                .resolve(new DefinitionKey(
+                                                        WorkflowScopes.DEFAULT, definitionId, version))
                                                 .plan()
                                                 .planHash())
                                         .isEqualTo(loaded.planHash());

@@ -51,6 +51,7 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowDefinitionPropagationPoller;
 import dev.vertique.workflow.engine.WorkflowDefinitionRegistryView;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
@@ -764,9 +765,13 @@ public final class ManagedDefinitionDatabase {
             if (!enabled || !verifyPinnedDefinition) {
                 return;
             }
-            String actualHash = registry.resolvePinned(definitionId, definitionVersion)
-                    .plan()
-                    .planHash();
+            // The version is published under the scope of its owner, which the observation does not name
+            String actualHash = registry.keysFor(definitionId).stream()
+                    .filter(key -> key.definitionVersion() == definitionVersion)
+                    .map(key -> registry.resolve(key).plan().planHash())
+                    .findFirst()
+                    .orElseThrow(
+                            () -> new WorkflowVersionPinUnavailableException(definitionId, definitionVersion, null));
             if (!expectedPlanHash.equals(actualHash)) {
                 throw new IllegalStateException("Restored workflow plan hash differs from the expected publication");
             }

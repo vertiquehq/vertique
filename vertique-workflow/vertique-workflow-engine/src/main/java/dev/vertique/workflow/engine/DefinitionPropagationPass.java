@@ -184,7 +184,7 @@ final class DefinitionPropagationPass {
         DefinitionKey key = row.key();
         try {
             WorkflowRegistry local = registry.get();
-            RuntimeWorkflow held = DefinitionPublication.held(local, key.definitionId(), key.definitionVersion());
+            RuntimeWorkflow held = DefinitionPublication.held(local, key);
             ManagedRegistrations.Standing standing =
                     registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
             boolean own = standing == ManagedRegistrations.Standing.OWN;
@@ -201,8 +201,7 @@ final class DefinitionPropagationPass {
                             .filter(known -> known.status() == row.status()
                                     && known.statusChangedAt().equals(row.statusChangedAt()))
                             .isPresent()
-                    && local.isDeprecated(key.definitionId(), key.definitionVersion())
-                            == (row.status() == DefinitionStatus.DEPRECATED)
+                    && local.isDeprecated(key) == (row.status() == DefinitionStatus.DEPRECATED)
                     && !view.failing(key);
         } catch (RuntimeException unreadable) {
             return false;
@@ -270,12 +269,12 @@ final class DefinitionPropagationPass {
         switch (record.status()) {
             case RETIRED -> {
                 WorkflowRegistry local = registry.get();
-                RuntimeWorkflow held = DefinitionPublication.held(local, key.definitionId(), key.definitionVersion());
+                RuntimeWorkflow held = DefinitionPublication.held(local, key);
                 ManagedRegistrations.Standing standing =
                         registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
                 boolean removed = false;
                 if (standing == ManagedRegistrations.Standing.OWN) {
-                    local.unregister(key.definitionId(), key.definitionVersion());
+                    local.unregister(key);
                     registrations.clear(key.definitionId(), key.definitionVersion(), held);
                     removed = true;
                 }
@@ -308,7 +307,7 @@ final class DefinitionPropagationPass {
         DefinitionKey key = record.key();
         if (!LIVE.contains(record.status())) return Future.succeededFuture(false);
         WorkflowRegistry local = registry.get();
-        RuntimeWorkflow held = DefinitionPublication.held(local, key.definitionId(), key.definitionVersion());
+        RuntimeWorkflow held = DefinitionPublication.held(local, key);
         ManagedRegistrations.Standing standing =
                 registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
         Future<Void> restored;
@@ -339,9 +338,7 @@ final class DefinitionPropagationPass {
      */
     private void applyHeld(WorkflowRegistry local, WorkflowDefinitionRecord record, RuntimeWorkflow held) {
         DefinitionKey key = record.key();
-        if (record.status() == DefinitionStatus.DEPRECATED
-                && !local.isDeprecated(key.definitionId(), key.definitionVersion()))
-            local.markDeprecated(key.definitionId(), key.definitionVersion());
+        if (record.status() == DefinitionStatus.DEPRECATED && !local.isDeprecated(key)) local.markDeprecated(key);
         String registered = held.plan().planHash();
         if (!record.planHash().equals(registered))
             throw DefinitionPublication.failure(
@@ -355,8 +352,7 @@ final class DefinitionPropagationPass {
         if (news && record.kind() == DefinitionKind.DOCUMENT)
             for (PersistedDefinitionLoader loader : loaders) {
                 if (!loader.supports(record.documentFormat())) continue;
-                Optional<WorkflowDefinition<?, ?>> definition =
-                        local.registeredDefinition(key.definitionId(), key.definitionVersion());
+                Optional<WorkflowDefinition<?, ?>> definition = local.registeredDefinition(key);
                 if (definition.isPresent()) loader.onRestored(record, definition.get());
                 else loader.onMetadata(record);
             }
@@ -384,7 +380,7 @@ final class DefinitionPropagationPass {
                                 key,
                                 "the registered runtime belongs to another owner that still holds this definition id"
                                         + " and version");
-                    local.unregister(key.definitionId(), key.definitionVersion());
+                    local.unregister(key);
                     registrations.clear(key.definitionId(), key.definitionVersion(), held);
                     view.removed(otherKey);
                     return (Void) null;
@@ -447,10 +443,10 @@ final class DefinitionPropagationPass {
         RuntimeWorkflow published = DefinitionPublication.publish(local, registrations, key, definition);
         if (record.status() != DefinitionStatus.DEPRECATED) return;
         try {
-            local.markDeprecated(key.definitionId(), key.definitionVersion());
+            local.markDeprecated(key);
         } catch (RuntimeException failure) {
             try {
-                local.unregister(key.definitionId(), key.definitionVersion());
+                local.unregister(key);
                 registrations.clear(key.definitionId(), key.definitionVersion(), published);
             } catch (RuntimeException compensation) {
                 if (compensation != failure) failure.addSuppressed(compensation);

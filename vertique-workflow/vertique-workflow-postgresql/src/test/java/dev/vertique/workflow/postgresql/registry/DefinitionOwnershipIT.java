@@ -184,11 +184,12 @@ public class DefinitionOwnershipIT {
                     .satisfies(row -> assertThat(row.planHash()).isEqualTo(winnerPlanHash));
 
             // And only the winner holds an executable registration
-            assertThat(winnerNode.registry().resolvePinned(raceId, 1).plan().planHash())
+            assertThat(winnerNode.registry().resolve(winnerKey).plan().planHash())
                     .isEqualTo(winnerPlanHash);
             assertThat(loserNode.registry().allRegistered())
                     .noneMatch(runtime -> runtime.plan().definitionId().equals(raceId));
-            assertThat(loserNode.registry().registeredDefinition(raceId, 1)).isEmpty();
+            assertThat(loserNode.registry().registeredDefinition(loserKey)).isEmpty();
+            assertThat(loserNode.registry().registeredDefinition(winnerKey)).isEmpty();
 
             // Given a second id where tenant-a's claim is committed and its completion is held back
             TenantRowSeed.seed(
@@ -233,7 +234,8 @@ public class DefinitionOwnershipIT {
             assertThat(fixture.stored(heldId))
                     .extracting(Stored::scopeKey, Stored::status, Stored::token)
                     .containsExactly(tuple("tenant-a", "ACTIVE", null), tuple("tenant-b", "CANDIDATE", null));
-            assertThat(nodeA.registry().resolvePinned(heldId, 1)).isNotNull();
+            assertThat(nodeA.registry().resolve(new DefinitionKey("tenant-a", heldId, 1)))
+                    .isNotNull();
         }
     }
 
@@ -320,8 +322,8 @@ public class DefinitionOwnershipIT {
                         .containsExactly(tuple(3L, loaded3.planHash()), tuple(4L, loaded4.planHash()));
 
                 // And each version stays pinnable on the node that activated it
-                RuntimeWorkflow pinned3 = nodeA.registry().resolvePinned(id, 3);
-                RuntimeWorkflow pinned4 = nodeB.registry().resolvePinned(id, 4);
+                RuntimeWorkflow pinned3 = nodeA.registry().resolve(new DefinitionKey("tenant-a", id, 3));
+                RuntimeWorkflow pinned4 = nodeB.registry().resolve(new DefinitionKey("tenant-a", id, 4));
                 assertThat(pinned3.plan().definitionVersion()).isEqualTo(3);
                 assertThat(pinned3.plan().planHash()).isEqualTo(loaded3.planHash());
                 assertThat(pinned4.plan().definitionVersion()).isEqualTo(4);
@@ -366,15 +368,14 @@ public class DefinitionOwnershipIT {
                     .orElseThrow();
             assertThat(claimed.status()).isEqualTo("ACTIVATING");
             assertThat(claimed.token()).isNotBlank();
-            assertThat(nodeA.registry().resolvePinned(id, 1)).isNotNull();
+            assertThat(nodeA.registry().resolve(tenantA)).isNotNull();
 
             // And that claim is older than twice the staleness bound when tenant-b then activates the same id and
             // version
             fixture.ageClaim(nodeA.app().workflowDefinitionsConfig(), tenantA, claimed.token());
             await(nodeB.service().activate(tenantB));
-            RuntimeWorkflow replacement = nodeB.registry().resolvePinned(id, 1);
-            RuntimeWorkflow replacementCurrent = nodeB.registry().resolveCurrent(id);
-            var replacementDefinition = nodeB.registry().registeredDefinition(id, 1);
+            RuntimeWorkflow replacement = nodeB.registry().resolve(tenantB);
+            var replacementDefinition = nodeB.registry().registeredDefinition(tenantB);
             Stored replacementRow = fixture.stored(id).stream()
                     .filter(row -> "tenant-b".equals(row.scopeKey()))
                     .findFirst()
@@ -405,10 +406,9 @@ public class DefinitionOwnershipIT {
                         assertThat(row.planHash()).isEqualTo(replacementRow.planHash());
                     });
 
-            // And tenant-b's runtime identity, current and pinned resolution and registered definition are unchanged
-            assertThat(nodeB.registry().resolvePinned(id, 1)).isSameAs(replacement);
-            assertThat(nodeB.registry().resolveCurrent(id)).isSameAs(replacementCurrent);
-            assertThat(nodeB.registry().registeredDefinition(id, 1)).isEqualTo(replacementDefinition);
+            // And tenant-b's runtime identity, pinned resolution and registered definition are unchanged
+            assertThat(nodeB.registry().resolve(tenantB)).isSameAs(replacement);
+            assertThat(nodeB.registry().registeredDefinition(tenantB)).isEqualTo(replacementDefinition);
             assertThat(nodeB.registry().allRegistered())
                     .filteredOn(runtime -> runtime.plan().definitionId().equals(id))
                     .singleElement()
@@ -417,7 +417,8 @@ public class DefinitionOwnershipIT {
             // And nothing of tenant-a stays executable on its node
             assertThat(nodeA.registry().allRegistered())
                     .noneMatch(runtime -> runtime.plan().definitionId().equals(id));
-            assertThat(nodeA.registry().registeredDefinition(id, 1)).isEmpty();
+            assertThat(nodeA.registry().registeredDefinition(tenantA)).isEmpty();
+            assertThat(nodeA.registry().registeredDefinition(tenantB)).isEmpty();
         }
     }
 

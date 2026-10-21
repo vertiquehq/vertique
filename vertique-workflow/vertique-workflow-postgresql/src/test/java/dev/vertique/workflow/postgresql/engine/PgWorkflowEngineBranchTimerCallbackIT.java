@@ -28,6 +28,8 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
@@ -285,7 +287,8 @@ public class PgWorkflowEngineBranchTimerCallbackIT {
 
     private WorkflowInstanceId seedInstance(WorkflowDefinition<?, ?> def) {
         UUID id = UUID.randomUUID();
-        String planHash = registry.resolvePinned(def.definitionId(), def.definitionVersion())
+        String planHash = registry.resolve(
+                        new DefinitionKey(WorkflowScopes.DEFAULT, def.definitionId(), def.definitionVersion()))
                 .plan()
                 .planHash();
         // INSERT workflow_instances row whose plan_hash matches the registered definition's
