@@ -43,7 +43,7 @@ class WorkflowBuilderTest {
     record ShippedEvent(String trackingCode) {}
 
     /** Minimal contract required for definition registration. */
-    @WorkflowContract(definitionId = "order-fulfillment", definitionVersion = 1)
+    @WorkflowContract
     interface OrderFulfillmentContract {
         @WorkflowSignal("order.shipped")
         Future<Void> orderShipped(WorkflowInstanceId id, ShippedEvent payload, @SignalDedupKey String dedupKey);

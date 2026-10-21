@@ -38,7 +38,7 @@ class WorkflowCoreModuleDefinitionValidatorBindingTest {
 
     record StartPayload(String id) {}
 
-    @WorkflowContract(definitionId = "wired-saga", definitionVersion = 1)
+    @WorkflowContract
     interface WiredSagaContract {}
 
     /** Validator that records every candidate it receives. */

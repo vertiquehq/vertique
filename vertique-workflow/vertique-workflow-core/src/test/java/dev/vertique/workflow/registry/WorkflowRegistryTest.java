@@ -39,7 +39,7 @@ class WorkflowRegistryTest {
 
     record SignalPayload(String data) {}
 
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface OrderSagaContract {
         @WorkflowSignal("order.confirmed")
         Future<Void> confirmed(WorkflowInstanceId id, SignalPayload payload, @SignalDedupKey String dedupKey);
@@ -573,15 +573,15 @@ class WorkflowRegistryTest {
         record PayloadB(String id) {}
 
         /** Contract A bound to definitionId "dup", version 1. */
-        @WorkflowContract(definitionId = "dup", definitionVersion = 1)
+        @WorkflowContract
         interface ContractA {}
 
         /** Contract B bound to definitionId "dup", version 1 (same id/version as ContractA). */
-        @WorkflowContract(definitionId = "dup", definitionVersion = 1)
+        @WorkflowContract
         interface ContractB {}
 
         /** Contract D1 — unique definitionId "d1", version 1. */
-        @WorkflowContract(definitionId = "d1", definitionVersion = 1)
+        @WorkflowContract
         interface ContractD1 {}
 
         @Test
@@ -733,7 +733,7 @@ class WorkflowRegistryTest {
         @DisplayName("registering different versions of the same definitionId succeeds; resolveCurrent returns highest")
         void registeringDifferentVersionsOfSameDefinitionWorks() {
             // Versions 1 and 2 of definitionId "multi" share one contract.
-            @WorkflowContract(definitionId = "multi", definitionVersion = 1)
+            @WorkflowContract
             interface MultiContract {}
 
             WorkflowDefinition<StateA, MultiContract> defV1 = new WorkflowDefinition<>() {
@@ -924,7 +924,7 @@ class WorkflowRegistryTest {
     record ApprovalSignal(String note) {}
 
     /** Contract named {@code approval}; the legacy attributes name an id and version no definition has. */
-    @WorkflowContract(value = "approval", definitionId = "unused", definitionVersion = 99)
+    @WorkflowContract("approval")
     interface ApprovalContract {
 
         @WorkflowStart
@@ -938,7 +938,7 @@ class WorkflowRegistryTest {
     }
 
     /** A second contract, named {@code other}, that also declares {@code approve}. */
-    @WorkflowContract(value = "other", definitionId = "unused-other", definitionVersion = 98)
+    @WorkflowContract("other")
     interface OtherContract {
 
         @WorkflowStart

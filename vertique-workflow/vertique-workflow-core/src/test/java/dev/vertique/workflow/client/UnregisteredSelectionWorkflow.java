@@ -21,7 +21,7 @@ import io.vertx.core.Future;
  *
  * <p>Targets definition id {@code "selection-saga-unregistered"}, which is never registered.
  */
-@WorkflowContract(definitionId = "selection-saga-unregistered", definitionVersion = 1)
+@WorkflowContract
 interface UnregisteredSelectionWorkflow {
 
     /**

@@ -61,7 +61,7 @@ class WorkflowProxyValidatorTest {
 
     // --- Contract fixtures ---
 
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ValidContract {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -74,7 +74,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Happy path: @IdempotencyKey parameter. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithIdempotencyKeyParam {
         @WorkflowStart
         Future<WorkflowInstanceId> start(@IdempotencyKey String key, StartPayload payload);
@@ -87,7 +87,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Happy path: @BusinessKey parameter wins over BusinessKeyed interface. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithBusinessKeyParam {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload, @BusinessKey String bk);
@@ -100,7 +100,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Happy path: @SubjectRef parameter wins over SubjectReferenced interface. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithSubjectRefParam {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload, @SubjectRef WorkflowSubjectRef ref);
@@ -113,7 +113,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Happy path: @SignalDedupKey parameter. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithSignalDedupKeyParam {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -132,14 +132,14 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: wrong return type on @WorkflowStart (not Future<WorkflowInstanceId>). */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface WrongStartReturnType {
         @WorkflowStart
         Future<String> start(StartPayload payload); // wrong: Future<String>
     }
 
     /** Failure: no idempotency key source. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface NoIdempotencyKeySource {
         record PlainPayload(String id) {} // does NOT implement IdempotencyKeyed
 
@@ -154,7 +154,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: wrong return type on @WorkflowSignal (not Future<Void>). */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface WrongSignalReturnType {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -164,7 +164,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: no dedup key source on signal. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface NoDedupKeySource {
         record PlainSignalPayload(String data) {} // does NOT implement SignalDedupKeyed
 
@@ -176,7 +176,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: wrong parameter shape for @WorkflowQuery (extra parameter). */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface QueryWrongParamShape {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -186,7 +186,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowQuery return type is a WorkflowView supertype (Future<Object>), not exact. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface QuerySupertypeReturn {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -196,7 +196,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowQuery return type is a wildcard (Future<? extends WorkflowView>), not exact. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface QueryWildcardReturn {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -206,21 +206,21 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowStart return type is a wildcard (Future<? extends WorkflowInstanceId>), not exact. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface StartWildcardReturn {
         @WorkflowStart
         Future<? extends WorkflowInstanceId> start(StartPayload payload); // wrong: wildcard
     }
 
     /** Failure: @WorkflowContract on a class, not an interface — must be rejected like the codegen path does. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     abstract static class NotAnInterfaceContract {
         @WorkflowStart
         abstract Future<WorkflowInstanceId> start(StartPayload payload);
     }
 
     /** Failure: two @WorkflowSignal methods with same name. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface DuplicateSignalMethods {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -233,7 +233,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: method carries two conflicting role annotations. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ConflictingAnnotations {
         @WorkflowStart
         @WorkflowSignal("order.confirmed") // conflict!
@@ -241,7 +241,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowStart method has a WorkflowInstanceId parameter (forbidden). */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface StartWithInstanceId {
         @WorkflowStart
         Future<WorkflowInstanceId> start(WorkflowInstanceId id, StartPayload payload);
@@ -254,7 +254,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowStart with more than one payload parameter. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface StartWithTwoPayloads {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload, StartPayload anotherPayload);
@@ -267,7 +267,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowStart with duplicate @IdempotencyKey parameters. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface StartWithDuplicateIdempotencyKey {
         @WorkflowStart
         Future<WorkflowInstanceId> start(
@@ -281,7 +281,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowSignal with no WorkflowInstanceId parameter. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithNoInstanceId {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -291,7 +291,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowSignal with two WorkflowInstanceId parameters. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithTwoInstanceIds {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -301,7 +301,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowSignal with WorkflowInstanceId NOT at position 0. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithInstanceIdNotFirst {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -314,7 +314,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowSignal with duplicate @SignalDedupKey parameters. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithDuplicateDedupKey {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -325,7 +325,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowSignal with more than one payload parameter. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithTwoPayloads {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -339,7 +339,7 @@ class WorkflowProxyValidatorTest {
      * declares just an @IdempotencyKey String and no payload object. Previously accepted; now
      * rejected because the proxy would route a null payload through WorkflowOperations.start().
      */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface StartWithNoPayload {
         @WorkflowStart
         Future<WorkflowInstanceId> start(@IdempotencyKey String key);
@@ -356,7 +356,7 @@ class WorkflowProxyValidatorTest {
      * Previously accepted; now rejected because the proxy would route a null payload through
      * WorkflowOperations.signal().
      */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithNoPayload {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -369,7 +369,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: method with no role annotation (not @WorkflowStart, @WorkflowSignal, or @WorkflowQuery). */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithNoRoleMethod {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -385,7 +385,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: interface declares a default method — not supported in cycle 1. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithDefaultMethod {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -419,7 +419,7 @@ class WorkflowProxyValidatorTest {
      * the validator must reject the ambiguous shape rather than depend on which one it encounters
      * first — the divergence that would otherwise let codegen and the reflective runtime disagree.
      */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SiblingDuplicateStartContract extends StartSiblingAnnotated, StartSiblingUnannotated {
         @WorkflowSignal("order.confirmed")
         Future<Void> confirm(WorkflowInstanceId id, SignalPayload payload);

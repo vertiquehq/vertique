@@ -20,7 +20,7 @@ import io.vertx.core.Future;
  *
  * <p>Targets the {@code selection-saga-broken} definition (v1).
  */
-@WorkflowContract(definitionId = "selection-saga-broken", definitionVersion = 1)
+@WorkflowContract
 interface BrokenSelectionWorkflow {
 
     /**

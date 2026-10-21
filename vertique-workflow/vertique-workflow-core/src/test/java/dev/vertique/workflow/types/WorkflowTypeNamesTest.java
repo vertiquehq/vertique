@@ -63,19 +63,19 @@ class WorkflowTypeNamesTest {
     @WorkflowType(NAME_OF_255_CODE_POINTS)
     record LongestNamed(String id) {}
 
-    @WorkflowContract(definitionId = "first", definitionVersion = 1)
+    @WorkflowContract
     interface FirstContract {}
 
-    @WorkflowContract(definitionId = "second", definitionVersion = 1)
+    @WorkflowContract
     interface SecondContract {}
 
-    @WorkflowContract(value = "orders", definitionId = "ledger-one", definitionVersion = 1)
+    @WorkflowContract("orders")
     interface LedgerOneContract {}
 
-    @WorkflowContract(value = "orders", definitionId = "ledger-two", definitionVersion = 1)
+    @WorkflowContract("orders")
     interface LedgerTwoContract {}
 
-    @WorkflowContract(value = "shared", definitionId = "shared-saga", definitionVersion = 1)
+    @WorkflowContract("shared")
     interface SharedContract {}
 
     // --- Duplicate names ---

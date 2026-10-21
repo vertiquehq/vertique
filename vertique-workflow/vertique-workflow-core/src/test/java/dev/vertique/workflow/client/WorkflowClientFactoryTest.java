@@ -89,7 +89,7 @@ class WorkflowClientFactoryTest {
      * Primary contract: start with {@code IdempotencyKeyed} payload, two signals, one query.
      * Used by signal, query, and object-method tests.
      */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SampleContract {
         /** Start with IdempotencyKeyed payload. */
         @WorkflowStart
@@ -111,7 +111,7 @@ class WorkflowClientFactoryTest {
     /**
      * Contract used to test {@code @IdempotencyKey} parameter overrides the interface.
      */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface KeyedStartContract {
         @WorkflowSignal("order.shipped")
         Future<Void> orderShipped(
@@ -133,7 +133,7 @@ class WorkflowClientFactoryTest {
     /**
      * Contract used to test {@code @BusinessKey} and {@code @SubjectRef} parameter overrides.
      */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface FullStartContract {
         @WorkflowSignal("order.shipped")
         Future<Void> orderShipped(
@@ -167,7 +167,7 @@ class WorkflowClientFactoryTest {
     }
 
     /** The annotation's definition id and version must never reach a started command. */
-    @WorkflowContract(value = "orders", definitionId = "unused", definitionVersion = 99)
+    @WorkflowContract("orders")
     interface OrdersContract {
         @WorkflowStart
         Future<WorkflowInstanceId> start(OrdersStart payload);
@@ -629,7 +629,7 @@ class WorkflowClientFactoryTest {
     }
 
     /** A @WorkflowContract on a class rather than an interface — must be rejected at create() time. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     abstract static class NonInterfaceContract {
         @WorkflowStart
         abstract Future<WorkflowInstanceId> start(StartPayloadWithInterface payload);

@@ -22,7 +22,7 @@ import io.vertx.core.Future;
  * {@link SelectionSignalPayload} (which implements {@code SignalDedupKeyed}), and one
  * {@code @WorkflowQuery} method.
  */
-@WorkflowContract(definitionId = "selection-saga", definitionVersion = 1)
+@WorkflowContract
 interface SelectionWorkflow {
 
     /**

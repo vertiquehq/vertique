@@ -44,13 +44,13 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
 
     record RejectPayload(String reason) {}
 
-    @WorkflowContract(definitionId = "validated-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ValidatedSagaContract {}
 
-    @WorkflowContract(definitionId = "broken-saga", definitionVersion = 1)
+    @WorkflowContract
     interface BrokenSagaContract {}
 
-    @WorkflowContract(definitionId = "reviewed-saga", definitionVersion = 3)
+    @WorkflowContract
     interface ReviewedSagaContract {}
 
     /** Validator that records every candidate it receives and can run an extra check. */

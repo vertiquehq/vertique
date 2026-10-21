@@ -53,15 +53,15 @@ class DefaultWorkflowRegistryConcurrencyTest {
 
     record StartTask(String id) {}
 
-    @WorkflowContract(definitionId = "task-alpha", definitionVersion = 1)
+    @WorkflowContract
     interface TaskAlphaContract {}
 
-    @WorkflowContract(definitionId = "task-foo", definitionVersion = 1)
+    @WorkflowContract
     interface TaskFooContract {}
 
     // Refusal: the "task-foo" v2 definition below names this contract instead of TaskFooContract,
     // which the registry refuses, to exercise the rollback path.
-    @WorkflowContract(definitionId = "task-foo", definitionVersion = 2)
+    @WorkflowContract
     interface OtherTaskContract {}
 
     // --- Helpers ---
@@ -98,34 +98,34 @@ class DefaultWorkflowRegistryConcurrencyTest {
     }
 
     // Contracts for the 10-definition concurrent-activation test
-    @WorkflowContract(definitionId = "id1", definitionVersion = 1)
+    @WorkflowContract
     interface C1 {}
 
-    @WorkflowContract(definitionId = "id2", definitionVersion = 1)
+    @WorkflowContract
     interface C2 {}
 
-    @WorkflowContract(definitionId = "id3", definitionVersion = 1)
+    @WorkflowContract
     interface C3 {}
 
-    @WorkflowContract(definitionId = "id4", definitionVersion = 1)
+    @WorkflowContract
     interface C4 {}
 
-    @WorkflowContract(definitionId = "id5", definitionVersion = 1)
+    @WorkflowContract
     interface C5 {}
 
-    @WorkflowContract(definitionId = "id6", definitionVersion = 1)
+    @WorkflowContract
     interface C6 {}
 
-    @WorkflowContract(definitionId = "id7", definitionVersion = 1)
+    @WorkflowContract
     interface C7 {}
 
-    @WorkflowContract(definitionId = "id8", definitionVersion = 1)
+    @WorkflowContract
     interface C8 {}
 
-    @WorkflowContract(definitionId = "id9", definitionVersion = 1)
+    @WorkflowContract
     interface C9 {}
 
-    @WorkflowContract(definitionId = "id10", definitionVersion = 1)
+    @WorkflowContract
     interface C10 {}
 
     private DefaultWorkflowRegistry registry;

@@ -28,10 +28,10 @@ class RegistryDeprecationTest {
 
     record InvoiceStart(String id) {}
 
-    @WorkflowContract(definitionId = "deprecation-invoice", definitionVersion = 1)
+    @WorkflowContract
     interface InvoiceContract {}
 
-    @WorkflowContract(definitionId = "deprecation-refund", definitionVersion = 1)
+    @WorkflowContract
     interface RefundContractV1 {}
 
     private static <C> WorkflowDefinition<InvoiceState, C> definition(String id, long version, Class<C> contract) {

@@ -31,7 +31,7 @@ class WorkflowMigrationModuleWiringTest {
 
     record StartCmd(String id) {}
 
-    @WorkflowContract(definitionId = "wiring-saga", definitionVersion = 1)
+    @WorkflowContract
     interface WiringSagaContract {}
 
     static WorkflowRegistry twoVersionRegistry() {

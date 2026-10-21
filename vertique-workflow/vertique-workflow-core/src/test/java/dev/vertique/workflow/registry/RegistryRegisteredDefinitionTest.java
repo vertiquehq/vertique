@@ -24,10 +24,10 @@ class RegistryRegisteredDefinitionTest {
 
     record SourceStart(String id) {}
 
-    @WorkflowContract(definitionId = "registered-source", definitionVersion = 1)
+    @WorkflowContract
     interface SourceContractV1 {}
 
-    @WorkflowContract(definitionId = "registered-source", definitionVersion = 2)
+    @WorkflowContract
     interface SourceContractV2 {}
 
     private static <C> WorkflowDefinition<SourceState, C> definition(String id, long version, Class<C> contract) {

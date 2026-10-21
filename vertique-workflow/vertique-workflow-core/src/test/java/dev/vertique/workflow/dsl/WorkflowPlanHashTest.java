@@ -45,7 +45,7 @@ class WorkflowPlanHashTest {
 
     record GoldenDecision(boolean approved) {}
 
-    @WorkflowContract(definitionId = "golden-saga", definitionVersion = 1)
+    @WorkflowContract
     interface GoldenContract {
         @WorkflowSignal("order.paid")
         Future<Void> orderPaid(WorkflowInstanceId id, GoldenSignal payload, @SignalDedupKey String dedupKey);
@@ -71,19 +71,19 @@ class WorkflowPlanHashTest {
 
     record PlainApproval(boolean approved) {}
 
-    @WorkflowContract(definitionId = "typed-saga", definitionVersion = 1)
+    @WorkflowContract
     interface TypedContract {
         @WorkflowSignal("order.paid")
         Future<Void> orderPaid(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
     }
 
-    @WorkflowContract(value = "orders", definitionId = "x", definitionVersion = 1)
+    @WorkflowContract("orders")
     interface OrdersContract {
         @WorkflowSignal("order.paid")
         Future<Void> orderPaid(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
     }
 
-    @WorkflowContract(value = "other", definitionId = "x", definitionVersion = 1)
+    @WorkflowContract("other")
     interface OtherContract {
         @WorkflowSignal("order.paid")
         Future<Void> orderPaid(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);

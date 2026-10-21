@@ -34,7 +34,7 @@ class WorkflowProxyVersionPinningTest {
     }
 
     /** Contract whose annotation carries a definition id and version that no client may use. */
-    @WorkflowContract(definitionId = "annotated-saga", definitionVersion = 9)
+    @WorkflowContract
     interface VersionedContract {
         @WorkflowStart
         Future<WorkflowInstanceId> start(VersionedPayload payload);

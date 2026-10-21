@@ -40,13 +40,13 @@ class WorkflowTypeNamesUndoTest {
     @WorkflowType("fresh")
     record Fresh(String id) {}
 
-    @WorkflowContract(value = "orders", definitionId = "ledger-one", definitionVersion = 1)
+    @WorkflowContract("orders")
     interface LedgerOneContract {}
 
-    @WorkflowContract(value = "orders", definitionId = "ledger-two", definitionVersion = 1)
+    @WorkflowContract("orders")
     interface LedgerTwoContract {}
 
-    @WorkflowContract(definitionId = "unnamed", definitionVersion = 1)
+    @WorkflowContract
     interface UnnamedContract {}
 
     private static final RuntimeException REJECTED = new IllegalStateException("rejected by a validator");

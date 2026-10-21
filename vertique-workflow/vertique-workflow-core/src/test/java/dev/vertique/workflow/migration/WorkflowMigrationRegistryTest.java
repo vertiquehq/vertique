@@ -54,10 +54,10 @@ class WorkflowMigrationRegistryTest {
 
     // --- Contract interfaces ---
 
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface OrderSagaContract {}
 
-    @WorkflowContract(definitionId = "payment-flow", definitionVersion = 1)
+    @WorkflowContract
     interface PaymentFlowContract {}
 
     // --- Workflow definitions ---
