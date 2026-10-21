@@ -10,7 +10,6 @@ import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.TimerNode;
@@ -19,7 +18,6 @@ import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
-import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -380,11 +378,7 @@ final class TimerLifecycleService {
     private Future<TimerFiringResult> handleTimerFiredStandalone(WorkflowInstance inst, UUID timerId, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolve(
-                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
-        } catch (WorkflowVersionPinUnavailableException e) {
-            return Future.failedFuture(
-                    new WorkflowVersionPinUnavailableException(e.scopeKey(), e.definitionId(), e.version(), inst.id()));
+            rw = PinnedPlans.resolve(registry, inst);
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -444,11 +438,7 @@ final class TimerLifecycleService {
     private Future<TimerFiringResult> handleTimerFiredTimeout(WorkflowInstance inst, UUID timerId, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolve(
-                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
-        } catch (WorkflowVersionPinUnavailableException e) {
-            return Future.failedFuture(
-                    new WorkflowVersionPinUnavailableException(e.scopeKey(), e.definitionId(), e.version(), inst.id()));
+            rw = PinnedPlans.resolve(registry, inst);
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -862,12 +852,12 @@ final class TimerLifecycleService {
      *
      * @param inst the workflow instance whose definition + plan hash to resolve and check
      * @return the resolved {@link RuntimeWorkflow} for {@code inst}'s definition/version
-     * @throws WorkflowVersionPinUnavailableException if the registry no longer has the pinned version
+     * @throws dev.vertique.workflow.exception.WorkflowVersionNotRunnableException if the local registry has no plan
+     *     for the pinned version
      * @throws WorkflowPlanHashDriftException if the stored plan hash differs from the resolved plan
      */
     private RuntimeWorkflow resolveAndCheckPlanHash(WorkflowInstance inst) {
-        RuntimeWorkflow rw = registry.resolve(
-                new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
+        RuntimeWorkflow rw = PinnedPlans.resolve(registry, inst);
         WorkflowPayloads.requirePlanHashMatches(inst, rw);
         return rw;
     }

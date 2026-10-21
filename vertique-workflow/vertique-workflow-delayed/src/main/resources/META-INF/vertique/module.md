@@ -43,6 +43,16 @@ All writes happen in the caller's SQL transaction. A timer is not visible to the
 
 ---
 
+## Timers a node cannot run
+
+When the callback of a firing fails with `WorkflowVersionNotRunnableException` (this node's deployed code lacks the definition version the instance is pinned to), the executor does not fail the attempt. In the same transaction it enqueues a fresh `WorkflowTimerFireJob` for the same timer, points `workflow_timers.delayed_job_execution_id` at it and succeeds, for every timer purpose (`STANDALONE`, `SIGNAL_TIMEOUT`, `TASK_DUE`, `TASK_REMINDER`). The timer row stays `SCHEDULED`, `markFired` and `markFailed` are not called, and the job's `maxAttempts` is not consumed, so the timer never dead-letters on a node that lacks the code and fires later on a node that has it. The instance is not touched and is never failed. Only that exact failure is recovered; any other failure, including a plain `WorkflowVersionPinUnavailableException`, still fails the attempt.
+
+The new job runs after the time the timer has been due, clamped to between 5 seconds and 5 minutes (measured with the injected `Clock`). The wait therefore roughly doubles on every re-queue until it reaches 5 minutes; no counter column exists, and a timer that no node can run costs one job insert every 5 minutes. A re-queue logs a warning that names the timer id, the purpose and the definition key, at most once per definition key per minute on each node; the other re-queues of that key log at debug. The limiter keeps only the keys warned in the last minute, so its memory is bounded by the keys that are currently stuck.
+
+Known residual: every re-queue leaves a completed `job_executions` row, and the job module does not delete completed rows, so a timer that stays unrunnable for a long time accumulates about 288 rows a day. The job module has no purge for completed rows, and none is added here; an operator can delete the completed rows of the timer-fire job if the growth matters.
+
+---
+
 ## Recovery
 
 The module includes cron-driven recovery for timers whose delayed job row is missing, stuck, or dead-lettered.

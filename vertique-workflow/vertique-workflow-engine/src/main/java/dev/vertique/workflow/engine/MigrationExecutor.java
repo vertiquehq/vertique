@@ -180,10 +180,10 @@ final class MigrationExecutor {
      * <ol>
      *   <li>Load the instance row (non-locking read; optimistic version bump guards concurrency).</li>
      *   <li>Resolve the source {@link RuntimeWorkflow} via {@link #resolvePinnedForInstance}
-     *       (enriches {@link dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException}
-     *       with the instance id). Assert plan-hash matches.</li>
-     *   <li>Resolve the target {@link RuntimeWorkflow} via
-     *       {@code registry.resolve(key)} of the instance's definition scope, id and the target version.</li>
+     *       (fails with {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException} carrying
+     *       the instance id when this node holds no code for the pin). Assert plan-hash matches.</li>
+     *   <li>Resolve the target {@link RuntimeWorkflow} for the key of the instance's definition scope, id and the
+     *       target version; a target this node holds no code for fails the same way.</li>
      *   <li>Reject a deprecated target version with a typed deprecated-version failure before any
      *       handler call or write.</li>
      *   <li>Look up the migration handler from the registry; throw
@@ -299,10 +299,7 @@ final class MigrationExecutor {
         }
         RuntimeWorkflow targetRw;
         try {
-            targetRw = registry.resolve(targetKey);
-        } catch (dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException e) {
-            return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException(
-                    e.scopeKey(), e.definitionId(), e.version(), inst.id()));
+            targetRw = PinnedPlans.resolve(registry, targetKey);
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -546,32 +543,30 @@ final class MigrationExecutor {
     // --- Internal helpers ---
 
     /**
-     * Resolves the pinned {@link RuntimeWorkflow} for the given instance, enriching any thrown
-     * {@link dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException} with the actual
-     * instance id. Also emits a structured warning log so operators can identify broken pin
-     * registrations without decoding exception stack traces.
+     * Resolves the pinned {@link RuntimeWorkflow} for the given instance. A pin this node holds no code for fails with
+     * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException} carrying the actual instance id,
+     * after a structured warning log so operators can identify broken pin registrations without decoding exception
+     * stack traces.
      *
      * <p>This helper centralises the error-enrichment pattern for the migration source-definition
      * lookup; it is used only by the migration flow.
      *
      * @param inst the workflow instance whose pinned definition to resolve
      * @return the resolved {@link RuntimeWorkflow}
-     * @throws dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException with the instance
-     *     id populated if the registry no longer holds the pinned version
+     * @throws dev.vertique.workflow.exception.WorkflowVersionNotRunnableException with the instance
+     *     id populated if the local registry holds no plan for the pinned version
      */
     private RuntimeWorkflow resolvePinnedForInstance(WorkflowInstance inst) {
         try {
-            return registry.resolve(
-                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
-        } catch (dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException e) {
+            return PinnedPlans.resolve(registry, inst);
+        } catch (dev.vertique.workflow.exception.WorkflowVersionNotRunnableException e) {
             org.slf4j.LoggerFactory.getLogger(MigrationExecutor.class)
                     .warn(
                             "workflow instance {} pinned to unregistered definition {}@v{}",
                             inst.id().value(),
                             inst.definitionId(),
                             inst.definitionVersion());
-            throw new dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException(
-                    e.definitionId(), e.version(), inst.id());
+            throw e;
         }
     }
 

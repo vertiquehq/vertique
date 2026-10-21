@@ -181,7 +181,8 @@ final class DefinitionActivations {
                 record = computedDefault(registry, definitionId).orElse(null);
         }
         if (record == null) throw new WorkflowNoCurrentVersionException(startScope, definitionId);
-        return registry.resolve(new DefinitionKey(record.targetScopeKey(), definitionId, record.version()));
+        return PinnedPlans.resolve(
+                registry, new DefinitionKey(record.targetScopeKey(), definitionId, record.version()));
     }
 
     /** Whether the default scope holds no version of the id or holds versions that implement the contract. */

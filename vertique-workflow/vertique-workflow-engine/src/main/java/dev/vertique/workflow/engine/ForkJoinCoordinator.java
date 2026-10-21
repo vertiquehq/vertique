@@ -11,7 +11,6 @@ import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
-import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -893,21 +892,21 @@ final class ForkJoinCoordinator {
                     .withWait(null, null)
                     .withState(reducedStateJson)
                     .withUpdatedAt(clock.instant());
+            // The plan the join advance runs is looked up before the instance row is written; a node without the
+            // code refuses with the typed not-runnable failure and the transaction rolls back.
+            RuntimeWorkflow advancedPlan;
+            try {
+                advancedPlan = PinnedPlans.resolve(registry, advanced);
+            } catch (Exception e) {
+                return Future.<Void>failedFuture(e);
+            }
             return instances.updateOptimistic(advanced, prevVersion, tx).compose(rowCount -> {
                 if (rowCount == 0) {
                     return Future.<Void>failedFuture(new WorkflowConflictException(
                             "Optimistic concurrency conflict advancing instance after join '" + joinNode.stepId()
                                     + "'"));
                 }
-                return driverPvd
-                        .get()
-                        .driveTransitionsStep(
-                                advanced,
-                                registry.resolve(new DefinitionKey(
-                                        advanced.definitionScopeKey(),
-                                        advanced.definitionId(),
-                                        advanced.definitionVersion())),
-                                tx);
+                return driverPvd.get().driveTransitionsStep(advanced, advancedPlan, tx);
             });
         });
     }

@@ -627,8 +627,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * <p>Loads the instance snapshot and full history rows from the database in a single
      * {@code REPEATABLE READ} transaction so the result is a consistent point-in-time snapshot.
-     * Concurrent transitions cannot interleave between the two reads. Does not require the
-     * definition version to still be registered.
+     * Concurrent transitions cannot interleave between the two reads. Looks up the plan of the
+     * instance's pinned definition version on this node and fails the future with
+     * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException} when the node holds
+     * no code for it.
      *
      * @param id the workflow instance id; must not be null
      * @return a {@link Future} resolving to a {@link WorkflowView} for the instance
@@ -642,9 +644,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * {@inheritDoc}
      *
      * <p>Reads like {@link #query(WorkflowInstanceId)}, after comparing {@code contractName} with the
-     * contract of the definition version the instance is pinned to. The comparison is skipped when that
-     * version is not registered on this node, and the query then behaves as the contract-less one. A
-     * different contract fails the future with
+     * contract of the definition version the instance is pinned to. A node that holds no code for that
+     * version fails the future with
+     * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException}. A different contract
+     * fails the future with
      * {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException} before the
      * history is read.
      *
@@ -665,9 +668,16 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         return Future.<WorkflowView>failedFuture(new WorkflowInstanceNotFoundException(id));
                     }
                     WorkflowInstance inst = optInst.get();
+                    RuntimeWorkflow pinned;
+                    try {
+                        // A node without the code of the pinned version cannot answer for the instance.
+                        pinned = PinnedPlans.resolve(registry, inst);
+                    } catch (Exception e) {
+                        return Future.<WorkflowView>failedFuture(e);
+                    }
                     if (callerContractName != null) {
                         WorkflowDefinitionContractMismatchException refusal =
-                                pinnedContractRefusal(inst, callerContractName);
+                                ContractMismatch.refusal(inst, pinned, callerContractName, "query");
                         if (refusal != null) {
                             return Future.<WorkflowView>failedFuture(refusal);
                         }
@@ -686,22 +696,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         } catch (IllegalArgumentException e) {
             throw new WorkflowVersionPinUnavailableException(scopeKey, definitionId, version, null);
         }
-    }
-
-    /**
-     * Compares the caller's contract with the contract of the version the instance is pinned to. A pin
-     * that is not registered on this node skips the comparison.
-     */
-    private @Nullable WorkflowDefinitionContractMismatchException pinnedContractRefusal(
-            WorkflowInstance inst, String callerContractName) {
-        RuntimeWorkflow pinned;
-        try {
-            pinned = registry.resolve(
-                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
-        } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException e) {
-            return null;
-        }
-        return ContractMismatch.refusal(inst, pinned, callerContractName, "query");
     }
 
     // --- TransactionalWorkflowOperations ---
@@ -859,7 +853,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * from the default scope otherwise. A start without a version runs what the activation records select for the
      * client's contract: the start scope's record, else the default scope's record, else the highest startable
      * version of the default scope. It fails with
-     * {@link dev.vertique.workflow.exception.WorkflowNoCurrentVersionException} when none of them applies.
+     * {@link dev.vertique.workflow.exception.WorkflowNoCurrentVersionException} when none of them applies, and with
+     * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException} when the selected key has no plan
+     * in this node's registry, before any row is written.
      */
     private RuntimeWorkflow resolveForStart(StartCommand cmd, String startScope) {
         Long version = cmd.requestedDefinitionVersion();
@@ -871,12 +867,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             if (!targetScope.equals(startScope) && !targetScope.equals(WorkflowScopes.DEFAULT)) {
                 throw new WorkflowDefinitionMissingException(cmd.definitionId(), targetScope);
             }
-            return registry.resolve(requestedKey(targetScope, cmd.definitionId(), version));
+            return PinnedPlans.resolve(registry, requestedKey(targetScope, cmd.definitionId(), version));
         }
         String owner = ownsId(registry, startScope, cmd.definitionId(), cmd.contractName())
                 ? startScope
                 : WorkflowScopes.DEFAULT;
-        return registry.resolve(requestedKey(owner, cmd.definitionId(), version));
+        return PinnedPlans.resolve(registry, requestedKey(owner, cmd.definitionId(), version));
     }
 
     /**
@@ -1194,8 +1190,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 WorkflowInstance inst = optInst.get();
                 RuntimeWorkflow rw;
                 try {
-                    rw = registry.resolve(new DefinitionKey(
-                            inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
+                    rw = PinnedPlans.resolve(registry, inst);
                     // Codex review fix H2: every other engine entry-point that resolves rw
                     // also asserts plan-hash drift. Branch signals must do the same so a
                     // redeployed-but-same-version plan doesn't silently run new callbacks
@@ -1421,8 +1416,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 WorkflowInstance inst = optInst.get();
                 RuntimeWorkflow rw;
                 try {
-                    rw = registry.resolve(new DefinitionKey(
-                            inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
+                    rw = PinnedPlans.resolve(registry, inst);
                     requirePlanHashMatches(inst, rw);
                 } catch (Exception e) {
                     return Future.<Void>failedFuture(e);
@@ -1665,11 +1659,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private Future<Void> doRetry(WorkflowInstanceId id, WorkflowInstance inst, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolve(
-                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()));
-        } catch (WorkflowVersionPinUnavailableException e) {
-            return Future.failedFuture(
-                    new WorkflowVersionPinUnavailableException(e.scopeKey(), e.definitionId(), e.version(), inst.id()));
+            rw = PinnedPlans.resolve(registry, inst);
         } catch (Exception e) {
             return Future.failedFuture(e);
         }

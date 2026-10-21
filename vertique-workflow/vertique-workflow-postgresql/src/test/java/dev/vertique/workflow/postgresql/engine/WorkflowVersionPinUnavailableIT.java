@@ -17,10 +17,10 @@ import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
-import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
@@ -241,14 +241,12 @@ public class WorkflowVersionPinUnavailableIT {
     }
 
     /**
-     * Querying an instance via engine B must succeed (query is read-only and definition-independent).
-     *
-     * <p>Engine A starts the instance. Engine B queries it without needing the definition
-     * registered. The returned {@link WorkflowView} must reflect the persisted instance state.
+     * Querying an instance via engine B, which lacks the pinned version's code, fails with the typed
+     * not-runnable refusal instead of returning a view.
      */
     @Test
-    @DisplayName("query via engine without pinned version returns WorkflowView from snapshot (definition-independent)")
-    void queryViaEngineWithoutPinnedVersionReturnsViewFromSnapshot(VertxTestContext ctx) {
+    @DisplayName("query via engine without pinned version fails with the not-runnable refusal")
+    void queryViaEngineWithoutPinnedVersionFailsNotRunnable(VertxTestContext ctx) {
         SimpleStartType payload = new SimpleStartType("query-value");
         String idempotencyKey = "version-pin-query-" + UUID.randomUUID();
         StartCommand startCmd = new StartCommand(
@@ -262,29 +260,13 @@ public class WorkflowVersionPinUnavailableIT {
                 null,
                 null);
 
-        // Engine A starts the instance.
         engineA.start(startCmd)
-                .compose(id -> {
-                    // Engine B queries it — must succeed without the definition registered.
-                    return engineB.query(id).map(view -> new Object[] {id, view});
-                })
+                .compose(id -> engineB.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
+                    assertTrue(ar.failed(), "engineB.query must fail without the pinned code");
                     assertTrue(
-                            ar.succeeded(),
-                            "engineB.query must succeed (read-only, no definition needed): " + ar.cause());
-                    Object[] result = ar.result();
-                    WorkflowInstanceId startedId = (WorkflowInstanceId) result[0];
-                    WorkflowView view = (WorkflowView) result[1];
-
-                    assertNotNull(view, "WorkflowView must not be null");
-                    assertEquals(
-                            startedId.value(),
-                            view.instance().id().value(),
-                            "returned instance id must match the started instance");
-                    assertEquals("version-test", view.instance().definitionId(), "definitionId must be 'version-test'");
-                    assertEquals(1L, view.instance().definitionVersion(), "definitionVersion must be 1");
-                    assertNotNull(view.recentHistory(), "history must not be null");
-                    assertFalse(view.recentHistory().isEmpty(), "history must have at least a START entry");
+                            ar.cause() instanceof WorkflowVersionNotRunnableException,
+                            "expected the not-runnable refusal but was: " + ar.cause());
                     ctx.completeNow();
                 }));
     }

@@ -92,7 +92,7 @@ Each workflow operation opens a Postgres transaction via the `WorkflowTransactio
 
 The engine stores serialized workflow state as JSON. The Java state type comes from the registered workflow plan.
 
-In-flight instances are pinned to the definition version and plan hash recorded at start. They do not silently move to a newer definition. The pin includes the definition scope, and branch recovery resolves the plan of the pinned definition scope, id and version.
+In-flight instances are pinned to the definition version and plan hash recorded at start. They do not silently move to a newer definition. The pin includes the definition scope, and branch recovery resolves the plan of the pinned definition scope, id and version. A node whose registry holds no plan for the pin fails the sweep of that token with `WorkflowVersionNotRunnableException`: the transaction rolls back, the token stays `RETRY_SCHEDULED` for a node that has the code, and the instance is not failed.
 
 The `WorkflowTransactionRunner` in this module delegates to `vertique-db-core`'s `TransactionBuilder`. Write paths run at the connection's default isolation (0 `SET TRANSACTION` statements); the `query()` read path uses `REPEATABLE READ` (1 statement, no `READ ONLY`).
 

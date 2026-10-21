@@ -10,6 +10,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.application.VertiqueApplicationComponent;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
+import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.core.lifecycle.LifecyclePhase;
@@ -72,6 +73,10 @@ import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
+import dev.vertique.workflow.timer.TimerIntentPayload;
+import dev.vertique.workflow.timer.TimerRecord;
+import dev.vertique.workflow.timer.TimerStatus;
+import dev.vertique.workflow.timer.TimerStore;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
@@ -97,6 +102,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Real PostgreSQL, generated application graph and the full callbacks for the workflow fixture. */
@@ -317,6 +323,10 @@ public final class ManagedDefinitionDatabase {
                 transactionalOperations();
 
         dev.vertique.workflow.ops.TransactionalTaskCallbacks<io.vertx.sqlclient.SqlClient> taskCallbacks();
+
+        dev.vertique.workflow.ops.TransactionalTimerCallbacks<io.vertx.sqlclient.SqlClient> timerCallbacks();
+
+        dev.vertique.workflow.timer.TimerStore<io.vertx.sqlclient.SqlClient> timerStore();
 
         WorkflowDefinitionPipeline definitionPipeline();
 
@@ -578,6 +588,48 @@ public final class ManagedDefinitionDatabase {
         @Singleton
         static PgDbExceptionMapper pgDbExceptionMapper() {
             return new PgDbExceptionMapper();
+        }
+
+        /**
+         * Records a timer intent as a scheduled timer row with a random execution id and enqueues no job, so tests
+         * decide when and where a timer fires.
+         */
+        @Provides
+        @IntoSet
+        @WorkflowRecorders
+        @Singleton
+        static WorkflowSideEffectRecorder<SqlClient> timerRecorder(TimerStore<SqlClient> timerStore, Clock clock) {
+            return new WorkflowSideEffectRecorder<>() {
+                @Override
+                public IntentKind kind() {
+                    return IntentKind.WORKFLOW_TIMER;
+                }
+
+                @Override
+                public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient transaction) {
+                    TimerIntentPayload payload = (TimerIntentPayload) intent.payload();
+                    UUID timerId = UUID.randomUUID();
+                    TimerRecord row = new TimerRecord(
+                            timerId,
+                            intent.correlation().workflowId(),
+                            intent.targetId(),
+                            payload.fireAt(),
+                            TimerStatus.SCHEDULED,
+                            UUID.randomUUID(),
+                            clock.instant(),
+                            null,
+                            null,
+                            null,
+                            null,
+                            payload.purpose(),
+                            payload.taskId(),
+                            intent.correlation().branchTokenId(),
+                            intent.correlation().forkStepId(),
+                            intent.correlation().branchId(),
+                            DurableMetadata.empty());
+                    return timerStore.insertScheduled(row, transaction).map(ignored -> RecorderResult.ofTimer(timerId));
+                }
+            };
         }
 
         @Provides

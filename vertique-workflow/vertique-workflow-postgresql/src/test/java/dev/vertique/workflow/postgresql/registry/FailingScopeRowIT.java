@@ -75,9 +75,9 @@ public class FailingScopeRowIT {
             .withDatabaseName("workflow_failing_scope_row_it")
             .withMigration("classpath:db/migration/workflow");
 
-    private static final String ACME = "acme";
+    static final String ACME = "acme";
     private static final String GLOBEX = "globex";
-    private static final String PURCHASE = "purchase-approval";
+    static final String PURCHASE = "purchase-approval";
     private static final Instant LOADED_AT = Instant.parse("2026-10-22T12:00:00Z");
 
     /** The property names of both purchase states and of the document state; no refusal message may repeat them. */
@@ -382,7 +382,7 @@ public class FailingScopeRowIT {
      * What one deployment ships: its code definitions and its type catalog. The first deployment's purchase state has
      * one property, the later one's has two under the same logical name.
      */
-    private record Deployment(List<WorkflowDefinition<?, ?>> code, List<WorkflowTypeCatalogEntry> catalog) {
+    record Deployment(List<WorkflowDefinition<?, ?>> code, List<WorkflowTypeCatalogEntry> catalog) {
 
         /** The first deployment: default code for the id when given, and a catalog that lists the decision class. */
         static Deployment firstWith(String id, boolean decisionListed) {
@@ -471,7 +471,7 @@ public class FailingScopeRowIT {
 
     // --- Documents, starts and readers ---
 
-    private static Boot boot(DefinitionScenario database, Vertx vertx, Deployment deployment) {
+    static Boot boot(DefinitionScenario database, Vertx vertx, Deployment deployment) {
         return database.nodeOf(pool -> SchemaDefinitionGraph.build(
                 vertx, pool, FailingScopeRowIT.class, deployment.code(), deployment.catalog()));
     }
@@ -505,12 +505,12 @@ public class FailingScopeRowIT {
                 node.app().workflowOperations().start(command(ACME, PURCHASE, orderId, idempotencyKey, null, null)));
     }
 
-    private static StartCommand command(
+    static StartCommand command(
             String scope, String id, String orderId, String idempotencyKey, Long version, String targetScope) {
         return command(ContractC.class, scope, id, orderId, idempotencyKey, version, targetScope);
     }
 
-    private static StartCommand command(
+    static StartCommand command(
             Class<?> contract,
             String scope,
             String id,
@@ -597,7 +597,7 @@ public class FailingScopeRowIT {
     }
 
     /** The record the definition listing returns for the key. */
-    private static WorkflowDefinitionRecord listed(Boot node, DefinitionKey key) {
+    static WorkflowDefinitionRecord listed(Boot node, DefinitionKey key) {
         return await(node.app()
                         .definitionService()
                         .list(new DefinitionFilter(key.scopeKey(), key.definitionId(), null)))
@@ -628,7 +628,7 @@ public class FailingScopeRowIT {
     }
 
     /** Clears the ids' rows and records now and again when the scenario closes. */
-    private static void own(DefinitionScenario database, String... ids) {
+    static void own(DefinitionScenario database, String... ids) {
         ActivationFixtures.clearActivations(database.admin(), ids);
         database.ownRows(ids);
         database.onClose(() -> ActivationFixtures.clearActivations(database.admin(), ids));

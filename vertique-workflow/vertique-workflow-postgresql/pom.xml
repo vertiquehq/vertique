@@ -166,6 +166,12 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-workflow-events</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <!-- Test scope only: the mixed-code proofs run the timer-fire executor against each node's engine. -->
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-workflow-delayed</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!--
           Test scope only: the cross-scope migration proofs compare state types through the schema
           module's WorkflowStateCompatibility. No production code in this module depends on it.
