@@ -146,9 +146,9 @@ The full fixture also demonstrates timers, compensation, fork, join, due dates, 
 |---|---:|---|
 | `definitionId` | yes | Durable workflow definition id |
 | `definitionVersion` | yes | Version registered for this document |
-| `stateType` | yes | Java class name for workflow state |
-| `contract` | yes | Java interface annotated with `@WorkflowContract` |
-| `startPayloadType` | yes | Java class name for the start payload |
+| `stateType` | yes | Logical name (`@WorkflowType`) or Java class name for workflow state |
+| `contract` | yes | Logical name (`@WorkflowContract.value()`) or Java class name of an interface annotated with `@WorkflowContract` |
+| `startPayloadType` | yes | Logical name or Java class name for the start payload |
 | `initialStateMapper` | yes | Named callback that maps start payload to initial state |
 | `subjectResolver` | no | Named callback that derives `WorkflowSubjectRef` from state |
 | `initialStep` | yes | Step id where execution begins |
@@ -207,7 +207,7 @@ A well-formed definition is one that passes both parsing and semantic validation
 
 - Jackson YAML/JSON parsing is strict: unknown fields and invalid step types fail.
 - Required top-level fields and required step fields must be present.
-- Java class names must resolve on the application classpath.
+- Type and contract names resolve in this order: first the `WorkflowTypeNames` index (types for state and payload names, contracts for the contract name), which holds the classes of every registered definition under their logical and binary names; then, for a name the index does not know, class lookup by binary name on the application classpath. A name that neither finds is a violation. The pipeline resolves the state and contract of a document the same way.
 - The contract class must be annotated with `@WorkflowContract`, and its id/version must match the document.
 - Named callbacks must resolve through the registered callback registries.
 - Decision expressions must parse through the expression profile.

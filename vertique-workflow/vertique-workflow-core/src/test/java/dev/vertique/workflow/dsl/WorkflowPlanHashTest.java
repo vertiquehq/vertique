@@ -5,7 +5,12 @@ package dev.vertique.workflow.dsl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.plan.HumanTaskNode;
+import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.types.WorkflowType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -25,6 +30,45 @@ class WorkflowPlanHashTest {
     record StartCmd(String id) {}
 
     record SignalPayload(String data) {}
+
+    // --- Unannotated fixture types: their binary names are part of the golden hash, so do not rename them ---
+
+    record GoldenState(String id) {}
+
+    record GoldenStart(String id) {}
+
+    record GoldenSignal(String data) {}
+
+    record GoldenDecision(boolean approved) {}
+
+    @WorkflowContract(definitionId = "golden-saga", definitionVersion = 1)
+    interface GoldenContract {}
+
+    // --- Fixture types for logical naming: annotated types and their unannotated twins ---
+
+    @WorkflowType("order")
+    record NamedState(String id) {}
+
+    @WorkflowType("order.paid")
+    record NamedPaid(String data) {}
+
+    @WorkflowType("order.approval")
+    record NamedApproval(boolean approved) {}
+
+    record PlainState(String id) {}
+
+    record PlainPaid(String data) {}
+
+    record PlainApproval(boolean approved) {}
+
+    @WorkflowContract(definitionId = "typed-saga", definitionVersion = 1)
+    interface TypedContract {}
+
+    @WorkflowContract(value = "orders", definitionId = "x", definitionVersion = 1)
+    interface OrdersContract {}
+
+    @WorkflowContract(value = "other", definitionId = "x", definitionVersion = 1)
+    interface OtherContract {}
 
     /** Builds plan A: charge → ship → wait-signal → complete. */
     private static WorkflowPlan buildPlanA() {
@@ -114,5 +158,171 @@ class WorkflowPlanHashTest {
 
             assertThat(planSignalA.planHash()).isNotEqualTo(planSignalB.planHash());
         }
+    }
+
+    /**
+     * Plan hash of {@code golden-saga} v1 with unannotated state, signal and decision classes, captured by
+     * registering this definition at revision {@code 778e8407}, before any logical type naming existed.
+     */
+    private static final String GOLDEN_UNANNOTATED_PLAN_HASH =
+            "268d4fa429daf6dc490b4962b88b142216e0f685c1d2ebb096179157b4e00a73";
+
+    @Test
+    @DisplayName("an unannotated definition registers with the plan hash it had before logical type names")
+    void unannotatedRegistryHashMatchesBaselineGolden() {
+        // Given: a definition whose state, start, signal and decision classes carry no annotation
+        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
+
+        // When: it registers
+        registry.register(new WorkflowDefinition<GoldenState, GoldenContract>() {
+            @Override
+            public Class<GoldenContract> contract() {
+                return GoldenContract.class;
+            }
+
+            @Override
+            public Class<GoldenState> stateType() {
+                return GoldenState.class;
+            }
+
+            @Override
+            public String definitionId() {
+                return "golden-saga";
+            }
+
+            @Override
+            public long definitionVersion() {
+                return 1L;
+            }
+
+            @Override
+            public void define(WorkflowBuilder<GoldenState> wf) {
+                wf.init(GoldenStart.class, start -> new GoldenState(start.id()))
+                        .initialStep("charge")
+                        .dispatch("charge", "payment-svc", state -> new Object(), "wait-paid")
+                        .waitForSignal("wait-paid", "order.paid", GoldenSignal.class)
+                        .onSignal((state, signal) -> state)
+                        .toStepOnSignal("wait-shipped")
+                        .build()
+                        .waitFor(
+                                "wait-shipped", "order.shipped", GoldenSignal.class, (state, signal) -> state, "review")
+                        .task("review")
+                        .assignToRole("reviewers")
+                        .decision("approve", GoldenDecision.class)
+                        .onDecision((state, decision) -> state)
+                        .toStep("done")
+                        .build()
+                        .complete("done");
+            }
+        });
+
+        // Then: the plan hash is the one captured before the change
+        assertThat(registry.resolvePinned("golden-saga", 1L).plan().planHash()).isEqualTo(GOLDEN_UNANNOTATED_PLAN_HASH);
+    }
+
+    @Test
+    @DisplayName("annotated state, signal and decision types enter the plan by logical name and change the hash")
+    void annotatedTypesAreNamedAndHashedLogically() {
+        // Given: a definition over annotated types and an identical twin over unannotated copies, each in
+        // its own registry
+        DefaultWorkflowRegistry annotatedRegistry = new DefaultWorkflowRegistry();
+        DefaultWorkflowRegistry twinRegistry = new DefaultWorkflowRegistry();
+
+        // When: both register
+        annotatedRegistry.register(
+                definition(TypedContract.class, "typed-saga", NamedState.class, NamedPaid.class, NamedApproval.class));
+        twinRegistry.register(
+                definition(TypedContract.class, "typed-saga", PlainState.class, PlainPaid.class, PlainApproval.class));
+
+        // Then: the annotated plan carries the logical names
+        WorkflowPlan plan = annotatedRegistry.resolvePinned("typed-saga", 1L).plan();
+        assertThat(plan.stateTypeName()).isEqualTo("order");
+        assertThat(waitNode(plan).payloadTypeName()).isEqualTo("order.paid");
+        assertThat(decisionNode(plan).decisions().get(0).payloadTypeName()).isEqualTo("order.approval");
+
+        // And: the hash digests those names, and so differs from the twin's
+        assertThat(plan.planHash()).isEqualTo(WorkflowBuilder.computePlanHashForTesting(plan));
+        assertThat(plan.planHash())
+                .isNotEqualTo(
+                        twinRegistry.resolvePinned("typed-saga", 1L).plan().planHash());
+    }
+
+    @Test
+    @DisplayName("the contract name does not affect the plan hash")
+    void contractNameDoesNotAffectPlanHash() {
+        // Given: two definitions identical except for the name on their contract interfaces
+        DefaultWorkflowRegistry ordersRegistry = new DefaultWorkflowRegistry();
+        DefaultWorkflowRegistry otherRegistry = new DefaultWorkflowRegistry();
+
+        // When: each registers in its own registry
+        ordersRegistry.register(
+                definition(OrdersContract.class, "x", PlainState.class, PlainPaid.class, PlainApproval.class));
+        otherRegistry.register(
+                definition(OtherContract.class, "x", PlainState.class, PlainPaid.class, PlainApproval.class));
+
+        // Then: the plans, hashes included, are equal
+        WorkflowPlan ordersPlan = ordersRegistry.resolvePinned("x", 1L).plan();
+        WorkflowPlan otherPlan = otherRegistry.resolvePinned("x", 1L).plan();
+        assertThat(ordersPlan.planHash()).isEqualTo(otherPlan.planHash());
+        assertThat(ordersPlan).isEqualTo(otherPlan);
+    }
+
+    /** Waits for {@code paid}, then asks for one {@code approve} decision of type {@code approval}. */
+    private static <S, C, P, A> WorkflowDefinition<S, C> definition(
+            Class<C> contract, String definitionId, Class<S> state, Class<P> paid, Class<A> approval) {
+        return new WorkflowDefinition<>() {
+            @Override
+            public Class<C> contract() {
+                return contract;
+            }
+
+            @Override
+            public Class<S> stateType() {
+                return state;
+            }
+
+            @Override
+            public String definitionId() {
+                return definitionId;
+            }
+
+            @Override
+            public long definitionVersion() {
+                return 1L;
+            }
+
+            @Override
+            public void define(WorkflowBuilder<S> wf) {
+                wf.init(StartCmd.class, start -> null)
+                        .initialStep("wait-paid")
+                        .waitForSignal("wait-paid", "order.paid", paid)
+                        .onSignal((current, signal) -> current)
+                        .toStepOnSignal("review")
+                        .build()
+                        .task("review")
+                        .assignToRole("reviewers")
+                        .decision("approve", approval)
+                        .onDecision((current, decision) -> current)
+                        .toStep("done")
+                        .build()
+                        .complete("done");
+            }
+        };
+    }
+
+    private static WaitSignalNode waitNode(WorkflowPlan plan) {
+        return plan.nodes().stream()
+                .filter(WaitSignalNode.class::isInstance)
+                .map(WaitSignalNode.class::cast)
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private static HumanTaskNode decisionNode(WorkflowPlan plan) {
+        return plan.nodes().stream()
+                .filter(HumanTaskNode.class::isInstance)
+                .map(HumanTaskNode.class::cast)
+                .findFirst()
+                .orElseThrow();
     }
 }

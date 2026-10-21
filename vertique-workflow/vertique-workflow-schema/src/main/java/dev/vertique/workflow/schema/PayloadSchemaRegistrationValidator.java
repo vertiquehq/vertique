@@ -15,6 +15,8 @@ import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RegisteredWorkflowDefinition;
 import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -28,7 +30,8 @@ import java.util.function.Supplier;
  *
  * <p>For the start payload type and then for the decision payload types of every human task, in plan order, each
  * distinct type name is resolved once per process JSON profile: {@code void} types mean no payload and are skipped; a
- * cached type is reused; the JSON object types are described by a fixed document; any other type is loaded with the
+ * cached type is reused; the JSON object types are described by a fixed document; any other type is found in the
+ * type-name index by its logical name or, when the index does not know the name, loaded by binary name with the
  * validator's class loader, described by the profile's schema generator, required to be object-shaped, checked for
  * patterns that do not compile, compiled into a guarded validator, given a property order and cached. The first failure ends validation and
  * is reported as a {@link WorkflowDefinitionException}; a failure is never cached, while entries resolved before it
@@ -46,24 +49,44 @@ final class PayloadSchemaRegistrationValidator implements WorkflowDefinitionVali
     private final PayloadSchemaCache cache;
     private final PayloadSchemaGenerator generator;
     private final ClassLoader classLoader;
+    private final WorkflowTypeNames typeNames;
+
+    PayloadSchemaRegistrationValidator(
+            JsonMapperProfileRegistry profileRegistry,
+            JsonConfig jsonConfig,
+            Optional<Validator> validator,
+            PayloadSchemaCache cache) {
+        this(profileRegistry, jsonConfig, validator, cache, new DefaultWorkflowTypeNames());
+    }
 
     @Inject
     PayloadSchemaRegistrationValidator(
             JsonMapperProfileRegistry profileRegistry,
             JsonConfig jsonConfig,
             Optional<Validator> validator,
-            PayloadSchemaCache cache) {
+            PayloadSchemaCache cache,
+            WorkflowTypeNames typeNames) {
         this(
                 cache,
                 new PayloadSchemaGenerator(profileRegistry, jsonConfig, validator),
-                PayloadSchemaRegistrationValidator.class.getClassLoader());
+                PayloadSchemaRegistrationValidator.class.getClassLoader(),
+                typeNames);
     }
 
     PayloadSchemaRegistrationValidator(
             PayloadSchemaCache cache, PayloadSchemaGenerator generator, ClassLoader classLoader) {
+        this(cache, generator, classLoader, new DefaultWorkflowTypeNames());
+    }
+
+    PayloadSchemaRegistrationValidator(
+            PayloadSchemaCache cache,
+            PayloadSchemaGenerator generator,
+            ClassLoader classLoader,
+            WorkflowTypeNames typeNames) {
         this.cache = cache;
         this.generator = generator;
         this.classLoader = classLoader;
+        this.typeNames = typeNames;
     }
 
     @Override
@@ -74,7 +97,7 @@ final class PayloadSchemaRegistrationValidator implements WorkflowDefinitionVali
         Class<?> startType = definition.startPayloadType();
         if (startType != null && startType != void.class && startType != Void.class) {
             resolve(
-                    new PayloadShapeRule.Context(definitionId, version, null, null, startType.getName()),
+                    new PayloadShapeRule.Context(definitionId, version, null, null, typeNames.nameOf(startType)),
                     () -> startType);
         }
         for (WorkflowNode node : definition.plan().nodes()) {
@@ -116,6 +139,10 @@ final class PayloadSchemaRegistrationValidator implements WorkflowDefinitionVali
     }
 
     private Class<?> load(PayloadShapeRule.Context context) {
+        Optional<Class<?>> indexed = typeNames.find(context.typeName());
+        if (indexed.isPresent()) {
+            return indexed.get();
+        }
         try {
             return Class.forName(context.typeName(), false, classLoader);
         } catch (ClassNotFoundException | LinkageError e) {

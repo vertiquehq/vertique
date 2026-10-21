@@ -94,6 +94,22 @@ Registration turns a definition into an immutable `WorkflowPlan`. A plan contain
 
 The engine records the definition id, definition version, and plan hash when an instance starts. Resumes use that pinned version rather than silently switching to the latest registered definition.
 
+### Logical Type Names
+
+A plan names its state type, its signal payload types and its decision payload types. By default a name is the class's binary name (`Class.getName()`), so renaming or moving a class changes the name in the plan and with it the plan hash. To keep the name stable, annotate the class:
+
+```java
+@WorkflowType("order.paid")
+public record OrderPaid(String orderId) {}
+```
+
+`@WorkflowType` takes a required `value()` that is the logical name: nonblank, at most 255 code points and free of ISO control characters. An invalid name fails registration with a `WorkflowDefinitionException` that names the class and never the raw value. `@WorkflowContract(value = "orders", ...)` names a contract the same way; an empty `value()` (the default) means the interface's binary name.
+
+- **Two namespaces.** Type names (state and payload classes) and contract names are separate: a contract and a state class may both be named `shared`.
+- **One class per name.** Within a namespace a name maps to one class. A second class under the same name fails registry startup with `WorkflowTypeNameConflictException`, which names the logical name and both binary class names. Every indexed class is also reachable by its binary name, so a logical name equal to the binary name of a different indexed class is the same conflict, whichever class is indexed first.
+- **Plan and hash.** `WorkflowPlan.stateTypeName` and the payload type names of wait-signal nodes and task decisions hold logical names, and the plan hash digests them. A class without `@WorkflowType` hashes exactly as before, so plans of unannotated types keep their hash. Annotating a class whose binary name differs from the new logical name changes the hash of every version that uses it. The start payload type and the contract name are not part of the hash.
+- **Resolver.** `WorkflowTypeNames` maps names to classes and back: `nameOf` and `contractNameOf` return the logical name, `resolve` and `find` look up a type, `findContract` looks up a contract. A lookup tries the logical name and then the binary name of an indexed class; it never loads a class by name, and `resolve` throws `WorkflowUnknownTypeNameException` for a name nobody indexed. `WorkflowCoreModule` provides one singleton index, binds it to `WorkflowTypeNames`, and the registry adds each registered definition's contract, state, start, signal and decision classes to it before the contributed validators run. A failed registration removes the names it added.
+
 ### Workflow Registry
 
 `WorkflowRegistry` stores all registered definition versions. Applications normally register definitions through Dagger `WorkflowContributor` multibindings:
@@ -108,7 +124,7 @@ static WorkflowContributor orderFulfillment(OrderFulfillmentDefinition definitio
 
 The registry validates definitions at registration time. Invalid graphs fail before they can serve traffic.
 
-Registration runs the plan checks and the callback consistency check, then every contributed
+Registration runs the plan checks and the callback consistency check, indexes the definition's type names (see Logical Type Names), then every contributed
 `WorkflowDefinitionValidator`, and only then publishes the definition. The validator step applies to
 bootstrap and runtime registrations alike. A validator exception propagates unchanged to the caller
 of `register` or `activate` and leaves the `(definitionId, version)` pair unresolvable.
@@ -217,7 +233,7 @@ static OrderFulfillmentWorkflow orderWorkflow(WorkflowClientFactory factory) {
 }
 ```
 
-Contract annotations are useful for type-safe application code. Document-defined workflows still use a contract class today; see `dev.vertique:vertique-workflow-definition` for the typed document model and its current limits.
+`@WorkflowContract.value()` gives the contract a logical name (see Logical Type Names); the name does not change the plan hash. Contract annotations are useful for type-safe application code. Document-defined workflows still use a contract class today; see `dev.vertique:vertique-workflow-definition` for the typed document model and its current limits.
 
 ---
 
@@ -452,6 +468,8 @@ report invalid arguments through failed Futures.
 | `WorkflowUnavailableException` | `UnavailableException` | 503 |
 | `WorkflowPersistenceException` | extends `WorkflowTechnicalException` (carries a `retryable` flag) | 500 |
 
+`WorkflowUnknownTypeNameException` (a name no indexed class has) and `WorkflowTypeNameConflictException` (two classes under one name in a namespace) extend `WorkflowDefinitionException`, so they are configuration failures and existing handlers for definition errors keep working.
+
 `WorkflowException` is the business-rule root only, not the superclass of every workflow failure — missing resources, state conflicts, configuration problems, unavailable capabilities, and technical failures use their own roots above instead.
 
 `WorkflowInvalidPayloadException` reports a caller-supplied payload that is not acceptable. It is a
@@ -481,6 +499,7 @@ exception as the cause, and it can carry submitted text, so applications must no
 Behaviors that are load-bearing for correct use and not obvious from method signatures alone:
 
 - **`WorkflowBuilder.init(payloadType, initialState)` is mandatory and may be called only once.** It must be the first builder call in a definition. Missing or duplicate `init` is rejected at registration with `WorkflowDefinitionException`.
+- **Logical names move the hash.** The plan hash digests logical type names. A class without `@WorkflowType` keeps its binary name and its hash; adding `@WorkflowType` with a value that differs from the binary name changes the hash of every version that uses the class.
 - **Plan hash pinning.** Each `WorkflowInstance` records the `definitionId`, `definitionVersion`, and `planHash` it started under. Resumes execute against that pinned plan, not the currently registered "latest" version. Use `WorkflowOperations.migrate(...)` plus a `WorkflowMigrationHandler` to move an in-flight instance to a newer version.
 - **Missing recorders fail the transition.** When a step emits a side-effect intent and no `WorkflowSideEffectRecorder<TX>` is registered for that `IntentKind`, the transaction fails. There is no silent no-op. Optional intent kinds may be declared via `@OptionalIntentKinds` and are no-ops only when explicitly opted in.
 - **Recorders must be durable, never live.** A `WorkflowSideEffectRecorder<TX>` may persist an outbox row, schedule a delayed job, or write to another transactional store, but must not call a downstream service before commit.

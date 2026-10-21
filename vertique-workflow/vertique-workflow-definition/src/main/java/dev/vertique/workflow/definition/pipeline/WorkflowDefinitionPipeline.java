@@ -14,6 +14,8 @@ import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadExceptio
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.plan.WorkflowPlan;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Objects;
@@ -65,11 +67,13 @@ public final class WorkflowDefinitionPipeline {
     private final WorkflowDefinitionParser parser;
     private final WorkflowDefinitionDocumentValidator validator;
     private final WorkflowDefinitionCompiler compiler;
+    private final WorkflowTypeNames typeNames;
 
     // --- Construction ---
 
     /**
-     * Constructs the pipeline with all required collaborators.
+     * Constructs the pipeline with all required collaborators. Type names in documents resolve by
+     * class-loader lookup only.
      *
      * @param parser the parser that deserializes raw bytes into a document; must not be
      *     {@code null}
@@ -78,14 +82,36 @@ public final class WorkflowDefinitionPipeline {
      * @param compiler the compiler that translates a validated document into builder calls; must
      *     not be {@code null}
      */
-    @Inject
     public WorkflowDefinitionPipeline(
             WorkflowDefinitionParser parser,
             WorkflowDefinitionDocumentValidator validator,
             WorkflowDefinitionCompiler compiler) {
+        this(parser, validator, compiler, new DefaultWorkflowTypeNames());
+    }
+
+    /**
+     * Constructs the pipeline with all required collaborators and the type-name index used to
+     * resolve the state and contract names of a document.
+     *
+     * @param parser the parser that deserializes raw bytes into a document; must not be
+     *     {@code null}
+     * @param validator the validator that accumulates and reports all document violations; must
+     *     not be {@code null}
+     * @param compiler the compiler that translates a validated document into builder calls; must
+     *     not be {@code null}
+     * @param typeNames the type-name index consulted before the class loader; must not be
+     *     {@code null}
+     */
+    @Inject
+    public WorkflowDefinitionPipeline(
+            WorkflowDefinitionParser parser,
+            WorkflowDefinitionDocumentValidator validator,
+            WorkflowDefinitionCompiler compiler,
+            WorkflowTypeNames typeNames) {
         this.parser = Objects.requireNonNull(parser, "parser");
         this.validator = Objects.requireNonNull(validator, "validator");
         this.compiler = Objects.requireNonNull(compiler, "compiler");
+        this.typeNames = Objects.requireNonNull(typeNames, "typeNames");
     }
 
     // --- Public API ---
@@ -114,7 +140,7 @@ public final class WorkflowDefinitionPipeline {
         // --- Stage 3: Compile ---
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         DocumentBackedWorkflowDefinition<?, ?> definition =
-                DocumentBackedWorkflowDefinition.fromDocument(doc, compiler, cl);
+                DocumentBackedWorkflowDefinition.fromDocument(doc, compiler, cl, typeNames);
 
         // --- Compute plan hash eagerly ---
         String planHash = computePlanHash(definition, doc);
@@ -139,12 +165,12 @@ public final class WorkflowDefinitionPipeline {
      * @throws WorkflowDefinitionException if the extra builder pass fails
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
-    private static String computePlanHash(
-            DocumentBackedWorkflowDefinition<?, ?> definition, WorkflowDefinitionDocument doc) {
+    private String computePlanHash(DocumentBackedWorkflowDefinition<?, ?> definition, WorkflowDefinitionDocument doc) {
         try {
             WorkflowBuilder builder = new WorkflowBuilder<>();
             definition.define(builder);
-            WorkflowPlan plan = builder.build(doc.definitionId(), doc.definitionVersion(), doc.stateType());
+            WorkflowPlan plan = builder.build(
+                    doc.definitionId(), doc.definitionVersion(), typeNames.nameOf(definition.stateType()));
             return plan.planHash();
         } catch (WorkflowDefinitionException e) {
             throw e;

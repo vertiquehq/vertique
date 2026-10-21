@@ -50,6 +50,7 @@ import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.tasks.TaskTransition;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
@@ -158,6 +159,9 @@ final class TaskLifecycleService {
      */
     private final PayloadConstraintCheck payloadConstraintCheck;
 
+    /** Resolves the logical decision payload type names the plan holds. */
+    private final WorkflowTypeNames typeNames;
+
     /**
      * Constructs a new task-lifecycle service.
      *
@@ -183,6 +187,8 @@ final class TaskLifecycleService {
      *     {@code null} (the engine assembly seam substitutes {@link WorkflowContextBinder#noop()}
      *     when durable-context wiring is not exercised)
      * @param payloadConstraintCheck the opt-in constraint check applied to coerced decision payloads
+     * @param typeNames the type-name index the registry fills as definitions register; a decision
+     *     payload name the index does not know is resolved as a binary class name
      */
     @Inject
     TaskLifecycleService(
@@ -201,7 +207,8 @@ final class TaskLifecycleService {
             Clock clock,
             Provider<TimerLifecycleService> timerPvd,
             WorkflowContextBinder contextBinder,
-            PayloadConstraintCheck payloadConstraintCheck) {
+            PayloadConstraintCheck payloadConstraintCheck,
+            WorkflowTypeNames typeNames) {
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -218,6 +225,7 @@ final class TaskLifecycleService {
         this.timerPvd = timerPvd;
         this.contextBinder = contextBinder;
         this.payloadConstraintCheck = payloadConstraintCheck;
+        this.typeNames = typeNames;
     }
 
     // --- Task-creation helpers (reached by the driver via Provider<TaskLifecycleService>) ---
@@ -564,8 +572,8 @@ final class TaskLifecycleService {
         // Step 3b: Payload-nullability validation + coercion.
         Object coercedPayload;
         try {
-            coercedPayload =
-                    WorkflowPayloads.validateAndCoerceTaskPayload(cmd.payload(), planDecision.payloadTypeName());
+            coercedPayload = WorkflowPayloads.validateAndCoerceTaskPayload(
+                    cmd.payload(), planDecision.payloadTypeName(), typeNames);
             payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.DECISION_REJECTION);
         } catch (Exception e) {
             logRejectedPayloadCause(e);
@@ -820,7 +828,7 @@ final class TaskLifecycleService {
                             Object coercedPayload;
                             try {
                                 coercedPayload = WorkflowPayloads.validateAndCoerceTaskPayload(
-                                        cmd.payload(), planDecision.payloadTypeName());
+                                        cmd.payload(), planDecision.payloadTypeName(), typeNames);
                                 payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.DECISION_REJECTION);
                             } catch (Exception e) {
                                 logRejectedPayloadCause(e);

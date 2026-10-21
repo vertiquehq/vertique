@@ -18,6 +18,8 @@ import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -114,6 +116,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /** Contributed registration-time definition validators; unordered and immutable. */
     private final Set<WorkflowDefinitionValidator> definitionValidators;
 
+    /** The type-name index shared with the engine, the schema module and the document compiler. */
+    private final WorkflowTypeNames typeNames;
+
     /**
      * Creates a new empty {@code DefaultWorkflowRegistry} with no fork/join validator.
      *
@@ -153,9 +158,46 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      */
     public DefaultWorkflowRegistry(
             WorkflowPlanValidator forkJoinValidator, Set<WorkflowDefinitionValidator> definitionValidators) {
+        this(forkJoinValidator, definitionValidators, new DefaultWorkflowTypeNames());
+    }
+
+    /**
+     * INTERNAL framework seam — the framework implementation behind a contract this module
+     * documents; not an application contract and outside the maturity promise.
+     *
+     * <p>Creates a new empty {@code DefaultWorkflowRegistry} that, in addition to the behavior of
+     * {@link #DefaultWorkflowRegistry(WorkflowPlanValidator, Set)}, names state and payload classes
+     * through {@code typeNames} and indexes each candidate definition's contract, state, start,
+     * signal and decision payload classes in it before the contributed validators run. A failed
+     * registration removes the names it added.
+     *
+     * <p>Indexing needs a {@link DefaultWorkflowTypeNames}; any other implementation is only
+     * consulted for names and its index is not extended.
+     *
+     * @param forkJoinValidator validator to invoke on each registered plan; may be null only in
+     *     test contexts that intentionally skip fork/join semantic checks
+     * @param definitionValidators validators to invoke on each candidate definition; copied
+     *     defensively, must not be {@code null}
+     * @param typeNames the shared type-name index; must not be {@code null}
+     */
+    public DefaultWorkflowRegistry(
+            WorkflowPlanValidator forkJoinValidator,
+            Set<WorkflowDefinitionValidator> definitionValidators,
+            WorkflowTypeNames typeNames) {
         Objects.requireNonNull(definitionValidators, "definitionValidators");
         this.forkJoinValidator = forkJoinValidator;
         this.definitionValidators = Set.copyOf(definitionValidators);
+        this.typeNames = Objects.requireNonNull(typeNames, "typeNames");
+    }
+
+    /**
+     * INTERNAL framework seam — lets the engine assembly share the registry's index; not an
+     * application contract and outside the maturity promise.
+     *
+     * @return the type-name index this registry names and indexes classes in; never {@code null}
+     */
+    public WorkflowTypeNames typeNames() {
+        return typeNames;
     }
 
     // --- WorkflowRegistry ---
@@ -200,7 +242,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
 
         String definitionId = def.definitionId();
         long definitionVersion = def.definitionVersion();
-        String stateTypeName = def.stateType().getName();
+        String stateTypeName = typeNames.nameOf(def.stateType());
 
         // build() validates that init() was called; throws WorkflowDefinitionException if not
         WorkflowPlan plan = builder.build(definitionId, definitionVersion, stateTypeName);
@@ -228,15 +270,33 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                 builder.signalPayloadTypes(),
                 perDefCallbacks);
 
-        // Contributed definition validators run last, before the publish phase; an exception
-        // propagates unchanged and the definition is never published.
-        RegisteredWorkflowDefinition candidate = new RegisteredWorkflowDefinition(plan, builder.startPayloadType());
-        for (WorkflowDefinitionValidator validator : definitionValidators) {
-            validator.validate(candidate);
+        // The candidate's classes enter the shared index before the contributed validators run, so a
+        // validator can resolve the logical names the plan holds. Any later failure removes them again.
+        Runnable undoIndexing = indexCandidate(def, builder);
+        try {
+            // Contributed definition validators run last, before the publish phase; an exception
+            // propagates unchanged and the definition is never published.
+            RegisteredWorkflowDefinition candidate = new RegisteredWorkflowDefinition(plan, builder.startPayloadType());
+            for (WorkflowDefinitionValidator validator : definitionValidators) {
+                validator.validate(candidate);
+            }
+            publish(def, definitionId, definitionVersion, rw);
+        } catch (RuntimeException | Error e) {
+            undoIndexing.run();
+            throw e;
         }
 
-        // --- Atomic publish phase (write-lock held for the entire multi-step publish) ---
+        // Per-definition callbacks live on `rw.callbacks()` (used by the engine via
+        // RuntimeWorkflow.callbacks() during execution). We intentionally do NOT merge them into
+        // any global aggregate: callback ids are scoped to {stepId, role} which collides across
+        // definitions/versions, and a globally-keyed map would silently overwrite or require
+        // callers to know which definition a callback belongs to. Consumers must look up
+        // callbacks via {@link RuntimeWorkflow#callbacks()} on a resolved instance.
+    }
 
+    /** Atomic publish phase: the write lock is held for the entire multi-step publish. */
+    private void publish(
+            WorkflowDefinition<?, ?> def, String definitionId, long definitionVersion, RuntimeWorkflow rw) {
         rwLock.writeLock().lock();
         try {
             // Store by (definitionId, version) — reject exact duplicates
@@ -264,13 +324,24 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         } finally {
             rwLock.writeLock().unlock();
         }
+    }
 
-        // Per-definition callbacks live on `rw.callbacks()` (used by the engine via
-        // RuntimeWorkflow.callbacks() during execution). We intentionally do NOT merge them into
-        // any global aggregate: callback ids are scoped to {stepId, role} which collides across
-        // definitions/versions, and a globally-keyed map would silently overwrite or require
-        // callers to know which definition a callback belongs to. Consumers must look up
-        // callbacks via {@link RuntimeWorkflow#callbacks()} on a resolved instance.
+    /**
+     * Adds the candidate's contract, state, start, signal and decision payload classes to the shared
+     * index. A conflicting or invalid name fails registration and leaves the index unchanged.
+     *
+     * @return an action that removes the names this call added
+     */
+    private Runnable indexCandidate(WorkflowDefinition<?, ?> def, WorkflowBuilder<?> builder) {
+        if (!(typeNames instanceof DefaultWorkflowTypeNames index)) {
+            return () -> {};
+        }
+        List<Class<?>> classes = new ArrayList<>();
+        classes.add(def.stateType());
+        classes.add(builder.startPayloadType());
+        classes.addAll(builder.signalPayloadTypes().values());
+        classes.addAll(builder.decisionPayloadTypes());
+        return index.add(def.contract(), classes);
     }
 
     /**

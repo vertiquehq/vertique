@@ -16,6 +16,8 @@ import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.Json;
@@ -81,14 +83,37 @@ final class WorkflowPayloads {
      * details never carry a payload value, a payload type name, or a binder message. A payload
      * that cannot bind to the declared class retains the {@link DecodeException} as the cause.
      *
+     * <p>This overload resolves the type name by class-loader lookup only.
+     *
      * @param payload the raw payload from the command
-     * @param payloadTypeName the fully-qualified class name declared in the plan decision
+     * @param payloadTypeName the type name declared in the plan decision
      * @return the coerced payload (may be {@code null} for Void decisions)
      * @throws WorkflowInvalidPayloadException if the payload violates the nullability rule or does
      *     not bind to the declared class
      * @throws WorkflowDefinitionException if the declared class cannot be resolved
      */
     static Object validateAndCoerceTaskPayload(Object payload, String payloadTypeName) {
+        return validateAndCoerceTaskPayload(payload, payloadTypeName, new DefaultWorkflowTypeNames());
+    }
+
+    /**
+     * Validates and coerces a decision payload, resolving the plan's type name through the type-name
+     * index first.
+     *
+     * <p>The name comes from a registered plan, so it is either a logical name or the binary class
+     * name of a row written before the class was named. When the index does not know it, the name is
+     * resolved as a binary class name, exactly as before logical names existed. The nullability rules
+     * and error reporting are those of {@link #validateAndCoerceTaskPayload(Object, String)}.
+     *
+     * @param payload the raw payload from the command
+     * @param payloadTypeName the type name declared in the plan decision
+     * @param typeNames the type-name index to resolve through
+     * @return the coerced payload (may be {@code null} for Void decisions)
+     * @throws WorkflowInvalidPayloadException if the payload violates the nullability rule or does
+     *     not bind to the declared class
+     * @throws WorkflowDefinitionException if the declared class cannot be resolved
+     */
+    static Object validateAndCoerceTaskPayload(Object payload, String payloadTypeName, WorkflowTypeNames typeNames) {
         // Special-case the Void / void markers BEFORE Class.forName: the primitive `void.class`
         // returns the literal name "void", which Class.forName rejects with ClassNotFoundException.
         // Without this short-circuit, a developer-declared `decision("approve", void.class)` would
@@ -106,12 +131,14 @@ final class WorkflowPayloads {
             return null;
         }
 
-        Class<?> payloadClass;
-        try {
-            payloadClass = Class.forName(payloadTypeName);
-        } catch (ClassNotFoundException e) {
-            throw new WorkflowDefinitionException(
-                    "Decision payloadTypeName '" + payloadTypeName + "' cannot be resolved: " + e.getMessage());
+        Class<?> payloadClass = typeNames.find(payloadTypeName).orElse(null);
+        if (payloadClass == null) {
+            try {
+                payloadClass = Class.forName(payloadTypeName);
+            } catch (ClassNotFoundException e) {
+                throw new WorkflowDefinitionException(
+                        "Decision payloadTypeName '" + payloadTypeName + "' cannot be resolved: " + e.getMessage());
+            }
         }
 
         if (payload == null) {

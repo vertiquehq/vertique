@@ -25,6 +25,8 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import dev.vertique.workflow.tasks.TaskAssignment;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.annotation.Nullable;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -32,11 +34,14 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -106,6 +111,12 @@ public final class WorkflowBuilder<S> {
 
     /** State mutators keyed by CallbackId value. */
     private final Map<String, Function<Object, Object>> stateMutators = new HashMap<>();
+
+    /** Reads logical type names only; the builder never indexes. */
+    private static final WorkflowTypeNames TYPE_NAMES = new DefaultWorkflowTypeNames();
+
+    /** Decision payload classes in declaration order; populated by task decisions. */
+    private final Set<Class<?>> decisionPayloadTypes = new LinkedHashSet<>();
 
     /** Signal payload types keyed by signal name; populated by waitFor calls. */
     private final Map<String, Class<?>> signalPayloadTypes = new LinkedHashMap<>();
@@ -281,7 +292,7 @@ public final class WorkflowBuilder<S> {
         CallbackId cbId = callbackId(stepId, "updater");
         stateUpdaters.put(cbId.value(), (BiFunction<Object, Object, Object>) (BiFunction<?, ?, ?>) stateUpdater);
         signalPayloadTypes.put(signalName, payloadClass);
-        nodes.add(new WaitSignalNode(stepId, signalName, payloadClass.getName(), cbId, nextStepId, null));
+        nodes.add(new WaitSignalNode(stepId, signalName, TYPE_NAMES.nameOf(payloadClass), cbId, nextStepId, null));
         return this;
     }
 
@@ -762,10 +773,9 @@ public final class WorkflowBuilder<S> {
 
         validateStepReferences();
 
-        String stateTypeName = ""; // stateType is not known by builder itself; resolved by registry
-        // stateTypeName is passed from registry when it calls build; we store it during init
-        // Actually builder doesn't directly know stateType — registry provides it separately
-        // The plan stateTypeName comes from WorkflowDefinition.stateType().getName() in registry
+        // The builder does not know the state type; the registry passes its logical name to the
+        // three-argument build overload.
+        String stateTypeName = "";
 
         String planHash = computePlanHash(
                 definitionId, definitionVersion, stateTypeName, effectiveInitialStep, nodes, subjectResolverCallbackId);
@@ -787,7 +797,7 @@ public final class WorkflowBuilder<S> {
      *
      * @param definitionId the workflow definition id
      * @param definitionVersion the workflow definition version
-     * @param stateTypeName the fully-qualified name of the workflow state type
+     * @param stateTypeName the logical name of the workflow state type
      * @return the constructed plan; never null
      * @throws WorkflowDefinitionException if {@code init()} was never called
      */
@@ -842,6 +852,19 @@ public final class WorkflowBuilder<S> {
      */
     public Map<String, Class<?>> signalPayloadTypes() {
         return Map.copyOf(signalPayloadTypes);
+    }
+
+    /**
+     * INTERNAL framework seam — read by the workflow registry so it can index the classes the plan
+     * names; not an application contract and outside the maturity promise.
+     *
+     * <p>Returns the decision payload classes collected from task decisions. The plan holds only
+     * their logical names.
+     *
+     * @return the decision payload classes in declaration order; never null
+     */
+    public Set<Class<?>> decisionPayloadTypes() {
+        return Collections.unmodifiableSet(new LinkedHashSet<>(decisionPayloadTypes));
     }
 
     /**
@@ -1115,8 +1138,8 @@ public final class WorkflowBuilder<S> {
          * @return the enclosing {@link WorkflowBuilder} for continued chaining
          */
         public WorkflowBuilder<S> build() {
-            nodes.add(
-                    new WaitSignalNode(stepId, signalName, payloadType.getName(), stateUpdaterCbId, nextStepId, null));
+            nodes.add(new WaitSignalNode(
+                    stepId, signalName, TYPE_NAMES.nameOf(payloadType), stateUpdaterCbId, nextStepId, null));
             return WorkflowBuilder.this;
         }
 
@@ -1236,7 +1259,7 @@ public final class WorkflowBuilder<S> {
             WaitSignalNode.TimeoutBranch branch =
                     new WaitSignalNode.TimeoutBranch(timeoutSpec, cbId, timeoutNextStepId);
             nodes.add(new WaitSignalNode(
-                    stepId, signalName, payloadType.getName(), stateUpdaterCbId, nextStepId, branch));
+                    stepId, signalName, TYPE_NAMES.nameOf(payloadType), stateUpdaterCbId, nextStepId, branch));
             return WorkflowBuilder.this;
         }
     }
@@ -1294,7 +1317,7 @@ public final class WorkflowBuilder<S> {
             WaitSignalNode.TimeoutBranch branch =
                     new WaitSignalNode.TimeoutBranch(timeoutSpec, timeoutMutatorCbId, timeoutNextStepId);
             nodes.add(new WaitSignalNode(
-                    stepId, signalName, payloadType.getName(), stateUpdaterCbId, nextStepId, branch));
+                    stepId, signalName, TYPE_NAMES.nameOf(payloadType), stateUpdaterCbId, nextStepId, branch));
             return WorkflowBuilder.this;
         }
     }
@@ -1717,7 +1740,9 @@ public final class WorkflowBuilder<S> {
                 throw new WorkflowDefinitionException("task '" + parent.stepId + "' decision '" + name
                         + "': onDecision(...) must be called before toStep(...)");
             }
-            parent.addDecision(new HumanTaskNode.TaskDecision(name, payloadType.getName(), applicatorCbId, nextStepId));
+            decisionPayloadTypes.add(payloadType);
+            parent.addDecision(
+                    new HumanTaskNode.TaskDecision(name, TYPE_NAMES.nameOf(payloadType), applicatorCbId, nextStepId));
             return parent;
         }
     }
@@ -1845,7 +1870,7 @@ public final class WorkflowBuilder<S> {
      *
      * @param definitionId the definition id
      * @param definitionVersion the definition version
-     * @param stateTypeName the fully-qualified state type name; may be empty but not null
+     * @param stateTypeName the logical state type name; may be empty but not null
      * @param initialStepId the initial step id
      * @param nodes the ordered list of nodes
      * @return lowercase hex SHA-256 digest; 64 characters

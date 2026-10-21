@@ -81,7 +81,10 @@ class name, decode message or map key. The cause is logged at DEBUG level only, 
 exception and can carry submitted text, so applications must not log the cause of a
 `WorkflowInvalidPayloadException` at INFO or above. The engine logs the cause at DEBUG unsanitized: it can
 quote submitted text, including line breaks. Keep DEBUG off for the `dev.vertique.workflow.engine` loggers in
-production, or sanitize at the log sink. A payload class that cannot be resolved remains a
+production, or sanitize at the log sink. A decision payload type is resolved from the name the plan holds: the engine looks the name up in the
+`WorkflowTypeNames` index first, so a class named with `@WorkflowType` resolves by its logical name, and an
+instance written before the class was annotated still resolves by the class's binary name. A name the index
+does not know is loaded as a binary class name, as before. A payload class that cannot be resolved remains a
 definition error (`WorkflowDefinitionException`), not a caller error. A failure thrown by an application
 decision applicator is also reported as a definition error, with the applicator exception as its cause
 and without its message.
@@ -193,7 +196,9 @@ assembles the entire package-private collaborator graph — including hand-wirin
 `ForkJoinCoordinator` mutual-recursion cycle using a one-element holder array. Returns the assembled
 engine as a `WorkflowEngineHandle`. The 16-argument overload takes the `Optional<BeanValidator>` that
 enables payload constraint enforcement; the shorter overloads delegate with an empty optional, so
-enforcement stays off.
+enforcement stays off. When the registry is a `DefaultWorkflowRegistry`, the factory shares the registry's
+`WorkflowTypeNames` index with the engine; any other registry gets an empty index, so decision payload names
+resolve as binary class names only.
 
 Key members:
 
@@ -230,7 +235,8 @@ Dagger module owning the engine-internal bindings:
 - Provides the `@OptionalIntentKinds Set<IntentKind>` (delegates to `WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS`).
 - Declares `WorkflowMigrationRegistry` as `@BindsOptionalOf` (opt-in migration support).
 - Declares `BeanValidator` as `@BindsOptionalOf` (opt-in payload constraint enforcement; bound by installing the validation module).
-- Includes `WorkflowCoreModule` and `ContextRuntimeModule`.
+- Includes `WorkflowCoreModule` and `ContextRuntimeModule`. The task-lifecycle service takes the singleton
+  `WorkflowTypeNames` index that `WorkflowCoreModule` provides.
 
 Adapter modules (`WorkflowPostgresqlModule`) include this module, so applications installing only the
 adapter module get all engine bindings automatically.

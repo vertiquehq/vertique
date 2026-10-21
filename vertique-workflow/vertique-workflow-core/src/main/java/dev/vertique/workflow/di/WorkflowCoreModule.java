@@ -22,6 +22,8 @@ import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.inject.Singleton;
 import java.util.Set;
 
@@ -70,6 +72,7 @@ public abstract class WorkflowCoreModule {
      * @param forkJoinValidator the plan validator consulted on each registered plan
      * @param definitionValidators the contributed registration-time definition validators; may be
      *     empty
+     * @param typeNames the shared type-name index the registry fills as definitions register
      * @return a fully-populated, immutable-after-build registry
      */
     @Provides
@@ -77,11 +80,33 @@ public abstract class WorkflowCoreModule {
     static WorkflowRegistry registry(
             Set<WorkflowContributor> contributors,
             WorkflowPlanValidator forkJoinValidator,
-            Set<WorkflowDefinitionValidator> definitionValidators) {
-        DefaultWorkflowRegistry reg = new DefaultWorkflowRegistry(forkJoinValidator, definitionValidators);
+            Set<WorkflowDefinitionValidator> definitionValidators,
+            DefaultWorkflowTypeNames typeNames) {
+        DefaultWorkflowRegistry reg = new DefaultWorkflowRegistry(forkJoinValidator, definitionValidators, typeNames);
         contributors.forEach(c -> c.contribute(reg));
         return reg;
     }
+
+    /**
+     * Provides the one process-wide type-name index. The registry fills it as definitions register;
+     * the engine, the schema module and the document compiler resolve logical names through it.
+     *
+     * @return the singleton index
+     */
+    @Provides
+    @Singleton
+    static DefaultWorkflowTypeNames defaultTypeNames() {
+        return new DefaultWorkflowTypeNames();
+    }
+
+    /**
+     * Binds {@link WorkflowTypeNames} to the singleton index.
+     *
+     * @param impl the singleton index
+     * @return the index bound as the lookup interface
+     */
+    @Binds
+    abstract WorkflowTypeNames typeNames(DefaultWorkflowTypeNames impl);
 
     /**
      * Declares the empty {@code Set<WorkflowContributor>} multibinding.

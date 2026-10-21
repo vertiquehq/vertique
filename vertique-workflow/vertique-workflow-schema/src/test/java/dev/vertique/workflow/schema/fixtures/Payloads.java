@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.annotation.JsonValue;
+import dev.vertique.workflow.types.WorkflowType;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import java.util.UUID;
@@ -25,6 +26,14 @@ public final class Payloads {
 
     /** A single-property record whose wire name differs under a snake case profile. */
     public record Comment(String displayName) {}
+
+    /** A start payload that carries a logical name. */
+    @WorkflowType("order.place")
+    public record PlaceOrder(String customer) {}
+
+    /** A decision payload that carries a logical name. */
+    @WorkflowType("order.approval")
+    public record OrderApproval(String comment) {}
 
     /** A required property with an alias: the schema states the requirement as a presence rule beside the type. */
     public record RequiredAliasRecord(

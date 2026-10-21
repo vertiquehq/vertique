@@ -37,6 +37,7 @@ import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.CallbackId;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -53,6 +54,7 @@ import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
 import io.vertx.sqlclient.SqlClient;
@@ -403,7 +405,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 clock,
                 () -> timerLifecycleHolder[0],
                 builtContextBinder,
-                payloadConstraintCheck);
+                payloadConstraintCheck,
+                registry instanceof DefaultWorkflowRegistry defaultRegistry
+                        ? defaultRegistry.typeNames()
+                        : new DefaultWorkflowTypeNames());
         taskLifecycleHolder[0] = this.taskLifecycle;
         // TimerLifecycleService needs the driver, coordinator, and task service eagerly; all three
         // are now built. The driver reaches resolveFireAt through the lazy Provider above

@@ -27,6 +27,17 @@ import java.lang.annotation.Target;
 public @interface WorkflowContract {
 
     /**
+     * The logical contract name.
+     *
+     * <p>Names a contract independently of its package and class name. Contract names form their own
+     * namespace, separate from {@link dev.vertique.workflow.types.WorkflowType} names; within it one
+     * name maps to one interface. The contract name is never part of the plan hash.
+     *
+     * @return the logical name; empty means the interface's binary name
+     */
+    String value() default "";
+
+    /**
      * The workflow definition id this contract targets.
      *
      * @return the definition id; must match a registered definition

@@ -37,6 +37,8 @@ import dev.vertique.workflow.plan.BranchRetryPolicy.BackoffStrategy;
 import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import dev.vertique.workflow.tasks.TaskAssignment;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Duration;
@@ -45,6 +47,7 @@ import java.time.format.DateTimeParseException;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -81,23 +84,46 @@ public final class WorkflowDefinitionCompiler {
     private final RegisteredIdentifierLookup lookup;
     private final ExpressionProfile profile;
     private final DecisionRouteCompiler decisionRouteCompiler;
+    private final WorkflowTypeNames typeNames;
 
     // --- Construction ---
 
     /**
-     * Constructs the compiler with all required collaborators.
+     * Constructs the compiler with all required collaborators. Payload type names are resolved by
+     * class-loader lookup only.
      *
      * @param lookup the facade over all 10 named callback registries; non-null
      * @param profile the expression profile used to build the expression environment for decision
      *     steps; non-null
      * @param decisionRouteCompiler the compiler for decision route tables; non-null
      */
-    @Inject
     public WorkflowDefinitionCompiler(
             RegisteredIdentifierLookup lookup, ExpressionProfile profile, DecisionRouteCompiler decisionRouteCompiler) {
+        this(lookup, profile, decisionRouteCompiler, new DefaultWorkflowTypeNames());
+    }
+
+    /**
+     * Constructs the compiler with all required collaborators and the type-name index.
+     *
+     * <p>A payload type name in a document is looked up in {@code typeNames} first; a name the
+     * index does not know is resolved as a binary class name on the context class loader.
+     *
+     * @param lookup the facade over all 10 named callback registries; non-null
+     * @param profile the expression profile used to build the expression environment for decision
+     *     steps; non-null
+     * @param decisionRouteCompiler the compiler for decision route tables; non-null
+     * @param typeNames the type-name index consulted before the class loader; non-null
+     */
+    @Inject
+    public WorkflowDefinitionCompiler(
+            RegisteredIdentifierLookup lookup,
+            ExpressionProfile profile,
+            DecisionRouteCompiler decisionRouteCompiler,
+            WorkflowTypeNames typeNames) {
         this.lookup = Objects.requireNonNull(lookup, "lookup");
         this.profile = Objects.requireNonNull(profile, "profile");
         this.decisionRouteCompiler = Objects.requireNonNull(decisionRouteCompiler, "decisionRouteCompiler");
+        this.typeNames = Objects.requireNonNull(typeNames, "typeNames");
     }
 
     // --- Public API ---
@@ -538,15 +564,20 @@ public final class WorkflowDefinitionCompiler {
     }
 
     /**
-     * Loads a class by name using the current thread's context class loader, wrapping any
-     * {@link ClassNotFoundException} in a {@link WorkflowDefinitionException}.
+     * Resolves a payload type name: the type-name index first, then the current thread's context
+     * class loader, wrapping any {@link ClassNotFoundException} in a
+     * {@link WorkflowDefinitionException}.
      *
-     * @param className the fully-qualified class name; non-null
+     * @param className the logical name or fully-qualified class name; non-null
      * @param context a description of the loading context for error messages
      * @return the resolved class; never null
      * @throws WorkflowDefinitionException if the class cannot be found
      */
-    private static Class<?> loadClass(String className, String context) {
+    private Class<?> loadClass(String className, String context) {
+        Optional<Class<?>> indexed = typeNames.find(className);
+        if (indexed.isPresent()) {
+            return indexed.get();
+        }
         try {
             return Class.forName(className, false, Thread.currentThread().getContextClassLoader());
         } catch (ClassNotFoundException e) {

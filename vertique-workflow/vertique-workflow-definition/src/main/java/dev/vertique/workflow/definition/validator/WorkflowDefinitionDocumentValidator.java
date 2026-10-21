@@ -19,6 +19,8 @@ import dev.vertique.workflow.definition.schema.StepNode;
 import dev.vertique.workflow.definition.schema.TimerStep;
 import dev.vertique.workflow.definition.schema.WaitSignalStep;
 import dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -28,7 +30,9 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -165,6 +169,9 @@ public final class WorkflowDefinitionDocumentValidator {
     @Nullable
     private final ExpressionProfile profile;
 
+    /** Consulted before the class loader when a document names a type or contract. */
+    private final WorkflowTypeNames typeNames;
+
     // --- Construction ---
 
     /**
@@ -182,10 +189,28 @@ public final class WorkflowDefinitionDocumentValidator {
      *     (expression pre-compilation is then skipped)
      * @throws NullPointerException if {@code lookup} is null
      */
-    @Inject
     public WorkflowDefinitionDocumentValidator(RegisteredIdentifierLookup lookup, @Nullable ExpressionProfile profile) {
+        this(lookup, profile, new DefaultWorkflowTypeNames());
+    }
+
+    /**
+     * Constructs the validator with the type-name index.
+     *
+     * <p>A state, payload or contract name in a document is looked up in {@code typeNames} first
+     * (types for state and payloads, contracts for the contract); a name the index does not know is
+     * resolved as a binary class name on the context class loader.
+     *
+     * @param lookup facade over all 10 named callback registries; non-null
+     * @param profile expression profile for pre-compiling {@code when} expressions; may be null
+     * @param typeNames the type-name index consulted before the class loader; non-null
+     * @throws NullPointerException if {@code lookup} or {@code typeNames} is null
+     */
+    @Inject
+    public WorkflowDefinitionDocumentValidator(
+            RegisteredIdentifierLookup lookup, @Nullable ExpressionProfile profile, WorkflowTypeNames typeNames) {
         this.lookup = Objects.requireNonNull(lookup, "lookup");
         this.profile = profile;
+        this.typeNames = Objects.requireNonNull(typeNames, "typeNames");
     }
 
     /**
@@ -239,7 +264,8 @@ public final class WorkflowDefinitionDocumentValidator {
                 "`stateType`",
                 violations);
 
-        Class<?> contractClass = checkClassResolvable(
+        Class<?> contractClass = resolveClass(
+                typeNames::findContract,
                 definitionId,
                 definitionVersion,
                 null,
@@ -384,14 +410,39 @@ public final class WorkflowDefinitionDocumentValidator {
     }
 
     /**
-     * Resolves a class by FQN using the context classloader (falling back to the validator's own
-     * classloader). Returns the resolved class, or {@code null} if resolution failed (in which
-     * case a violation is added).
+     * Resolves a state or payload type name: the type-name index first, then by FQN using the
+     * context classloader (falling back to the validator's own classloader). Returns the resolved
+     * class, or {@code null} if resolution failed (in which case a violation is added).
      *
-     * <p>This method uses class lookup only ({@code Class.forName(name, false, cl)}); it does
-     * NOT instantiate the class.
+     * <p>The class-loader fallback uses class lookup only ({@code Class.forName(name, false, cl)});
+     * it does NOT instantiate the class.
      */
-    private static Class<?> checkClassResolvable(
+    private Class<?> checkClassResolvable(
+            String definitionId,
+            long definitionVersion,
+            String stepId,
+            Integer routeIndex,
+            String fqn,
+            String code,
+            String fieldLabel,
+            List<Violation> violations) {
+        return resolveClass(
+                typeNames::find,
+                definitionId,
+                definitionVersion,
+                stepId,
+                routeIndex,
+                fqn,
+                code,
+                fieldLabel,
+                violations);
+    }
+
+    /**
+     * Resolves a name through {@code indexed} first and then by class lookup on the class loader.
+     */
+    private static Class<?> resolveClass(
+            Function<String, Optional<Class<?>>> indexed,
             String definitionId,
             long definitionVersion,
             String stepId,
@@ -403,6 +454,10 @@ public final class WorkflowDefinitionDocumentValidator {
         if (fqn == null || fqn.isBlank()) {
             // A blank FQN is reported by the relevant blank-id rule, not here.
             return null;
+        }
+        Optional<Class<?>> known = indexed.apply(fqn);
+        if (known.isPresent()) {
+            return known.get();
         }
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         if (cl == null) {

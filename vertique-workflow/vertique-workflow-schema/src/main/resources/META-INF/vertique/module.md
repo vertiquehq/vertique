@@ -86,7 +86,9 @@ including tasks inside fork branches. For each distinct type name it does this o
    A primitive decision type other than `void`, such as `int`, is not skipped: it is rejected with
    the message "cannot be loaded", the same wording the engine's class lookup gives.
 2. **Reuse the cache.** A type already resolved under the same profile is not generated again.
-3. **Load the class.** The payload type name is loaded without initializing the class.
+3. **Find the class.** The payload type name is looked up in the `WorkflowTypeNames` index, where a class
+   named with `@WorkflowType` is found by its logical name. A name the index does not know is loaded as a
+   binary class name without initializing the class.
 4. **Generate the schema.** The canonical Draft 2020-12 document is produced with the input-profile
    schema generator under the process system profile (`JsonConfig.effectiveSystemProfile`).
 5. **Require an object.** The document must be object-shaped (see below).
@@ -123,7 +125,10 @@ Schemas are generated under one profile, the process system profile. The profile
 the validator is created; the profile itself is resolved at the first generation, so an unknown
 profile name fails there as a configuration error and is not wrapped.
 
-The cache is a process-wide singleton keyed by payload type name and profile id. A type is described
+The cache is a process-wide singleton keyed by the logical payload type name and profile id. The logical
+name is the `@WorkflowType` value, or the binary class name for a class without the annotation, so a start
+payload and a decision payload are both keyed the way the plan names them. `WorkflowPayloadSchemas` finds a
+schema through the same logical name. A type is described
 once per profile however many definitions or versions use it. The cache is populated even when a
 later step rejects the definition; that is harmless because nothing reads a cached schema as proof
 that a definition is registered.
@@ -145,7 +150,7 @@ linear-safe, or review them before they enter a payload type.
 ### Threading and class loading
 
 - Validators run synchronously on the registering thread. Call `activate` off the event loop.
-- Payload classes are loaded with this module's own class loader. Other workflow modules resolve
+- Payload classes the type-name index does not know are loaded with this module's own class loader. Other workflow modules resolve
   classes differently, so in an application with split class loaders the payload classes must be
   visible from the loader that loads `vertique-workflow-schema`.
 
