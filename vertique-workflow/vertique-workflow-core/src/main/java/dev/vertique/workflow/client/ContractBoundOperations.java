@@ -47,8 +47,12 @@ final class ContractBoundOperations implements WorkflowOperations {
 
     @Override
     public Future<Void> signal(
-            WorkflowInstanceId id, String contractName, String signalName, Object payload, String signalDedupKey) {
-        return delegate.signal(id, contractName, signalName, payload, signalDedupKey);
+            WorkflowInstanceId id,
+            String callerContractName,
+            String signalName,
+            Object payload,
+            String signalDedupKey) {
+        return delegate.signal(id, callerContractName, signalName, payload, signalDedupKey);
     }
 
     @Override
@@ -67,8 +71,8 @@ final class ContractBoundOperations implements WorkflowOperations {
     }
 
     @Override
-    public Future<WorkflowView> query(WorkflowInstanceId id, String contractName) {
-        return delegate.query(id, contractName);
+    public Future<WorkflowView> query(WorkflowInstanceId id, String callerContractName) {
+        return delegate.query(id, callerContractName);
     }
 
     @Override

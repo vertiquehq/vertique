@@ -512,8 +512,7 @@ public final class WorkflowDefinitionDocumentValidator {
      */
     private static void checkContractAnnotation(
             String definitionId, long definitionVersion, Class<?> contractClass, List<Violation> violations) {
-        WorkflowContract annotation = contractClass.getAnnotation(WorkflowContract.class);
-        if (annotation == null) {
+        if (!contractClass.isAnnotationPresent(WorkflowContract.class)) {
             violations.add(new Violation(
                     blankFallback(definitionId),
                     definitionVersion,
@@ -521,7 +520,6 @@ public final class WorkflowDefinitionDocumentValidator {
                     null,
                     "CONTRACT_NOT_ANNOTATED",
                     "`contract` class '" + contractClass.getName() + "' is not annotated with @WorkflowContract"));
-            return;
         }
     }
 

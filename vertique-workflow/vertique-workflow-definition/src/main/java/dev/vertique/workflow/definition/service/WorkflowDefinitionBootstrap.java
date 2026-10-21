@@ -277,7 +277,7 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
         }
 
         // Detect (id, version) duplicates within the local successes list before any store mutation. Any
-        // number of definitions may name one contract. Use LinkedHashMaps to preserve insertion order for
+        // number of definitions may name one contract. A LinkedHashMap preserves insertion order for
         // deterministic error messages.
         Map<String, CompiledDefinition> seenKeys = new LinkedHashMap<>();
         for (CompiledDefinition compiled : successes) {
