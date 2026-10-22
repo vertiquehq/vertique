@@ -985,6 +985,53 @@ class WorkflowRegistryTest {
                 .containsExactly("purchase-approval v3");
     }
 
+    @Test
+    @DisplayName("a definition class still selects its id and contract after its version is retired")
+    void definitionClassSurvivesRetirementOfItsVersion() {
+        // Given: purchase-approval v1 and v2 registered, and a class of another id registered
+        registry.register(new PurchaseApprovalV1());
+        registry.register(new PurchaseApprovalV2());
+        registry.register(new TravelApprovalV1());
+        DefinitionKey v1 = new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 1L);
+
+        // When: v1 retires
+        registry.unregister(v1);
+
+        // Then: its class still selects the id and the contract
+        assertThat(registry.definitionClass(PurchaseApprovalV1.class)).hasValueSatisfying(registered -> {
+            assertThat(registered.definitionId()).isEqualTo("purchase-approval");
+            assertThat(registered.contractName()).isEqualTo("approval");
+            assertThat(registered.contract()).isEqualTo(ApprovalContract.class);
+        });
+
+        // and: the version is not resolvable and not registered
+        assertThatThrownBy(() -> registry.resolve(v1)).isInstanceOf(WorkflowVersionPinUnavailableException.class);
+        assertThat(registry.find(v1)).isEmpty();
+        assertThat(registry.allRegistered()).hasSize(2);
+
+        // and: after the last version retires the class still selects the id
+        registry.unregister(new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 2L));
+        assertThat(registry.definitionClass(PurchaseApprovalV2.class))
+                .hasValueSatisfying(
+                        registered -> assertThat(registered.definitionId()).isEqualTo("purchase-approval"));
+        assertThat(registry.contractOf(WorkflowScopes.DEFAULT, "purchase-approval"))
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("a class that never registered, or whose registration was refused, stays unknown after a retirement")
+    void unregisteredAndRefusedClassesStayUnknown() {
+        // Given: purchase-approval v1 retired, and a registration refused for undeclared signals
+        registry.register(new PurchaseApprovalV1());
+        registry.unregister(new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 1L));
+        assertThatThrownBy(() -> registry.register(new WaitsForUndeclaredSignals()))
+                .isInstanceOf(WorkflowDefinitionException.class);
+
+        // Then: the class of another id and the refused class are unknown
+        assertThat(registry.definitionClass(TravelApprovalV1.class)).isEmpty();
+        assertThat(registry.definitionClass(WaitsForUndeclaredSignals.class)).isEmpty();
+    }
+
     // --- Scoped registry: tests ---
 
     @Test

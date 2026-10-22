@@ -68,8 +68,9 @@ import java.util.stream.Collectors;
  *       {@link ConcurrentSkipListMap} keyed by version; allows efficient lookup of the highest
  *       version via {@code lastEntry()}, and answers {@link #contractOf(String, String)} from the
  *       first version it holds.</li>
- *   <li>{@code sources} — the registered definition objects per scope, id and version; also the
- *       source of {@link #definitionClass(Class)}.</li>
+ *   <li>{@code sources} — the registered definition objects per scope, id and version.</li>
+ *   <li>{@code knownClasses} — the definition id and contract each registered definition class selected,
+ *       kept after the version retires; the source of {@link #definitionClass(Class)}.</li>
  *   <li>{@code deprecated} — set of version numbers per scope and definitionId that are marked
  *       deprecated; always a subset of the registered versions and mutated only under
  *       {@code writeLock}.</li>
@@ -121,6 +122,17 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      * {@link #rwLock} together with {@link #byDefinition}; it holds exactly the registered versions.
      */
     private final HashMap<ScopedId, HashMap<Long, WorkflowDefinition<?, ?>>> sources = new HashMap<>();
+
+    /** The contract and highest version a definition class was registered with under one definition id. */
+    private record KnownClass(long version, Class<?> contract) {}
+
+    /**
+     * Keyed by the runtime class of a registered definition → (definition id → the highest version of that id
+     * the class was registered as, and its contract). Written when a version registers and never removed, so
+     * the class keeps selecting its definition id after every version it was registered as has retired. It
+     * holds no plan and makes no version startable. Guarded by {@link #rwLock}.
+     */
+    private final HashMap<Class<?>, HashMap<String, KnownClass>> knownClasses = new HashMap<>();
 
     /**
      * Keyed by (scope, definitionId) → (version → the binding of the registered plan: the binary name of its state and
@@ -584,6 +596,12 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                     .computeIfAbsent(scopedId, k -> new ConcurrentSkipListMap<>())
                     .put(definitionVersion, rw);
             sources.computeIfAbsent(scopedId, k -> new HashMap<>()).put(definitionVersion, def);
+            knownClasses
+                    .computeIfAbsent(def.getClass(), k -> new HashMap<>())
+                    .merge(
+                            definitionId,
+                            new KnownClass(definitionVersion, def.contract()),
+                            (known, added) -> added.version() > known.version() ? added : known);
             bindings.computeIfAbsent(scopedId, k -> new HashMap<>()).put(definitionVersion, nameBinding);
             if (!compareWithDefault)
                 failing.computeIfAbsent(scopedId, k -> new HashSet<>()).add(definitionVersion);
@@ -1037,40 +1055,25 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /**
      * {@inheritDoc}
      *
-     * <p>Derived from the registered definitions under the read lock, so it follows
-     * {@link #unregister(DefinitionKey)}. When several versions of one id share the class, the
-     * highest version's contract answers.
+     * <p>Answered under the read lock from what the registrations recorded, so it does not follow
+     * {@link #unregister(DefinitionKey)}: a class keeps selecting its definition id after every version it was
+     * registered as has retired, which is what lets a client created from the class outlive a retired
+     * version. A class that was never registered, or whose registration was refused, is unknown. When
+     * several versions of one id share the class, the highest version's contract answers.
      */
     @Override
     public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
         Objects.requireNonNull(definitionClass, "definitionClass");
         rwLock.readLock().lock();
         try {
-            String foundId = null;
-            WorkflowDefinition<?, ?> foundDefinition = null;
-            long foundVersion = Long.MIN_VALUE;
-            for (Map.Entry<ScopedId, HashMap<Long, WorkflowDefinition<?, ?>>> byId : sources.entrySet()) {
-                String id = byId.getKey().definitionId();
-                for (Map.Entry<Long, WorkflowDefinition<?, ?>> byVersion :
-                        byId.getValue().entrySet()) {
-                    if (byVersion.getValue().getClass() != definitionClass) {
-                        continue;
-                    }
-                    if (foundId != null && !foundId.equals(id)) {
-                        return Optional.empty();
-                    }
-                    if (foundId == null || byVersion.getKey() > foundVersion) {
-                        foundId = id;
-                        foundDefinition = byVersion.getValue();
-                        foundVersion = byVersion.getKey();
-                    }
-                }
-            }
-            if (foundId == null) {
+            HashMap<String, KnownClass> byId = knownClasses.get(definitionClass);
+            if (byId == null || byId.size() != 1) {
                 return Optional.empty();
             }
-            Class<?> contract = foundDefinition.contract();
-            return Optional.of(new RegisteredDefinitionClass(foundId, typeNames.contractNameOf(contract), contract));
+            Map.Entry<String, KnownClass> known = byId.entrySet().iterator().next();
+            Class<?> contract = known.getValue().contract();
+            return Optional.of(
+                    new RegisteredDefinitionClass(known.getKey(), typeNames.contractNameOf(contract), contract));
         } finally {
             rwLock.readLock().unlock();
         }

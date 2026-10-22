@@ -123,7 +123,9 @@ public interface WorkflowRegistry {
      *
      * <p>The lookup is by the exact runtime class of the registered definition objects. A class whose
      * instances were registered under more than one definition id has no single answer, so the result
-     * is empty for it, as it is for a class that was never registered.
+     * is empty for it, as it is for a class that was never registered. The answer outlives
+     * {@link #unregister(DefinitionKey)}: a class whose every registered version has retired still selects its
+     * definition id, though no version of it can then start.
      *
      * @param definitionClass the class of a registered {@link WorkflowDefinition}
      * @return the definition id, contract name and contract of the class, or empty when the class is

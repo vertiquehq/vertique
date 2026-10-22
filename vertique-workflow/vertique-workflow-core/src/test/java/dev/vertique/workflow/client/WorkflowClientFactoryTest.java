@@ -30,6 +30,8 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import io.vertx.core.Future;
 import java.lang.reflect.Type;
@@ -369,6 +371,26 @@ class WorkflowClientFactoryTest {
         assertThat(cmd.startScope()).isNull();
         assertThat(cmd.requestedTargetScope()).isNull();
         assertThat(cmd.toString()).doesNotContain("unused").doesNotContain("99");
+    }
+
+    @Test
+    @DisplayName("a definition-class client is still created after the version of that class is retired")
+    void definitionClassClientIsCreatedAfterItsVersionRetires() {
+        // Given a registered definition whose only version is then retired
+        DefaultWorkflowRegistry ordersRegistry = new DefaultWorkflowRegistry();
+        ordersRegistry.register(new OrdersDefinition());
+        ordersRegistry.unregister(new DefinitionKey(WorkflowScopes.DEFAULT, "orders-flow", 1L));
+        RecordingWorkflowOperations recorder = new RecordingWorkflowOperations();
+        WorkflowClientFactory ordersFactory = new WorkflowClientFactory(recorder, ordersRegistry);
+
+        // When a client is created from the definition class and starts
+        ordersFactory.create(OrdersDefinition.class).start(new OrdersStart("order-1"));
+
+        // Then the command carries the definition's id and the contract name, so the engine answers for the version
+        StartCommand cmd = recorder.starts().get(0);
+        assertThat(cmd.definitionId()).isEqualTo("orders-flow");
+        assertThat(cmd.contractName()).isEqualTo("orders");
+        assertThat(cmd.requestedDefinitionVersion()).isNull();
     }
 
     @Test
