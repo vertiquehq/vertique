@@ -40,8 +40,8 @@ public interface WorkflowDefinitionService {
      */
     Future<Void> publish(DefinitionKey key);
     /**
-     * Deprecates an available definition so it is skipped by current resolution and refused for new
-     * explicit starts and migration targets, while instances already pinned to it keep running. The status is
+     * Deprecates an available definition so it is refused for new starts, whether named or selected by an
+     * activation record, and as a migration target, while instances already pinned to it keep running. The status is
      * committed durably before it is projected into the local cache and registry. The version that the default
      * scope's activation record of the id names is refused with {@code INVALID_TRANSITION} until another version is
      * activated in the default scope or {@link #deactivateDefault(String)} clears the record. A durable registry is

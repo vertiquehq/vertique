@@ -26,9 +26,10 @@ import jakarta.annotation.Nullable;
  *
  * @param stepId unique step identifier within the plan
  * @param signalName name of the signal this node waits for; must be unique within the plan
- * @param payloadTypeName fully-qualified class name ({@link Class#getName()}) of the expected
- *     signal payload type; used by the engine to coerce externally-ingested payloads (e.g., raw
- *     {@code Map}) to the typed class via {@code Json.decodeValue}
+ * @param payloadTypeName logical type name of the expected signal payload type (the class's
+ *     {@code @WorkflowType} name, or its binary name when it has none), resolved through
+ *     {@link dev.vertique.workflow.types.WorkflowTypeNames}; used by the engine to coerce
+ *     externally-ingested payloads (e.g., raw {@code Map}) to the typed class via {@code Json.decodeValue}
  * @param stateUpdaterCallbackId callback id for the {@code BiFunction<S, P, S>} that merges the
  *     incoming signal payload into the current workflow state
  * @param nextStepId step to advance to after the signal is processed

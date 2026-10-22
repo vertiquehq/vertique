@@ -23,8 +23,10 @@ import java.util.List;
  * @param definitionId the unique identifier of the workflow definition
  * @param definitionVersion monotonically increasing version of this plan
  * @param planHash SHA-256 hex digest of the plan content; deterministic across JVM restarts
- * @param stateTypeName fully-qualified class name ({@link Class#getName()}) of the workflow state
- *     type; held as a string so the plan is serialization-friendly
+ * @param stateTypeName logical type name of the workflow state type (the class's {@code @WorkflowType}
+ *     name, or its binary name when it has none); resolved to the class through
+ *     {@link dev.vertique.workflow.types.WorkflowTypeNames}, never by loading a class by name; held as a
+ *     string so the plan is serialization-friendly
  * @param initialStepId step id of the first node the engine executes after {@code start()}
  * @param nodes ordered list of all nodes in the plan; must include the node identified by
  *     {@code initialStepId}

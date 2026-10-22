@@ -161,10 +161,11 @@ public interface WorkflowRegistry {
     }
 
     /**
-     * Marks one registered version of a definition as deprecated. A deprecated version is skipped
-     * by current resolution and by explicit new starts and migration targets, yet remains available
-     * through pinned resolution so in-flight instances keep running. Unregistering the version
-     * clears the mark.
+     * Marks one registered version of a definition as deprecated. A deprecated version is refused
+     * for new starts, whether named or selected by an activation record, and as a migration target, yet remains
+     * available through pinned resolution so in-flight instances keep running. The mark does not move an
+     * activation record; only the computed default, used when no store is bound, skips a deprecated version.
+     * Unregistering the version clears the mark.
      *
      * <p>Implementations must make the mark atomic with registration changes, so that no caller
      * observes a version that is registered but not yet marked after this method returns. The
@@ -179,8 +180,8 @@ public interface WorkflowRegistry {
     }
 
     /**
-     * Clears the deprecation mark of one registered version of a definition, so that current resolution and new
-     * starts see it again. The registration itself is untouched.
+     * Clears the deprecation mark of one registered version of a definition, so that new starts and migration
+     * targets accept it again, and the computed default, used when no store is bound, counts it. The registration itself is untouched.
      *
      * <p>Implementations must make the change atomic with registration changes. Clearing the mark of a version
      * that is not registered or not marked is a no-op. The default implementation throws, so registries that do

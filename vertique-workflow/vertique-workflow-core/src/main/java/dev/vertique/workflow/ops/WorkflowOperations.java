@@ -97,7 +97,7 @@ public interface WorkflowOperations {
      * Returns a read-only view of the workflow instance and its recent history.
      *
      * <p>This is a read-only operation and does not require a write transaction. It succeeds even
-     * if the workflow definition version is no longer registered.
+     * if the workflow definition version is no longer registered, because it reads no plan.
      *
      * @param id id of the workflow instance to query
      * @return a {@link Future} that resolves to a {@link WorkflowView} containing the instance
@@ -109,9 +109,11 @@ public interface WorkflowOperations {
      * Returns a read-only view of the workflow instance on behalf of a client of the named contract.
      *
      * <p>A binding that checks contracts compares {@code contractName} with the contract of the
-     * definition version the instance is pinned to, when that version is registered, and refuses the
-     * query when they differ. The default implementation performs no check and delegates to
-     * {@link #query(WorkflowInstanceId)}.
+     * definition version the instance is pinned to and refuses the query when they differ. Unlike
+     * {@link #query(WorkflowInstanceId)}, which needs no plan, the check needs the pinned plan: a binding
+     * that holds no code for that version fails with
+     * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException}. The default implementation
+     * performs no check and delegates to {@link #query(WorkflowInstanceId)}.
      *
      * <p>A wrapper or decorator around another binding must override this method and forward it to the
      * wrapped binding; inheriting the default silently drops the caller-contract check. The check is a

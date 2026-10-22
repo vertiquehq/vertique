@@ -18,8 +18,10 @@ public interface WorkflowDefinitionLifecycle {
 
     /**
      * Deprecates an available definition. The durable status is committed first; only after that
-     * commit does the local registry mark the version deprecated, so current resolution skips it and explicit
-     * new starts and migration targets are refused while pinned instances keep running. A definition that is
+     * commit does the local registry mark the version deprecated, so explicit new starts, starts an activation
+     * record selects, and migration targets are refused while pinned instances keep running. The mark does not
+     * move an activation record; the computed default, used only when no store is bound, skips a deprecated
+     * version. A definition that is
      * already deprecated is accepted, which re-applies the local mark. Any other status fails typed.
      * The local mark is a no-op when the version is not registered on this node, and a registry that does
      * not support deprecation fails the call after the durable commit, leaving the committed status in
