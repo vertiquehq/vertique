@@ -557,7 +557,7 @@ The bound `WorkflowDefinitionRegistryView` is a read-only view of one node:
 
 - `registered()` returns an immutable snapshot of the committed records, in a live status, whose runtime this
   node holds, ordered by definition id, scope (default first) and version. It lists the applied records of every
-  scope, with their ids, versions and provenance, so it is an operator view: do not expose it to tenants
+  scope, with their ids, versions and provenance, so it is an operator view: do not expose it to end users
   unfiltered.
 - `applyFailures()` returns the number of rows that currently fail to apply, not a running total: a successful
   retry removes the row from the count, and so does a row that is no longer in the table.

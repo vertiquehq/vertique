@@ -29,7 +29,7 @@ Good fits:
 
 - A definition that names decision payload types by class name, such as a document-backed
   definition, where a typo or an unsuitable type would otherwise surface at the first decision.
-- Applications that activate definitions at runtime and want a bad definition refused before it
+- Applications that publish definitions at runtime and want a bad definition refused before it
   becomes resolvable.
 - Endpoints that want to reject a malformed decision or start payload with value-free, pointer-based
   violation details before submitting it to the engine.
@@ -97,7 +97,7 @@ default value).
 ## What Registration Checks
 
 The validator is a `WorkflowDefinitionValidator` contributed to the workflow registry. It runs for
-every candidate definition, whether registered at bootstrap or activated at runtime. It reads the
+every candidate definition, whether registered at bootstrap or published at runtime. It reads the
 start payload type first, then the decision payload types of every human task in plan order,
 including tasks inside fork branches. For each distinct type name it does this once:
 
@@ -168,7 +168,7 @@ linear-safe, or review them before they enter a payload type.
 
 ### Threading and class loading
 
-- Validators run synchronously on the registering thread. Call `activate` off the event loop.
+- Validators run synchronously on the registering thread. Call `publish` off the event loop.
 - Payload classes the type-name index does not know are loaded with this module's own class loader. Other workflow modules resolve
   classes differently, so in an application with split class loaders the payload classes must be
   visible from the loader that loads `vertique-workflow-schema`.
@@ -411,7 +411,7 @@ profile override; the original exception is chained as the cause. The start payl
   bean-validation constraints that the engine still enforces.
 - **Declaring a scalar or array payload type.** `String`, `int`, `List<X>` and single-value records
   are rejected at registration. Wrap the value in a record.
-- **Calling `activate` on the event loop.** Schema generation and pattern compilation block the
+- **Calling `publish` on the event loop.** Schema generation and pattern compilation block the
   calling thread.
 - **Expecting a pattern limit on the engine path.** A `@Pattern` constraint checked by the engine's
   bean-validation path runs on strings of any length; only keyed validation is bounded. Do not rely
