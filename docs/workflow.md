@@ -377,8 +377,8 @@ definitions, their lifecycle status and their document sources survive restarts 
 - **Definition ids.** Ids are unprefixed: the document id is the definition id everywhere it is used
   (`StartCommand.definitionId`, pinned resolution, migration targets). A document may use the id of a code definition or of
   another scope's document, and each scope numbers its own versions. `load` and `publish` take any scope key, so restrict
-  them to trusted callers and never forward their refusal messages to end users: a refusal can name other scopes and plan hashes. Ids and scope keys
-  may contain Unicode format and bidirectional characters that validation does not strip; do not render them unescaped in
+  them to trusted callers and never forward their refusal messages to end users: a refusal can name other scopes and plan hashes. Definition ids
+  may contain Unicode format and bidirectional characters that validation does not strip (scope keys reject them); do not render them unescaped in
   operator UIs or logs.
 
 ### Code and document definitions
@@ -467,7 +467,7 @@ The same procedure applies to a packaged document with `activateOnDeploy: false`
 
 #### Roll-forward only
 
-Deployments are roll-forward only. A node whose code lacks a version that is not retired fails application startup with `CODE_UNAVAILABLE`: the node does not start, and none of its workflows run. Three cases are therefore unsupported: an old-code node that restarts or autoscales after a newer version was published, a rollback of the code past a version that has live instances, and rolling code back to 0.3.0. Old nodes that stay up keep serving, but starts that resolve to the newer version fail with the retryable not-runnable error.
+Deployments are roll-forward only. A node whose code lacks a version that is not retired fails application startup with `CODE_UNAVAILABLE`: the node does not start, and none of its workflows run. Three cases are therefore unsupported: an old-code node that restarts or autoscales after a newer version was published, a rollback of the code past a version that has live instances, and rolling code back to 0.3.0. Old nodes that stay up keep serving, but starts that resolve to the newer version fail with the not-runnable error, which is retryable only against a node that has the code.
 
 Activating the previous version again changes only which version new starts use; it does not let an old-code node restart, because the startup check looks at the published row, not at the activation. To undo a bad rollout, activate the previous version and then retire the newer one once the cooling window has passed and no instance is pinned to it, or deploy a corrected version. To keep a rollback possible, deploy with `activateOnDeploy` set to `false`, activate once every node runs the new code, and retire the new version promptly if you abandon it.
 
@@ -475,7 +475,7 @@ Activating the previous version again changes only which version new starts use;
 
 A node that is already running can still receive work for a version whose code it does not hold, for example while a rolling deploy is in progress. The plan lookup fails with `WorkflowVersionNotRunnableException` before anything is written, and no node marks an instance failed because it cannot run its pin.
 
-- **Calls.** A start that resolves to the version creates no instance. A signal, task completion, query, retry or migration on an instance pinned to it leaves the instance, its history and its dedup rows as they were. The failure belongs to the node, not to the instance, so a retry on a node that has the code succeeds.
+- **Calls.** A start that resolves to the version creates no instance. A signal, task completion, typed-client query (`query(id, contractName)`), retry or migration on an instance pinned to it leaves the instance, its history and its dedup rows as they were. The failure belongs to the node, not to the instance, so a retry on a node that has the code succeeds. The failure is retryable only while some node holds the code: after the version is retired and its class removed, no node will.
 - **Timers.** A timer that no running node can handle is queued again with capped exponential backoff: the new job runs after the time the timer has been due, between 5 seconds and 5 minutes, so the wait roughly doubles on every re-queue until it reaches 5 minutes. The re-queue does not spend one of the job's attempts and the timer row stays `SCHEDULED`, so the timer fires on a node that has the code. Each node logs a warning for a re-queue at most once per definition key per minute and logs the others at debug level. There is no metric for it.
 - **Retained job rows.** Every re-queue leaves a completed timer-fire job row, and the job module does not delete completed rows. A timer that stays unrunnable for a long time accumulates about 288 such rows a day; an operator can delete the completed rows of the timer-fire job.
 
@@ -740,7 +740,7 @@ cycle. Eight old declarations are removed; constructors and all other members st
   `PersistedDefinitionLoader` types implement every method they declare.
 - **`ActivationStatus`** is `CANDIDATE`, `PUBLISHING`, `AVAILABLE`, `DEPRECATED` and `RETIRED`: `ACTIVATING`, `ACTIVE` and `SUPERSEDED` are removed and `DEPRECATED` and `RETIRED` are new. A `switch` over it needs the new cases.
 - **Public `currentStatus`.** `WorkflowDefinitionStore.currentStatus(id, version)` now also reports the persisted status of a
-  global version the node knows only as metadata (a candidate or retired row it did not compile); it returns `null` only when
+  version the node knows only as metadata (a candidate or retired row it did not compile); it returns `null` only when
   nothing is known about the version.
 
 ### 3. Port contracts, clients and definitions (breaking)
@@ -855,7 +855,7 @@ and needs no registration. `WorkflowInstance` carries a non-null start scope (`s
 definition version (`definitionScopeKey`); `TaskRecord` carries a non-null `scopeKey`; `WorkflowInstanceQuery` and
 `TaskFilter` carry a nullable `scopeKey` filter. The engine stamps the start scope of the `StartCommand` on a new instance
 (the default scope when the command names none) and the scope of the resolved definition version as the definition scope.
-The value is stored as given and is not validated beyond the column length of 255. Migration and resurrection keep an
+The start scope is validated like any scope key: `StartCommand` refuses an invalid one. Migration and resurrection keep an
 instance's start scope for its life; a migration to another scope's definition changes only the definition scope.
 
 - **Tasks follow the instance.** The PostgreSQL task store writes the owning instance row's start scope on every task
@@ -867,8 +867,8 @@ instance's start scope for its life; a migration to another scope's definition c
   signal, cancel, retry, migrate, task complete or reassign) do not check it, and timers, branch tokens and definition
   resolution are global: before acting on a caller-supplied id, load the instance and compare its `scopeKey()` with the
   caller's scope. Definition-lifecycle refusal messages can name another scope, status and plan hashes: do not
-  forward them to end users. Ids and scope keys may contain Unicode format and bidirectional characters that validation
-  does not strip; do not render them unescaped in operator UIs or logs.
+  forward them to end users. Definition ids may contain Unicode format and bidirectional characters that validation
+  does not strip (scope keys reject them); do not render them unescaped in operator UIs or logs.
 
 ## Durable Context Propagation
 

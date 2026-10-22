@@ -295,7 +295,8 @@ marked it, and on every peer that marks the version when its own reconciliation 
 database), registers it, marks it and lets pinned instances resume, while new starts of it stay refused.
 Other running nodes learn of the deprecation from their next periodic reconciliation, which takes the configured
 staleness cadence plus the time to apply, or when they restart. Deprecating a version leaves every other
-version available, and current resolution already serves the next lower version. It requires the durable registry:
+version available. The default scope's current version, which an activation record selects, cannot be deprecated until another
+version is activated or `deactivateDefault` clears the record. It requires the durable registry:
 without one, the returned Future fails.
 
 `activate(scopeKey, definitionId, targetScopeKey, version)` makes a version the one a start without a version runs in a scope,
