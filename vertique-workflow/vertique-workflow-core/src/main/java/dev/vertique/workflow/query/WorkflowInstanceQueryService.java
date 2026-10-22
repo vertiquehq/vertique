@@ -13,11 +13,13 @@ import java.util.Optional;
 /**
  * Public-facing query service for workflow instances (cycle 5).
  *
- * <p>Exposes two operations:
+ * <p>Exposes three operations:
  * <ul>
  *   <li>{@link #list(WorkflowInstanceQuery, PageCursor)} — keyset-paginated list of instances
  *       matching a {@link WorkflowInstanceQuery} filter.</li>
  *   <li>{@link #getById(WorkflowInstanceId)} — single-instance lookup by primary key.</li>
+ *   <li>{@link #countNonTerminal(String, long)} — number of unfinished instances pinned to one
+ *       definition version.</li>
  * </ul>
  *
  * <p>History is intentionally <em>not</em> surfaced here. The cycle-4 ADR-0049 drew a deliberate
@@ -58,4 +60,22 @@ public interface WorkflowInstanceQueryService {
      *     found, or an empty {@link Optional} if not found; fails if the lookup fails
      */
     Future<Optional<WorkflowInstance>> getById(WorkflowInstanceId id);
+
+    /**
+     * Counts the instances pinned to exactly one definition version that have not finished: those running,
+     * waiting or compensating, archived instances included. The count is a point-in-time read for reporting;
+     * it does not guard a lifecycle change.
+     *
+     * <p>The default implementation fails the returned future with {@link UnsupportedOperationException}, so
+     * existing implementors keep compiling and never silently report zero.
+     *
+     * @param definitionId the workflow definition id
+     * @param version the exact definition version
+     * @return a {@link Future} that completes with the number of non-terminal instances, or fails if the count
+     *     fails or is unsupported
+     */
+    default Future<Long> countNonTerminal(String definitionId, long version) {
+        return Future.failedFuture(new UnsupportedOperationException(
+                getClass().getName() + " does not support the countNonTerminal operation"));
+    }
 }

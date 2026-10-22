@@ -36,9 +36,11 @@ import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentVali
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadException;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -74,6 +76,14 @@ class WorkflowDefinitionBootstrapTest {
 
     @WorkflowContract(definitionId = "boot-gamma", definitionVersion = 1)
     interface BootGammaV1Contract {}
+
+    private static final String SIXTY_FOUR_CODE_POINTS =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private static final String OVER_LONG_ID =
+            SIXTY_FOUR_CODE_POINTS + SIXTY_FOUR_CODE_POINTS + SIXTY_FOUR_CODE_POINTS + SIXTY_FOUR_CODE_POINTS;
+
+    @WorkflowContract(definitionId = OVER_LONG_ID, definitionVersion = 1)
+    interface OverLongIdContract {}
 
     // --- Infrastructure ---
 
@@ -333,6 +343,91 @@ class WorkflowDefinitionBootstrapTest {
                                 .anyMatch(v -> v.code().equals("DUPLICATE_DEFINITION"));
                     });
 
+            assertThat(reg.allRegistered()).isEmpty();
+        }
+    }
+
+    // --- Over-bound metadata or id in a later resource: attributed, all-or-nothing, in every mode ---
+
+    @Nested
+    @DisplayName("over-bound identity or provenance in the second resource")
+    class OverBoundSecondResource {
+
+        private static final String SECOND_URI = "test://second-over-bound";
+
+        private final Optional<WorkflowDefinitionRegistryStore> absent = Optional.empty();
+        private final Optional<WorkflowDefinitionRegistryStore> present =
+                Optional.of(Mockito.mock(WorkflowDefinitionRegistryStore.class));
+
+        @Test
+        @DisplayName("300-code-point revision, no durable store: failure names the second URI, nothing registered")
+        void overLongRevisionWithoutStore() {
+            assertAttributedAtomicFailure(absent, secondWithRevision("r".repeat(300)));
+        }
+
+        @Test
+        @DisplayName("300-code-point revision, durable store: failure names the second URI, nothing registered")
+        void overLongRevisionWithStore() {
+            assertAttributedAtomicFailure(present, secondWithRevision("r".repeat(300)));
+        }
+
+        @Test
+        @DisplayName("70-code-point sourceType, no durable store: failure names the second URI, nothing registered")
+        void overLongSourceTypeWithoutStore() {
+            assertAttributedAtomicFailure(absent, secondWithSourceType("s".repeat(70)));
+        }
+
+        @Test
+        @DisplayName("70-code-point sourceType, durable store: failure names the second URI, nothing registered")
+        void overLongSourceTypeWithStore() {
+            assertAttributedAtomicFailure(present, secondWithSourceType("s".repeat(70)));
+        }
+
+        @Test
+        @DisplayName("256-code-point definition id, no durable store: failure names the second URI, nothing registered")
+        void overLongDefinitionIdWithoutStore() {
+            assertAttributedAtomicFailure(absent, secondWithOverLongId());
+        }
+
+        @Test
+        @DisplayName("256-code-point definition id, durable store: failure names the second URI, nothing registered")
+        void overLongDefinitionIdWithStore() {
+            assertAttributedAtomicFailure(present, secondWithOverLongId());
+        }
+
+        private DefinitionResource secondWithRevision(String revision) {
+            SourceMetadata meta = new SourceMetadata("test", SECOND_URI, revision, null, null, Instant.now());
+            return new DefinitionResource(yamlFor("boot-beta", 1, BootBetaV1Contract.class), DocumentFormat.YAML, meta);
+        }
+
+        private DefinitionResource secondWithSourceType(String sourceType) {
+            SourceMetadata meta = new SourceMetadata(sourceType, SECOND_URI, null, null, null, Instant.now());
+            return new DefinitionResource(yamlFor("boot-beta", 1, BootBetaV1Contract.class), DocumentFormat.YAML, meta);
+        }
+
+        private DefinitionResource secondWithOverLongId() {
+            SourceMetadata meta = new SourceMetadata("test", SECOND_URI, null, null, null, Instant.now());
+            return new DefinitionResource(
+                    yamlFor(OVER_LONG_ID, 1, OverLongIdContract.class), DocumentFormat.YAML, meta);
+        }
+
+        private void assertAttributedAtomicFailure(
+                Optional<WorkflowDefinitionRegistryStore> durable, DefinitionResource invalidSecond) {
+            // Given a valid first resource followed by a resource with an over-bound value
+            DefinitionResource valid = resourceFor("boot-alpha", 1, BootAlphaV1Contract.class);
+            WorkflowDefinitionBootstrap bs = new WorkflowDefinitionBootstrap(
+                    pipeline, store, Set.of(() -> List.of(valid, invalidSecond)), durable, Optional.empty());
+            DefaultWorkflowRegistry reg = freshRegistry();
+
+            // When the bootstrap contributes
+            // Then startup fails with a load exception naming the second resource ...
+            assertThatThrownBy(() -> bs.contribute(reg))
+                    .isInstanceOf(WorkflowDefinitionLoadException.class)
+                    .satisfies(ex -> assertThat(((WorkflowDefinitionLoadException) ex)
+                                    .violations()
+                                    .toList())
+                            .anyMatch(v -> v.message().contains(SECOND_URI)));
+            // ... and nothing from the valid first resource was registered
             assertThat(reg.allRegistered()).isEmpty();
         }
     }

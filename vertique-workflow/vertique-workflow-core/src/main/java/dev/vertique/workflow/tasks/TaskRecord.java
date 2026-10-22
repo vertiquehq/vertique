@@ -56,6 +56,9 @@ import java.util.UUID;
  *     null for single-path (non-branch) tasks
  * @param forkStepId the fork step id when this task belongs to a branch; null for single-path tasks
  * @param branchId the branch id within the fork group; null for single-path tasks
+ * @param tenantKey the tenant key of the owning workflow instance; {@code null} when the instance
+ *     has none. The PostgreSQL store derives the persisted value from the owning instance row on
+ *     insert and ignores the value carried here. It is information, not an isolation boundary.
  */
 public record TaskRecord(
         UUID taskId,
@@ -80,4 +83,61 @@ public record TaskRecord(
         @Nullable String subjectVersionAtCreation,
         @Nullable UUID branchTokenId,
         @Nullable String forkStepId,
-        @Nullable String branchId) {}
+        @Nullable String branchId,
+        @Nullable String tenantKey) {
+
+    /**
+     * Creates a task record without a tenant key. Retained so existing callers keep compiling;
+     * equivalent to the canonical constructor with a {@code null} {@code tenantKey}.
+     */
+    public TaskRecord(
+            UUID taskId,
+            WorkflowInstanceId workflowId,
+            String stepId,
+            TaskAssignment assignment,
+            TaskStatus status,
+            List<TaskDecisionDescriptor> decisions,
+            @Nullable Instant dueAt,
+            @Nullable UUID dueDateTimerId,
+            @Nullable Instant completedAt,
+            @Nullable Instant cancelledAt,
+            @Nullable Instant expiredAt,
+            Instant updatedAt,
+            @Nullable String decisionName,
+            @Nullable String decisionPayloadJson,
+            @Nullable WorkflowActor completedBy,
+            @Nullable WorkflowActor cancelledBy,
+            @Nullable WorkflowActor reassignedBy,
+            @Nullable String cancellationReason,
+            @Nullable String reassignmentReason,
+            @Nullable String subjectVersionAtCreation,
+            @Nullable UUID branchTokenId,
+            @Nullable String forkStepId,
+            @Nullable String branchId) {
+        this(
+                taskId,
+                workflowId,
+                stepId,
+                assignment,
+                status,
+                decisions,
+                dueAt,
+                dueDateTimerId,
+                completedAt,
+                cancelledAt,
+                expiredAt,
+                updatedAt,
+                decisionName,
+                decisionPayloadJson,
+                completedBy,
+                cancelledBy,
+                reassignedBy,
+                cancellationReason,
+                reassignmentReason,
+                subjectVersionAtCreation,
+                branchTokenId,
+                forkStepId,
+                branchId,
+                null);
+    }
+}

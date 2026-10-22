@@ -132,16 +132,24 @@ Instance state is modeled as a single current snapshot plus an append-only histo
 
 Starts require an idempotency key. `StartCommand.requestedDefinitionVersion` may pin a new instance to a specific registered version; when omitted, the current version is used. Idempotency and dedup keys are scoped to what they protect — a start key is scoped to the definition id and a signal dedup key is scoped to the workflow instance; see `dev.vertique:vertique-workflow-postgresql` for the complete key-scope table across all operations.
 
+### Tenant Key on Instances, Tasks And Filters
+
+`WorkflowInstance` and `TaskRecord` each end with a nullable `String tenantKey` component, and `WorkflowInstanceQuery` and `TaskFilter` each end with a nullable `String tenantKey` filter component (after `includeArchived`). The previous constructors of all four records are retained and delegate with `null`, so existing callers keep compiling; `WorkflowInstanceQuery.withTenantKey(...)` and `TaskFilter.withTenantKey(...)` set the filter, and every other `with*` method preserves it. The instance has no tenant setter and every instance updater passes the tenant through. Record patterns that deconstruct these four records by component list stop compiling and must add the component.
+
+The PostgreSQL store persists the value in nullable `tenant_key` columns added by `V002__create_workflow_definitions_and_tenant_key.sql`. Existing rows read `null`. The filters are exact-match; a task's tenant is derived from its owning instance row by the PostgreSQL store, whatever the `TaskRecord` carries on insert. The engine sets no tenant when it starts an instance and no engine setting exists yet, so an engine-started instance has a `null` tenant until the tenant context stamps it. A tenant written by another writer stays with the instance for life: tasks created afterwards carry it, and migration and resurrection keep it.
+
+The value and the filters are information and a filter, not an isolation or authorization boundary: a `null` filter matches every tenant, so a caller must not pass an unresolved tenant as `null` expecting scoping. Start idempotency keys and business keys stay global. No operation addressed by instance or task id (query, signal, cancel, retry, migrate, task complete or reassign) checks the tenant, and timers, branch tokens and definition resolution are global: load the instance and compare its `tenantKey()` with the caller's tenant before acting on a caller-supplied id. No check ties an instance tenant to the owner of its definition.
+
 ### Durable Context on the Instance
 
-`WorkflowInstance` carries an 18th component, `@Nullable DurableMetadata metadata` — the durable
+`WorkflowInstance` carries a `@Nullable DurableMetadata metadata` component — the durable
 context (correlation, tenant, and other registered namespaces) captured once at start time, using
 the framework's standard `{"context": …}` carrier shape. It is `null` when no ambient durable context was
 present at start (empty capture) or for instances started before this field existed.
 
 The field is immutable for the instance's lifetime: no `withMetadata(...)` updater exists, and
 every other `with*` updater (`withVersion`, `withStatus`, `withCurrentStepId`, `withWait`,
-`withState`, `withError`, `withUpdatedAt`) passes it through unchanged. No transition, migration,
+`withState`, `withError`, `withUpdatedAt`) passes it through unchanged (as it does `tenantKey`). No transition, migration,
 retry, or repair operation may overwrite it.
 
 At drive time, the engine treats this carrier as a base-wins/instance-fill *fill* source, not an
@@ -362,6 +370,73 @@ WorkflowActorMapper customActorMapper() {
 
 ---
 
+## Durable Definition Registry
+
+`dev.vertique.workflow.registry.store` supplies SQL-free metadata and source values, the
+`WorkflowDefinitionRegistryStore` persistence SPI, and `WorkflowDefinitionLifecycle.activate(DefinitionKey)`.
+A `DefinitionKey` carries nullable tenant scope, definition id, and positive version; ids and tenant keys are
+nonblank, at most 255 code points and free of control characters, and provenance text is bounded (source type 64,
+URI 2048, revision, author and upload id 255 code points). A
+`DefinitionFilter` selects ALL, GLOBAL, or one TENANT explicitly; it does not authorize tenant access.
+`WorkflowDefinitionRecord` contains immutable metadata and provenance; source text is fetched separately
+as `WorkflowDefinitionDocument`. Source URIs are opaque attribution and are never fetched on restore.
+
+The store provides candidate insertion, metadata lookup/list, guarded source lookup, static document
+reconciliation, fenced claim/complete/release operations, and
+`recomputeActive(@Nullable String tenantKey, String definitionId)`. Recompute is scoped to that exact
+owner and id: the highest ACTIVE or SUPERSEDED version becomes ACTIVE and lower eligible versions
+become SUPERSEDED; CANDIDATE, ACTIVATING, DEPRECATED, and RETIRED rows remain unchanged.
+`WorkflowRegistry` gains `markDeprecated(definitionId, version)` (default throws
+`UnsupportedOperationException`) and `isDeprecated` (default `false`) so existing third-party registries are
+unaffected. `DefaultWorkflowRegistry` keeps the mark under its lock: current resolution skips deprecated
+versions and fails with the same unknown-definition exception when all are deprecated, pinned resolution still serves them, and
+`unregister` clears the mark. Marking an unregistered version is a no-op. The store SPI adds the
+conditional `transition(key, from, to)` operation and the lifecycle adds `deprecate(DefinitionKey)`.
+The store adds `retire(DefinitionKey)` and the lifecycle adds `retire(DefinitionKey)` (CANDIDATE, or DEPRECATED after the
+cooling window with no live pinned instance); `WorkflowInstanceQueryService.countNonTerminal(definitionId, version)` is an
+optional informational count whose default fails with `UnsupportedOperationException`. `TransactionalWorkflowOperations`
+implementations backed by the Vert.x SQL engine receive a `SqlConnection` with a pending Vert.x transaction. Publishing
+a runtime directly through `WorkflowRegistry` is not seen as managed by the durable lifecycle: a managed deprecate or retire
+of such a version fails with `INVALID_TRANSITION` rather than taking it over.
+The lifecycle and the definition service also add `reinstate(DefinitionKey)`; the store performs it as `transition(key, RETIRED,
+SUPERSEDED)` with the membership recomputation inside the same transaction.
+The store also adds `upsertCode` (startup record of deployed code: rehash only while no live instance is pinned to
+that exact version, decided inside the store transaction) and `resetStaleActivating` (claims older than twice the
+staleness bound return to CANDIDATE). `WorkflowRegistry.registeredDefinition(id, version)` is an internal default-empty
+hook that the default registry fills with the source definition it registered; it is empty after `unregister`.
+Candidates of different owners (tenant keys or global) may coexist for one id, but only one owner holds
+the id's executable membership; a claim, completion or static reconciliation by another owner fails with
+`OWNER_CONFLICT`.
+`WorkflowCoreModule` declares optional
+store, lifecycle, and configuration bindings plus the loader multibinding. Without persistence, the
+standalone definition graph needs neither a database nor a configuration parser. `WorkflowRegistry.unregister`
+removes a version and its contract mapping; third-party registries must implement it to support durable
+activation compensation. Its default throws explicitly.
+
+### Document Policy Configuration
+
+Bind `WorkflowDefinitionsConfig` directly, or install `WorkflowDefinitionsConfigModule` together with
+`dev.vertique.config.parser.ConfigParsingModule` and the existing `@VertxConfig` input. The opt-in module
+parses and validates `workflow.definitions` before the first document parse. Omitting that module keeps
+the defaults and introduces no parser dependency into the graph.
+
+| Property | Default | Meaning |
+|---|---|---|
+| `workflow.definitions.maxStalenessSeconds` | `30` | Positive registry timing bound: the peer reconciliation period, the cooling window before a deprecated version may retire, and (doubled) the age at which an activation claim becomes reclaimable |
+| `workflow.definitions.maxDocumentSizeBytes` | `262144` | Positive runtime input-byte limit L; L + floor(L/2) must fit an integer |
+
+`maxStoredDocumentSizeBytes()` derives floor(3L/2). Durable source text must fit both that UTF-8 byte
+bound and L Unicode code points. These bounds describe normalized text, not its original encoding.
+All nodes sharing the table must use the same policy. Raising L increases parsing and memory costs;
+raise it on every node before admitting larger documents. Before lowering it, ensure documents
+required for restoration fit the new envelope; otherwise startup fails explicitly and a periodic reconciliation counts and retries the row.
+
+`WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
+including stale claims, ownership conflicts, missing loaders, and plan drift. Asynchronous entrypoints
+report invalid arguments through failed Futures.
+
+---
+
 ## Exceptions
 
 `workflow-core` defines the semantic exception hierarchy applications catch when workflow operations fail. Each root maps to the matching core framework exception root and its default HTTP status:
@@ -410,7 +485,7 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **Missing recorders fail the transition.** When a step emits a side-effect intent and no `WorkflowSideEffectRecorder<TX>` is registered for that `IntentKind`, the transaction fails. There is no silent no-op. Optional intent kinds may be declared via `@OptionalIntentKinds` and are no-ops only when explicitly opted in.
 - **Recorders must be durable, never live.** A `WorkflowSideEffectRecorder<TX>` may persist an outbox row, schedule a delayed job, or write to another transactional store, but must not call a downstream service before commit.
 - **Human task DSL guard rails.** A task step's decision list must be non-empty with unique decision names (enforced by the `HumanTaskNode` compact constructor). The optional due-date triplet (`dueDate`, `onDueMutator`, `dueNextStepId`) is all-or-nothing — supplying a partial subset is rejected at construction.
-- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` may be set, mirroring the single-`assignee_type` storage shape. Use `TaskFilter.empty()` plus `with*` copies to compose filters.
+- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` may be set, mirroring the single-`assignee_type` storage shape. Use `TaskFilter.empty()` plus `with*` copies to compose filters. The optional `tenantKey` filter is an exact match, not validated, and `null` means every tenant.
 - **Version-stable approvals.** `.requireVersionStability()` on a task captures `subject_version` at task creation; completion fails with `WorkflowStaleSubjectVersionException` when the reviewer's `reviewedSubjectVersion` does not match the snapshot. Creating a stability-required task with a null `subject_version` fails with `WorkflowSubjectVersionUnavailableException`.
 - **Subject resolver precedence.** An explicit `StartCommand.subjectRef` wins; otherwise a definition-level `.subject(...)` resolver is invoked with the initial state. A configured resolver returning `null` is a contract violation (`WorkflowDefinitionException`), not a silent "no subject".
 - **`WorkflowActor` is required on every task mutation command.** `TaskCompletionCommand` and `TaskReassignmentCommand` reject null / blank actor identity through their compact constructors. Blank `reason` is normalized to `null` before the command is fingerprinted for idempotency.

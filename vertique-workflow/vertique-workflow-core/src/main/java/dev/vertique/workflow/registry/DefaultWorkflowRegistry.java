@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
@@ -47,6 +48,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  *       version via {@code lastEntry()}.</li>
  *   <li>{@code byContract} — {@link ConcurrentHashMap} keyed by contract interface class; links
  *       the class to its definition metadata.</li>
+ *   <li>{@code deprecated} — set of version numbers per definitionId that are marked deprecated;
+ *       always a subset of the registered versions and mutated only under {@code writeLock}.</li>
  * </ul>
  *
  * <p>Thread-safety contract:
@@ -84,8 +87,20 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     private final ConcurrentHashMap<String, ConcurrentSkipListMap<Long, RuntimeWorkflow>> byDefinition =
             new ConcurrentHashMap<>();
 
+    /**
+     * Keyed by definitionId → (version → the definition that was registered). Guarded by {@link #rwLock}
+     * together with {@link #byDefinition}; it holds exactly the registered versions.
+     */
+    private final HashMap<String, HashMap<Long, WorkflowDefinition<?, ?>>> sources = new HashMap<>();
+
     /** Keyed by contract interface class → contract metadata. */
     private final ConcurrentHashMap<Class<?>, WorkflowContractMetadata> byContract = new ConcurrentHashMap<>();
+
+    /**
+     * Keyed by definitionId → versions marked deprecated. Only registered versions are ever present;
+     * guarded by {@link #rwLock} together with {@link #byDefinition}.
+     */
+    private final ConcurrentHashMap<String, Set<Long>> deprecated = new ConcurrentHashMap<>();
 
     /**
      * Serializes the multi-step publish phase of {@link #register}.
@@ -245,6 +260,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                                 + existingContract.definitionVersion() + "'; cannot rebind to '" + definitionId + "' v"
                                 + definitionVersion + "'");
             }
+            sources.computeIfAbsent(definitionId, k -> new HashMap<>()).put(definitionVersion, def);
         } finally {
             rwLock.writeLock().unlock();
         }
@@ -476,7 +492,11 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /**
      * {@inheritDoc}
      *
-     * @throws WorkflowDefinitionMissingException if no definition with the given id is registered
+     * <p>Selects the highest registered version that is not marked deprecated. Deprecated
+     * versions stay available through {@link #resolvePinned(String, long)}.
+     *
+     * @throws WorkflowDefinitionMissingException if no definition with the given id is registered,
+     *     or every registered version of it is deprecated
      */
     @Override
     public RuntimeWorkflow resolveCurrent(String definitionId) {
@@ -486,7 +506,14 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             if (versions == null || versions.isEmpty()) {
                 throw new WorkflowDefinitionMissingException(definitionId);
             }
-            return versions.lastEntry().getValue();
+            Set<Long> marked = deprecated.getOrDefault(definitionId, Set.of());
+            for (Map.Entry<Long, RuntimeWorkflow> entry :
+                    versions.descendingMap().entrySet()) {
+                if (!marked.contains(entry.getKey())) {
+                    return entry.getValue();
+                }
+            }
+            throw new WorkflowDefinitionMissingException(definitionId);
         } finally {
             rwLock.readLock().unlock();
         }
@@ -554,6 +581,87 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             return List.copyOf(result);
         } finally {
             rwLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The mark is taken under the same write lock as {@link #register} and {@link #unregister},
+     * so a version is never observable as registered-but-unmarked after this method returns.
+     * Marking a version that is not currently registered is a no-op, because a deprecation can race
+     * with the local removal of the same version; marking an already deprecated version is
+     * idempotent. {@link #unregister(String, long)} clears the mark.
+     */
+    @Override
+    public void markDeprecated(String definitionId, long version) {
+        rwLock.writeLock().lock();
+        try {
+            var versions = byDefinition.get(definitionId);
+            if (versions == null || !versions.containsKey(version)) return;
+            deprecated
+                    .computeIfAbsent(definitionId, k -> ConcurrentHashMap.newKeySet())
+                    .add(version);
+        } finally {
+            rwLock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Returns {@code false} for a version that is not currently registered.
+     */
+    @Override
+    public boolean isDeprecated(String definitionId, long version) {
+        rwLock.readLock().lock();
+        try {
+            return deprecated.getOrDefault(definitionId, Set.of()).contains(version);
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Returns the definition object passed to {@link #register}, read under the same lock as the
+     * registration, so it is empty for a version that was never registered and again after
+     * {@link #unregister(String, long)}.
+     */
+    @Override
+    public Optional<WorkflowDefinition<?, ?>> registeredDefinition(String definitionId, long version) {
+        rwLock.readLock().lock();
+        try {
+            var registered = sources.get(definitionId);
+            return registered == null ? Optional.empty() : Optional.ofNullable(registered.get(version));
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    /** Removes the version, its deprecation mark and matching contract mapping under the publication lock. */
+    @Override
+    public void unregister(String definitionId, long version) {
+        rwLock.writeLock().lock();
+        try {
+            var versions = byDefinition.get(definitionId);
+            if (versions == null || versions.remove(version) == null) return;
+            if (versions.isEmpty()) byDefinition.remove(definitionId, versions);
+            sources.computeIfPresent(definitionId, (k, registered) -> {
+                registered.remove(version);
+                return registered.isEmpty() ? null : registered;
+            });
+            deprecated.computeIfPresent(definitionId, (k, marked) -> {
+                marked.remove(version);
+                return marked.isEmpty() ? null : marked;
+            });
+            byContract
+                    .entrySet()
+                    .removeIf(e -> e.getValue().definitionId().equals(definitionId)
+                            && e.getValue().definitionVersion() == version);
+        } finally {
+            rwLock.writeLock().unlock();
         }
     }
 }

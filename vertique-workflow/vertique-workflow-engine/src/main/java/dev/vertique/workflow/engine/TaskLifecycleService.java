@@ -315,7 +315,8 @@ final class TaskLifecycleService {
                 subjectVersionAtCreation,
                 null, // branchTokenId
                 null, // forkStepId
-                null); // branchId
+                null, // branchId
+                inst.tenantKey());
     }
 
     /**

@@ -11,6 +11,9 @@ import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
+import dev.vertique.application.VertiqueApplicationBootstrap;
+import dev.vertique.application.VertiqueApplicationHandle;
+import dev.vertique.core.VertiqueRuntime;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -29,8 +32,6 @@ import dev.vertique.workflow.definition.it.fixture.PaymentCapturedDoc;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.it.fixture.ShipmentCreatedDoc;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
-import dev.vertique.workflow.definition.service.ActivationStatus;
-import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
@@ -42,6 +43,12 @@ import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
+import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase;
+import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
+import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
+import dev.vertique.workflow.registry.store.DefinitionFilter;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
@@ -51,6 +58,7 @@ import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.pgclient.PgBuilder;
@@ -63,7 +71,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -117,6 +124,7 @@ public class DocumentDefinitionEndToEndJsonIT {
     static Pool pool;
     static WorkflowOperations engine;
     static WorkflowDefinitionService definitionService;
+    static VertiqueApplicationHandle<?> application;
 
     // --- Dagger component B ---
 
@@ -387,14 +395,23 @@ public class DocumentDefinitionEndToEndJsonIT {
                 .using(vertx)
                 .build();
 
-        JsonTestComponent component = DaggerDocumentDefinitionEndToEndJsonIT_JsonTestComponent.builder()
-                .jsonInfrastructureModule(new JsonInfrastructureModule(pool))
-                .build();
-
-        engine = component.workflowOperations();
-        definitionService = component.workflowDefinitionService();
-
-        ctx.completeNow();
+        AppComponent component = ManagedDefinitionDatabase.app(
+                vertx,
+                pool,
+                new JsonObject(),
+                new BootObservation("order-fulfillment-doc", 2, "unused", false),
+                JsonDefinitionSourceModule.jsonSource());
+        VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, new JsonObject()), ignored -> component)
+                .onComplete(started -> {
+                    if (started.failed()) {
+                        ctx.failNow(started.cause());
+                        return;
+                    }
+                    application = started.result();
+                    engine = component.workflowOperations();
+                    definitionService = component.definitionService();
+                    ctx.completeNow();
+                });
     }
 
     /** Truncates all workflow tables before each test so tests are isolated. */
@@ -407,10 +424,13 @@ public class DocumentDefinitionEndToEndJsonIT {
     }
 
     @AfterAll
-    static void tearDown() {
-        if (pool != null) {
-            pool.close();
-        }
+    static void tearDown(VertxTestContext ctx) {
+        Future<Void> shutdown = application == null ? Future.succeededFuture() : application.shutdown();
+        Future<Void> cleanup = shutdown.eventually(() -> pool == null ? Future.succeededFuture() : pool.close());
+        cleanup.onComplete(result -> {
+            if (result.failed()) ctx.failNow(result.cause());
+            else ctx.completeNow();
+        });
     }
 
     // --- Tests ---
@@ -451,22 +471,25 @@ public class DocumentDefinitionEndToEndJsonIT {
 
     /**
      * Verifies that the JSON-compiled {@code planHash} is non-blank and the definition is listed
-     * as {@link ActivationStatus#ACTIVE} by the service after bootstrap (AC #10, AC #12).
+     * as {@link DefinitionStatus#ACTIVE} by the service after bootstrap (AC #10, AC #12).
      */
     @Test
     @DisplayName("JSON planHash is non-blank and definition is active in the service after bootstrap")
     void jsonDefinitionPlanHashIsNonBlankAndListedAsActive(VertxTestContext ctx) {
-        Collection<CompiledDefinitionRef> refs = definitionService.list();
-        ctx.verify(() -> {
-            assertEquals(1, refs.size(), "exactly one definition must be in the service (JSON v2)");
-            CompiledDefinitionRef ref = refs.iterator().next();
-            assertEquals("order-fulfillment-doc", ref.definitionId());
-            assertEquals(2L, ref.definitionVersion());
-            assertEquals(ActivationStatus.ACTIVE, ref.status());
-            assertNotNull(ref.planHash(), "planHash must not be null");
-            assertTrue(!ref.planHash().isBlank(), "planHash must not be blank");
-            ctx.completeNow();
-        });
+        definitionService
+                .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertTrue(ar.succeeded(), "definition metadata query must succeed: " + ar.cause());
+                    List<WorkflowDefinitionRecord> refs = ar.result();
+                    assertEquals(1, refs.size(), "exactly one definition must be in the service (JSON v2)");
+                    WorkflowDefinitionRecord ref = refs.get(0);
+                    assertEquals("order-fulfillment-doc", ref.key().definitionId());
+                    assertEquals(2L, ref.key().definitionVersion());
+                    assertEquals(DefinitionStatus.ACTIVE, ref.status());
+                    assertNotNull(ref.planHash(), "planHash must not be null");
+                    assertTrue(!ref.planHash().isBlank(), "planHash must not be blank");
+                    ctx.completeNow();
+                }));
     }
 
     // --- Private helpers ---

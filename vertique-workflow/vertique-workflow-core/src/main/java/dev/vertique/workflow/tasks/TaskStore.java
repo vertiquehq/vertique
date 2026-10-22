@@ -37,6 +37,11 @@ public interface TaskStore<TX> {
      * <p>The task id in {@code record} must be unique. Implementations should propagate any
      * unique-constraint violation as a failed {@link Future}.
      *
+     * <p>The tenant of the stored task is the tenant of its owning workflow instance. The
+     * {@code tenantKey} on {@code record} is not authoritative (callers that build the record from a
+     * branch token do not set it); an implementation that stores a tenant must take it from the
+     * instance.
+     *
      * @param record the task to insert; must have {@code status == OPEN}
      * @param tx the active transaction context; all writes must use this context
      * @return a {@link Future} that completes when the row is inserted

@@ -60,4 +60,14 @@ public final class PgWorkflowInstanceQueryService implements WorkflowInstanceQue
     public Future<Optional<WorkflowInstance>> getById(WorkflowInstanceId id) {
         return repository.findById(id);
     }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Delegates directly to {@link PgWorkflowInstanceRepository#countNonTerminal}.
+     */
+    @Override
+    public Future<Long> countNonTerminal(String definitionId, long version) {
+        return repository.countNonTerminal(definitionId, version);
+    }
 }

@@ -353,7 +353,7 @@ class WorkflowEngineBinderWiringTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
         var captured = captureAmbientOnUpdate(h.instances(), holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -382,7 +382,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
         // Loser: claimOrResolveSignal resolves false (a prior committed transaction already applied
@@ -416,7 +416,7 @@ class WorkflowEngineBinderWiringTest {
         Set<dev.vertique.core.context.InboundContextInitializer> initializers =
                 Set.of(new dev.vertique.correlation.CorrelationContextSeeder(holder, correlationFactory));
         Harness h = buildHarnessWithInitializers(propagator, holder, initializers);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -463,7 +463,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -505,7 +505,7 @@ class WorkflowEngineBinderWiringTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
         var captured = captureAmbientOnUpdate(h.instances(), holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, WaitType.SIGNAL, "approve", null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -534,7 +534,7 @@ class WorkflowEngineBinderWiringTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
         var captured = captureAmbientOnUpdate(h.instances(), holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -591,7 +591,7 @@ class WorkflowEngineBinderWiringTest {
         JoinStateRepository<SqlClient> joinStates = mock();
         TimerStore<SqlClient> timerStore = mock();
         TaskStore<SqlClient> taskStore = mock();
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
@@ -665,7 +665,7 @@ class WorkflowEngineBinderWiringTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
         var captured = captureAmbientOnUpdate(h.instances(), holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -707,7 +707,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         UUID taskId = UUID.randomUUID();
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, tenantMetadata("T1"));
@@ -759,7 +759,7 @@ class WorkflowEngineBinderWiringTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
         var captured = captureAmbientOnUpdate(h.instances(), holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -797,7 +797,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
         UUID taskId = UUID.randomUUID();
@@ -839,7 +839,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         UUID taskId = UUID.randomUUID();
         UUID dueTimerId = UUID.randomUUID();
@@ -864,7 +864,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -900,7 +900,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildReminderRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -941,7 +941,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
         UUID taskId = UUID.randomUUID();
@@ -1003,7 +1003,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         UUID taskId = UUID.randomUUID();
         UUID reminderTimerId = UUID.randomUUID();
@@ -1029,7 +1029,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildReminderRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -1062,7 +1062,7 @@ class WorkflowEngineBinderWiringTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
         var captured = captureAmbientOnUpdate(h.instances(), holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -1097,7 +1097,7 @@ class WorkflowEngineBinderWiringTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
         var captured = captureAmbientOnUpdate(h.instances(), holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         UUID timerId = UUID.randomUUID();
         WorkflowInstance inst =
@@ -1130,7 +1130,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
         UUID timerId = UUID.randomUUID();
@@ -1223,7 +1223,7 @@ class WorkflowEngineBinderWiringTest {
         Set<dev.vertique.core.context.InboundContextInitializer> initializers =
                 Set.of(new dev.vertique.correlation.CorrelationContextSeeder(holder, correlationFactory));
         Harness h = buildHarnessWithInitializers(propagator, holder, initializers);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         // A branch-timer plan whose TimerNode advances to a non-terminal WaitSignalNode, so the
         // driven branch parks WAITING again instead of reaching a terminal status — this avoids
@@ -1348,7 +1348,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -1371,7 +1371,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -1399,7 +1399,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, WaitType.SIGNAL, "approve", null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -1419,7 +1419,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, WaitType.SIGNAL, "approve", null, null);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -1444,7 +1444,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstance inst = new WorkflowInstance(
                 new WorkflowInstanceId(UUID.randomUUID()),
@@ -1482,7 +1482,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -1528,7 +1528,7 @@ class WorkflowEngineBinderWiringTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         MigrationHarness mh = buildHarnessWithMigration(propagator, holder);
         Harness h = mh.harness();
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, null, null, null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -1549,7 +1549,7 @@ class WorkflowEngineBinderWiringTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         MigrationHarness mh = buildHarnessWithMigration(propagator, holder);
         Harness h = mh.harness();
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow sourceRw = buildRuntimeWorkflow(stubCallbacks());
         WorkflowPlan targetPlan = new WorkflowPlan(
@@ -1597,7 +1597,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         UUID taskId = UUID.randomUUID();
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, tenantMetadata("T1"));
@@ -1625,7 +1625,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -1665,7 +1665,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         UUID taskId = UUID.randomUUID();
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, tenantMetadata("T1"));
@@ -1694,7 +1694,7 @@ class WorkflowEngineBinderWiringTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator, holder);
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         UUID taskId = UUID.randomUUID();
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, null);

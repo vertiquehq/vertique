@@ -183,6 +183,16 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
 
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-workflow-definition</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-application</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!--
           Test scope only: PgWorkflowEnginePayloadConstraintIT enforces payload constraints through
           a real Hibernate Validator obtained from ValidationModule via a test Dagger component. No

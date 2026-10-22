@@ -196,7 +196,7 @@ class PgWorkflowEngineSubjectResolverTest {
         taskStore = mock(PgTaskStore.class);
         timerStore = mock(PgTimerStore.class);
         pool = mock(Pool.class);
-        tx = mock(SqlClient.class);
+        tx = ActiveTransactionConnection.create();
 
         when(historyRepo.nextSequence(any(WorkflowInstanceId.class), any(SqlClient.class)))
                 .thenAnswer(inv -> Future.succeededFuture(seqCounter.incrementAndGet()));

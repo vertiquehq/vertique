@@ -28,6 +28,10 @@ import java.time.Instant;
  * @param subjectId filter by the subject id of the owning workflow instance; null means no filter
  * @param includeArchived when {@code true}, includes tasks belonging to archived workflow
  *     instances; defaults to {@code false}
+ * @param tenantKey filter by the tenant key of the owning workflow instance (exact match); null
+ *     means no filter and matches every tenant. This is a filter, not an isolation or
+ *     authorization boundary: a caller that has not resolved a tenant must not pass null
+ *     expecting scoping.
  */
 public record TaskFilter(
         @Nullable String assigneeUser,
@@ -38,7 +42,35 @@ public record TaskFilter(
         @Nullable Instant dueBefore,
         @Nullable String subjectType,
         @Nullable String subjectId,
-        boolean includeArchived) {
+        boolean includeArchived,
+        @Nullable String tenantKey) {
+
+    /**
+     * Creates a filter without a tenant constraint. Retained so existing callers keep compiling;
+     * equivalent to the canonical constructor with a {@code null} {@code tenantKey}.
+     */
+    public TaskFilter(
+            @Nullable String assigneeUser,
+            @Nullable String assigneeRole,
+            @Nullable String assigneeQueue,
+            @Nullable WorkflowInstanceId workflowId,
+            @Nullable TaskStatus status,
+            @Nullable Instant dueBefore,
+            @Nullable String subjectType,
+            @Nullable String subjectId,
+            boolean includeArchived) {
+        this(
+                assigneeUser,
+                assigneeRole,
+                assigneeQueue,
+                workflowId,
+                status,
+                dueBefore,
+                subjectType,
+                subjectId,
+                includeArchived,
+                null);
+    }
 
     /**
      * Validates that at most one of {@code assigneeUser} / {@code assigneeRole} /
@@ -66,7 +98,7 @@ public record TaskFilter(
      * @return an all-null {@code TaskFilter}
      */
     public static TaskFilter empty() {
-        return new TaskFilter(null, null, null, null, null, null, null, null, false);
+        return new TaskFilter(null, null, null, null, null, null, null, null, false, null);
     }
 
     // --- Fluent with* methods ---
@@ -87,7 +119,8 @@ public record TaskFilter(
                 dueBefore,
                 subjectType,
                 subjectId,
-                includeArchived);
+                includeArchived,
+                tenantKey);
     }
 
     /**
@@ -106,7 +139,8 @@ public record TaskFilter(
                 dueBefore,
                 subjectType,
                 subjectId,
-                includeArchived);
+                includeArchived,
+                tenantKey);
     }
 
     /**
@@ -125,7 +159,8 @@ public record TaskFilter(
                 dueBefore,
                 subjectType,
                 subjectId,
-                includeArchived);
+                includeArchived,
+                tenantKey);
     }
 
     /**
@@ -144,7 +179,8 @@ public record TaskFilter(
                 dueBefore,
                 subjectType,
                 subjectId,
-                includeArchived);
+                includeArchived,
+                tenantKey);
     }
 
     /**
@@ -163,7 +199,8 @@ public record TaskFilter(
                 dueBefore,
                 subjectType,
                 subjectId,
-                includeArchived);
+                includeArchived,
+                tenantKey);
     }
 
     /**
@@ -182,7 +219,8 @@ public record TaskFilter(
                 dueBefore,
                 subjectType,
                 subjectId,
-                includeArchived);
+                includeArchived,
+                tenantKey);
     }
 
     /**
@@ -201,7 +239,8 @@ public record TaskFilter(
                 dueBefore,
                 subjectType,
                 subjectId,
-                includeArchived);
+                includeArchived,
+                tenantKey);
     }
 
     /**
@@ -220,7 +259,8 @@ public record TaskFilter(
                 dueBefore,
                 subjectType,
                 subjectId,
-                includeArchived);
+                includeArchived,
+                tenantKey);
     }
 
     /**
@@ -242,6 +282,28 @@ public record TaskFilter(
                 dueBefore,
                 subjectType,
                 subjectId,
-                includeArchived);
+                includeArchived,
+                tenantKey);
+    }
+
+    /**
+     * Returns a copy of this filter with the {@code tenantKey} field set.
+     *
+     * @param tenantKey the tenant key to match exactly; null removes the filter, which matches
+     *     every tenant
+     * @return a new {@code TaskFilter} with the updated field
+     */
+    public TaskFilter withTenantKey(@Nullable String tenantKey) {
+        return new TaskFilter(
+                assigneeUser,
+                assigneeRole,
+                assigneeQueue,
+                workflowId,
+                status,
+                dueBefore,
+                subjectType,
+                subjectId,
+                includeArchived,
+                tenantKey);
     }
 }

@@ -12,11 +12,14 @@ import dev.vertique.db.query.PageCursor;
 import dev.vertique.db.query.PagedResult;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.registry.DefinitionPinAdmission;
 import dev.vertique.workflow.query.WorkflowInstanceQuery;
 import dev.vertique.workflow.state.WorkflowInstance;
+import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.Pool;
+import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Inject;
@@ -26,6 +29,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * PostgreSQL-backed repository for {@link WorkflowInstance} persistence.
@@ -58,6 +62,10 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     private final String sqlSelectAllColumns;
     private final String sqlFindById;
     private final String sqlFindByIdForUpdate;
+
+    /** Parameters: $1=definition id, $2=definition version. Archived rows still pin their version. */
+    private final String sqlCountNonTerminal;
+
     private final String sqlFindByBusinessKey;
 
     /**
@@ -73,6 +81,23 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     private final String sqlUpdateOptimistic;
 
     /**
+     * The optimistic UPDATE restricted to an instance that already is a counted pin: its persisted status
+     * is running, waiting or compensating. It needs no definition admission. Parameters as for
+     * {@link #sqlUpdateOptimistic}.
+     */
+    private final String sqlUpdateOptimisticLive;
+
+    /** Parameters: $1=id. Reads the persisted pin and state that decide whether a finished instance may resume. */
+    private final String sqlReadPin;
+
+    private static final Set<WorkflowStatus> TERMINAL_STATUSES = Set.of(
+            WorkflowStatus.COMPLETED,
+            WorkflowStatus.FAILED,
+            WorkflowStatus.COMPENSATED,
+            WorkflowStatus.CANCELLED,
+            WorkflowStatus.EXPIRED);
+
+    /**
      * Migration-specific optimistic UPDATE. Re-pins the instance to a new definition version and
      * plan hash, clears all wait fields and error fields, forces {@code status = 'RUNNING'} and
      * {@code completed_at = NULL} (post-migration is always non-terminal), and writes the migrated
@@ -82,6 +107,12 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * $5=current_step_id, $6=state_json, $7=expected (old) version.
      */
     private final String sqlMigratePinAndState;
+
+    /**
+     * The table the pin admission reads the stored definition rows from, qualified with the schema
+     * mapped to the {@code workflow} instance when there is one.
+     */
+    private final String definitionsTable;
 
     // --- Constructor ---
 
@@ -112,24 +143,29 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
         super(pool, mapper);
 
         String instances = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_instances");
+        this.definitionsTable = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_definitions");
 
         this.sqlInsert = "INSERT INTO " + instances
                 + " (id, definition_id, definition_version, plan_hash, version, status,"
                 + " business_key, subject_type, subject_id, subject_version,"
                 + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
-                + " error_type, error_message, metadata, created_at, updated_at)"
+                + " error_type, error_message, metadata, created_at, updated_at, tenant_key)"
                 + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17,"
-                + " $18::jsonb, $19, $20)";
+                + " $18::jsonb, $19, $20, $21)";
 
         this.sqlSelectAllColumns = "SELECT id, definition_id, definition_version, plan_hash, version, status,"
                 + " business_key, subject_type, subject_id, subject_version,"
                 + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
-                + " error_type, error_message, metadata, created_at, updated_at, completed_at"
+                + " error_type, error_message, metadata, created_at, updated_at, completed_at, tenant_key"
                 + " FROM " + instances;
 
         this.sqlFindById = sqlSelectAllColumns + " WHERE id = $1";
 
         this.sqlFindByIdForUpdate = sqlSelectAllColumns + " WHERE id = $1 FOR UPDATE";
+
+        this.sqlCountNonTerminal = "SELECT count(*) AS total FROM " + instances
+                + " WHERE definition_id = $1 AND definition_version = $2"
+                + " AND status IN ('RUNNING','WAITING','COMPENSATING')";
 
         this.sqlFindByBusinessKey = sqlSelectAllColumns + " WHERE definition_id = $1 AND business_key = $2";
 
@@ -140,6 +176,11 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 + " completed_at = CASE WHEN $3::varchar IN ('COMPLETED','FAILED','COMPENSATED','CANCELLED','EXPIRED')"
                 + "   THEN NOW() ELSE NULL END"
                 + " WHERE id = $1 AND version = $11";
+
+        this.sqlUpdateOptimisticLive = sqlUpdateOptimistic + " AND status IN ('RUNNING','WAITING','COMPENSATING')";
+
+        this.sqlReadPin = "SELECT definition_id, definition_version, plan_hash, status, version FROM " + instances
+                + " WHERE id = $1";
 
         this.sqlMigratePinAndState = "UPDATE " + instances
                 + " SET definition_version = $2, plan_hash = $3, version = $4,"
@@ -156,8 +197,15 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     /**
      * Inserts a new workflow instance row within the given transaction.
      *
+     * <p>The insert creates a pin on a definition version, so the version is admitted first (see
+     * {@link DefinitionPinAdmission}). A managed definition that does not admit the version fails the
+     * returned future and nothing is inserted. A definition id without stored rows is admitted under
+     * READ COMMITTED.
+     *
      * @param inst the workflow instance to persist
-     * @param tx   the active transaction to use for the insert
+     * @param tx   the active transaction to use for the insert; must be a connection with a pending
+     *             transaction begun through Vert.x, otherwise the future fails with
+     *             {@link IllegalArgumentException} before any SQL
      * @return a {@link Future} that completes when the row is inserted
      */
     @Override
@@ -183,12 +231,20 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 inst.errorMessage(),
                 inst.metadata() == null ? null : inst.metadata().toCarrier(),
                 toOffsetDateTime(inst.createdAt()),
-                toOffsetDateTime(inst.updatedAt()));
+                toOffsetDateTime(inst.updatedAt()),
+                inst.tenantKey());
 
-        return tx.preparedQuery(sqlInsert)
-                .execute(params)
-                .<Void>mapEmpty()
-                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances insert")));
+        return DefinitionPinAdmission.admitPin(
+                        tx,
+                        definitionsTable,
+                        inst.definitionId(),
+                        inst.definitionVersion(),
+                        inst.planHash(),
+                        exceptionMapper)
+                .compose(admitted -> tx.preparedQuery(sqlInsert)
+                        .execute(params)
+                        .<Void>mapEmpty()
+                        .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances insert"))));
     }
 
     /**
@@ -199,10 +255,23 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * method returns {@code 0}. On success it returns {@code 1} and the row's {@code version} is
      * set to {@code updated.version()}.
      *
+     * <p>An update to a terminal status is the original conditional update. An update to a running,
+     * waiting or compensating status first runs that update restricted to an instance whose persisted
+     * status already is running, waiting or compensating: such an instance is a counted pin, so no
+     * definition read is needed. When that matches no row, the persisted row is read in the same
+     * transaction. A missing row, a version other than {@code expectedVersion} or a persisted status that
+     * is not terminal returns {@code 0}. A persisted terminal status means the update would resurrect a
+     * finished instance: the pinned version is then admitted (see {@link DefinitionPinAdmission}; a
+     * deprecated version still admits it, a retired, candidate or activating one, or a different plan
+     * hash, does not) and the original update is run again. A refusal fails the returned future.
+     *
      * @param updated         the updated workflow instance snapshot to write
      * @param expectedVersion the version value that must be present in the DB row for the update
      *                        to succeed
-     * @param tx              the active transaction to use
+     * @param tx              the active transaction to use; for an update to a running, waiting or
+     *                        compensating status it must be a connection with a pending transaction
+     *                        begun through Vert.x, otherwise the future fails with
+     *                        {@link IllegalArgumentException} before any SQL
      * @return a {@link Future} containing {@code 1} if the update succeeded, {@code 0} if the
      *         version was stale
      */
@@ -221,10 +290,47 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 updated.errorMessage(),
                 expectedVersion);
 
-        return tx.preparedQuery(sqlUpdateOptimistic)
+        if (TERMINAL_STATUSES.contains(updated.status())) {
+            return executeUpdate(sqlUpdateOptimistic, params, tx);
+        }
+        return DefinitionPinAdmission.requireTransaction(tx)
+                .compose(valid -> executeUpdate(sqlUpdateOptimisticLive, params, tx))
+                .compose(
+                        rows -> rows > 0 ? Future.succeededFuture(rows) : resume(updated, expectedVersion, params, tx));
+    }
+
+    /** Runs the slow path of an update to a nonterminal status that matched no counted pin. */
+    private Future<Integer> resume(WorkflowInstance updated, long expectedVersion, Tuple params, SqlClient tx) {
+        return tx.preparedQuery(sqlReadPin)
+                .execute(Tuple.of(updated.id().value()))
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances updateOptimistic")))
+                .compose(rs -> {
+                    var it = rs.iterator();
+                    if (!it.hasNext()) return Future.succeededFuture(0);
+                    Row persisted = it.next();
+                    if (persisted.getLong("version") != expectedVersion || !isTerminal(persisted.getString("status"))) {
+                        return Future.succeededFuture(0);
+                    }
+                    return DefinitionPinAdmission.admitResurrection(
+                                    tx,
+                                    definitionsTable,
+                                    persisted.getString("definition_id"),
+                                    persisted.getLong("definition_version"),
+                                    persisted.getString("plan_hash"),
+                                    exceptionMapper)
+                            .compose(admitted -> executeUpdate(sqlUpdateOptimistic, params, tx));
+                });
+    }
+
+    private Future<Integer> executeUpdate(String sql, Tuple params, SqlClient tx) {
+        return tx.preparedQuery(sql)
                 .execute(params)
                 .map(rs -> rs.rowCount())
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances updateOptimistic")));
+    }
+
+    private static boolean isTerminal(String status) {
+        return TERMINAL_STATUSES.contains(WorkflowStatus.valueOf(status));
     }
 
     /**
@@ -237,14 +343,19 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * because a post-migration instance is by definition non-terminal and in a clean RUNNING
      * state regardless of what the source instance held.
      *
+     * <p>The target version is admitted before the update (see {@link DefinitionPinAdmission}).
+     *
      * @param updated         the post-migration workflow instance snapshot; must carry the new
      *                        {@code definitionVersion}, {@code planHash}, {@code version},
      *                        {@code currentStepId}, and {@code stateJson}
      * @param expectedVersion the version value that must be present in the DB row for the update
      *                        to succeed (optimistic concurrency guard)
-     * @param tx              the active transaction to use
+     * @param tx              the active transaction to use; must be a connection with a pending
+     *                        transaction begun through Vert.x, otherwise the future fails with
+     *                        {@link IllegalArgumentException} before any SQL
      * @return a {@link Future} containing {@code 1} if the update succeeded, {@code 0} if the
-     *         expected version no longer matches (stale write)
+     *         expected version no longer matches (stale write); the future fails when the target
+     *         version is not admitted
      */
     @Override
     public Future<Integer> migratePinAndState(WorkflowInstance updated, long expectedVersion, SqlClient tx) {
@@ -257,11 +368,18 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 updated.stateJson(),
                 expectedVersion);
 
-        return tx.preparedQuery(sqlMigratePinAndState)
-                .execute(params)
-                .map(rs -> rs.rowCount())
-                .recover(t ->
-                        Future.failedFuture(exceptionMapper.translate(t, "workflow_instances migratePinAndState")));
+        return DefinitionPinAdmission.admitPin(
+                        tx,
+                        definitionsTable,
+                        updated.definitionId(),
+                        updated.definitionVersion(),
+                        updated.planHash(),
+                        exceptionMapper)
+                .compose(admitted -> tx.preparedQuery(sqlMigratePinAndState)
+                        .execute(params)
+                        .map(rs -> rs.rowCount())
+                        .recover(t -> Future.failedFuture(
+                                exceptionMapper.translate(t, "workflow_instances migratePinAndState"))));
     }
 
     // --- Read operations ---
@@ -283,6 +401,21 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                             : Optional.empty();
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances findById")));
+    }
+
+    /**
+     * Counts the instances pinned to exactly one definition version that are running, waiting or
+     * compensating, archived instances included. Uses the pool directly without row locking.
+     *
+     * @param definitionId the workflow definition id
+     * @param version the exact definition version
+     * @return a {@link Future} containing the number of non-terminal instances
+     */
+    public Future<Long> countNonTerminal(String definitionId, long version) {
+        return pool.preparedQuery(sqlCountNonTerminal)
+                .execute(Tuple.of(definitionId, version))
+                .<Long>map(rs -> rs.iterator().next().getLong("total"))
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances countNonTerminal")));
     }
 
     /**
@@ -422,6 +555,12 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
             sql.append(hasWhere ? " AND" : " WHERE");
             paramValues.add(query.subjectVersion());
             sql.append(" subject_version = $").append(paramValues.size());
+            hasWhere = true;
+        }
+        if (query.tenantKey() != null) {
+            sql.append(hasWhere ? " AND" : " WHERE");
+            paramValues.add(query.tenantKey());
+            sql.append(" tenant_key = $").append(paramValues.size());
             hasWhere = true;
         }
         if (!query.includeArchived()) {

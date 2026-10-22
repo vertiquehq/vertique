@@ -108,7 +108,8 @@ class RowMappers {
                     toInstant(row.getOffsetDateTime("updated_at")),
                     row.getJsonObject("metadata") != null
                             ? DurableMetadata.fromCarrier(row.getJsonObject("metadata"))
-                            : null);
+                            : null,
+                    row.getString("tenant_key"));
         };
     }
 

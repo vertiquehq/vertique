@@ -14,6 +14,11 @@ import dev.vertique.workflow.definition.validator.WorkflowDefinitionViolations;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DocumentOrigin;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.ArrayList;
@@ -21,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -73,8 +79,8 @@ import java.util.Set;
  * restarted rather than attempting recovery from JVM-level {@code Error}s.
  *
  * <p>Runtime activation through
- * {@link dev.vertique.workflow.definition.service.WorkflowDefinitionService} has its own per-key
- * CAS serialization and is not affected by this startup guarantee.
+ * {@link dev.vertique.workflow.definition.service.WorkflowDefinitionService} uses a local CAS in
+ * standalone graphs and delegates durable activation to the engine's per-id publication queue.
  *
  * <h2>Parse failure attribution</h2>
  * <p>{@link WorkflowDefinitionParseException} extends {@link WorkflowDefinitionException}, so
@@ -96,6 +102,14 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
     private final WorkflowDefinitionStore store;
     private final Set<WorkflowDefinitionSource> sources;
 
+    private final boolean durable;
+    private final WorkflowDefinitionsConfig config;
+    private volatile List<DocumentOrigin> origins = List.of();
+
+    List<DocumentOrigin> documentOrigins() {
+        return origins;
+    }
+
     // --- Construction ---
 
     /**
@@ -106,9 +120,21 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
      *     must not be {@code null}
      * @param sources the set of all registered definition sources; must not be {@code null}
      */
-    @Inject
     public WorkflowDefinitionBootstrap(
             WorkflowDefinitionPipeline pipeline, WorkflowDefinitionStore store, Set<WorkflowDefinitionSource> sources) {
+        this(pipeline, store, sources, Optional.empty(), Optional.empty());
+    }
+
+    /** Constructs bootstrap with optional durable source retention and early typed policy validation. */
+    @Inject
+    public WorkflowDefinitionBootstrap(
+            WorkflowDefinitionPipeline pipeline,
+            WorkflowDefinitionStore store,
+            Set<WorkflowDefinitionSource> sources,
+            Optional<WorkflowDefinitionRegistryStore> durable,
+            Optional<WorkflowDefinitionsConfig> config) {
+        this.durable = durable.isPresent();
+        this.config = config.orElseGet(WorkflowDefinitionsConfig::defaults);
         this.pipeline = Objects.requireNonNull(pipeline, "pipeline");
         this.store = Objects.requireNonNull(store, "store");
         this.sources = Objects.requireNonNull(sources, "sources");
@@ -130,8 +156,8 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
      *
      * @param registry the registry to register definitions into; must not be {@code null}
      * @throws WorkflowDefinitionLoadException if any resource fails parsing, validation, or
-     *     compilation, or if duplicate {@code (definitionId, definitionVersion)} pairs are
-     *     detected across sources
+     *     compilation, if a definition id or its source metadata exceeds the length limits, or if
+     *     duplicate {@code (definitionId, definitionVersion)} pairs are detected across sources
      * @throws WorkflowDefinitionException if a registry registration fails during Phase 2 (after
      *     all resources successfully compiled); the failed entry's ACTIVATING claim is released
      *     back to CANDIDATE before rethrowing
@@ -147,6 +173,8 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
         // --- Phase 1: parse + validate + compile — no store or registry mutations ---
 
         List<CompiledDefinition> successes = new ArrayList<>();
+        List<DocumentOrigin> loadedOrigins = new ArrayList<>();
+        Map<CompiledDefinition, WorkflowDefinitionRecord> records = new LinkedHashMap<>();
         List<Violation> allViolations = new ArrayList<>();
 
         List<WorkflowDefinitionSource> orderedSources = sources.stream()
@@ -157,17 +185,32 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
             for (DefinitionResource resource : source.resources()) {
                 try {
                     CompiledDefinition compiled = pipeline.load(resource);
+                    // Key, provenance and record are built for every resource before anything is
+                    // registered, so an over-bound value fails startup rather than a later commit.
+                    DefinitionKey key = new DefinitionKey(
+                            null,
+                            compiled.definition().definitionId(),
+                            compiled.definition().definitionVersion());
+                    WorkflowDefinitionRecord record = DefaultWorkflowDefinitionService.record(
+                            key, compiled, resource.format().name());
+                    if (durable) {
+                        var document = DefinitionSourceText.decode(key, resource.content(), resource.format(), config);
+                        loadedOrigins.add(new DocumentOrigin(key, document, record.provenance(), compiled.planHash()));
+                    }
+                    records.put(compiled, record);
                     successes.add(compiled);
                 } catch (WorkflowDefinitionLoadException e) {
                     // Accumulated validation violations from one document
                     allViolations.addAll(e.violations().toList());
+                } catch (IllegalArgumentException e) {
+                    // Key, provenance or record bound violation — attribute it to the resource.
+                    allViolations.add(new Violation(
+                            "<unknown>", 0, null, null, "LOAD_FAILURE", resourceUri(resource) + ": " + e.getMessage()));
                 } catch (WorkflowDefinitionException e) {
                     // Parse failure (WorkflowDefinitionParseException extends
                     // WorkflowDefinitionException) or class-resolution failure — synthesize a
                     // structured violation attributing the failure to the resource's source URI.
-                    String uri = resource.metadata().uri() != null
-                            ? resource.metadata().uri()
-                            : resource.metadata().sourceType();
+                    String uri = resourceUri(resource);
                     String code =
                             (e instanceof WorkflowDefinitionParseException) ? "DOCUMENT_PARSE_FAILURE" : "LOAD_FAILURE";
                     allViolations.add(new Violation("<unknown>", 0, null, null, code, uri + ": " + e.getMessage()));
@@ -223,6 +266,8 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
             throw new WorkflowDefinitionLoadException(new WorkflowDefinitionViolations(allViolations));
         }
 
+        origins = List.copyOf(loadedOrigins);
+
         // --- Phase 2: commit — all resources succeeded, no duplicates ---
         // Each definition is stored as CANDIDATE, claimed for activation (CANDIDATE → ACTIVATING),
         // registered into the registry, then marked active (ACTIVATING → ACTIVE).
@@ -233,7 +278,7 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
         for (CompiledDefinition compiled : successes) {
             String defId = compiled.definition().definitionId();
             long defVersion = compiled.definition().definitionVersion();
-            store.storeCandidate(compiled);
+            store.candidate(records.get(compiled), compiled);
             boolean claimed = store.tryClaimForActivation(defId, defVersion);
             if (!claimed) {
                 // Should not happen during bootstrap (no concurrent activations before startup),
@@ -251,5 +296,11 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
                 throw e;
             }
         }
+    }
+
+    private static String resourceUri(DefinitionResource resource) {
+        return resource.metadata().uri() != null
+                ? resource.metadata().uri()
+                : resource.metadata().sourceType();
     }
 }

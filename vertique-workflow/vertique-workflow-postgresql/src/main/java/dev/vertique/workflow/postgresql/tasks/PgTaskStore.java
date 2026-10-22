@@ -155,8 +155,9 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         this.sqlInsert = "INSERT INTO " + tasks
                 + " (task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
                 + " decisions_snapshot_json, due_at, due_date_timer_id, subject_version_at_creation,"
-                + " created_at, updated_at, branch_token_id, fork_step_id, branch_id)"
-                + " VALUES ($1, $2, $3, 'OPEN', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)";
+                + " created_at, updated_at, branch_token_id, fork_step_id, branch_id, tenant_key)"
+                + " VALUES ($1, $2, $3, 'OPEN', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,"
+                + " (SELECT tenant_key FROM " + instances + " WHERE id = $2))";
 
         this.sqlSelectAllColumns = "SELECT task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
                 + " decisions_snapshot_json, decision_name, decision_payload_json,"
@@ -165,7 +166,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 + " completed_at, cancelled_at, expired_at, cancellation_reason,"
                 + " subject_version_at_creation,"
                 + " branch_token_id, fork_step_id, branch_id,"
-                + " created_at, updated_at"
+                + " created_at, updated_at, tenant_key"
                 + " FROM " + tasks;
 
         this.sqlSelectJoinedColumns = "SELECT wt.task_id, wt.workflow_id, wt.step_id, wt.status,"
@@ -176,9 +177,12 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 + " wt.completed_at, wt.cancelled_at, wt.expired_at, wt.cancellation_reason,"
                 + " wt.subject_version_at_creation,"
                 + " wt.branch_token_id, wt.fork_step_id, wt.branch_id,"
-                + " wt.created_at, wt.updated_at"
+                + " wt.created_at, wt.updated_at, wt.tenant_key"
                 + " FROM " + tasks + " wt"
-                + " JOIN " + instances + " wi ON wt.workflow_id = wi.id";
+                // The joined side exposes only the columns the filters read, so the unqualified
+                // keyset columns (updated_at, task_id) stay unambiguous on every page.
+                + " JOIN (SELECT id, subject_type, subject_id, archived_at FROM " + instances + ") wi"
+                + " ON wt.workflow_id = wi.id";
 
         this.sqlNotArchivedPrefix = " NOT EXISTS (SELECT 1 FROM " + instances + " wi2 WHERE wi2.id = ";
 
@@ -408,10 +412,10 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
     @Override
     public Future<PagedResult<TaskRecord>> findByFilter(TaskFilter filter, PageCursor cursor, SqlClient tx) {
         // The subject filters (subjectType, subjectId) need a JOIN to workflow_instances.
-        // The archived-filter is handled with a NOT EXISTS subquery (not a JOIN) to avoid the
-        // "column reference is ambiguous" error that arises when both workflow_tasks.updated_at
-        // and workflow_instances.updated_at are visible in a JOIN and the keyset WHERE predicate
-        // references "updated_at" without a table qualifier.
+        // The joined side is a narrowed projection of workflow_instances (only the columns the
+        // filters read) so workflow_instances.updated_at is never visible: the keyset WHERE
+        // predicate references "updated_at" without a table qualifier. Without a subject filter the
+        // archived-filter uses a NOT EXISTS subquery instead of a JOIN for the same reason.
         boolean needsInstanceJoin = filter.subjectType() != null || filter.subjectId() != null;
 
         StringBuilder sql = new StringBuilder(sqlSelectAllColumns);
@@ -477,13 +481,18 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
             sql.append(" wi.subject_id = $").append(paramValues.size());
             hasWhere = true;
         }
+        if (filter.tenantKey() != null) {
+            sql.append(hasWhere ? " AND" : " WHERE");
+            paramValues.add(filter.tenantKey());
+            sql.append(" ").append(colPrefix).append("tenant_key = $").append(paramValues.size());
+            hasWhere = true;
+        }
         if (!filter.includeArchived()) {
             // Exclude tasks whose owning workflow instance has been soft-deleted (archived).
             // When a subject-filter JOIN is present, reuse the already-joined wi alias.
             // Otherwise, use a correlated NOT EXISTS subquery so the keyset pagination columns
-            // (updated_at, task_id) remain unambiguous — a JOIN would introduce a second
-            // updated_at column from workflow_instances, causing a "column reference is
-            // ambiguous" error in the keyset WHERE predicate.
+            // (updated_at, task_id) remain unambiguous — a plain JOIN of workflow_instances would
+            // introduce a second updated_at column and make the keyset WHERE predicate ambiguous.
             sql.append(hasWhere ? " AND" : " WHERE");
             if (needsInstanceJoin) {
                 sql.append(" wi.archived_at IS NULL");
@@ -661,7 +670,8 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 subjectVersionAtCreation,
                 branchTokenId,
                 forkStepId,
-                branchId);
+                branchId,
+                row.getString("tenant_key"));
     }
 
     /**

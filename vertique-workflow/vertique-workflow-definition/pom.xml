@@ -113,12 +113,7 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-logging</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- IT dependencies: PostgreSQL-backed engine + Testcontainers -->
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-workflow-postgresql</artifactId>
-            <scope>test</scope>
-        </dependency>
+        <!-- IT dependencies: Testcontainers -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-db-test</artifactId>

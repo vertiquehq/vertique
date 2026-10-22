@@ -195,7 +195,7 @@ Exact wiring depends on the application's persistence, messaging, delayed-job, a
 
 ### Schema placement and migrations
 
-The workflow tables live in the connection's default schema unless `db.schemas.workflow` maps them to another one. With `DbModule` installed, that single setting places all eight PostgreSQL workflow stores and, in named Flyway mode (`flyway.named`), the migration itself, so the migration and every statement agree. Without the entry, SQL stays unqualified. Components that migrate and components that run the workflows read the same `db.schemas` configuration.
+The workflow tables live in the connection's default schema unless `db.schemas.workflow` maps them to another one. With `DbModule` installed, that single setting places all nine PostgreSQL workflow stores and, in named Flyway mode (`flyway.named`), the migration itself, so the migration and every statement agree. Without the entry, SQL stays unqualified. Components that migrate and components that run the workflows read the same `db.schemas` configuration.
 
 The migration can run without the application: a migration-only component installs `DbModule`, `DbFlywayModule` and `WorkflowMigrationsModule` (plus the declaration modules of the other instances it migrates), needs no connection pool, and calls `FlywayMigrationRunner.run(vertx)` from a deploy step or job. The runtime component then installs `DbModule` and `DbPostgresqlModule` and needs no Flyway module unless it migrates at startup. See the [workflow-postgresql reference](../vertique-workflow/vertique-workflow-postgresql/src/main/resources/META-INF/vertique/module.md#flyway-configuration) for the configuration, the legacy single-Flyway mode and the class loader the runner uses.
 
@@ -245,6 +245,406 @@ steps:
 ```
 
 Document definitions are not currently no-code object schemas. They still reference Java classes and named callbacks.
+
+Runtime management uses Futures. Load a global candidate, then activate its durable key:
+
+```java
+Future<CompiledDefinitionRef> activated = definitionService
+        .load(content, DocumentFormat.YAML, sourceMetadata, null)
+        .compose(ref -> definitionService.activate(new DefinitionKey(
+                null, ref.definitionId(), ref.definitionVersion())).map(ref));
+```
+
+With PostgreSQL installed, every definition, code-first or document-authored, is also a row in a durable
+registry that survives restarts and converges across nodes. See [Durable Definition Registry](#durable-definition-registry)
+for the lifecycle and operations, and [Upgrading to 0.4.0](#upgrading-to-040) before moving an existing application.
+
+---
+
+## Durable Definition Registry
+
+The durable registry stores one row per workflow definition version in the `workflow_definitions` table, so
+definitions, their lifecycle status and their document sources survive restarts and reach every node.
+
+### When it is active
+
+- **Store bound.** The registry is active when a `WorkflowDefinitionRegistryStore` is bound. `WorkflowPostgresqlModule`
+  binds one unconditionally, so every PostgreSQL application has it. It needs PostgreSQL 15 or later.
+- **No store.** Without a store (graphs that do not install the PostgreSQL module) nothing changes: definitions stay
+  in memory, the service keeps its local outcomes behind the same `Future` signatures, the startup step does no I/O
+  and no timer is scheduled. `deprecate`, `retire` and `reinstate` need the store and fail without one.
+- **Identity.** A row is identified by `DefinitionKey(tenantKey, definitionId, definitionVersion)`. A null tenant key
+  is the global owner. One owner at a time holds a definition id; a second owner's claim fails with `OWNER_CONFLICT`.
+- **Tenant ids.** With the store bound, `load` for a tenant accepts only a document whose id is `<tenantKey>:<name>`
+  (a non-blank name), and a tenant key must not contain `:`; anything else fails with `WorkflowDefinitionException`
+  naming the tenant key and the id, and nothing is stored. The namespaced id is the definition id everywhere it is used:
+  `StartCommand.definitionId`, pinned resolution and migration targets. This keeps a tenant from holding an id that a later
+  code release needs. Global loads and code definitions are not restricted, but avoid `:` in global ids: a global id equal
+  to a tenant's namespaced id still fails with `OWNER_CONFLICT`. The rule binds `load`, not the registry store SPI, and
+  rows written before it keep every lifecycle operation.
+
+### Code and document definitions
+
+| Kind | Where it comes from | Row |
+|---|---|---|
+| `CODE` | Definitions the application registers in Java, including contributors | Global owner, recorded at startup |
+| `DOCUMENT` | Packaged YAML/JSON sources and documents loaded at runtime | Any owner, with source text, format and provenance |
+
+Code registers itself from the deployed application, so `load` and `activate` apply to documents only.
+`deprecate`, `retire` and `reinstate` apply to both kinds.
+
+### Lifecycle
+
+| Status | Meaning |
+|---|---|
+| `CANDIDATE` | Loaded and compiled, not published |
+| `ACTIVATING` | A node holds a short-lived activation claim; a claim older than twice the staleness bound counts as abandoned |
+| `ACTIVE` | The highest non-deprecated live version of an owner and id; new starts resolve to it |
+| `SUPERSEDED` | Live, but a higher version is active; pinned instances keep running |
+| `DEPRECATED` | Live for pinned instances; refused for new starts and migration targets |
+| `RETIRED` | Retained metadata only; no executable membership |
+
+| Operation | Moves | Typical failure reasons |
+|---|---|---|
+| `activate` | `CANDIDATE` to `ACTIVE` or `SUPERSEDED` | `OWNER_CONFLICT`, `STALE_CLAIM`, `DRIFT`, `LOADER_MISSING` |
+| `deprecate` | `ACTIVE` or `SUPERSEDED` to `DEPRECATED` | `INVALID_TRANSITION` |
+| `retire` | `CANDIDATE`, or a cooled `DEPRECATED` row, to `RETIRED` | `COOLING`, `PINNED_INSTANCES`, `INVALID_TRANSITION` |
+| `reinstate` | `RETIRED` to `ACTIVE` or `SUPERSEDED` | `CODE_UNAVAILABLE`, `OWNER_CONFLICT`, `DRIFT`, `LOADER_MISSING`, `INVALID_TRANSITION` |
+
+Refusals are `WorkflowDefinitionLifecycleException` instances with a `reason()` and the `key()`; other failures, such as
+no bound store, an invalid key or a lock timeout, use their own exception types. They arrive as failed `Future`s, never as
+synchronous exceptions.
+
+- **Deprecation.** `resolveCurrent` skips a deprecated version, and fails with the unknown-definition exception when
+  every version is deprecated. An explicit-version start and a `migrate` whose target is deprecated fail with
+  reason `DEPRECATED`. Signals, timers and resumes of instances already pinned to the version keep working.
+  Deprecating the active version does not promote another one; current resolution already serves the next lower
+  version, and the durable listing shows no `ACTIVE` row until the next startup recomputation.
+- **Cooling window.** A deprecated version cannot retire until `workflow.definitions.maxStalenessSeconds` (default 30)
+  has passed on the database clock. After that, retirement is refused with `PINNED_INSTANCES` while any `RUNNING`,
+  `WAITING` or `COMPENSATING` instance, archived ones included, is pinned to the exact version.
+- **Reinstatement.** `reinstate` needs an executable source: the deployed code for a code version, the stored text for a
+  document. The version becomes `ACTIVE` if it is the highest eligible version of its owner and `SUPERSEDED` otherwise.
+- **No authorization.** `load`, `activate`, `deprecate`, `retire` and `reinstate` perform no access check. Restrict
+  them to authorized callers in your application.
+
+### Async usage
+
+```java
+DefinitionKey v1 = new DefinitionKey(null, "order-fulfillment", 1);
+SourceMetadata source = new SourceMetadata("upload", null, null, "ops", null, Instant.now());
+
+// Load a candidate from bytes and activate it.
+Future<Void> published = definitionService
+        .load(yamlBytes, DocumentFormat.YAML, source, null)
+        .compose(ref -> definitionService.activate(
+                new DefinitionKey(null, ref.definitionId(), ref.definitionVersion())));
+
+// The snippets below are separate steps: run each one when its turn comes, not all at once.
+
+// Stop new starts of the old version; pinned instances keep running.
+Future<Void> deprecated = definitionService.deprecate(v1);
+
+// Later, after the cooling window and once no instance is pinned. Until then this
+// fails with reason COOLING or PINNED_INSTANCES, so treat it as retryable.
+Future<Void> retired = definitionService.retire(v1)
+        .onFailure(failure -> {
+            if (failure instanceof WorkflowDefinitionLifecycleException e) {
+                log.info("retire of {} refused: {}", e.key(), e.reason());
+            }
+        });
+
+// Bring a retired version back.
+Future<Void> restored = definitionService.reinstate(v1);
+
+Future<List<WorkflowDefinitionRecord>> live = definitionService.list(new DefinitionFilter(
+        DefinitionFilter.TenantScope.GLOBAL, null, Set.of(DefinitionStatus.ACTIVE, DefinitionStatus.SUPERSEDED)));
+```
+
+`list` returns immutable metadata rows without source text. `sourceMetadata(key)` returns the source attribution
+without reading the source body.
+
+### Startup reconciliation
+
+Before any `BOOTSTRAP` verticle deploys, the engine records and restores the registry, in this order:
+
+1. It records every code definition as a global `CODE` row and every packaged document as a `DOCUMENT` row.
+2. It restores every live `DOCUMENT` row of every owner (`ACTIVE`, `SUPERSEDED`, `DEPRECATED`) from its stored text,
+   checking the compiled plan hash and the stored text digest.
+3. It recomputes the active version per owner and id, applies deprecation marks, removes runtimes of `RETIRED` rows
+   that belong to the row's owner, and resets abandoned activation claims.
+
+Startup fails, naming the definition, in these cases, among others (a loader or compile failure of a stored document, a failing
+loader callback, a stored document over the envelope after lowering the limit, a non-UTF8 database, a second loader for one
+format, an unattributed direct registration, and a lock timeout):
+
+| Situation | Failure |
+|---|---|
+| Code compiles to a different plan hash while instances are pinned to that exact version | `DRIFT`, both hashes named |
+| A stored row of the same id and version is of the other kind | `INVALID_TRANSITION` (kind conflict) |
+| Another owner holds the id | `OWNER_CONFLICT`, holders named |
+| A live `CODE` row whose version the deployed code no longer provides | `CODE_UNAVAILABLE` |
+| A code definition whose id or version breaks the key rules | `WorkflowDefinitionException` naming the definition |
+| A live document row with no loader, or whose compiled hash or text digest differs | `LOADER_MISSING` or `DRIFT` |
+| A packaged document whose text differs from the stored text under an equal plan hash | `DRIFT` (digest) |
+
+- **Code hash change without pins.** When no instance is pinned to that exact version, the stored hash is replaced and
+  a WARN logs both hashes. Changing a deployed version's compiled shape is still a rolling-deploy hazard, see
+  [Upgrading to 0.4.0](#upgrading-to-040); prefer a new version.
+- **Digest.** Each `DOCUMENT` row stores the SHA-256 of its stored UTF-8 text. It detects accidental or concurrent change
+  of the stored text; it does not authenticate the writer, so restrict write access to the table.
+- **Compose validators** run in `VALIDATE` and do not re-run for restored, propagated or runtime-activated definitions.
+
+### Peer propagation
+
+Each node polls the table and applies differences, so a change committed on one node reaches the others.
+
+- **Cadence.** The period is `workflow.definitions.maxStalenessSeconds` (default 30 seconds). The real bound is the
+  cadence plus the time one pass needs to apply; a row that keeps failing gives no bound. The first pass runs one period
+  after startup.
+- **`pollNow()`.** `WorkflowDefinitionPropagationPoller.pollNow()` runs one pass immediately and returns its `Future`.
+  A call while a pass runs returns that pass. The future succeeds even when some rows failed, and fails only when the
+  table cannot be read.
+- **What a pass does.** It restores live rows the node does not hold, marks deprecated rows, and removes runtimes of
+  retired rows that the node holds for that row's owner. A `CODE` row needs the same version in the code deployed on that
+  node with an equal plan hash, otherwise the row fails with `CODE_UNAVAILABLE` or `DRIFT`. Polling never records a code
+  hash, never reinstates and never changes a durable row.
+- **Failures.** A row that cannot be applied, or is not applied within twice the period, is logged with its key and
+  reason (never source text; repeats of the same failure log at debug level), counted, and retried on the next pass.
+- **Observability.** The bound `WorkflowDefinitionRegistryView` reports `registered()`, the live records this node
+  has applied, and `applyFailures()`, the number of rows currently failing. It lists every owner's records, so it is an
+  operator view: do not expose it to tenants unfiltered. It describes one node; another node can differ until its own
+  pass has run.
+- **Do not rely on peers for safety.** Deprecation and retirement checks use each node's own registry until its pass
+  runs. Starts and migrations are protected by a database check at pin time (below), not by polling.
+
+### Database coordination
+
+- **Pin admission.** Before a new instance pin is written, a migration re-pins an instance, or a finished instance is
+  resurrected (failed retry), the repository takes a shared advisory lock on the definition id and reads the id's rows in
+  the caller's transaction. A refused pin fails with `WorkflowDefinitionLifecycleException` and rolls the transaction
+  back. Starts share the lock, so they do not serialize each other, but `retire` and startup writes wait for them.
+- **Lock timeout.** Every admission, and every registry write, sets `SET LOCAL lock_timeout = '30000ms'`. It overrides a
+  stricter value set on the role or session and bounds every later lock wait in that transaction until commit or rollback.
+  A timeout rolls back the caller's transaction (retry the whole transaction); registry operations surface it as a
+  retryable `WorkflowPersistenceException`.
+- **Stalls.** Long caller transactions can delay lifecycle and startup writes, and PostgreSQL queues later admissions
+  behind a waiting writer, including a restarting node's startup reconciliation. Do not await a lifecycle call for an
+  id while your own transaction holds an admission for it.
+- **Stronger isolation.** Under `REPEATABLE READ` or `SERIALIZABLE`, an id with no visible definition row is refused with
+  `INVALID_TRANSITION`, because the snapshot cannot tell an unmanaged id from a newly managed one. This includes engines
+  assembled by hand that skip the registry bootstrap. `READ COMMITTED` admits an id with no rows.
+- **Brief refusals.** For a short window between local publication and the durable commit of an activation, new starts of
+  that version are refused. After a same-version code rehash (below), nodes still running the old code refuse new pins.
+- **Registry writes** always run at `READ COMMITTED`, whatever the server default.
+- **Retirement cost.** `retire` counts the pinned instances while it holds the exclusive id lock, and no index covers that
+  predicate, so on a very large instance table a retirement can delay new starts of that id.
+
+### Registry mutation outside the lifecycle
+
+- **Direct registration.** The engine tracks which runtime it published for which owner. A runtime registered directly
+  through `WorkflowRegistry` is never adopted or removed by the lifecycle: `deprecate`, `retire` and `reinstate` of that
+  version fail with `INVALID_TRANSITION`, and a startup or poll apply that needs the slot fails the same way and leaves the
+  runtime in place. Do not register definitions directly at runtime and expect the lifecycle to manage them.
+- **Concurrency boundary.** Managed operations serialize per definition id on each node. A direct `register` or `unregister`
+  of the same id during a managed operation is outside that guarantee. Each individual registry operation stays thread safe.
+- **Metadata reads.** With a store bound, `list` and `sourceMetadata` read the durable table. Metadata of definitions
+  that application contributors or packaged sources register appears only after the managed `BOOTSTRAP` step has recorded
+  it, and there is no in-memory fallback.
+
+### Configuration
+
+| Key | Default | Meaning |
+|---|---|---|
+| `workflow.definitions.maxStalenessSeconds` | `30` | Poll period, cooling window before retirement, and (doubled) the age of an abandoned activation claim |
+| `workflow.definitions.maxDocumentSizeBytes` | `262144` | Largest runtime `load` input, in bytes (L); the stored form is capped at floor(3L/2) UTF-8 bytes and L code points |
+
+Both keys are optional. To read them from configuration, install `WorkflowDefinitionsConfigModule` together with
+`ConfigParsingModule`; otherwise the defaults apply, or bind `WorkflowDefinitionsConfig` directly. Use the same values on
+every node sharing the table. Raise L on every node before admitting larger documents. Retire documents that exceed the
+new envelope before lowering L; a lower limit makes restoration fail startup, a poll counts and retries the row, and a later
+`activate` or `reinstate` of a retained row that exceeds the new envelope also fails.
+Non-positive values are rejected at startup with a configuration error, as is an L whose stored envelope would overflow an
+integer or a staleness period whose milliseconds would overflow a long.
+Raising L increases memory and parse cost; the parser's nesting and expression limits are independent. The
+[workflow definition module reference](../vertique-workflow/vertique-workflow-definition/src/main/resources/META-INF/vertique/module.md)
+holds the per-path size rules.
+
+---
+
+## Upgrading to 0.4.0
+
+This section covers the durable definition registry. Other changes in the release, such as the payload schema validation,
+are described in their own sections. This release adds the durable definition registry. It contains a breaking change to `WorkflowDefinitionService` and
+changes startup for every PostgreSQL application. Do the following in order.
+
+### 1. Migrate the schema
+
+- Flyway applies one new migration, `V002__create_workflow_definitions_and_tenant_key.sql`, from `db/migration/workflow`
+  (`V1__` is unchanged). It creates the `workflow_definitions` table with its `document_digest` column, adds a nullable
+  `tenant_key` column to `workflow_tasks` and `workflow_instances` (existing rows `null`) and creates one partial index
+  per table for tenant-filtered listings: `idx_workflow_tasks_tenant_updated_at` and
+  `idx_workflow_instances_tenant_updated_at`, each on `(tenant_key, updated_at DESC, <id>)` where `tenant_key IS NOT NULL`.
+  It must run before the first 0.4.0 node starts.
+- **Lock and duration.** Each `ALTER TABLE` and each `CREATE INDEX` holds an `ACCESS EXCLUSIVE` lock until the migration
+  commits, and each index build is a sequential scan of its table under that lock, so the time the tables are blocked
+  grows with their size. Run the migration when no long transaction is open on `workflow_tasks` or `workflow_instances`.
+  It waits at most 30 seconds per statement for a lock (`SET LOCAL lock_timeout`), during which new statements on that
+  table queue behind it, and then fails, so rerun it after the blocking transaction ends. A manual run must be one
+  transaction (`psql --single-transaction -f V002__create_workflow_definitions_and_tenant_key.sql`), or the timeout has no
+  effect.
+- **Large installations.** Every tenant column and tenant index statement is `IF NOT EXISTS`, so you can do the table work
+  ahead of the upgrade and let the migration find it done. Run these exact statements outside a transaction (each on an
+  autocommit connection), with the `ALTER` statements first. A statement that times out on its lock changes nothing and can
+  be rerun:
+
+  ```sql
+  SET lock_timeout = '30s';
+  ALTER TABLE workflow_tasks     ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255);
+  ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255);
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_tasks_tenant_updated_at
+      ON workflow_tasks (tenant_key, updated_at DESC, task_id ASC) WHERE tenant_key IS NOT NULL;
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_instances_tenant_updated_at
+      ON workflow_instances (tenant_key, updated_at DESC, id ASC) WHERE tenant_key IS NOT NULL;
+  ```
+
+  The migration then adds no scan. `ADD COLUMN IF NOT EXISTS` still takes the exclusive lock briefly. Both `IF NOT EXISTS`
+  forms match by name only, so a column or index of that name with a different definition is silently accepted: use the
+  statements above unchanged. A failed concurrent build leaves an `INVALID` index that `IF NOT EXISTS` would skip: check
+  `pg_index.indisvalid` for both index names and drop an invalid one before the migration runs. To confirm the result, read
+  `pg_get_indexdef('idx_workflow_tasks_tenant_updated_at'::regclass)` and the same for the instances index, and check that
+  `information_schema.columns` shows `tenant_key` as `character varying(255)` on both tables.
+- **Rolling upgrade.** Instances started and tasks created by nodes of the previous release keep `tenant_key = null`
+  permanently, and the engine sets no tenant on new instances yet, so every engine-started instance is `null` too. For
+  tasks created earlier from an instance that another writer stamped, run `UPDATE workflow_tasks t SET tenant_key =
+  i.tenant_key FROM workflow_instances i WHERE t.workflow_id = i.id AND t.tenant_key IS NULL AND i.tenant_key IS NOT
+  NULL`. Instances started by previous-release nodes cannot be backfilled from the column.
+- **Development databases.** A database that applied an earlier 0.4.0 snapshot must be recreated: version 2 changed its
+  checksum and description, so Flyway validation fails, and the versions 3 and 4 it recorded are no longer shipped.
+- PostgreSQL 15 or later is required (`NULLS NOT DISTINCT`).
+- Anything else that writes `DOCUMENT` rows, such as operator scripts or other modules, must supply `document_digest`:
+  the lowercase hex SHA-256 of the stored UTF-8 text, present on `DOCUMENT` rows and absent on `CODE` rows. Where Flyway
+  is disabled, run the migration script yourself, in one transaction, before the first 0.4.0 node starts.
+- Durable `DOCUMENT` bodies need `server_encoding = UTF8`. The check runs before the first document read or write. `CODE`
+  rows and applications without documents work on any encoding.
+
+### 2. Port `WorkflowDefinitionService` callers (breaking)
+
+Four operations are replaced in place, on the interface and on `DefaultWorkflowDefinitionService`, with no deprecation
+cycle. Eight old declarations are removed; constructors and all other members stay.
+
+| Before | After |
+|---|---|
+| `CompiledDefinitionRef load(byte[], DocumentFormat, SourceMetadata)` | `Future<CompiledDefinitionRef> load(byte[], DocumentFormat, SourceMetadata, @Nullable String tenantKey)` |
+| `void activate(String id, long version)` | `Future<Void> activate(DefinitionKey key)` |
+| `Collection<CompiledDefinitionRef> list()` | `Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter)` |
+| `Optional<SourceMetadata> sourceMetadata(String id, long version)` | `Future<Optional<SourceMetadata>> sourceMetadata(DefinitionKey key)` |
+
+- **Added.** `deprecate(DefinitionKey)`, `retire(DefinitionKey)` and `reinstate(DefinitionKey)`, all returning `Future<Void>`.
+  With no store, the four replaced operations keep their outcomes behind the new signatures, while the three added ones fail.
+- **Custom implementations.** A class that implements `WorkflowDefinitionService` must now implement all seven operations.
+  Classes that implement the new `WorkflowDefinitionRegistryStore`, `WorkflowDefinitionLifecycle` or
+  `PersistedDefinitionLoader` types implement every method they declare.
+- **`ActivationStatus`** gains `DEPRECATED` and `RETIRED`. A `switch` over it without a default branch needs the new cases.
+- **Public `currentStatus`.** `WorkflowDefinitionStore.currentStatus(id, version)` now also reports the persisted status of a
+  global version the node knows only as metadata (a candidate or retired row it did not compile); it returns `null` only when
+  nothing is known about the version.
+
+### 3. Check what changes at startup
+
+Every PostgreSQL application, including code-first ones that never touch documents:
+
+- **First boot writes `CODE` rows.** Each code definition is recorded as a global row. The `V002__` migration must have run.
+- **Code drift can fail startup.** If a version's compiled shape changed and instances are pinned to that exact version
+  (`RUNNING`, `WAITING` or `COMPENSATING`), startup fails with `DRIFT` naming both hashes. Keep the code of a version unchanged
+  until its instances finish, or bump the version. With no pinned instance the stored hash is replaced and a WARN logs it.
+- **Key rules.** A code definition with a blank, over-long or control-character id, or a non-positive version, fails
+  startup with a message naming the definition. Definition ids and tenant keys are at most 255 code points.
+- **Kind and owner conflicts** fail startup naming both rows or owners.
+- **Tenant ids are namespaced.** With the store bound, `load` for a tenant now requires the document id to be
+  `<tenantKey>:<name>` and the tenant key to contain no `:`. Existing tenant rows are unaffected; rename and reload a
+  document that used an unprefixed id, start it under the new id, and `retire` the old unprefixed versions: until they are
+  retired they keep holding the id, and reinstating one takes it back.
+
+Applications that combine the automatically bound PostgreSQL store with static document sources gain extra startup
+prerequisites. Each packaged document now must:
+
+- **Fit the stored envelope.** At the default L it is at most 393216 UTF-8 bytes and 262144 Unicode code points after
+  decoding. Without a store, static JSON had no document size cap; this is a new boundary for JSON sources. A YAML source keeps
+  its existing code-point guard, which now follows L.
+- **Be strictly representable.** The whole source must decode without malformed encoding, decoded NUL or unpaired surrogates,
+  including trailing bytes the parser ignores. Without a store such trailing bytes were accepted. Escaped source sequences
+  stay as source text.
+- **Be stored as UTF-8 text.** Durable storage keeps decoded characters, comments, whitespace and line endings, not the
+  original bytes. JSON may arrive in UTF-8, UTF-16 or UTF-32; YAML must be UTF-8. The database must be `UTF8`.
+- **Not change text without a new version.** An equal plan hash no longer proves equal text. A packaged document whose
+  text differs from the stored text of the same id and version, even by a comment, whitespace or line endings only, fails
+  startup with `DRIFT`, on every node whose packaged text differs from the stored text, including during a rolling deploy.
+  Bump the version of a changed document: a row of the same id and version blocks startup in every status, retired
+  ones included.
+
+Metadata limits now apply in every mode, with or without a store, to `load` and static sources: definition id and tenant
+key at most 255 code points; source type at most 64; URI at most 2048; revision, author and upload id at most 255. The
+retained `WorkflowDefinitionStore` methods check only the key (id length and control characters, positive version). NUL and unpaired surrogates are rejected in every text field, and
+ISO control characters in ids and tenant keys. A version must be positive. An over-limit source is rejected before anything
+is registered, and a static source failing a limit fails startup naming the resource.
+
+### 4. Plan the rollout
+
+- **Same-version rehash.** The first 0.4.0 node that finds no pinned instance for a changed version rewrites the stored
+  hash. From then on, every node still running the old code refuses new starts and migrations of that version with `DRIFT`, until it restarts
+  on the new code. A failed instance pinned before the rewrite can no longer be retried on any node, because its recorded
+  hash is the old one. Prefer a new version over editing a deployed one.
+- **Rollback or old-code restart.** A node that restarts on code lacking a version the database holds as live fails startup
+  with `CODE_UNAVAILABLE`.
+- **Deleting a version.** To remove a version's code safely: `deprecate` it, wait out the cooling window, `retire` it
+  while no instance is pinned, then remove the code in a later deployment.
+- **Finish the rolling upgrade first.** `retire` and `reinstate` rely on every node taking the shared id lock when it
+  admits a pin, so use them only once all nodes run 0.4.0.
+- **Startup stalls.** Startup writes wait for open caller transactions on the same ids, up to 30 seconds per lock, and then
+  fail with a retryable persistence error naming the id.
+
+### 5. Adapt callers of the engine
+
+- **Transaction clients.** Public transaction-aware engine entrypoints (`start`, the `signal` overloads, `cancel`, `retry`,
+  `migrate`, and the task and timer callbacks) require a `SqlConnection` with a pending transaction begun through Vert.x,
+  for example with `Pool.withTransaction`. A `Pool`, a bare or completed connection, a raw `BEGIN`, a wrapper or a mock
+  fails the returned `Future` with `IllegalArgumentException` before any SQL. Await the operation before committing or
+  rolling back. A custom `WorkflowTransactionRunner` must keep the transaction pending until the work future completes.
+- **Pin admission.** Starts and migrations now run the admission check described under
+  [Database coordination](#database-coordination), including the 30-second `SET LOCAL lock_timeout` and the stronger-isolation
+  refusal.
+- **Registry implementations.** `WorkflowRegistry` gains `unregister`, `markDeprecated`, `isDeprecated` and
+  `registeredDefinition` as default methods, so existing implementations compile. The defaults of the first two throw
+  `UnsupportedOperationException`, `isDeprecated` returns `false` and `registeredDefinition` returns empty.
+  A decorator that forwards only the old members therefore makes `deprecate` and `retire` fail after the durable commit,
+  keeps serving deprecated versions to new starts, and reports a code version as `CODE_UNAVAILABLE` on reinstatement.
+  Forward all four members. `DefaultWorkflowRegistry` implements them.
+- **Instance query.** `WorkflowInstanceQueryService.countNonTerminal(id, version)` is a default method that fails with
+  `UnsupportedOperationException`; the PostgreSQL implementation overrides it.
+- **Added bindings.** Applications gain the bound `WorkflowDefinitionLifecycle`, `WorkflowDefinitionRegistryView` and
+  `WorkflowDefinitionPropagationPoller`. The poller adds one periodic timer per node; it is scheduled after startup and
+  stopped at shutdown.
+- **Instance tenant.** `V002__` adds the nullable tenant columns. The engine sets no tenant on new instances yet, so
+  they stay `null` (see [Instance Tenant](#instance-tenant)). Tenant ids
+  use the `<tenantKey>:<name>` namespace for definition loads. Record patterns that deconstruct `WorkflowInstance`,
+  `TaskRecord`, `WorkflowInstanceQuery` or `TaskFilter` by component list need the new trailing `tenantKey` component.
+  Other modules or tools that read `workflow_instances` or `workflow_tasks` see an extra nullable column.
+
+### 6. Configuration
+
+Two optional keys, `workflow.definitions.maxStalenessSeconds` (30) and `workflow.definitions.maxDocumentSizeBytes` (262144).
+Existing configuration needs no change. See [Configuration](#configuration).
+
+## Instance Tenant
+
+`WorkflowInstance`, `TaskRecord`, `WorkflowInstanceQuery` and `TaskFilter` carry a nullable `tenantKey`. The engine sets no tenant when it starts an instance, and no engine setting exists yet: an instance tenant is `NULL` unless another writer stamps it, so a tenant filter matches nothing for engine-started instances. The value is stored as given and is not validated beyond the column length of 255. Migration and resurrection keep an instance's tenant for its life.
+
+- **Tasks follow the instance.** The PostgreSQL task store writes the owning instance row's tenant on every task insert, whatever the `TaskRecord` carries, so a task created after another writer stamped its instance carries that tenant and a task created earlier stays `NULL`.
+- **Filters.** `WorkflowInstanceQuery.tenantKey` and `TaskFilter.tenantKey` match exactly when non-null; `null` matches every tenant. Never pass an unresolved tenant as `null` expecting scoping.
+- **Information, not isolation.** The tenant is a label and a filter. Operations addressed by instance or task id (query, signal, cancel, retry, migrate, task complete or reassign) do not check it, and timers, branch tokens and definition resolution are global: before acting on a caller-supplied id, load the instance and compare its `tenantKey()` with the caller's tenant. Definition-lifecycle refusal messages can name another owner's tenant, status and plan hashes: do not forward them to tenants.
+- **Global keys.** Start idempotency keys and business keys are global: a start that reuses another tenant's key returns that tenant's instance.
+- **No definition cross-check.** Nothing ties an instance tenant to a definition owner: a stamped instance may run another tenant's namespaced definition or a global one.
 
 ---
 

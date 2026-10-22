@@ -10,8 +10,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fasterxml.jackson.module.paramnames.ParameterNamesModule;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.util.Optional;
 import org.yaml.snakeyaml.LoaderOptions;
 
 /**
@@ -24,19 +26,9 @@ import org.yaml.snakeyaml.LoaderOptions;
  * as an instance field — mappers are thread-safe after configuration, so repeated calls to
  * {@link #yamlMapper()} or {@link #jsonMapper()} return the same cached instance.
  *
- * <p>The YAML factory is constructed with explicit SnakeYAML {@link LoaderOptions} to enforce
- * NFR-WF-DEF-006:
- * <ul>
- *   <li>{@code codePointLimit} = {@value #YAML_CODE_POINT_LIMIT} code points (256 KiB) — matches
- *       the service-level size cap in
- *       {@link dev.vertique.workflow.definition.service.DefaultWorkflowDefinitionService}.
- *       Enforced by SnakeYAML's Scanner, which Jackson's {@code YAMLParser} uses directly.</li>
- *   <li>{@code maxAliasesForCollections} = {@value #YAML_MAX_ALIASES} — defense-in-depth limit
- *       for any raw SnakeYAML usage (e.g., Composer-based paths). Note: Jackson's {@code YAMLParser}
- *       tokenises the YAML stream using the Scanner without invoking the Composer, so this limit
- *       does not apply when parsing through Jackson's {@code readTree}/{@code readValue} API.
- *       The primary alias-bomb protection via Jackson is the {@code codePointLimit}.</li>
- * </ul>
+ * <p>The YAML scanner uses the configured input code-point limit. This is independent of
+ * runtime encoded-byte admission. Collection alias limits protect Composer-based SnakeYAML
+ * paths; Jackson tokenizes aliases as scalar anchor names without expanding them.
  *
  * <p>The {@link ParameterNamesModule} is registered on both mappers to enable Jackson to discover
  * record canonical-constructor parameter names at runtime without requiring
@@ -51,18 +43,12 @@ public class WorkflowDefinitionMapperFactory {
 
     // --- Constants ---
 
-    /**
-     * Maximum YAML document size in code points (approximately bytes for ASCII-dominant content).
-     * 256 KiB — matches the service-level size cap in
-     * {@link dev.vertique.workflow.definition.service.DefaultWorkflowDefinitionService#MAX_DEFINITION_SIZE}
-     * (NFR-WF-DEF-006).
-     */
+    /** Default YAML scanner input limit in Unicode code points. */
     static final int YAML_CODE_POINT_LIMIT = 256 * 1024;
 
     /**
      * Maximum number of YAML aliases allowed within a single collection.
-     * Limits alias-bomb attacks that exponentially expand anchors into large in-memory structures
-     * (NFR-WF-DEF-006).
+     * Applies to Composer-based SnakeYAML paths; Jackson does not expand collection aliases.
      */
     static final int YAML_MAX_ALIASES = 50;
 
@@ -72,12 +58,17 @@ public class WorkflowDefinitionMapperFactory {
     private final ObjectMapper jsonMapper;
 
     /**
-     * Constructs the factory and initialises both mappers eagerly. Package-private default
-     * constructor allows Dagger to instantiate via {@code @Inject}.
+     * Constructs a standalone factory with the default YAML code-point policy.
      */
-    @Inject
     WorkflowDefinitionMapperFactory() {
-        this.yamlMapper = buildMapper(safeYamlFactory());
+        this(Optional.empty());
+    }
+
+    /** Constructs the real mappers after resolving the optional typed input policy. */
+    @Inject
+    WorkflowDefinitionMapperFactory(Optional<WorkflowDefinitionsConfig> config) {
+        this.yamlMapper = buildMapper(safeYamlFactory(
+                config.orElseGet(WorkflowDefinitionsConfig::defaults).maxDocumentSizeBytes()));
         this.jsonMapper = buildMapper(new JsonFactory());
     }
 
@@ -89,9 +80,9 @@ public class WorkflowDefinitionMapperFactory {
      *
      * @return a YAML factory with safety limits applied
      */
-    private static YAMLFactory safeYamlFactory() {
+    private static YAMLFactory safeYamlFactory(int codePointLimit) {
         LoaderOptions loaderOptions = new LoaderOptions();
-        loaderOptions.setCodePointLimit(YAML_CODE_POINT_LIMIT);
+        loaderOptions.setCodePointLimit(codePointLimit);
         loaderOptions.setMaxAliasesForCollections(YAML_MAX_ALIASES);
         return YAMLFactory.builder().loaderOptions(loaderOptions).build();
     }

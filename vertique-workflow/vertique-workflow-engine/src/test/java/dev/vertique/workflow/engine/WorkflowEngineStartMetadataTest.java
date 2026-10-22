@@ -165,7 +165,7 @@ class WorkflowEngineStartMetadataTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness harness = buildHarness(propagator);
-        SqlClient tx = org.mockito.Mockito.mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         runOnDuplicated(vertx, v -> {
             holder.bind(TenantCtx.class, new TenantCtx("T1"));
@@ -195,7 +195,7 @@ class WorkflowEngineStartMetadataTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness harness = buildHarness(propagator);
-        SqlClient tx = org.mockito.Mockito.mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         runOnDuplicated(vertx, v -> harness.ops()
                 .start(startCommand(), tx)
@@ -219,7 +219,7 @@ class WorkflowEngineStartMetadataTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness harness = buildHarness(propagator);
-        SqlClient tx = org.mockito.Mockito.mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         runOnDuplicated(vertx, v -> {
             holder.bind(TenantCtx.class, new TenantCtx("T1"));

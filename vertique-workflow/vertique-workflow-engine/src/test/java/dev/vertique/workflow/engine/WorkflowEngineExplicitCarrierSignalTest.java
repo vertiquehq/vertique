@@ -282,7 +282,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
     @DisplayName("signal(): explicit carrier wins over ambient and instance fills an absent namespace (AC-4 core)")
     void signal_explicitCarrierInstanceLevel_carrierWinsOverAmbientPlusInstanceFill(Vertx vertx, VertxTestContext ctx) {
         Harness h = buildHarness();
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow();
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -329,7 +329,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
     void signal_explicitCarrierNullInstanceMetadata_carrierNamespacesOnlyNoFillContribution(
             Vertx vertx, VertxTestContext ctx) {
         Harness h = buildHarness();
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow();
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -367,7 +367,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
     @DisplayName("signal(): a losing dedup-race delivery's carrier is discarded and never bound (FR-WF-CTX-042)")
     void signal_duplicateDedupKeyRace_loserCarrierDiscardedWithLoser(Vertx vertx, VertxTestContext ctx) {
         Harness h = buildHarness();
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
         // Loser: claimOrResolveSignal resolves false (a prior committed transaction already applied
@@ -403,7 +403,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
     void signal_explicitCarrierWithAuthenticatedOnlyNamespace_strippedFromCarrierButInstanceFillUnsanitized(
             Vertx vertx, VertxTestContext ctx) {
         Harness h = buildHarness(Set.of(TenantCtxCodec.decoder(), secureDecoder()));
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow();
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -457,7 +457,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
     void signal_explicitCarrierWithNullPropagator_failsFastInsteadOfSilentlyDroppingCarrier(
             Vertx vertx, VertxTestContext ctx) {
         Harness h = buildHarnessWithNullPropagator();
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
         DurableMetadata explicitCarrier =

@@ -18,6 +18,7 @@ import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.postgresql.query.PgWorkflowInstanceQueryService;
+import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
 import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
@@ -28,6 +29,8 @@ import dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionService;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.query.WorkflowInstanceQueryService;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.retention.WorkflowRetentionService;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerStore;
@@ -44,13 +47,14 @@ import java.util.Optional;
  * {@code @WorkflowRecorders} multibinding, the {@code @OptionalIntentKinds} default set, the
  * optional {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} binding, and the
  * engine's {@code core}/{@code context} includes). This module contributes only the dialect-specific
- * bindings: the five repository SPIs, the task/timer stores, the transaction runner, and the
+ * bindings: the five repository SPIs, the task/timer/definition-registry stores, the transaction runner, and the
  * query/retention services — all bound to their PostgreSQL implementations.
  *
  * <p>Consumers install only {@code WorkflowPostgresqlModule}; the engine wiring arrives transitively
  * through the {@code include}, so application wiring is unchanged.
  *
- * <p>The five repositories, the two stores and {@link PgWorkflowRetentionRepository} are each
+ * <p>The five repositories, the three stores (task, timer and definition registry) and
+ * {@link PgWorkflowRetentionRepository} are each
  * provided as one scoped instance built with the optional {@link DbSchemas} placement, so every
  * workflow table is read and written in the schema mapped for the {@code workflow} instance and
  * resolves through the connection's default schema when no mapping exists. The SPI bindings and
@@ -206,6 +210,26 @@ public abstract class WorkflowPostgresqlModule {
         return new PgWorkflowRetentionRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
     }
 
+    /**
+     * Provides the {@link PgWorkflowDefinitionRegistryStore}, applying the schema mapping for the
+     * {@code workflow} instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param config  the optional shared document policy; defaults apply when absent
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL definition registry store
+     */
+    @Provides
+    @Singleton
+    static PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore(
+            Pool pool,
+            PgDbExceptionMapper mapper,
+            Optional<WorkflowDefinitionsConfig> config,
+            Optional<DbSchemas> schemas) {
+        return new PgWorkflowDefinitionRegistryStore(pool, mapper, config, schemas.orElseGet(DbSchemas::empty));
+    }
+
     // --- Store SPI bindings ---
 
     /**
@@ -332,4 +356,15 @@ public abstract class WorkflowPostgresqlModule {
     @Binds
     @Singleton
     abstract WorkflowRetentionService bindRetentionService(PgWorkflowRetentionService impl);
+
+    /**
+     * Binds {@link PgWorkflowDefinitionRegistryStore} as the {@link WorkflowDefinitionRegistryStore}
+     * implementation, using the existing application pool and the scoped store instance.
+     *
+     * @param store the definition registry store singleton
+     * @return the store as the public SPI interface
+     */
+    @Binds
+    @Singleton
+    abstract WorkflowDefinitionRegistryStore definitionRegistryStore(PgWorkflowDefinitionRegistryStore store);
 }

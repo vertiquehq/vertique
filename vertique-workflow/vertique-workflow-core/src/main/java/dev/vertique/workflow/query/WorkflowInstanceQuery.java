@@ -33,6 +33,9 @@ import java.util.Objects;
  * @param definitionId optional definition id to filter by; {@code null} means no filter
  * @param includeArchived when {@code true}, archived instances (with a non-null {@code archived_at})
  *     are included in the result; defaults to {@code false}
+ * @param tenantKey optional tenant key to filter by (exact match); {@code null} means no filter and
+ *     matches every tenant. This is a filter, not an isolation or authorization boundary: a caller
+ *     that has not resolved a tenant must not pass {@code null} expecting scoping.
  */
 public record WorkflowInstanceQuery(
         @Nullable WorkflowStatus status,
@@ -41,7 +44,23 @@ public record WorkflowInstanceQuery(
         @Nullable String subjectId,
         @Nullable String subjectVersion,
         @Nullable String definitionId,
-        boolean includeArchived) {
+        boolean includeArchived,
+        @Nullable String tenantKey) {
+
+    /**
+     * Creates a query without a tenant filter. Retained so existing callers keep compiling;
+     * equivalent to the canonical constructor with a {@code null} {@code tenantKey}.
+     */
+    public WorkflowInstanceQuery(
+            @Nullable WorkflowStatus status,
+            @Nullable String businessKey,
+            @Nullable String subjectType,
+            @Nullable String subjectId,
+            @Nullable String subjectVersion,
+            @Nullable String definitionId,
+            boolean includeArchived) {
+        this(status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, null);
+    }
 
     // --- Factory methods ---
 
@@ -114,7 +133,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withStatus(@Nullable WorkflowStatus status) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived);
+                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, tenantKey);
     }
 
     /**
@@ -125,7 +144,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withBusinessKey(@Nullable String businessKey) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived);
+                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, tenantKey);
     }
 
     /**
@@ -136,7 +155,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withSubjectType(@Nullable String subjectType) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived);
+                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, tenantKey);
     }
 
     /**
@@ -147,7 +166,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withSubjectId(@Nullable String subjectId) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived);
+                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, tenantKey);
     }
 
     /**
@@ -169,7 +188,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withSubjectVersion(@Nullable String subjectVersion) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived);
+                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, tenantKey);
     }
 
     /**
@@ -180,7 +199,7 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withDefinitionId(@Nullable String definitionId) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived);
+                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, tenantKey);
     }
 
     /**
@@ -191,6 +210,18 @@ public record WorkflowInstanceQuery(
      */
     public WorkflowInstanceQuery withIncludeArchived(boolean includeArchived) {
         return new WorkflowInstanceQuery(
-                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived);
+                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, tenantKey);
+    }
+
+    /**
+     * Returns a copy of this query with the {@code tenantKey} field replaced.
+     *
+     * @param tenantKey the tenant key to match exactly; {@code null} removes the filter, which
+     *     matches every tenant
+     * @return a new {@code WorkflowInstanceQuery} with the updated field and all others preserved
+     */
+    public WorkflowInstanceQuery withTenantKey(@Nullable String tenantKey) {
+        return new WorkflowInstanceQuery(
+                status, businessKey, subjectType, subjectId, subjectVersion, definitionId, includeArchived, tenantKey);
     }
 }

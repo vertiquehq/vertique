@@ -28,7 +28,7 @@ import java.util.Set;
  * inside the constructor would make it impossible to register a {@code v1 -> v2} migration handler
  * when only {@code v1} is statically contributed to the Dagger graph at startup time and {@code v2}
  * is loaded later via
- * {@link dev.vertique.workflow.definition.service.WorkflowDefinitionService#activate}.
+ * the asynchronous document-definition activation service.
  * Dagger constructs all singletons eagerly; if the constructor throws for an absent version the
  * entire graph fails to build.
  *

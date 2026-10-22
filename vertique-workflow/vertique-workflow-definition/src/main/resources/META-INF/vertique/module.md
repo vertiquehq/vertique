@@ -253,18 +253,104 @@ static PayloadMapperContributor reserveInventoryPayload() {
 
 ## Runtime Loading And Activation
 
-`WorkflowDefinitionService` supports management-style loading:
+`WorkflowDefinitionService` returns Futures for loading, activation, metadata listing, and source
+attribution. For a global definition, compose activation after the candidate load completes:
 
 ```java
-CompiledDefinitionRef ref = service.load(content, DocumentFormat.YAML, metadata);
-service.activate(ref.definitionId(), ref.definitionVersion());
+Future<CompiledDefinitionRef> activated = service
+        .load(content, DocumentFormat.YAML, metadata, null)
+        .compose(ref -> service.activate(new DefinitionKey(
+                null, ref.definitionId(), ref.definitionVersion())).map(ref));
+
+Future<List<WorkflowDefinitionRecord>> definitions = service.list(
+        new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null));
 ```
 
-`load` parses, validates, and compiles the document into a candidate. `activate` registers it with the workflow registry. A failed load leaves the previous active version untouched. A failed activation leaves the candidate inactive.
+`load` parses, validates, and compiles a candidate without registering it. `activate` publishes it;
+a failed load leaves the prior active version untouched. With PostgreSQL installed, source and
+metadata are durable and activation recompiles the stored text rather than trusting a local cache.
+The managed application lifecycle restores activated documents of every owner before any BOOTSTRAP verticle
+deploys. After source verification and active-membership recomputation, it rereads committed status and
+provenance and delivers fresh metadata to each already-verified registration through `onRestored`; the
+cache therefore reflects the promoted and demoted versions before traffic starts. The callback is
+idempotent and a failure aborts startup. A missing loader or stored/compiled hash mismatch also aborts
+startup. All nodes sharing live documents must have the appropriate loader and application callback/type
+catalog. Source URIs are never fetched. Without a store, these operations retain their in-memory outcomes
+through the asynchronous signatures.
 
-Previously started workflow instances remain pinned to the version they started with. New starts use the current version unless `StartCommand.requestedDefinitionVersion` asks for a specific version.
+`deprecate(DefinitionKey)` moves an ACTIVE or SUPERSEDED version to DEPRECATED durably, marks it in the
+local registry and reports DEPRECATED in service metadata and lists. New starts of that version and
+migrations to it are refused with reason `DEPRECATED`, including a retry of an explicit start under an
+idempotency key used before the deprecation; instances already pinned to it keep running on the node that
+marked it, and on every peer that marks the version when its own reconciliation applies the deprecation. A restart restores the deprecated version (including a packaged document deprecated in the
+database), registers it, marks it and lets pinned instances resume, while new starts of it stay refused.
+Other running nodes learn of the deprecation from their next periodic reconciliation, which takes the configured
+staleness cadence plus the time to apply, or when they restart. Deprecating the active version does not promote
+another, so a durable listing can show no ACTIVE version until the next startup recomputation, while
+current resolution already serves the next lower version. It requires the durable registry: without one,
+the returned Future fails.
 
-Current v1 constraint: coexisting versions of the same document-backed workflow must use distinct contract interface classes because contract metadata is keyed by Java class.
+`reinstate(DefinitionKey)` brings a retired version back when its source is available (the deployed code for a code version,
+the stored text for a document) and no other owner holds the id; the version becomes ACTIVE if it is the highest eligible
+version, otherwise SUPERSEDED. The returned Future fails with `CODE_UNAVAILABLE`, `OWNER_CONFLICT`, `DRIFT`,
+`LOADER_MISSING` or `INVALID_TRANSITION`, and service metadata reports the committed status.
+
+`retire(DefinitionKey)` retires a candidate version, or a deprecated one after the cooling window with no live pinned
+instance, and reports RETIRED in service metadata and lists; the returned Future fails with `COOLING`,
+`PINNED_INSTANCES` or `INVALID_TRANSITION`. Retiring a candidate of one owner never removes another owner's runtime,
+even when id, version and hash are equal.
+
+Startup restores the live documents of every owner, global and tenant. An id that deployed code registers is a
+global CODE row, so activating a tenant document under that id fails with `OWNER_CONFLICT` naming both owners.
+With the store bound, `load` for a tenant accepts only a document id of the form `<tenantKey>:<name>` and a tenant key without `:`;
+otherwise it fails with `WorkflowDefinitionException` naming the tenant key and id and stores nothing. Use the namespaced id
+everywhere the definition id is used (start, pinned resolution, migration targets). Global loads and the in-memory service are
+unchanged; avoid `:` in global ids, since a global id equal to a tenant's namespaced id still collides at startup.
+`load`, `activate`, `deprecate`, `retire` and `reinstate` perform no authorization: restrict them to authorized callers. The
+public `currentStatus` of a version that is only persisted metadata (a candidate or retired row that startup did
+not compile) reports the persisted status instead of returning `null`; it returns `null` only when nothing is known about the version. An equal plan hash no longer proves equal text: a
+packaged document whose text differs (even by a comment, whitespace or line endings) from the stored text of the
+same id and version fails startup, so bump the version of a changed document; a retired row of that id and version blocks it too.
+
+`sourceMetadata(DefinitionKey)` reads attribution without fetching source text. Lists contain immutable,
+key-bearing metadata. With a store bound, `list` and `sourceMetadata` read the durable table and have no
+in-memory fallback, so metadata of packaged documents and code definitions appears only after the managed
+BOOTSTRAP step has recorded it. Definition id and tenant key (255), source type (64), URI (2048) and revision,
+author and upload id (255) code-point limits apply in every mode, including when no store is installed. NUL and
+unpaired surrogates are rejected in every text field, ISO control characters in ids and tenant keys, and a
+version must be positive. Over-limit input is rejected before anything is registered. Invalid asynchronous
+arguments are failed Futures. Previously started instances keep their pinned version. Each coexisting
+document version needs its own contract interface class because registry contract mappings use that class.
+
+### Source Text And Size Policy
+
+`WorkflowDefinitionsConfig` supplies runtime input limit L (default 262144 bytes). Install the opt-in
+`WorkflowDefinitionsConfigModule` with the canonical `ConfigParsingModule` to parse
+`workflow.definitions.maxDocumentSizeBytes` and `maxStalenessSeconds`, or bind the typed config directly.
+The default applies without a parser binding. The YAML scanner's code-point limit is L; nesting,
+expression limits, and collection-alias settings remain independent.
+
+| Source path | Admission |
+|---|---|
+| Runtime `load`, with or without a store | Original input at most L bytes, checked before parsing |
+| Static source without a store | Existing byte parser; YAML code-point guard L, no added JSON byte cap or source decoder |
+| Static source with a store | Existing pipeline first, then strict whole-source conversion and stored-text envelope; no runtime raw-byte cap |
+| Durable restore | Guarded stored text, at most floor(3L/2) UTF-8 bytes and L Unicode code points; no raw-L restore cap |
+
+Durable storage preserves decoded source characters, comments, whitespace, and line endings, rather
+than original encoded bytes or a reserialized document. JSON retains the existing UTF-8/16/32 reader
+support and consumes its recognized leading encoding marker; YAML remains UTF-8 and preserves its
+reader's leading marker character. Strict conversion checks the whole durable source after the
+ordinary pipeline succeeds: malformed encoding, actual decoded NUL, and unpaired surrogates fail
+before persistence. Escaped source sequences remain source text. No additional trailing-token policy
+is enabled, so this representation check can reject malformed trailing bytes that a no-store parser
+previously ignored.
+
+PostgreSQL DOCUMENT bodies require server encoding UTF8. All nodes sharing the table use the same
+limits. Raise L everywhere before admitting larger sources; increased limits increase memory and
+parsing costs. Lowering L below a required stored row's envelope makes restoration fail explicitly.
+A changed catalogue lookup alias alone need not change the existing plan hash: the hash includes
+builder-generated plan callback identities and structure. Keep the required callback behavior deployed.
 
 ---
 
