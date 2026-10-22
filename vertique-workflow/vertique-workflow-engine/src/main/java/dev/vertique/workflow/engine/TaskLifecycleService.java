@@ -1166,27 +1166,30 @@ final class TaskLifecycleService {
                 // Branch has moved on — reminder is irrelevant.
                 return Future.succeededFuture();
             }
-            // Atomically increment the reminder counter (gated on status='OPEN').
-            return taskStore.incrementRemindersFiredCount(taskId, tx).compose(maybeIndex -> {
-                if (maybeIndex.isEmpty()) {
-                    // Task closed concurrently — no-op.
+            // Resolve the pinned plan BEFORE any write: a node that cannot run the pinned version
+            // must leave the reminder counter untouched, because the executor re-queues the timer
+            // in this same transaction and the re-queue commits.
+            return instances.findById(workflowId, tx).compose(optInst -> {
+                if (optInst.isEmpty()) {
                     return Future.succeededFuture();
                 }
-                int reminderIndex = maybeIndex.get();
-                Instant now = clock.instant();
-
-                // Resolve the HumanTaskNode to get reminder spec for next scheduling.
-                return instances.findById(workflowId, tx).compose(optInst -> {
-                    if (optInst.isEmpty()) {
+                WorkflowInstance inst = optInst.get();
+                RuntimeWorkflow rw;
+                try {
+                    rw = resolveAndCheckPlanHash(inst);
+                } catch (Exception e) {
+                    return Future.<Void>failedFuture(e);
+                }
+                // Atomically increment the reminder counter (gated on status='OPEN').
+                return taskStore.incrementRemindersFiredCount(taskId, tx).compose(maybeIndex -> {
+                    if (maybeIndex.isEmpty()) {
+                        // Task closed concurrently — no-op.
                         return Future.succeededFuture();
                     }
-                    WorkflowInstance inst = optInst.get();
-                    RuntimeWorkflow rw;
-                    try {
-                        rw = resolveAndCheckPlanHash(inst);
-                    } catch (Exception e) {
-                        return Future.<Void>failedFuture(e);
-                    }
+                    int reminderIndex = maybeIndex.get();
+                    Instant now = clock.instant();
+
+                    // Resolve the HumanTaskNode to get reminder spec for next scheduling.
                     WorkflowNode node = rw.nodeById().get(task.stepId());
                     if (!(node instanceof HumanTaskNode htn)) {
                         return Future.<Void>failedFuture(

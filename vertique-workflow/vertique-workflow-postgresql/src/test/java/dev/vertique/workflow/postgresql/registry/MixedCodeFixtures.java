@@ -30,6 +30,10 @@ final class MixedCodeFixtures {
         WAITS_FOR_TASK,
         /** The instance waits for a human task that expires in an hour. */
         WAITS_FOR_TASK_WITH_DUE_DATE,
+        /** The instance waits for a human task that has two one-shot reminders, after one and two hours. */
+        WAITS_FOR_TASK_WITH_REMINDERS,
+        /** The instance forks; its first branch waits for a task that has a reminder every hour, at most three. */
+        WAITS_IN_BRANCHES_FOR_TASK_WITH_REMINDERS,
         /** The instance forks; its first branch waits for a task that expires in an hour, its second for a signal. */
         WAITS_IN_BRANCHES_FOR_TASK_WITH_DUE_DATE,
         /** The instance waits for a timer that is due in an hour. */
@@ -118,6 +122,41 @@ final class MixedCodeFixtures {
                             .build()
                             .complete("done")
                             .complete("expired");
+                case WAITS_FOR_TASK_WITH_REMINDERS ->
+                    start.initialStep("review")
+                            .task("review")
+                            .assignToRole("reviewers")
+                            .reminderAt(Duration.ofHours(1), Duration.ofHours(2))
+                            .decision("approve", void.class)
+                            .onDecision((state, decision) -> state)
+                            .toStep("done")
+                            .build()
+                            .complete("done");
+                case WAITS_IN_BRANCHES_FOR_TASK_WITH_REMINDERS ->
+                    start.initialStep(FORK_STEP)
+                            .fork(FORK_STEP)
+                            .branch(FIRST_BRANCH, "review", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                            .branch(SECOND_BRANCH, "await-second", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                            .join("join")
+                            .task("review")
+                            .assignToRole("reviewers")
+                            .reminderEvery(Duration.ofHours(1), 3)
+                            .decision("approve", void.class)
+                            .onDecision((state, decision) -> state)
+                            .toStep("first-done")
+                            .build()
+                            .complete("first-done")
+                            .waitForSignal("await-second", "payment.captured", PaymentCapturedDoc.class)
+                            .onSignal(OrderDocState::applyPaymentCaptured)
+                            .toStepOnSignal("second-done")
+                            .build()
+                            .complete("second-done")
+                            .join("join")
+                            .allRequired((state, results) -> state)
+                            .toStep("done")
+                            .onFailure("done")
+                            .endJoin()
+                            .complete("done");
                 case WAITS_IN_BRANCHES_FOR_TASK_WITH_DUE_DATE ->
                     start.initialStep(FORK_STEP)
                             .fork(FORK_STEP)

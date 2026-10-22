@@ -632,6 +632,25 @@ public final class ManagedDefinitionDatabase {
             };
         }
 
+        /** Accepts an emitted workflow event and keeps nothing, so that plans with task reminders boot and run. */
+        @Provides
+        @IntoSet
+        @WorkflowRecorders
+        @Singleton
+        static WorkflowSideEffectRecorder<SqlClient> eventRecorder() {
+            return new WorkflowSideEffectRecorder<>() {
+                @Override
+                public IntentKind kind() {
+                    return IntentKind.WORKFLOW_EVENT;
+                }
+
+                @Override
+                public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient transaction) {
+                    return Future.succeededFuture(RecorderResult.empty());
+                }
+            };
+        }
+
         @Provides
         @IntoSet
         @WorkflowRecorders

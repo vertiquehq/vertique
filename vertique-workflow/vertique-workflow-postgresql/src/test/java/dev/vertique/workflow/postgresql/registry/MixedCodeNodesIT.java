@@ -375,6 +375,110 @@ public class MixedCodeNodesIT {
     }
 
     @Test
+    @DisplayName("a task reminder firing on a node without the pinned code changes nothing and fires on a capable node")
+    void taskReminderOnNodeWithoutPinnedCodeChangesNothingAndFiresOnCapableNode(Vertx vertx) {
+        String id = "mixed-code-reminder";
+
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, id);
+
+            // Given a version 2 instance on A waiting for a task with reminders after one and two hours, and B with
+            // version 1 only
+            Boot b = nodeWithV1Only(database, id);
+            Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK_WITH_REMINDERS);
+            await(b.app().definitionPropagationPoller().pollNow());
+            WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            List<TimerRow> reminders = reminderTimers(database, instance);
+            assertThat(reminders).hasSize(2);
+            TimerRow first = reminders.getFirst();
+            Rows before = Rows.of(database, instance);
+            SteppedClock clock = new SteppedClock(reminders.getLast().fireAt());
+            RecordingFireJob bJob = new RecordingFireJob(clock);
+
+            // When B's executor runs the first reminder more than once
+            Throwable firstRun = fireOn(executor(b, bJob, clock), first.timerId(), instance);
+            Throwable secondRun = fireOn(executor(b, bJob, clock), first.timerId(), instance);
+
+            // Then the timer is queued again each time and stays scheduled
+            assertThat(firstRun).as("first failure of the executor on B").isNull();
+            assertThat(secondRun).as("second failure of the executor on B").isNull();
+            assertThat(bJob.delays()).hasSize(2);
+            assertThat(reminderTimers(database, instance))
+                    .extracting(TimerRow::status)
+                    .containsOnly("SCHEDULED");
+
+            // And the reminder counter, the history, the timers and the other rows are as they were
+            assertThat(Rows.of(database, instance)).isEqualTo(before);
+            assertThat(before.tasks()).endsWith(":OPEN:0");
+
+            // When A's executor runs the first reminder
+            Throwable firedOnA = fireOn(executor(a, new RecordingFireJob(clock), clock), first.timerId(), instance);
+
+            // Then it fired as reminder 1 of 2 and the second reminder is still scheduled
+            assertThat(firedOnA).as("failure of the executor on A").isNull();
+            assertThat(Rows.of(database, instance).tasks()).endsWith(":OPEN:1");
+            assertThat(reminderIndexes(database, instance, "TASK_REMINDER_FIRED"))
+                    .containsExactly("1");
+            assertThat(reminderTimers(database, instance))
+                    .extracting(TimerRow::status)
+                    .containsExactly("FIRED", "SCHEDULED");
+        }
+    }
+
+    @Test
+    @DisplayName("a branch task reminder firing on a node without the pinned code changes nothing and fires elsewhere")
+    void branchTaskReminderOnNodeWithoutPinnedCodeChangesNothingAndFiresOnCapableNode(Vertx vertx) {
+        String id = "mixed-code-branch-reminder";
+
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, id);
+
+            // Given a version 2 instance on A whose first branch waits for a task with an hourly reminder, and B with
+            // version 1 only
+            Boot b = nodeWithV1Only(database, id);
+            Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_IN_BRANCHES_FOR_TASK_WITH_REMINDERS);
+            await(b.app().definitionPropagationPoller().pollNow());
+            WorkflowInstanceId instance = await(onDuplicatedContext(
+                    vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
+            TimerRow reminder = timerWithPurpose(database, instance, "TASK_REMINDER");
+            Rows before = Rows.of(database, instance);
+            assertThat(before.tasks()).endsWith(":OPEN:0");
+            SteppedClock clock = new SteppedClock(reminder.fireAt());
+            RecordingFireJob bJob = new RecordingFireJob(clock);
+
+            // When B's executor runs the reminder more than once
+            Throwable firstRun = failureOf(onDuplicatedContext(vertx, () -> executor(b, bJob, clock)
+                    .execute(new TimerFirePayload(reminder.timerId(), instance, null), mock(JobContext.class))));
+            Throwable secondRun = failureOf(onDuplicatedContext(vertx, () -> executor(b, bJob, clock)
+                    .execute(new TimerFirePayload(reminder.timerId(), instance, null), mock(JobContext.class))));
+
+            // Then the timer is queued again each time and stays scheduled
+            assertThat(firstRun).as("first failure of the executor on B").isNull();
+            assertThat(secondRun).as("second failure of the executor on B").isNull();
+            assertThat(bJob.delays()).hasSize(2);
+            assertThat(timerWithPurpose(database, instance, "TASK_REMINDER").status())
+                    .isEqualTo("SCHEDULED");
+
+            // And the reminder counter, the history, the timers, the branches and the task are as they were
+            assertThat(Rows.of(database, instance)).isEqualTo(before);
+
+            // When A's executor runs the reminder
+            Throwable firedOnA = failureOf(onDuplicatedContext(vertx, () -> executor(
+                            a, new RecordingFireJob(clock), clock)
+                    .execute(new TimerFirePayload(reminder.timerId(), instance, null), mock(JobContext.class))));
+
+            // Then it fired as reminder 1, and the next one is scheduled an hour after the first
+            assertThat(firedOnA).as("failure of the executor on A").isNull();
+            assertThat(Rows.of(database, instance).tasks()).endsWith(":OPEN:1");
+            assertThat(reminderIndexes(database, instance, "BRANCH_TASK_REMINDER_FIRED"))
+                    .containsExactly("1");
+            List<TimerRow> reminders = reminderTimers(database, instance);
+            assertThat(reminders).extracting(TimerRow::status).containsExactly("FIRED", "SCHEDULED");
+            assertThat(reminders.getLast().fireAt()).isEqualTo(reminder.fireAt().plus(Duration.ofHours(1)));
+        }
+    }
+
+    @Test
     @DisplayName("a start replay on a node without the pinned code still compares the contract of the client")
     void startReplayOnNodeWithoutPinnedCodeComparesTheContract(Vertx vertx) {
         String id = "mixed-code-replay";
@@ -645,7 +749,7 @@ public class MixedCodeNodesIT {
     // --- Rows ---
 
     /** Everything a refused call must leave as it was, read straight from the tables. */
-    private record Rows(String instance, long history, long dedup, String branches, String tasks) {
+    private record Rows(String instance, long history, long dedup, String branches, String tasks, String timers) {
 
         static Rows of(DefinitionScenario database, WorkflowInstanceId id) {
             Row instance = one(database, """
@@ -673,8 +777,12 @@ public class MixedCodeNodesIT {
                             FROM workflow_branch_tokens WHERE workflow_id = $1 ORDER BY branch_id
                             """, id.value()),
                     joined(database, """
-                            SELECT task_id::text || ':' || status AS item
+                            SELECT task_id::text || ':' || status || ':' || reminders_fired_count AS item
                             FROM workflow_tasks WHERE workflow_id = $1 ORDER BY task_id
+                            """, id.value()),
+                    joined(database, """
+                            SELECT purpose || ':' || status || ':' || fire_at AS item
+                            FROM workflow_timers WHERE workflow_id = $1 ORDER BY fire_at, timer_id
                             """, id.value()));
         }
     }
@@ -704,6 +812,36 @@ public class MixedCodeNodesIT {
                 row.getString("status"),
                 row.getUUID("delayed_job_execution_id"),
                 row.getOffsetDateTime("fire_at").toInstant());
+    }
+
+    /** The reminder timers of the instance, earliest first. */
+    private static List<TimerRow> reminderTimers(DefinitionScenario database, WorkflowInstanceId instance) {
+        List<TimerRow> timers = new ArrayList<>();
+        for (Row row : await(database.admin().preparedQuery("""
+                        SELECT timer_id, status, delayed_job_execution_id, fire_at
+                        FROM workflow_timers WHERE workflow_id = $1 AND purpose = 'TASK_REMINDER'
+                        ORDER BY fire_at, timer_id
+                        """).execute(Tuple.of(instance.value())))) {
+            timers.add(new TimerRow(
+                    row.getUUID("timer_id"),
+                    row.getString("status"),
+                    row.getUUID("delayed_job_execution_id"),
+                    row.getOffsetDateTime("fire_at").toInstant()));
+        }
+        return timers;
+    }
+
+    /** The reminder indexes recorded by history entries of the type, in the order they were recorded. */
+    private static List<String> reminderIndexes(
+            DefinitionScenario database, WorkflowInstanceId instance, String entryType) {
+        List<String> indexes = new ArrayList<>();
+        for (Row row : await(database.admin().preparedQuery("""
+                        SELECT payload_json ->> 'reminderIndex' AS item
+                        FROM workflow_history WHERE workflow_id = $1 AND entry_type = $2 ORDER BY sequence
+                        """).execute(Tuple.of(instance.value(), entryType)))) {
+            indexes.add(row.getString("item"));
+        }
+        return indexes;
     }
 
     private static UUID openTask(DefinitionScenario database, WorkflowInstanceId instance) {
