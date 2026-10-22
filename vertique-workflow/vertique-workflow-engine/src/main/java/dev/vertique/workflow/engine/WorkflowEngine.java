@@ -735,9 +735,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * keys are shared by the clients of one start scope and id. A start that names no version otherwise returns
      * the existing instance. A start that names a version, and possibly a target scope, must name the definition
      * the existing instance is pinned to; any other pin fails as an idempotency conflict. A replay never changes
-     * a pin. When this node has no plan for the pin, the contract of another registered version of the same id in
-     * the scope stands in for it; a node that holds no version of the id fails with
-     * {@link WorkflowVersionNotRunnableException}, because it cannot compare the contracts.
+     * a pin. When this node has no plan for the pin, the contract the durable registry stores for the pinned
+     * definition stands in for it, and failing that the contract of another registered version of the same id in
+     * the scope; a node that knows neither fails with {@link WorkflowVersionNotRunnableException}, because it
+     * cannot compare the contracts.
      */
     private Future<WorkflowInstanceId> replayedStart(StartCommand cmd, WorkflowInstanceId existing, SqlClient tx) {
         return instances.findById(existing, tx).compose(found -> {
@@ -747,42 +748,58 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         : Future.failedFuture(new WorkflowInstanceNotFoundException(existing));
             }
             WorkflowInstance pinned = found.get();
-            // The pinned version's own plan names the contract; on a node without that plan, any other registered
-            // version of the same id in the scope does, because every version of an id in a scope implements one
-            // contract. A node that holds no version of the id cannot vouch for the caller's contract and refuses,
-            // like a contract-checked query does.
+            // The pinned version's own plan names the contract. On a node without that plan, the contract stored for
+            // the pinned definition does, and failing that any other registered version of the same id in the
+            // scope. A node that knows none of them cannot vouch for the caller's contract and refuses, like a
+            // contract-checked query does.
             DefinitionKey pin =
                     new DefinitionKey(pinned.definitionScopeKey(), pinned.definitionId(), pinned.definitionVersion());
-            Optional<String> pinnedContract = registry.find(pin)
-                    .map(RuntimeWorkflow::contractName)
-                    .or(() -> registry.contractOf(pin.scopeKey(), pin.definitionId()));
-            if (pinnedContract.isEmpty()) {
-                return Future.failedFuture(new WorkflowVersionNotRunnableException(pin, existing));
-            }
-            if (!cmd.contractName().equals(pinnedContract.get())) {
-                return Future.failedFuture(new WorkflowIdempotencyConflictException(
-                        "start",
-                        cmd.idempotencyKey(),
-                        "contract=" + pinnedContract.get(),
-                        "contract=" + EchoedNames.bounded(cmd.contractName())));
-            }
-            if (cmd.requestedDefinitionVersion() == null) {
-                return Future.succeededFuture(existing);
-            }
-            long requestedVersion = cmd.requestedDefinitionVersion();
-            String requestedScope = cmd.requestedTargetScope();
-            boolean sameVersion = pinned.definitionVersion() == requestedVersion;
-            boolean sameScope = requestedScope == null || requestedScope.equals(pinned.definitionScopeKey());
-            if (sameVersion && sameScope) {
-                return Future.succeededFuture(existing);
-            }
-            // The fingerprints keep the stored "definitionVersion=N" format; the scope is named only when it differs.
+            Optional<String> local = registry.find(pin).map(RuntimeWorkflow::contractName);
+            Future<Optional<String>> contractOfPin = local.isPresent()
+                    ? Future.succeededFuture(local)
+                    : activations
+                            .storedContract(pin)
+                            .map(stored -> stored.or(() -> registry.contractOf(pin.scopeKey(), pin.definitionId())));
+            return contractOfPin.compose(pinnedContract -> checkReplay(cmd, existing, pinned, pin, pinnedContract));
+        });
+    }
+
+    /**
+     * Compares the contract and the pin of a replayed start with those of the existing instance, once the contract
+     * of the pinned definition is known or found unknown.
+     */
+    private Future<WorkflowInstanceId> checkReplay(
+            StartCommand cmd,
+            WorkflowInstanceId existing,
+            WorkflowInstance pinned,
+            DefinitionKey pin,
+            Optional<String> pinnedContract) {
+        if (pinnedContract.isEmpty()) {
+            return Future.failedFuture(new WorkflowVersionNotRunnableException(pin, existing));
+        }
+        if (!cmd.contractName().equals(pinnedContract.get())) {
             return Future.failedFuture(new WorkflowIdempotencyConflictException(
                     "start",
                     cmd.idempotencyKey(),
-                    pinFingerprint(sameScope ? null : pinned.definitionScopeKey(), pinned.definitionVersion()),
-                    pinFingerprint(sameScope ? null : requestedScope, requestedVersion)));
-        });
+                    "contract=" + pinnedContract.get(),
+                    "contract=" + EchoedNames.bounded(cmd.contractName())));
+        }
+        if (cmd.requestedDefinitionVersion() == null) {
+            return Future.succeededFuture(existing);
+        }
+        long requestedVersion = cmd.requestedDefinitionVersion();
+        String requestedScope = cmd.requestedTargetScope();
+        boolean sameVersion = pinned.definitionVersion() == requestedVersion;
+        boolean sameScope = requestedScope == null || requestedScope.equals(pinned.definitionScopeKey());
+        if (sameVersion && sameScope) {
+            return Future.succeededFuture(existing);
+        }
+        // The fingerprints keep the stored "definitionVersion=N" format; the scope is named only when it differs.
+        return Future.failedFuture(new WorkflowIdempotencyConflictException(
+                "start",
+                cmd.idempotencyKey(),
+                pinFingerprint(sameScope ? null : pinned.definitionScopeKey(), pinned.definitionVersion()),
+                pinFingerprint(sameScope ? null : requestedScope, requestedVersion)));
     }
 
     private static String pinFingerprint(@Nullable String scopeKey, long version) {

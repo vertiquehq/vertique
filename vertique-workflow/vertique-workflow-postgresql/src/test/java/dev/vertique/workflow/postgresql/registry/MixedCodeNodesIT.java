@@ -87,6 +87,10 @@ public class MixedCodeNodesIT {
     @WorkflowContract("mixed-code-c")
     public interface MixedContract extends OrderDocumentSignals {}
 
+    /** The contract of a version that a node registers after the version that its instances are pinned to is gone. */
+    @WorkflowContract("mixed-code-other")
+    public interface OtherContract extends OrderDocumentSignals {}
+
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_mixed_code_nodes_it")
             .withMigration("classpath:db/migration/workflow");
@@ -96,6 +100,8 @@ public class MixedCodeNodesIT {
 
     private static final String MIXED_CONTRACT_NAME =
             MixedContract.class.getAnnotation(WorkflowContract.class).value();
+    private static final String OTHER_CONTRACT_NAME =
+            OtherContract.class.getAnnotation(WorkflowContract.class).value();
 
     @Test
     @DisplayName("a start on a node without the current version's code fails typed and creates no instance")
@@ -479,7 +485,7 @@ public class MixedCodeNodesIT {
     }
 
     @Test
-    @DisplayName("a start replay on a node without the pinned code still compares the contract of the client")
+    @DisplayName("a start replay on a node without the pinned code compares the contract stored for the pin")
     void startReplayOnNodeWithoutPinnedCodeComparesTheContract(Vertx vertx) {
         String id = "mixed-code-replay";
 
@@ -493,7 +499,7 @@ public class MixedCodeNodesIT {
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
             Rows before = Rows.of(database, instance);
             StartCommand otherContract = new StartCommand(
-                    id, "mixed-code-other", new PlaceOrderDoc("order-k1"), "k1", null, null, null, DEFAULT, null);
+                    id, OTHER_CONTRACT_NAME, new PlaceOrderDoc("order-k1"), "k1", null, null, null, DEFAULT, null);
 
             // When B replays the start through the contract of the instance and through another contract
             WorkflowInstanceId sameContract = await(b.app().workflowOperations().start(start(id, "k1")));
@@ -506,14 +512,33 @@ public class MixedCodeNodesIT {
             // and: another contract is an idempotency conflict of kind start, not the existing instance id
             assertThat(otherContractRefused).isInstanceOf(WorkflowIdempotencyConflictException.class);
 
-            // and: once B holds no version of the id at all, the replay is refused typed, naming the pin
+            // and: once B holds no version of the id at all, the stored contract of the pin still answers the replay
             b.app().workflowRegistry().unregister(new DefinitionKey(DEFAULT, id, 1));
-            Throwable withoutAnyVersionRefused = ActivationFixtures.failureOf(
-                    () -> b.app().workflowOperations().start(start(id, "k1")));
-            assertThat(withoutAnyVersionRefused)
-                    .isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
-                        assertThat(failure.definitionKey()).isEqualTo(new DefinitionKey(DEFAULT, id, 2));
-                    });
+            assertThat(await(b.app().workflowOperations().start(start(id, "k1"))))
+                    .isEqualTo(instance);
+            assertThat(ActivationFixtures.failureOf(
+                            () -> b.app().workflowOperations().start(otherContract)))
+                    .isInstanceOf(WorkflowIdempotencyConflictException.class);
+
+            // and: a later version registered under another contract does not replace the stored one
+            b.app().workflowRegistry().register(MixedCodeFixtures.code(id, 3, Shape.COMPLETES, OtherContract.class));
+            assertThat(await(b.app().workflowOperations().start(start(id, "k1"))))
+                    .isEqualTo(instance);
+            Throwable storedContractConflict = ActivationFixtures.failureOf(() -> b.app()
+                    .workflowOperations()
+                    .start(new StartCommand(
+                            id,
+                            OTHER_CONTRACT_NAME,
+                            new PlaceOrderDoc("order-k1"),
+                            "k1",
+                            null,
+                            null,
+                            null,
+                            DEFAULT,
+                            null)));
+            assertThat(storedContractConflict)
+                    .isInstanceOf(WorkflowIdempotencyConflictException.class)
+                    .hasMessageContaining(MIXED_CONTRACT_NAME);
 
             // and: nothing changed
             assertThat(Rows.of(database, instance)).isEqualTo(before);

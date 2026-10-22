@@ -9,8 +9,10 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -59,16 +61,31 @@ final class DefinitionActivations {
 
     private final AtomicLong sequence = new AtomicLong();
     private final boolean computed;
+    private final Optional<WorkflowDefinitionRegistryStore> store;
     private final Instant computedAt = Instant.now();
 
     /** Constructs a view for an engine without a durable registry, which computes the default scope's versions. */
     DefinitionActivations() {
         this.computed = true;
+        this.store = Optional.empty();
     }
 
     @Inject
     DefinitionActivations(Optional<WorkflowDefinitionRegistryStore> store) {
         this.computed = store.isEmpty();
+        this.store = store;
+    }
+
+    /**
+     * The contract name the durable registry stores for the definition, which holds whether or not this node has
+     * code for it. Empty without a durable registry and when the registry has no row for the key.
+     *
+     * @param key the full definition key
+     * @return a {@link Future} of the stored contract name
+     */
+    Future<Optional<String>> storedContract(DefinitionKey key) {
+        if (store.isEmpty()) return Future.succeededFuture(Optional.empty());
+        return store.get().find(key).map(found -> found.map(WorkflowDefinitionRecord::contractName));
     }
 
     /** The scope's own record of the id, if the view holds one. */
