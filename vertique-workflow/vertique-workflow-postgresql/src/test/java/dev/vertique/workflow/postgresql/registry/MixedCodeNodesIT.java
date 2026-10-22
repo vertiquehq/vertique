@@ -172,8 +172,8 @@ public class MixedCodeNodesIT {
     }
 
     @Test
-    @DisplayName("task completion and a query through a node without the pinned code fail typed")
-    void taskCompletionAndQueryThroughNodeWithoutPinnedCodeFailTyped(Vertx vertx) {
+    @DisplayName("task completion through a node without the pinned code fails typed and a query still reads")
+    void taskCompletionThroughNodeWithoutPinnedCodeFailsTypedAndQueryReads(Vertx vertx) {
         String id = "mixed-code-task";
         DefinitionKey pinned = new DefinitionKey(DEFAULT, id, 2);
 
@@ -193,14 +193,13 @@ public class MixedCodeNodesIT {
                     new TaskCompletionCommand(task, "approve", null, "c1", new WorkflowActor.User("reviewer"), null);
             Throwable completionRefused = ActivationFixtures.failureOf(() ->
                     b.app().pool().withTransaction(tx -> b.app().taskCallbacks().taskCompleted(completion, tx)));
-            Throwable queryRefused = ActivationFixtures.failureOf(
-                    () -> b.app().workflowOperations().query(instance));
+            WorkflowView readOnB = await(b.app().workflowOperations().query(instance));
 
-            // Then both fail typed, naming the pinned version
-            assertThat(completionRefused).isInstanceOf(WorkflowVersionNotRunnableException.class);
-            assertThat(queryRefused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
+            // Then the completion fails typed, naming the pinned version, and the query reads the stored instance
+            assertThat(completionRefused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
                 assertThat(failure.definitionKey()).isEqualTo(pinned);
             });
+            assertThat(readOnB.instance().id()).isEqualTo(instance);
 
             // And the task stays open and the instance is unchanged
             assertThat(Rows.of(database, instance)).isEqualTo(before);
