@@ -162,6 +162,11 @@ SPDX-License-Identifier: EUPL-1.2
         <!-- Test dependencies -->
         <dependency>
             <groupId>dev.vertique</groupId>
+            <artifactId>vertique-workflow-definition</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
             <artifactId>vertique-application-test</artifactId>
             <scope>test</scope>
         </dependency>

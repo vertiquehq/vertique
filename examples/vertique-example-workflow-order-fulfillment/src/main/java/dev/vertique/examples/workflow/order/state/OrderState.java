@@ -4,6 +4,7 @@
 package dev.vertique.examples.workflow.order.state;
 
 import dev.vertique.examples.workflow.order.command.PlaceOrder;
+import dev.vertique.workflow.types.WorkflowType;
 import jakarta.annotation.Nullable;
 import java.util.List;
 
@@ -22,6 +23,7 @@ import java.util.List;
  * @param authorizationId payment authorization id; set after payment is authorized
  * @param trackingNumber shipment tracking number; set after shipment is created
  */
+@WorkflowType("order")
 public record OrderState(
         String orderId,
         String customerId,

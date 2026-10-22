@@ -105,10 +105,13 @@ import jakarta.inject.Singleton;
  *       {@link dev.vertique.job.JobRepository} binding (via included
  *       {@link dev.vertique.job.postgresql.JobPostgresqlModule}). Required by
  *       {@link WorkflowDelayedModule}.</li>
+ *   <li>{@code GeneratedWorkflowTypeCatalogModule} — the type catalog the annotation processor
+ *       generates from the {@code @WorkflowContract} and {@code @WorkflowType} classes of this
+ *       module; every component that registers or loads workflow definitions includes it.</li>
  *   <li>{@link OrderFulfillmentDefinitionModule} — linear order-fulfillment workflow definition
  *       (cycle 1 saga).</li>
  *   <li>{@link OrderFulfillmentFanOutDefinitionModule} — ALL_REQUIRED fan-out order-fulfillment
- *       workflow definition (PRD-WF-002 §A.5.1).</li>
+ *       workflow definition.</li>
  *   <li>{@link TimerDefinitionModule} — standalone-timer and signal-with-timeout definitions
  *       used by cycle-2 timer ITs.</li>
  *   <li>{@link WorkflowTasksModule} — {@link TaskService},
@@ -149,6 +152,7 @@ import jakarta.inject.Singleton;
             WorkflowDelayedModule.class,
             DelayedJobModule.class,
             CronPersistenceModule.class,
+            GeneratedWorkflowTypeCatalogModule.class,
             OrderFulfillmentDefinitionModule.class,
             OrderFulfillmentFanOutDefinitionModule.class,
             TimerDefinitionModule.class,
@@ -172,7 +176,7 @@ public interface AppComponent extends VertiqueApplicationComponent {
      * <p>Used by integration-test relay drivers to deliver branch-targeted signals using the
      * {@link TransactionalWorkflowOperations#signal(dev.vertique.workflow.ops.WorkflowInstanceId,
      * String, Object, String, String, String, Object)} overload that accepts
-     * {@code forkStepId} and {@code branchId} (PRD-WF-002 §D11).
+     * {@code forkStepId} and {@code branchId}.
      *
      * @return transactional workflow operations backed by {@link SqlClient}
      */

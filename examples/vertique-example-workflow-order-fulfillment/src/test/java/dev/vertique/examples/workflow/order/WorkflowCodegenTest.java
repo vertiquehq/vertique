@@ -30,8 +30,7 @@ class WorkflowCodegenTest {
     void orderFulfillmentProxyImplementsContract() {
         OrderFulfillmentWorkflow proxy = new OrderFulfillmentWorkflow_WorkflowClientProxy(
                 mock(WorkflowOperations.class),
-                new WorkflowClientBinding(
-                        "order-fulfillment", OrderFulfillmentWorkflow.class.getName(), null, null, null));
+                new WorkflowClientBinding("order-fulfillment", "order-fulfillment", null, null, null));
 
         assertInstanceOf(
                 OrderFulfillmentWorkflow.class, proxy, "generated proxy must implement the contract interface");
@@ -46,8 +45,7 @@ class WorkflowCodegenTest {
     void orderFulfillmentFanOutProxyImplementsContract() {
         OrderFulfillmentFanOutWorkflow proxy = new OrderFulfillmentFanOutWorkflow_WorkflowClientProxy(
                 mock(WorkflowOperations.class),
-                new WorkflowClientBinding(
-                        "order-fulfillment-fanout", OrderFulfillmentFanOutWorkflow.class.getName(), null, null, null));
+                new WorkflowClientBinding("order-fulfillment-fanout", "order-fulfillment-fanout", null, null, null));
 
         assertInstanceOf(
                 OrderFulfillmentFanOutWorkflow.class,

@@ -28,7 +28,7 @@ import io.vertx.core.Future;
  * integration test drives the branch signals directly via
  * {@link dev.vertique.workflow.ops.TransactionalWorkflowOperations}.
  */
-@WorkflowContract
+@WorkflowContract("order-fulfillment-fanout")
 public interface OrderFulfillmentFanOutWorkflow {
     /**
      * Delivers the fraud-screening result.

@@ -9,8 +9,6 @@ import dev.vertique.core.lifecycle.LifecycleOrdered;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.examples.workflow.order.AppComponent;
 import dev.vertique.examples.workflow.order.DaggerAppComponent;
-import dev.vertique.examples.workflow.order.OrderFulfillmentFanOutWorkflow;
-import dev.vertique.examples.workflow.order.OrderFulfillmentWorkflow;
 import dev.vertique.examples.workflow.order.command.AuthorizePayment;
 import dev.vertique.examples.workflow.order.command.CreateShipment;
 import dev.vertique.examples.workflow.order.command.PlaceOrder;
@@ -65,6 +63,12 @@ import org.slf4j.LoggerFactory;
 public abstract class SagaTestBase {
 
     private static final Logger log = LoggerFactory.getLogger(SagaTestBase.class);
+
+    /** The logical contract name of the linear order-fulfillment workflow. */
+    static final String ORDER_CONTRACT = "order-fulfillment";
+
+    /** The logical contract name of the fan-out order-fulfillment workflow. */
+    static final String FAN_OUT_CONTRACT = "order-fulfillment-fanout";
 
     /** Multi-module migrations: inbox-outbox tables + workflow tables. */
     static final String MIGRATIONS = "classpath:db/migration/inbox-outbox,classpath:db/migration/workflow";
@@ -305,15 +309,7 @@ public abstract class SagaTestBase {
         return component
                 .workflowOperations()
                 .start(new StartCommand(
-                        "order-fulfillment",
-                        OrderFulfillmentWorkflow.class.getName(),
-                        cmd,
-                        cmd.idempotencyKey(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        null));
+                        "order-fulfillment", ORDER_CONTRACT, cmd, cmd.idempotencyKey(), null, null, null, null, null));
     }
 
     /**
@@ -329,7 +325,7 @@ public abstract class SagaTestBase {
                 .workflowOperations()
                 .start(new StartCommand(
                         "order-fulfillment-fanout",
-                        OrderFulfillmentFanOutWorkflow.class.getName(),
+                        FAN_OUT_CONTRACT,
                         cmd,
                         cmd.idempotencyKey(),
                         null,
@@ -370,9 +366,9 @@ public abstract class SagaTestBase {
      * mode). Does NOT deploy any Vert.x verticles — all dispatch is in-process.
      *
      * <p>For all dispatches the workflow id is read from the {@code x-workflow-id} outbox header
-     * so routing is not affected by the branch-state propagation limitation (PRD-WF-002
-     * §NOT-IMPLEMENTED: branch payload factories see an empty state rather than the parent
-     * instance state, making state-derived fields like orderId unavailable at dispatch time).
+     * so routing is not affected by the branch-state propagation limitation (branch payload
+     * factories see an empty state rather than the parent instance state, making state-derived
+     * fields like orderId unavailable at dispatch time).
      * For fan-out branch dispatches, {@code x-workflow-fork-step-id} and
      * {@code x-workflow-branch-id} headers are additionally extracted and forwarded to the
      * branch-aware {@link dev.vertique.workflow.ops.TransactionalWorkflowOperations#signal} overload.
@@ -418,7 +414,7 @@ public abstract class SagaTestBase {
         String branchId = record.headers().get("x-workflow-branch-id");
 
         // Always use the workflow id from the outbox header: this avoids the branch-state
-        // propagation limitation (PRD-WF-002: branch payload factories see empty state so
+        // propagation limitation (branch payload factories see empty state so
         // orderId is null in the dispatch command). The x-workflow-id header is set by
         // OutboxSideEffectRecorder for every workflow service dispatch.
         WorkflowInstanceId instanceId = instanceIdFromHeader(record);
