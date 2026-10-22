@@ -14,6 +14,7 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
@@ -64,6 +65,7 @@ final class MigrationExecutor {
     private final dev.vertique.workflow.migration.WorkflowMigrationRegistry migrationRegistry;
 
     private final WorkflowRegistry registry;
+    private final FailingDefinitions failing;
     private final WorkflowInstanceRepository<SqlClient> instances;
     private final WorkflowHistoryRepository<SqlClient> history;
 
@@ -112,6 +114,8 @@ final class MigrationExecutor {
      *     when durable-context wiring is not exercised)
      * @param stateCompatibility the state comparison applied when the source and target state classes differ;
      *     empty refuses such a migration
+     * @param failing this node's evaluation of the scope rows that deployed code conflicts with; a migration into
+     *     a version it holds is refused
      */
     @Inject
     MigrationExecutor(
@@ -123,11 +127,13 @@ final class MigrationExecutor {
             WorkflowTransitionDriver driver,
             Clock clock,
             WorkflowContextBinder contextBinder,
-            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility) {
+            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
+            FailingDefinitions failing) {
         // migrationRegistryOpt is null only from test-only constructors that delegate with null;
         // Dagger always provides a non-null Optional via @BindsOptionalOf.
         this.migrationRegistry = migrationRegistryOpt != null ? migrationRegistryOpt.orElse(null) : null;
         this.registry = registry;
+        this.failing = failing;
         this.instances = instances;
         this.history = history;
         this.branchTokens = branchTokens;
@@ -135,6 +141,42 @@ final class MigrationExecutor {
         this.clock = clock;
         this.contextBinder = contextBinder;
         this.stateCompatibility = stateCompatibility != null ? stateCompatibility : Optional.empty();
+    }
+
+    /**
+     * Constructs a migration executor that holds no failing version.
+     *
+     * @param migrationRegistryOpt the optional migration registry
+     * @param registry the workflow registry
+     * @param instances the instance repository
+     * @param history the history repository
+     * @param branchTokens the branch-token repository; may be {@code null}
+     * @param driver the transition driver
+     * @param clock the clock
+     * @param contextBinder the binder-row seam
+     * @param stateCompatibility the state comparison; empty refuses a migration between differing state classes
+     */
+    MigrationExecutor(
+            Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
+            WorkflowRegistry registry,
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            @jakarta.annotation.Nullable BranchTokenRepository<SqlClient> branchTokens,
+            WorkflowTransitionDriver driver,
+            Clock clock,
+            WorkflowContextBinder contextBinder,
+            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility) {
+        this(
+                migrationRegistryOpt,
+                registry,
+                instances,
+                history,
+                branchTokens,
+                driver,
+                clock,
+                contextBinder,
+                stateCompatibility,
+                new FailingDefinitions());
     }
 
     /**
@@ -285,8 +327,10 @@ final class MigrationExecutor {
                 && !targetScope.equals(inst.scopeKey())
                 && !WorkflowScopes.DEFAULT.equals(targetScope)) {
             return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowDefinitionException(
-                    "migration of instance '" + id.value() + "' to scope '" + targetScope + "' is refused: scope '"
-                            + targetScope + "' is not visible from the instance's start scope '" + inst.scopeKey()
+                    "migration of instance '" + id.value() + "' to scope '" + EchoedNames.bounded(targetScope)
+                            + "' is refused: scope '" + EchoedNames.bounded(targetScope)
+                            + "' is not visible from the instance's start scope '"
+                            + EchoedNames.bounded(inst.scopeKey())
                             + "'; an instance migrates only to its start scope or the default scope"));
         }
         DefinitionKey targetKey;
@@ -296,6 +340,13 @@ final class MigrationExecutor {
             // A version no key can hold is not registered.
             return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException(
                     targetScope, inst.definitionId(), targetVersion, inst.id()));
+        }
+        // A version this node evaluated as failing admits no new work either; refuse before anything is resolved,
+        // looked up or written.
+        Optional<dev.vertique.workflow.registry.store.DefinitionFailure> failure = failing.find(targetKey);
+        if (failure.isPresent()) {
+            return Future.failedFuture(
+                    new dev.vertique.workflow.exception.WorkflowDefinitionFailingException(targetKey, failure.get()));
         }
         RuntimeWorkflow targetRw;
         try {
@@ -359,9 +410,10 @@ final class MigrationExecutor {
      */
     private Future<Void> refuseIncompatibleTarget(
             WorkflowInstance inst, RuntimeWorkflow sourceRw, RuntimeWorkflow targetRw, DefinitionKey targetKey) {
-        String subject = "migration of instance '" + inst.id().value() + "' from '" + inst.definitionId() + "' v"
-                + inst.definitionVersion() + " in scope '" + inst.definitionScopeKey() + "' to v"
-                + targetKey.definitionVersion() + " in scope '" + targetKey.scopeKey() + "' is refused: ";
+        String subject = "migration of instance '" + inst.id().value() + "' from '"
+                + EchoedNames.bounded(inst.definitionId()) + "' v" + inst.definitionVersion() + " in scope '"
+                + EchoedNames.bounded(inst.definitionScopeKey()) + "' to v" + targetKey.definitionVersion()
+                + " in scope '" + EchoedNames.bounded(targetKey.scopeKey()) + "' is refused: ";
         if (!sourceRw.contractName().equals(targetRw.contractName())) {
             return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException(
                     targetKey,
@@ -371,8 +423,7 @@ final class MigrationExecutor {
         if (sourceRw.stateType().equals(targetRw.stateType())) {
             return null;
         }
-        String states = "the target state type " + targetRw.stateType().getSimpleName() + " differs from the source's "
-                + sourceRw.stateType().getSimpleName();
+        String states = "the target state type differs from the source's";
         if (stateCompatibility.isEmpty()) {
             return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowDefinitionException(subject + states
                     + " and the state comparison is unavailable (no WorkflowStateCompatibility is" + " bound)"));

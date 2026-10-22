@@ -222,7 +222,7 @@ message; they are not treated as absent. Metadata listing never selects the sour
 
 `failure_reason` (`VARCHAR(64)`, nullable, no check constraint) holds the name of the rule a failing scope row breaks,
 `STATE_TYPE_NOT_EXTENDED` or `NAME_BINDING_UNRESOLVED`, and is null for every other row. Only `recordFailure(key, failure)`
-writes it, in one `UPDATE` under the definition id lock, and a startup that finds no conflict clears it. `find` and
+writes it, in one `UPDATE` under the definition id lock that only matches a DOCUMENT row of a scope other than `default` (a default scope row or a CODE row is left untouched), and a startup or a reconciliation pass that finds no conflict clears it. `find` and
 `list` read it into `WorkflowDefinitionRecord.failure()` with the rule's fixed description as the detail; a reason this
 release does not know reads as no failure. A node refuses starts from its own startup evaluation, not from this column, so
 nodes that ship different code can rewrite it during a rolling deploy.

@@ -15,6 +15,7 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStatus;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
@@ -371,7 +372,8 @@ public final class WorkflowTimerFireExecutor implements DelayedJobExecutor<Timer
     }
 
     private static String describe(DefinitionKey key) {
-        return key.scopeKey() + "/" + key.definitionId() + "@v" + key.definitionVersion();
+        return EchoedNames.bounded(key.scopeKey()) + "/" + EchoedNames.bounded(key.definitionId()) + "@v"
+                + key.definitionVersion();
     }
 
     /**

@@ -449,4 +449,55 @@ public class CrossScopeMigrationIT {
             harness.close();
         }
     }
+
+    @Test
+    @DisplayName("a refused migration names the definition key and no state class name")
+    void stateRefusalOfAMigrationNamesNoStateClass() throws Exception {
+        // Given: default versions 1 and 2 with state Base, an acme definition with state Added of the same contract,
+        // and the handler from acme to default version 2
+        Recording<Added, Base> acmeToDefault = new Recording<>(
+                ACME, 1L, DEFAULT, 2L, Added.class, Base.class, (state, ctx) -> new Base(state.id(), state.amount()));
+        Harness harness = open(
+                registry -> {
+                    registry.register(defaultCode(1L));
+                    registry.register(defaultCode(2L));
+                    registry.register(ACME, acmeDocument());
+                },
+                acmeToDefault);
+        try {
+            // and: an instance started in acme and pinned to the acme definition
+            WorkflowInstanceId id = waitingPinnedTo(harness, ACME, ACME, harness.planHash(ACME, 1L));
+
+            // When: it migrates to the default version 2, whose state does not extend the source's
+            Throwable refusal = failureOf(() -> harness.engine().migrate(id, DEFAULT, 2L));
+
+            // Then: the refusal names the instance's definition and the missing property, and no state class
+            assertThat(refusal).isInstanceOf(WorkflowDefinitionException.class);
+            assertThat(refusal.getMessage()).contains(ID).contains("note");
+            assertThat(refusal.getMessage()).doesNotContain("Base", "Added");
+        } finally {
+            harness.close();
+        }
+    }
+
+    @Test
+    @DisplayName("a refused migration repeats a long caller-supplied target scope only in bounded form")
+    void refusalOfAMigrationBoundsTheTargetScope() throws Exception {
+        // Given: an instance started in acme and pinned to the default version 1
+        Harness harness = open(registry -> registry.register(defaultCode(1L)));
+        try {
+            WorkflowInstanceId id = waitingPinnedTo(harness, DEFAULT, ACME, harness.planHash(DEFAULT, 1L));
+
+            // When: it migrates to a target scope that is long and holds a line break
+            String hostile = "line\nforged " + "z".repeat(5000);
+            Throwable refusal = failureOf(() -> harness.engine().migrate(id, hostile, 1L));
+
+            // Then: the refusal does not repeat the scope whole, nor any line break of it
+            assertThat(refusal).isInstanceOf(WorkflowDefinitionException.class);
+            assertThat(refusal.getMessage()).doesNotContain(hostile, "z".repeat(100), "\n");
+            assertThat(refusal.getMessage().length()).isLessThan(1000);
+        } finally {
+            harness.close();
+        }
+    }
 }

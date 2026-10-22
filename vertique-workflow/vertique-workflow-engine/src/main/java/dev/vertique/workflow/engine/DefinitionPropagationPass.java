@@ -8,9 +8,12 @@ import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
+import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
+import dev.vertique.workflow.registry.store.DefinitionFailure.Rule;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -20,10 +23,12 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
@@ -88,6 +93,7 @@ final class DefinitionPropagationPass {
     private final WorkflowCodeDefinitionCatalog catalog;
     private final DefaultWorkflowDefinitionRegistryView view;
     private final DefinitionActivations activations;
+    private final FailingDefinitions failing;
     private final Vertx vertx;
     private final long rowDeadlineMs;
     /** The status and change instant at which a row that is not live was last settled, by key. */
@@ -115,6 +121,7 @@ final class DefinitionPropagationPass {
                 catalog,
                 view,
                 new DefinitionActivations(store),
+                new FailingDefinitions(),
                 vertx,
                 config);
     }
@@ -129,9 +136,11 @@ final class DefinitionPropagationPass {
             WorkflowCodeDefinitionCatalog catalog,
             DefaultWorkflowDefinitionRegistryView view,
             DefinitionActivations activations,
+            FailingDefinitions failing,
             Vertx vertx,
             Optional<WorkflowDefinitionsConfig> config) {
         this.activations = activations;
+        this.failing = failing;
         this.vertx = vertx;
         long seconds = config.orElseGet(WorkflowDefinitionsConfig::defaults).maxStalenessSeconds();
         long deadlineMs;
@@ -212,6 +221,7 @@ final class DefinitionPropagationPass {
                         .compose(found -> {
                             if (found.isEmpty()) {
                                 view.removed(key);
+                                failing.clear(key);
                                 settledRows.remove(key);
                                 reasons.remove(key);
                                 return Future.succeededFuture(false);
@@ -251,6 +261,7 @@ final class DefinitionPropagationPass {
                         && memo.changedAt().equals(row.statusChangedAt())
                         && !own;
             }
+            if (held == null && evaluatedUnresolved(row)) return true;
             return own
                     && held.plan().planHash().equals(row.planHash())
                     && view.recorded(key)
@@ -262,6 +273,25 @@ final class DefinitionPropagationPass {
         } catch (RuntimeException unreadable) {
             return false;
         }
+    }
+
+    /**
+     * Whether this node already evaluated the scope row as failing for an unresolvable recorded type name and the
+     * table shows the same rule. Such a row has no runtime to compare, so this evaluation stands for it.
+     */
+    private boolean evaluatedUnresolved(WorkflowDefinitionRecord row) {
+        DefinitionKey key = row.key();
+        DefinitionFailure stored = row.failure();
+        return !WorkflowScopes.DEFAULT.equals(key.scopeKey())
+                && stored != null
+                && stored.rule() == Rule.NAME_BINDING_UNRESOLVED
+                && failing.find(key)
+                        .filter(mark -> mark.rule() == Rule.NAME_BINDING_UNRESOLVED)
+                        .isPresent()
+                && view.recorded(key)
+                        .filter(known -> known.status() == row.status()
+                                && known.statusChangedAt().equals(row.statusChangedAt()))
+                        .isPresent();
     }
 
     /** Bounds the row by the row deadline; the slot of the row stays held until its action completes. */
@@ -335,6 +365,7 @@ final class DefinitionPropagationPass {
                     removed = true;
                 }
                 view.removed(key);
+                failing.clear(key);
                 handOffMetadata(record);
                 if (removed) log.info("Removed definition {} from this node: it is retired", printable(key));
             }
@@ -422,7 +453,7 @@ final class DefinitionPropagationPass {
         Future<Void> published = record.kind() == DefinitionKind.CODE
                 ? work(() -> {
                     CodeDefinition code = DefinitionPublication.verifiedCode(catalog, record);
-                    publishAndMark(local, record, code.definition());
+                    publishAndMark(local, record, code.definition(), false);
                     return (Void) null;
                 })
                 : publishDocument(local, record);
@@ -433,17 +464,36 @@ final class DefinitionPropagationPass {
         });
     }
 
+    /**
+     * Publishes a stored document. A scope row that this node's code conflicts with is not an apply failure: it is
+     * evaluated as failing exactly as the startup step does, kept in this node's evaluation and written to the
+     * table when it differs from the stored mark. Every conflict of a default scope row is an apply failure.
+     */
     private Future<Void> publishDocument(WorkflowRegistry local, WorkflowDefinitionRecord record) {
         DefinitionKey key = record.key();
+        boolean scoped = !WorkflowScopes.DEFAULT.equals(key.scopeKey());
         PersistedDefinitionLoader loader = DefinitionPublication.loaderFor(loaders, record);
         return store.orElseThrow()
                 .findDocument(key)
                 .compose(document -> work(() -> {
                     WorkflowDefinitionDocument source = document.orElseThrow(() ->
                             DefinitionPublication.failure(Reason.LOADER_MISSING, key, "DOCUMENT source is missing"));
-                    if (!record.nameBinding().isEmpty())
-                        DefinitionPublication.requireBoundNamesResolve(
-                                WorkflowEngineFactory.registryTypeNames(local), record);
+                    if (!record.nameBinding().isEmpty()) {
+                        try {
+                            DefinitionPublication.requireBoundNamesResolve(
+                                    WorkflowEngineFactory.registryTypeNames(local), record);
+                        } catch (WorkflowUnknownTypeNameException unresolved) {
+                            if (!scoped) throw unresolved;
+                            // Nothing is compiled or registered: no class is loaded by a name that no longer
+                            // resolves.
+                            log.info(
+                                    "Definition {} is marked failing: a type name in its recorded name binding no"
+                                            + " longer resolves",
+                                    printable(key));
+                            loader.onMetadata(record);
+                            return DefinitionFailure.of(Rule.NAME_BINDING_UNRESOLVED);
+                        }
+                    }
                     WorkflowDefinition<?, ?> definition;
                     String hash;
                     try {
@@ -460,22 +510,64 @@ final class DefinitionPropagationPass {
                                 Reason.DRIFT,
                                 key,
                                 "stored hash " + record.planHash() + " differs from compiled hash " + hash);
-                    publishAndMark(local, record, definition);
+                    DefinitionFailure evaluated = publishAndMark(local, record, definition, scoped);
                     loader.onRestored(record, definition);
-                    return (Void) null;
-                }));
+                    return evaluated;
+                }))
+                .compose(evaluated -> recordEvaluation(record, evaluated));
+    }
+
+    /**
+     * Keeps this node's evaluation of a scope row and writes it to the table when it differs from the stored mark,
+     * which clears a mark whose conflict is gone. A default scope row carries no evaluation.
+     */
+    private Future<Void> recordEvaluation(WorkflowDefinitionRecord record, @Nullable DefinitionFailure evaluated) {
+        DefinitionKey key = record.key();
+        if (WorkflowScopes.DEFAULT.equals(key.scopeKey())) return Future.succeededFuture();
+        if (evaluated == null) failing.clear(key);
+        else failing.mark(key, evaluated, record.contractName());
+        DefinitionFailure stored = record.failure();
+        boolean unchanged = evaluated == null ? stored == null : stored != null && stored.rule() == evaluated.rule();
+        return unchanged ? Future.succeededFuture() : store.orElseThrow().recordFailure(key, evaluated);
     }
 
     /**
      * Publishes the definition for the row's key and marks it deprecated when the row is. A runtime that could
      * not be marked is removed and unattributed again, so that a deprecated version is never served unmarked.
+     *
+     * <p>When {@code scoped} is set and the registry refuses the definition, it is registered without the comparison
+     * of its state type with the default scope's, as the startup step does, and the failing rule is returned. Any
+     * other refusal propagates.
+     *
+     * @return the rule the scope row breaks, or {@code null} when it registered plainly
      */
-    private void publishAndMark(
-            WorkflowRegistry local, WorkflowDefinitionRecord record, WorkflowDefinition<?, ?> definition) {
+    private @Nullable DefinitionFailure publishAndMark(
+            WorkflowRegistry local,
+            WorkflowDefinitionRecord record,
+            WorkflowDefinition<?, ?> definition,
+            boolean scoped) {
         DefinitionKey key = record.key();
-        RuntimeWorkflow published =
-                DefinitionPublication.publish(local, registrations, key, definition, record.nameBinding());
-        if (record.status() != DefinitionStatus.DEPRECATED) return;
+        RuntimeWorkflow published;
+        DefinitionFailure evaluated = null;
+        try {
+            published = DefinitionPublication.publish(local, registrations, key, definition, record.nameBinding());
+        } catch (WorkflowDefinitionException refusal) {
+            if (!scoped) throw refusal;
+            // Only the comparison with the default scope's state type differs between the two registrations, so a
+            // registration that succeeds now was refused by it.
+            try {
+                published = DefinitionPublication.publishFailing(
+                        local, registrations, key, definition, record.nameBinding(), record.planHash());
+            } catch (RuntimeException notTheComparison) {
+                refusal.addSuppressed(notTheComparison);
+                throw refusal;
+            }
+            log.info(
+                    "Definition {} is marked failing: its state type does not extend the default scope's",
+                    printable(key));
+            evaluated = DefinitionFailure.of(Rule.STATE_TYPE_NOT_EXTENDED);
+        }
+        if (record.status() != DefinitionStatus.DEPRECATED) return evaluated;
         try {
             local.markDeprecated(key);
         } catch (RuntimeException failure) {
@@ -487,6 +579,7 @@ final class DefinitionPropagationPass {
             }
             throw failure;
         }
+        return evaluated;
     }
 
     /** Hands a candidate or retired document to the loaders that support its format. */

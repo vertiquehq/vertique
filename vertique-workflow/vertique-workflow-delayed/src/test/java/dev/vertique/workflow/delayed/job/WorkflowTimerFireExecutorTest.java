@@ -691,6 +691,33 @@ class WorkflowTimerFireExecutorTest {
         }
     }
 
+    @Test
+    @DisplayName("the re-queue lines repeat a long scope key and definition id only in bounded form")
+    void requeueLogsBoundTheEchoedScopeKeyAndDefinitionId() {
+        // Given: a timer, due now, pinned to a definition whose scope key and id are at the length limit, and
+        // the same timer logged once more below warning level
+        String scope = "q".repeat(255);
+        String id = "w".repeat(255);
+        DefinitionKey key = new DefinitionKey(scope, id, 4);
+        MutableClock clock = new MutableClock(FIXED_NOW);
+        WorkflowTimerFireExecutor timed = executorWith(clock);
+        when(fireJob.enqueue(any(TimerFirePayload.class), any(DelayedJobOptions.class), eq(tx)))
+                .thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+        when(timerStore.updateExecutionId(any(), any(), eq(tx))).thenReturn(Future.succeededFuture());
+
+        try (RequeueLog log = new RequeueLog()) {
+            // When: the timer is re-queued twice in the same minute
+            runNotRunnable(timed, clock, key);
+            runNotRunnable(timed, clock, key);
+
+            // Then: a warning and a debug line were logged, naming the key in bounded form only
+            assertThat(log.everything()).hasSize(2);
+            assertThat(log.everything()).allSatisfy(line -> assertThat(line)
+                    .doesNotContain(scope, id, "q".repeat(100), "w".repeat(100))
+                    .contains("q".repeat(10), "w".repeat(10)));
+        }
+    }
+
     // --- Helpers ---
 
     private WorkflowTimerFireExecutor executorWith(Clock clock) {
@@ -790,6 +817,12 @@ class WorkflowTimerFireExecutorTest {
         List<String> warnings() {
             return appender.list.stream()
                     .filter(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .toList();
+        }
+
+        List<String> everything() {
+            return appender.list.stream()
                     .map(ILoggingEvent::getFormattedMessage)
                     .toList();
         }

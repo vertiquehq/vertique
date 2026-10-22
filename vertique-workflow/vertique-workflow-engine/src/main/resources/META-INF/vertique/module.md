@@ -278,7 +278,7 @@ public interface AppComponent {
 
 `WorkflowEngine.start` resolves a null `StartCommand.startScope` to the default scope (`WorkflowScopes.DEFAULT`) and `doCreateInstance` stamps that start scope and the scope of the resolved definition version on the new instance; the engine takes no scope source of its own. The order of a start is: look up the start dedup row of `(start scope, definition id, idempotency key)` (`WorkflowDedupRepository.findStart`), then resolve the definition, then compare the command contract with the definition contract, then claim the dedup row and create the instance. A replay that names a version or target scope other than the existing pin fails with `WorkflowIdempotencyConflictException`; the stored fingerprint stays `definitionVersion=N` and is not used for the comparison. `MigrationExecutor` carries both scopes of the instance into the re-pinned snapshot, and resurrection keeps them, so a scope written by another writer stays with the instance. The scopes are information and a filter, not an isolation boundary.
 
-`migrate(id, targetScope, targetVersion)` (and the transactional form with a trailing transaction) resolves the target in `targetScope`, which must be the instance's start scope or the default scope. Before it looks up the handler it refuses a target of another contract with `WorkflowDefinitionContractMismatchException`, and a target whose state class differs from the source's and does not extend it (or any differing state class when no `WorkflowStateCompatibility` is bound) with `WorkflowDefinitionException`; it then finds the handler by both scopes and re-pins the instance's definition scope to the target. `migrate(id, targetVersion)` keeps meaning the instance's definition scope.
+`migrate(id, targetScope, targetVersion)` (and the transactional form with a trailing transaction) resolves the target in `targetScope`, which must be the instance's start scope or the default scope. Before it looks up the handler it refuses a target of another contract with `WorkflowDefinitionContractMismatchException`, and a target whose state class differs from the source's and does not extend it (or any differing state class when no `WorkflowStateCompatibility` is bound) with `WorkflowDefinitionException`, and a target version that this node evaluated as failing (see Failing scope rows) with `WorkflowDefinitionFailingException`, before any write; refusal messages name the definition key and repeat caller-supplied scope and id only in bounded form, never a state class name; it then finds the handler by both scopes and re-pins the instance's definition scope to the target. `migrate(id, targetVersion)` keeps meaning the instance's definition scope.
 
 Work this node cannot run. A key that the node's registry holds no plan for is not runnable on that node, whether or not another node can run it (a rolling deploy publishes a version that reaches the other nodes as a committed record before they have its code; a failing scope row has no registered plan at all). The plan lookup then fails with `WorkflowVersionNotRunnableException` before anything is written: a start that resolves to such a key (explicit version or activation record) creates no instance and no start dedup row, and a signal (including the branch-aware forms), task completion, query, retry, migration (its source or its target), the timer callbacks, the join advance and branch recovery leave the instance, its history and its dedup rows as they were, because the transaction rolls back and a claimed signal dedup row is not kept. Branch recovery leaves the token scheduled for a node that has the code. No node marks an instance failed because it cannot run its pin, and `query` of such an instance fails the same way, since the node cannot answer for the pinned version. A node whose deployed code lacks a non-retired version still fails startup with `CODE_UNAVAILABLE`, so deployments are roll-forward only: the not-runnable failures occur on nodes that are already running when another node publishes or activates.
 
@@ -388,11 +388,23 @@ when it is published, with `WorkflowUnknownTypeNameException`, and the row stays
   `WorkflowDefinitionFailingException` naming the scope, the definition key and the rule. The check runs after the replay
   check, so a repeat of an earlier start still returns its instance, and before the version is resolved from the
   registry. Other scopes, and the default scope's versions, are not affected.
+- **Default scope unaffected.** A failing scope row never blocks the registration of a default scope version of the same
+  id, at startup or when a default version is published later; only the scope-owned rows that registered plainly take part
+  in that comparison.
 - **Evaluation per node.** Every startup evaluates every live scope row against the code that node ships and writes the
   result with `recordFailure`, which clears the mark when no conflict remains; the node refuses starts from its own
   evaluation, not from the stored mark. The stored mark feeds the definition listing (`WorkflowDefinitionRecord.failure()`).
   During a rolling deploy, nodes that ship different code may rewrite the mark in turn, so the listing shows the most
   recent node's evaluation while each node keeps refusing by its own.
+- **Peer propagation.** The reconciliation pass evaluates a scope row the same way: a live scope DOCUMENT row published by
+  another node that this node's code conflicts with is registered as failing (state rule) or left unregistered (binding
+  rule), kept in this node's evaluation, written with `recordFailure` when the stored mark differs, and counted as settled,
+  not as an apply failure. A default scope row and a CODE row that conflict stay apply failures. The node's evaluation is
+  cleared when the row is retired or removed.
+- **Start target scope.** A start that names a target scope that is neither its own scope nor `default` fails with
+  `WorkflowDefinitionMissingException` before any failing mark is read, so a client learns nothing about another scope's rows.
+- **Containment is limited.** Only these two rules are contained. Any other failure to restore a scope row (a different
+  hash, a missing loader, an unreadable source, a conflict among the scope's own versions) still aborts startup.
 
 `WorkflowDefinitionLifecycle.reinstate` brings a RETIRED or DEPRECATED version back to `AVAILABLE`. A RETIRED version is accepted
 only when the executable source is available (a code definition from the code deployed with the node, captured before startup

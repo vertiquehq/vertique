@@ -143,6 +143,13 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     private final HashMap<ScopedId, Set<Long>> deployed = new HashMap<>();
 
     /**
+     * Keyed by (scope, definitionId) → versions registered through {@link #registerFailing}, whose state class
+     * was not compared with the default scope's. A later default version is not compared with them either.
+     * Guarded by {@link #rwLock} together with {@link #byDefinition}; only registered versions are present.
+     */
+    private final HashMap<ScopedId, Set<Long>> failing = new HashMap<>();
+
+    /**
      * Serializes the multi-step publish phase of {@link #register}.
      * Reads take {@code readLock()}; the publish phase of register takes {@code writeLock()}.
      */
@@ -528,7 +535,8 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
 
     /** Names a definition version and its scope for a refusal message. */
     private static String describe(String scopeKey, String definitionId, long definitionVersion) {
-        return "'" + definitionId + "' v" + definitionVersion + " in scope '" + scopeKey + "'";
+        return "'" + EchoedNames.bounded(definitionId) + "' v" + definitionVersion + " in scope '"
+                + EchoedNames.bounded(scopeKey) + "'";
     }
 
     /** Atomic publish phase: the write lock is held for the entire multi-step publish. */
@@ -565,9 +573,10 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                 if (!earlierState.equals(rw.stateType())) {
                     throw new WorkflowDefinitionException("definition "
                             + describe(scopeKey, definitionId, definitionVersion)
-                            + " has state type " + rw.stateType().getSimpleName() + " but earlier versions of '"
-                            + definitionId + "' in that scope have state type " + earlierState.getSimpleName()
-                            + "; every version of a definition in a scope must have the same state type");
+                            + " has another state type than the earlier versions of '"
+                            + EchoedNames.bounded(definitionId)
+                            + "' in that scope; every version of a definition in a scope must have the same state"
+                            + " type");
                 }
             }
             if (compareWithDefault) requireStateExtension(scopeKey, definitionId, definitionVersion, rw);
@@ -576,6 +585,8 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                     .put(definitionVersion, rw);
             sources.computeIfAbsent(scopedId, k -> new HashMap<>()).put(definitionVersion, def);
             bindings.computeIfAbsent(scopedId, k -> new HashMap<>()).put(definitionVersion, nameBinding);
+            if (!compareWithDefault)
+                failing.computeIfAbsent(scopedId, k -> new HashSet<>()).add(definitionVersion);
             if (deployment)
                 deployed.computeIfAbsent(scopedId, k -> new HashSet<>()).add(definitionVersion);
         } finally {
@@ -599,8 +610,17 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                         || entry.getValue().isEmpty()) {
                     continue;
                 }
-                var scopeOwned = entry.getValue().firstEntry();
-                requireExtension(rw, scopeOwned.getValue(), other.scopeKey(), definitionId, scopeOwned.getKey());
+                Set<Long> failingVersions = failing.getOrDefault(other, Set.of());
+                var scopeOwned = entry.getValue().entrySet().stream()
+                        .filter(version -> !failingVersions.contains(version.getKey()))
+                        .findFirst();
+                if (scopeOwned.isEmpty()) continue;
+                requireExtension(
+                        rw,
+                        scopeOwned.orElseThrow().getValue(),
+                        other.scopeKey(),
+                        definitionId,
+                        scopeOwned.orElseThrow().getKey());
             }
             return;
         }
@@ -625,10 +645,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                 || defaultRw.stateType().equals(scopeOwned.stateType())) {
             return;
         }
-        String subject = "definition " + describe(scopeKey, definitionId, scopeOwnedVersion) + " has state type "
-                + scopeOwned.stateType().getSimpleName() + " but the default scope's '" + definitionId
-                + "' of the same contract has state type "
-                + defaultRw.stateType().getSimpleName();
+        String subject = "definition " + describe(scopeKey, definitionId, scopeOwnedVersion)
+                + " has another state type than the default scope's '" + EchoedNames.bounded(definitionId)
+                + "' of the same contract";
         if (stateCompatibility.isEmpty()) {
             throw new WorkflowDefinitionException(subject
                     + "; the state comparison is unavailable (no WorkflowStateCompatibility is bound), so"
@@ -1198,6 +1217,10 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                 return marked.isEmpty() ? null : marked;
             });
             deployed.computeIfPresent(scopedId, (k, marked) -> {
+                marked.remove(version);
+                return marked.isEmpty() ? null : marked;
+            });
+            failing.computeIfPresent(scopedId, (k, marked) -> {
                 marked.remove(version);
                 return marked.isEmpty() ? null : marked;
             });

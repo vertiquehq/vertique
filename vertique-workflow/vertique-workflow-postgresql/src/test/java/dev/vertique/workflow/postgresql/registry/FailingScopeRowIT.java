@@ -9,9 +9,14 @@ import static dev.vertique.workflow.postgresql.registry.DefinitionScenario.failu
 import static dev.vertique.workflow.postgresql.registry.DefinitionScenario.source;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.definition.callbacks.NamedStartStateMapper;
+import dev.vertique.workflow.definition.callbacks.StartStateMapperContributor;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
 import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
@@ -20,6 +25,7 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionFailingException;
+import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -27,6 +33,7 @@ import dev.vertique.workflow.postgresql.registry.ActivationFixtures.Pin;
 import dev.vertique.workflow.postgresql.registry.ActivationFixtures.Scenario;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.failing.v1.FinanceDecision;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionFailure.Rule;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -376,6 +383,273 @@ public class FailingScopeRowIT {
         }
     }
 
+    // --- Containment of a failing row: default scope, peers, retirement, migration, visibility, echoed names ---
+
+    @Test
+    @DisplayName("a failing scope row that restores before the default version does not block default registration")
+    void failingScopeRowDoesNotBlockDefaultVersions(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, PURCHASE);
+
+            // Given the first deployment, where acme publishes and activates its document and the default scope
+            // publishes version 2 of the id, a document whose state is named by its logical name
+            Boot first = boot(database, vertx, Deployment.firstWith(null, true));
+            DefinitionKey acme = publishAndActivateAcme(first, PURCHASE, false);
+            publishDefaultPurchaseState(first, PURCHASE, 2);
+            first.close();
+            DefinitionKey defaultKey = new DefinitionKey(DEFAULT, PURCHASE, 2);
+
+            // When the second deployment, whose default code of the id has a state acme's state does not extend,
+            // starts: acme's key sorts before the default scope's, so its row restores first
+            Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
+
+            // Then startup succeeded, acme's row is failing and the default scope's version 2 is registered
+            assertThat(listed(second, acme).failure()).isNotNull();
+            assertThat(listed(second, acme).failure().rule()).isEqualTo(Rule.STATE_TYPE_NOT_EXTENDED);
+            assertThat(second.app().workflowRegistry().find(defaultKey)).isPresent();
+
+            // And publishing a default version while the node runs succeeds
+            publishDefaultPurchaseState(second, PURCHASE, 3);
+            assertThat(database.stored(DEFAULT, PURCHASE, 3).status()).isEqualTo("AVAILABLE");
+            assertThat(second.app().workflowRegistry().find(new DefinitionKey(DEFAULT, PURCHASE, 3)))
+                    .isPresent();
+
+            // And acme's row is still refused and another scope still starts
+            assertThat(startFailure(second, ContractC.class, ACME, PURCHASE))
+                    .isInstanceOf(WorkflowDefinitionFailingException.class);
+            assertThat(startPin(database, second, ContractC.class, GLOBEX, PURCHASE)
+                            .definitionScope())
+                    .isEqualTo(DEFAULT);
+        }
+    }
+
+    @Test
+    @DisplayName("a pass does not count a failing row with an unresolvable name binding as an apply failure")
+    void passDoesNotFailARowThatStartupMarkedFailing(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, PURCHASE);
+
+            // Given a row marked failing at startup because its recorded type name no longer resolves
+            Boot first = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
+            DefinitionKey key = publishAndActivateAcme(first, PURCHASE, true);
+            first.close();
+            Boot second = boot(database, vertx, Deployment.sameStateWithoutDecision(PURCHASE));
+            assertThat(listed(second, key).failure().rule()).isEqualTo(Rule.NAME_BINDING_UNRESOLVED);
+
+            // When the periodic reconciliation runs twice
+            await(second.app().definitionPropagationPoller().pollNow());
+            await(second.app().definitionPropagationPoller().pollNow());
+
+            // Then the row is not counted as an apply failure and stays marked and refused
+            assertThat(second.app().definitionRegistryView().applyFailures()).isZero();
+            assertThat(failureReason(database, key)).isEqualTo("NAME_BINDING_UNRESOLVED");
+            assertThat(startFailure(second, ContractC.class, ACME, PURCHASE))
+                    .isInstanceOfSatisfying(
+                            WorkflowDefinitionFailingException.class,
+                            failing -> assertThat(failing.rule()).isEqualTo(Rule.NAME_BINDING_UNRESOLVED));
+        }
+    }
+
+    @Test
+    @DisplayName("a scope row that a peer publishes and this node's code conflicts with is marked failing by the pass")
+    void passMarksAScopeRowThatAPeerPublishedAndThisNodesCodeConflictsWith(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, PURCHASE);
+
+            // Given node B, which ships the later default code, and node A, which ships the first one
+            Boot b = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            Boot a = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
+
+            // When A publishes and activates acme's document and B reconciles
+            DefinitionKey key = publishAndActivateAcme(a, PURCHASE, false);
+            await(b.app().definitionPropagationPoller().pollNow());
+
+            // Then B does not count the row as an apply failure and the table shows the state rule
+            assertThat(b.app().definitionRegistryView().applyFailures()).isZero();
+            assertThat(failureReason(database, key)).isEqualTo("STATE_TYPE_NOT_EXTENDED");
+
+            // And a start in acme on B is refused as failing, not as unrunnable
+            assertThat(startFailure(b, ContractC.class, ACME, PURCHASE))
+                    .isInstanceOfSatisfying(WorkflowDefinitionFailingException.class, failing -> {
+                        assertThat(failing.definitionKey()).isEqualTo(key);
+                        assertThat(failing.rule()).isEqualTo(Rule.STATE_TYPE_NOT_EXTENDED);
+                    });
+
+            // And a start in acme on A, whose code does not conflict, runs acme's own row
+            assertThat(startPin(database, a, ContractC.class, ACME, PURCHASE))
+                    .isEqualTo(new Pin(ACME, ACME, PURCHASE, 1));
+        }
+    }
+
+    @Test
+    @DisplayName("a failing row that this node retires is no longer refused as failing")
+    void retiredFailingRowLosesItsMarkOnTheRetiringNode(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, PURCHASE);
+
+            // Given a row marked failing by the second deployment
+            Boot first = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
+            DefinitionKey key = publishAndActivateAcme(first, PURCHASE, false);
+            first.close();
+            Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            assertThat(listed(second, key).failure()).isNotNull();
+            assertThat(failureOfExplicitStart(second, key)).isInstanceOf(WorkflowDefinitionFailingException.class);
+
+            // When the row is deprecated and retired on that node
+            await(second.app().definitionService().deprecate(key));
+            database.ageStatus(key, 60);
+            await(second.app().definitionService().retire(key));
+            assertThat(database.stored(ACME, PURCHASE, 1).status()).isEqualTo("RETIRED");
+
+            // Then a start naming the version is refused for another reason than the stale mark
+            Throwable refused = failureOfExplicitStart(second, key);
+            assertThat(refused).isNotNull().isNotInstanceOf(WorkflowDefinitionFailingException.class);
+        }
+    }
+
+    @Test
+    @DisplayName("a failing row that a peer retires is no longer refused as failing after the next pass")
+    void retiredFailingRowLosesItsMarkOnAPeer(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, PURCHASE);
+
+            // Given node A, which ships the first code, and node B, which ships the later code and marks the row
+            // failing at startup
+            Boot a = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
+            DefinitionKey key = publishAndActivateAcme(a, PURCHASE, false);
+            Boot b = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            assertThat(failureOfExplicitStart(b, key)).isInstanceOf(WorkflowDefinitionFailingException.class);
+
+            // When A deprecates and retires the row and B reconciles
+            await(a.app().definitionService().deprecate(key));
+            database.ageStatus(key, 60);
+            await(a.app().definitionService().retire(key));
+            await(b.app().definitionPropagationPoller().pollNow());
+            await(b.app().definitionPropagationPoller().pollNow());
+
+            // Then a start naming the version on B is refused for another reason than the stale mark
+            Throwable refused = failureOfExplicitStart(b, key);
+            assertThat(refused).isNotNull().isNotInstanceOf(WorkflowDefinitionFailingException.class);
+        }
+    }
+
+    @Test
+    @DisplayName("a migration into a failing version is refused before anything is written")
+    void migrationIntoAFailingVersionIsRefused(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, PURCHASE);
+
+            // Given the first deployment, where acme's version 1 is active with one waiting instance and acme's
+            // version 2 is published
+            Boot first = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
+            DefinitionKey v1 = publishAndActivateAcme(first, PURCHASE, false);
+            WorkflowInstanceId waiting = startInAcme(first, "waiting-order", "start-" + UUID.randomUUID());
+            await(first.app()
+                    .definitionService()
+                    .load(
+                            ACME,
+                            versioned(document(PURCHASE, false), 2),
+                            DocumentFormat.YAML,
+                            source("acme-v2", LOADED_AT)));
+            DefinitionKey v2 = new DefinitionKey(ACME, PURCHASE, 2);
+            await(first.app().definitionService().publish(v2));
+            first.close();
+
+            // When the second deployment marks both versions failing and the instance migrates to version 2
+            Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            assertThat(listed(second, v1).failure()).isNotNull();
+            assertThat(listed(second, v2).failure()).isNotNull();
+            Throwable refusal = failureOf(second.app().workflowOperations().migrate(waiting, ACME, 2L));
+
+            // Then the migration is refused as failing, naming version 2
+            assertThat(refusal).isInstanceOfSatisfying(WorkflowDefinitionFailingException.class, failing -> {
+                assertThat(failing.definitionKey()).isEqualTo(v2);
+                assertThat(failing.rule()).isEqualTo(Rule.STATE_TYPE_NOT_EXTENDED);
+            });
+
+            // And the instance keeps its pin
+            assertThat(pinOf(database, waiting)).isEqualTo(new Pin(ACME, ACME, PURCHASE, 1));
+        }
+    }
+
+    @Test
+    @DisplayName("a start that names the scope of another tenant's failing row learns nothing about it")
+    void startNamingAnotherScopeDoesNotRevealItsFailingRow(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, PURCHASE);
+
+            // Given a row of acme marked failing by the second deployment
+            Boot first = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
+            DefinitionKey key = publishAndActivateAcme(first, PURCHASE, false);
+            first.close();
+            Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            assertThat(listed(second, key).failure()).isNotNull();
+
+            // When a client in globex names acme's version 1 and acme as the target scope
+            String idempotencyKey = "start-" + UUID.randomUUID();
+            Throwable refused = ActivationFixtures.failureOf(() -> second.app()
+                    .workflowOperations()
+                    .start(command(GLOBEX, PURCHASE, "probe-order", idempotencyKey, 1L, ACME)));
+
+            // Then the start is refused as missing, exactly as for a scope that holds no such row
+            assertThat(refused).isInstanceOf(WorkflowDefinitionMissingException.class);
+            Throwable absent = ActivationFixtures.failureOf(() -> second.app()
+                    .workflowOperations()
+                    .start(command(GLOBEX, PURCHASE, "probe-order", idempotencyKey, 1L, "initech")));
+            assertThat(absent).isInstanceOf(WorkflowDefinitionMissingException.class);
+            assertThat(refused.getClass()).isEqualTo(absent.getClass());
+        }
+    }
+
+    @Test
+    @DisplayName("the startup warning repeats a long definition id only in bounded form")
+    void startupWarningBoundsALongDefinitionId(Vertx vertx) {
+        String longId = "purchase-" + "x".repeat(200);
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db);
+                BootstrapLog log = new BootstrapLog()) {
+            own(database, longId);
+
+            // Given a row with a long id that the later deployment marks failing
+            Boot first = boot(database, vertx, Deployment.firstWith(longId, true));
+            DefinitionKey key = publishAndActivateAcme(first, longId, false);
+            first.close();
+
+            // When the second deployment starts
+            Boot second = boot(database, vertx, Deployment.laterWith(longId));
+            assertThat(listed(second, key).failure()).isNotNull();
+
+            // Then the warning names the row and repeats neither the whole id nor a long run of it
+            assertThat(log.warnings()).isNotEmpty();
+            assertThat(log.warnings()).allSatisfy(line -> assertThat(line)
+                    .doesNotContain(longId, "x".repeat(100))
+                    .contains("x".repeat(10)));
+        }
+    }
+
+    @Test
+    @DisplayName("recording a failure leaves a default scope row and a code row untouched")
+    void recordFailureTouchesOnlyScopeDocumentRows(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, PURCHASE, "failing-default-doc");
+
+            // Given a default scope document row and a code row of the default scope
+            Boot node = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
+            publishDefaultDocument(node, "failing-default-doc", false);
+            DefinitionKey documentKey = new DefinitionKey(DEFAULT, "failing-default-doc", 1);
+            DefinitionKey codeKey = new DefinitionKey(DEFAULT, PURCHASE, 1);
+            assertThat(database.stored(DEFAULT, PURCHASE, 1).status()).isEqualTo("AVAILABLE");
+
+            // When a failure is recorded for each
+            DefinitionFailure failure = DefinitionFailure.of(Rule.STATE_TYPE_NOT_EXTENDED);
+            DefinitionScenario.failureOf(node.app().definitionRegistryStore().recordFailure(documentKey, failure));
+            DefinitionScenario.failureOf(node.app().definitionRegistryStore().recordFailure(codeKey, failure));
+
+            // Then neither row carries a failure reason
+            assertThat(failureReason(database, documentKey)).isNull();
+            assertThat(failureReason(database, codeKey)).isNull();
+        }
+    }
+
     // --- Deployments ---
 
     /**
@@ -473,12 +747,22 @@ public class FailingScopeRowIT {
 
     static Boot boot(DefinitionScenario database, Vertx vertx, Deployment deployment) {
         return database.nodeOf(pool -> SchemaDefinitionGraph.build(
-                vertx, pool, FailingScopeRowIT.class, deployment.code(), deployment.catalog()));
+                vertx,
+                pool,
+                FailingScopeRowIT.class,
+                deployment.code(),
+                deployment.catalog(),
+                purchaseMapper(deployment)));
     }
 
     private static Boot attempt(DefinitionScenario database, Vertx vertx, Deployment deployment) {
         return database.attemptOf(pool -> SchemaDefinitionGraph.build(
-                vertx, pool, FailingScopeRowIT.class, deployment.code(), deployment.catalog()));
+                vertx,
+                pool,
+                FailingScopeRowIT.class,
+                deployment.code(),
+                deployment.catalog(),
+                purchaseMapper(deployment)));
     }
 
     /** Loads, publishes and activates acme's document of the id and returns its key. */
@@ -594,6 +878,128 @@ public class FailingScopeRowIT {
                     type: complete
                 """.formatted(id, ContractC.class.getName(), afterApproval, review)
                 .getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * The start state mapper of documents that name the purchase state by its logical name: it builds whichever class
+     * the deployment's catalog lists under that name.
+     */
+    private static StartStateMapperContributor purchaseMapper(Deployment deployment) {
+        Class<?> state = deployment.catalog().stream()
+                .filter(entry -> entry.kind() == Kind.TYPE && "purchase-state".equals(entry.name()))
+                .map(WorkflowTypeCatalogEntry::type)
+                .findFirst()
+                .orElseThrow();
+        return builder -> {
+            if (state == dev.vertique.workflow.postgresql.registry.failing.v1.PurchaseState.class)
+                builder.register(new NamedStartStateMapper<>(
+                        "doc.purchase.fromPlaceOrder",
+                        PlaceOrderDoc.class,
+                        dev.vertique.workflow.postgresql.registry.failing.v1.PurchaseState.class,
+                        start -> new dev.vertique.workflow.postgresql.registry.failing.v1.PurchaseState(
+                                start.orderId())));
+            else
+                builder.register(new NamedStartStateMapper<>(
+                        "doc.purchase.fromPlaceOrder",
+                        PlaceOrderDoc.class,
+                        dev.vertique.workflow.postgresql.registry.failing.v2.PurchaseState.class,
+                        start -> new dev.vertique.workflow.postgresql.registry.failing.v2.PurchaseState(
+                                start.orderId(), "cc-1")));
+        };
+    }
+
+    /** Loads and publishes a default scope document of the version whose state is the purchase state by name. */
+    private static void publishDefaultPurchaseState(Boot node, String id, long version) {
+        await(node.app()
+                .definitionService()
+                .load(
+                        DEFAULT,
+                        purchaseStateDocument(id, version),
+                        DocumentFormat.YAML,
+                        source("default-" + id + "-" + version, LOADED_AT)));
+        await(node.app().definitionService().publish(new DefinitionKey(DEFAULT, id, version)));
+    }
+
+    /** A document that completes at once and names the purchase state by its logical name. */
+    private static byte[] purchaseStateDocument(String id, long version) {
+        return """
+                definitionId: %s
+                definitionVersion: %d
+                stateType: purchase-state
+                contract: %s
+                startPayloadType: dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc
+                initialStateMapper: doc.purchase.fromPlaceOrder
+                initialStep: done
+                steps:
+                  - id: done
+                    type: complete
+                """.formatted(id, version, ContractC.class.getName()).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** The document with another version number. */
+    private static byte[] versioned(byte[] document, long version) {
+        return new String(document, StandardCharsets.UTF_8)
+                .replace("definitionVersion: 1", "definitionVersion: " + version)
+                .getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** The failure of a start of the key's version that names its scope explicitly. */
+    private static Throwable failureOfExplicitStart(Boot node, DefinitionKey key) {
+        String idempotencyKey = "start-" + UUID.randomUUID();
+        return ActivationFixtures.failureOf(() -> node.app()
+                .workflowOperations()
+                .start(command(
+                        key.scopeKey(),
+                        key.definitionId(),
+                        "explicit-order",
+                        idempotencyKey,
+                        key.definitionVersion(),
+                        key.scopeKey())));
+    }
+
+    /** Where the instance is pinned. */
+    private static Pin pinOf(DefinitionScenario database, WorkflowInstanceId instance) {
+        Row row = await(database.admin().preparedQuery("""
+                                SELECT scope_key, definition_scope_key, definition_id, definition_version
+                                FROM workflow_instances WHERE id = $1
+                                """).execute(Tuple.of(instance.value())))
+                .iterator()
+                .next();
+        return new Pin(
+                row.getString("scope_key"),
+                row.getString("definition_scope_key"),
+                row.getString("definition_id"),
+                row.getLong("definition_version"));
+    }
+
+    /** Collects what the startup step logs while it is open. */
+    private static final class BootstrapLog implements AutoCloseable {
+        private final ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(
+                        "dev.vertique.workflow.engine.WorkflowDefinitionRegistryBootstrapStep");
+        private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        private final Level previousLevel = logger.getLevel();
+
+        BootstrapLog() {
+            appender.start();
+            logger.setLevel(Level.DEBUG);
+            logger.addAppender(appender);
+        }
+
+        List<String> warnings() {
+            return new java.util.ArrayList<>(appender.list)
+                    .stream()
+                            .filter(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
+                            .map(ILoggingEvent::getFormattedMessage)
+                            .toList();
+        }
+
+        @Override
+        public void close() {
+            logger.detachAppender(appender);
+            logger.setLevel(previousLevel);
+            appender.stop();
+        }
     }
 
     /** The record the definition listing returns for the key. */

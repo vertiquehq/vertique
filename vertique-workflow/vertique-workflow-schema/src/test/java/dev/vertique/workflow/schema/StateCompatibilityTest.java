@@ -184,6 +184,10 @@ class StateCompatibilityTest {
 
     record AddsKindConstant(Address address, List<Item> items, KindWithC kind) {}
 
+    record PlainKind(String id, String kind) {}
+
+    record EnumeratedKind(String id, Kind kind) {}
+
     // --- Fixture: older state JSON ---
 
     record Order(String id) {}
@@ -287,5 +291,23 @@ class StateCompatibilityTest {
         assertThat(incompatibility).isEmpty();
         assertThat(decoded.id()).isEqualTo("o-1");
         assertThat(decoded.note()).isNull();
+    }
+
+    @Test
+    @DisplayName("a free text property is not compatible with a target that restricts it to enum constants")
+    void freeTextPropertyIsNotCompatibleWithAnEnumTarget() {
+        // Given: a source whose kind is free text and a target whose kind is an enum, and a target whose kind is
+        // free text as well
+        WorkflowStateCompatibility comparison = comparison();
+
+        // When: the source is compared with each target
+        Optional<String> restricted = comparison.firstIncompatibility(PlainKind.class, EnumeratedKind.class);
+        Optional<String> unchanged = comparison.firstIncompatibility(PlainKind.class, PlainKind.class);
+
+        // Then: the enum target is refused at the property, state JSON with any other text could not be read
+        assertThat(restricted).contains("kind");
+
+        // and: an unchanged free text property is accepted
+        assertThat(unchanged).isEmpty();
     }
 }

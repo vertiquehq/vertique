@@ -30,6 +30,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -606,7 +607,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 log.warn(
                         "Definition {} is marked failing: a type name in its recorded name binding no longer"
                                 + " resolves",
-                        key);
+                        printable(key));
                 return new Restored(null, DefinitionFailure.of(Rule.NAME_BINDING_UNRESOLVED));
             }
         } else {
@@ -668,7 +669,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 refusal.addSuppressed(notTheComparison);
                 throw refusal;
             }
-            log.warn("Definition {} is marked failing: its state type does not extend the default scope's", key);
+            log.warn(
+                    "Definition {} is marked failing: its state type does not extend the default scope's",
+                    printable(key));
             return DefinitionFailure.of(Rule.STATE_TYPE_NOT_EXTENDED);
         }
     }
@@ -685,6 +688,12 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         DefinitionFailure stored = record.failure();
         boolean unchanged = evaluated == null ? stored == null : stored != null && stored.rule() == evaluated.rule();
         return unchanged ? Future.succeededFuture() : store.orElseThrow().recordFailure(key, evaluated);
+    }
+
+    /** The key in a form that is safe to log: bounded and without control characters. */
+    private static String printable(DefinitionKey key) {
+        return "scope '" + EchoedNames.bounded(key.scopeKey()) + "' id '" + EchoedNames.bounded(key.definitionId())
+                + "' version " + key.definitionVersion();
     }
 
     private static <T> Future<T> work(Supplier<T> action) {

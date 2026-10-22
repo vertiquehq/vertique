@@ -69,6 +69,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private final @Nullable DefaultWorkflowDefinitionRegistryView view;
     /** The node's view of the activation records, which a start without a version reads. */
     private final DefinitionActivations activations;
+
+    private final FailingDefinitions failing;
     /** Runtimes this lifecycle published whose completion outcome is still unknown, by key. */
     private final ConcurrentMap<DefinitionKey, RuntimeWorkflow> uncertain = new ConcurrentHashMap<>();
     /** Runtimes a reinstatement published whose commit outcome could not be read back, by key. */
@@ -116,7 +118,16 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             ManagedRegistrations registrations,
             WorkflowCodeDefinitionCatalog catalog,
             @Nullable DefaultWorkflowDefinitionRegistryView view) {
-        this(store, registry, loaders, queue, registrations, catalog, view, new DefinitionActivations());
+        this(
+                store,
+                registry,
+                loaders,
+                queue,
+                registrations,
+                catalog,
+                view,
+                new DefinitionActivations(),
+                new FailingDefinitions());
     }
 
     @Inject
@@ -128,8 +139,10 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             ManagedRegistrations registrations,
             WorkflowCodeDefinitionCatalog catalog,
             @Nullable DefaultWorkflowDefinitionRegistryView view,
-            DefinitionActivations activations) {
+            DefinitionActivations activations,
+            FailingDefinitions failing) {
         this.activations = activations;
+        this.failing = failing;
         this.view = view;
         this.store = store;
         this.registry = registry;
@@ -579,6 +592,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     /** Removes the runtime this lifecycle published for the retired key; any other registration stays. */
     private Future<Void> removeRetired(DefinitionKey key) {
         if (view != null) view.removed(key);
+        failing.clear(key);
         WorkflowRegistry local = registry.get();
         String id = key.definitionId();
         long version = key.definitionVersion();

@@ -1191,9 +1191,9 @@ class WorkflowRegistryTest {
                 stated(StateB.class, ScopeContractC.class, "s-x", 2L, id -> new StateB(id.length()))));
         Throwable otherScope = catchThrowable(() -> registry.register("acme", stateA("s-x", 1L)));
 
-        // Then: the first is refused naming the key and both state types
+        // Then: the first is refused naming the key and no state type
         assertNamesKey(anotherState, WorkflowScopes.DEFAULT, "s-x", 2L);
-        assertThat(anotherState.getMessage()).contains("StateA").contains("StateB");
+        assertThat(anotherState.getMessage()).contains("s-x").doesNotContain("StateA", "StateB");
 
         // and: the refused version is not registered
         assertThat(registry.find(new DefinitionKey(WorkflowScopes.DEFAULT, "s-x", 2L)))
@@ -1341,6 +1341,96 @@ class WorkflowRegistryTest {
         assertNamesKey(plainRegistration, "acme", "f-x", 1L);
         assertThat(plainRegistration.getMessage()).contains("extend");
         assertThat(fresh.find(acmeV1)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a failing scope row does not block a later default version of the same id")
+    void failingScopeRowDoesNotBlockALaterDefaultVersion() {
+        // Given: a registry with the comparison bound, acme's version 1 with StateRemoved registered as failing
+        // before any default version of the id exists, and (default, f-d, 1) with StateA registered after it
+        DefaultWorkflowRegistry withComparison = new DefaultWorkflowRegistry(
+                null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
+        withComparison.registerFailing(
+                "acme", stated(StateRemoved.class, ScopeContractC.class, "f-d", 1L, StateRemoved::new));
+        Throwable firstDefault = catchThrowable(() -> withComparison.register(stateA("f-d", 1L)));
+
+        // When: a later default version, still with StateA, registers
+        Throwable laterDefault = catchThrowable(() -> withComparison.register(stateA("f-d", 2L)));
+
+        // Then: both default registrations are accepted, the failing row does not take part in the comparison
+        assertThat(firstDefault).isNull();
+        assertThat(laterDefault).isNull();
+        assertThat(withComparison.find(new DefinitionKey(WorkflowScopes.DEFAULT, "f-d", 2L)))
+                .isPresent();
+        assertThat(withComparison.find(new DefinitionKey("acme", "f-d", 1L))).isPresent();
+    }
+
+    @Test
+    @DisplayName("a scope row that registered plainly still takes part in the default version comparison")
+    void normallyRegisteredScopeRowStillConstrainsALaterDefaultVersion() {
+        // Given: a registry with the comparison bound and acme's version 1 with StateRemoved registered plainly
+        // before any default version of the id exists
+        DefaultWorkflowRegistry withComparison = new DefaultWorkflowRegistry(
+                null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
+        withComparison.register("acme", stated(StateRemoved.class, ScopeContractC.class, "f-n", 1L, StateRemoved::new));
+
+        // When: (default, f-n, 1) with StateA, which acme's state does not extend, registers
+        Throwable refused = catchThrowable(() -> withComparison.register(stateA("f-n", 1L)));
+
+        // Then: it is refused naming the scope row, so only failing rows are exempt
+        assertNamesKey(refused, "acme", "f-n", 1L);
+        assertThat(withComparison.find(new DefinitionKey(WorkflowScopes.DEFAULT, "f-n", 1L)))
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("a row registered as failing and removed is compared again when it registers plainly")
+    void removedFailingRowIsComparedAgainWhenRegisteredPlainly() {
+        // Given: a registry with the comparison bound, and acme's version 1 with StateRemoved registered as failing,
+        // removed and registered plainly, which is accepted while no default version of the id exists
+        DefaultWorkflowRegistry withComparison = new DefaultWorkflowRegistry(
+                null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
+        DefinitionKey acmeV1 = new DefinitionKey("acme", "f-r", 1L);
+        withComparison.registerFailing(
+                "acme", stated(StateRemoved.class, ScopeContractC.class, "f-r", 1L, StateRemoved::new));
+        withComparison.unregister(acmeV1);
+        withComparison.register("acme", stated(StateRemoved.class, ScopeContractC.class, "f-r", 1L, StateRemoved::new));
+
+        // When: (default, f-r, 1) with StateA registers
+        Throwable refused = catchThrowable(() -> withComparison.register(stateA("f-r", 1L)));
+
+        // Then: it is refused, nothing of the earlier failing registration exempts the row
+        assertNamesKey(refused, "acme", "f-r", 1L);
+    }
+
+    @Test
+    @DisplayName("state refusals name the definition key and no state class name")
+    void stateRefusalsNameTheKeyAndNoStateClassName() {
+        // Given: a registry with the comparison bound, (default, s-q, 1) with StateA and (default, s-q, 2) refused
+        // for another state class, and a registry without the comparison holding the same default
+        DefaultWorkflowRegistry withComparison = new DefaultWorkflowRegistry(
+                null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
+        withComparison.register(stateA("s-q", 1L));
+        registry.register(stateA("s-q", 1L));
+
+        // When: a scope state that does not extend the default's, a second version with another state class in the
+        // default scope, and a scope state with no comparison available register
+        Throwable notExtended = catchThrowable(() -> withComparison.register(
+                "acme", stated(StateRemoved.class, ScopeContractC.class, "s-q", 1L, StateRemoved::new)));
+        Throwable anotherInScope = catchThrowable(() -> withComparison.register(
+                stated(StateB.class, ScopeContractC.class, "s-q", 2L, id -> new StateB(id.length()))));
+        Throwable unavailable = catchThrowable(() -> registry.register(
+                "acme", stated(StateAPlus.class, ScopeContractC.class, "s-q", 1L, id -> new StateAPlus(id, null))));
+
+        // Then: each refusal names the scope, the id and the version
+        assertNamesKey(notExtended, "acme", "s-q", 1L);
+        assertNamesKey(anotherInScope, WorkflowScopes.DEFAULT, "s-q", 2L);
+        assertNamesKey(unavailable, "acme", "s-q", 1L);
+
+        // and: none of them names a state class
+        assertThat(notExtended.getMessage()).doesNotContain("StateRemoved", "StateA");
+        assertThat(anotherInScope.getMessage()).doesNotContain("StateB", "StateA");
+        assertThat(unavailable.getMessage()).doesNotContain("StateAPlus", "StateA");
     }
 
     private static void assertNamesKey(Throwable refusal, String scopeKey, String definitionId, long version) {

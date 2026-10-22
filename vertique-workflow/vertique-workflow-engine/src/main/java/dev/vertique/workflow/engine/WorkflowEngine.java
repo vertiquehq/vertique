@@ -532,7 +532,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 this.driver,
                 clock,
                 builtContextBinder,
-                stateCompatibility);
+                stateCompatibility,
+                failing);
     }
 
     // --- WorkflowOperations ---
@@ -821,7 +822,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * Refuses a start that selects a version this node evaluated as failing, for a version that was named and for one
      * an activation record selects. It runs before the version is resolved from the registry, because a failing row
      * whose name binding no longer resolves has no registered plan to resolve. Only the start scope's own versions can
-     * fail, and they apply to the client when they implement its contract.
+     * fail, and they apply to the client when they implement its contract. A named target scope that is neither the
+     * start scope nor the default scope is refused as missing, before any mark is read.
      *
      * @throws WorkflowDefinitionFailingException when the selected version is failing
      */
@@ -834,6 +836,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         DefinitionKey selected;
         if (version != null) {
             String targetScope = cmd.requestedTargetScope();
+            // A scope the client cannot see is answered as the later resolution answers it, so that the mark of
+            // another tenant's row is never observable.
+            if (targetScope != null && !targetScope.equals(startScope) && !targetScope.equals(WorkflowScopes.DEFAULT))
+                throw new WorkflowDefinitionMissingException(id, targetScope);
             selected = new DefinitionKey(
                     targetScope != null ? targetScope : owns ? startScope : WorkflowScopes.DEFAULT, id, version);
         } else {

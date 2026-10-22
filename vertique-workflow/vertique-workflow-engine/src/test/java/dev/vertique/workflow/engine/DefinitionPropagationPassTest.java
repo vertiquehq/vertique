@@ -21,6 +21,7 @@ import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionFailure;
+import dev.vertique.workflow.registry.store.DefinitionFailure.Rule;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -784,6 +785,111 @@ class DefinitionPropagationPassTest {
         assertThat(log.everything()).noneSatisfy(text -> assertThat(text).contains("SECRET-DOCUMENT-TEXT"));
     }
 
+    // ----- scope rows that newly deployed code conflicts with -----
+
+    @Test
+    @DisplayName("a scope row that another node published and this node's code conflicts with is settled, not failed")
+    void settlesAScopeRowThatThisNodesCodeConflictsWith() {
+        // Given: a live scope document row whose plain registration the state comparison refuses
+        WorkflowDefinitionRecord row = document("acme", "wf-scope-state", DefinitionStatus.AVAILABLE, T0);
+        world.registry.stateConflicts.add("wf-scope-state");
+        world.store.put(row);
+
+        // When: a pass runs, and runs again
+        world.runOk();
+        world.runOk();
+
+        // Then: no pass counts the row as an apply failure and nothing warns about it
+        assertThat(world.view.applyFailures()).isZero();
+        assertThat(world.view.failing(row.key())).isFalse();
+        assertThat(log.warnings()).isEmpty();
+
+        // and: the plan is registered as failing and the table holds the state rule for the row
+        assertThat(world.registry.holds("wf-scope-state", 1)).isTrue();
+        assertThat(world.store.failures).containsOnlyKeys(row.key());
+        assertThat(world.store.failures.get(row.key()).rule()).isEqualTo(Rule.STATE_TYPE_NOT_EXTENDED);
+    }
+
+    @Test
+    @DisplayName("a default scope row that the state comparison refuses is still an apply failure")
+    void defaultScopeRowConflictIsStillAnApplyFailure() {
+        // Given: a live default scope document row whose registration fails
+        WorkflowDefinitionRecord row =
+                document(WorkflowScopes.DEFAULT, "wf-default-state", DefinitionStatus.AVAILABLE, T0);
+        world.registry.stateConflicts.add("wf-default-state");
+        world.store.put(row);
+
+        // When: a pass runs
+        world.runOk();
+
+        // Then: the row is counted as failing, unregistered and unmarked
+        assertThat(world.view.applyFailures()).isEqualTo(1);
+        assertThat(world.registry.holds("wf-default-state", 1)).isFalse();
+        assertThat(world.store.failures).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a scope row whose recorded type name no longer resolves is settled and marked, not failed")
+    void settlesAScopeRowWhoseBoundNameNoLongerResolves() {
+        // Given: a live scope document row recorded with a type name that no class resolves
+        WorkflowDefinitionRecord row = new WorkflowDefinitionRecord(
+                new DefinitionKey("acme", "wf-scope-binding", 1),
+                DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
+                HASH,
+                DefinitionStatus.AVAILABLE,
+                PROVENANCE,
+                "YAML",
+                T0,
+                T0,
+                Map.of("example.State", "no.such.Name"),
+                null);
+        world.store.put(row);
+
+        // When: a pass runs, and runs again
+        world.runOk();
+        world.runOk();
+
+        // Then: no pass counts the row as an apply failure and nothing warns about it
+        assertThat(world.view.applyFailures()).isZero();
+        assertThat(world.view.failing(row.key())).isFalse();
+        assertThat(log.warnings()).isEmpty();
+
+        // and: no plan is registered, and the table holds the binding rule for the row
+        assertThat(world.registry.holds("wf-scope-binding", 1)).isFalse();
+        assertThat(world.store.failures).containsOnlyKeys(row.key());
+        assertThat(world.store.failures.get(row.key()).rule()).isEqualTo(Rule.NAME_BINDING_UNRESOLVED);
+    }
+
+    @Test
+    @DisplayName("a default scope row whose recorded type name no longer resolves is still an apply failure")
+    void defaultScopeRowWithUnresolvableBoundNameIsStillAnApplyFailure() {
+        // Given: a live default scope document row recorded with a type name that no class resolves
+        WorkflowDefinitionRecord row = new WorkflowDefinitionRecord(
+                new DefinitionKey(WorkflowScopes.DEFAULT, "wf-default-binding", 1),
+                DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
+                HASH,
+                DefinitionStatus.AVAILABLE,
+                PROVENANCE,
+                "YAML",
+                T0,
+                T0,
+                Map.of("example.State", "no.such.Name"),
+                null);
+        world.store.put(row);
+
+        // When: a pass runs
+        world.runOk();
+
+        // Then: the row is counted as failing, unregistered and unmarked
+        assertThat(world.view.applyFailures()).isEqualTo(1);
+        assertThat(world.registry.holds("wf-default-binding", 1)).isFalse();
+        assertThat(world.store.failures).isEmpty();
+    }
+
     // ----- fixtures -----
 
     private static WorkflowDefinitionRecord document(
@@ -886,6 +992,7 @@ class DefinitionPropagationPassTest {
         final Map<DefinitionKey, Integer> finds = new HashMap<>();
         final Map<DefinitionKey, Throwable> findFailures = new HashMap<>();
         final Map<DefinitionKey, Promise<Optional<WorkflowDefinitionDocument>>> documentGates = new HashMap<>();
+        final Map<DefinitionKey, DefinitionFailure> failures = new LinkedHashMap<>();
         Supplier<List<WorkflowDefinitionRecord>> listing;
         int lists;
 
@@ -981,6 +1088,8 @@ class DefinitionPropagationPassTest {
 
         @Override
         public Future<Void> recordFailure(DefinitionKey key, DefinitionFailure failure) {
+            if (failure == null) failures.remove(key);
+            else failures.put(key, failure);
             return Future.succeededFuture();
         }
 
@@ -998,6 +1107,9 @@ class DefinitionPropagationPassTest {
         final Map<String, String> hashes = new HashMap<>();
         final List<RuntimeWorkflow> history = new ArrayList<>();
         final List<String> unregistered = new ArrayList<>();
+        /** The definition ids whose plain registration is refused by the state comparison. */
+        final Set<String> stateConflicts = new HashSet<>();
+
         boolean failMark;
 
         WorkflowDefinition<?, ?> definition(String id, long version) {
@@ -1067,6 +1179,14 @@ class DefinitionPropagationPassTest {
 
         @Override
         public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
+            if (stateConflicts.contains(def.definitionId()))
+                throw new WorkflowDefinitionException("definition '" + def.definitionId()
+                        + "' has a state type that does not extend the default scope's");
+            register(def);
+        }
+
+        @Override
+        public void registerFailing(String scopeKey, WorkflowDefinition<?, ?> def) {
             register(def);
         }
 

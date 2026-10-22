@@ -17,6 +17,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * {@link WorkflowStateCompatibility} that compares the canonical JSON Schemas of two state classes under the
@@ -25,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>The target extends the source when every property of the source exists in the target with the same type:
  * properties the target adds are allowed. Nested objects compare property by property, collection items compare
  * by the same rule, map values compare by the same rule, and an enum target must contain every constant of the
- * source. A property whose type the target widens to also admit {@code null} is compatible. A source schema that
+ * source; a source property without constants is not compatible with an enum target. A property whose type the target widens to also admit {@code null} is compatible. A source schema that
  * composes alternatives ({@code allOf}, {@code anyOf}, {@code oneOf}) is compatible only with a target that
  * declares the same composition.
  *
@@ -35,6 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Singleton
 final class SchemaStateCompatibility implements WorkflowStateCompatibility {
 
+    private static final Logger LOG = LoggerFactory.getLogger(SchemaStateCompatibility.class);
     private static final String ROOT_PATH = "$";
     private static final String PROPERTIES = "properties";
     private static final String ITEMS = "items";
@@ -77,10 +80,10 @@ final class SchemaStateCompatibility implements WorkflowStateCompatibility {
         try {
             described = generator.describe(state);
         } catch (RuntimeException e) {
+            LOG.debug("The state type {} cannot be described as a JSON Schema", state.getName(), e);
             throw new WorkflowDefinitionException(
-                    "the state type " + state.getName() + " cannot be described as a JSON Schema, so it cannot be"
-                            + " compared with another state type: "
-                            + e.getClass().getSimpleName(),
+                    "a state type cannot be described as a JSON Schema, so it cannot be compared with another state"
+                            + " type: " + e.getClass().getSimpleName(),
                     e);
         }
         schemas.putIfAbsent(state, described);
@@ -110,6 +113,9 @@ final class SchemaStateCompatibility implements WorkflowStateCompatibility {
                 return null;
             }
             if (!sameComposition(source, target) || !formatKept(source, target) || !typesKept(source, target)) {
+                return at(path);
+            }
+            if (!source.containsKey(ENUM) && target.containsKey(ENUM)) {
                 return at(path);
             }
             if (source.containsKey(ENUM)) {

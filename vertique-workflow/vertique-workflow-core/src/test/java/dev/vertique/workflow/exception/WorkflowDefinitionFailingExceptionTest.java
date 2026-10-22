@@ -44,4 +44,27 @@ class WorkflowDefinitionFailingExceptionTest {
         assertThat(refusal).isInstanceOf(WorkflowConfigurationException.class);
         assertThat(refusal).isNotInstanceOf(WorkflowUnavailableException.class);
     }
+
+    @Test
+    @DisplayName("the message repeats a long scope key and id only in bounded form")
+    void messageBoundsTheEchoedScopeKeyAndId() {
+        // Given: a key whose scope key and definition id are at the length limit
+        String scope = "s".repeat(255);
+        String id = "d".repeat(255);
+        DefinitionKey key = new DefinitionKey(scope, id, 7L);
+
+        // When: the exception is constructed
+        WorkflowDefinitionFailingException refusal = new WorkflowDefinitionFailingException(
+                key, new DefinitionFailure(Rule.STATE_TYPE_NOT_EXTENDED, "state type does not extend"));
+
+        // Then: the message repeats neither whole and still names the rule
+        assertThat(refusal.getMessage())
+                .doesNotContain(scope, id, "s".repeat(100), "d".repeat(100))
+                .contains("STATE_TYPE_NOT_EXTENDED");
+        assertThat(refusal.getMessage().length()).isLessThan(300);
+
+        // and: the typed accessors keep the full identifiers
+        assertThat(refusal.scopeKey()).isEqualTo(scope);
+        assertThat(refusal.definitionKey()).isEqualTo(key);
+    }
 }

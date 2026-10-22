@@ -170,7 +170,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " SET plan_hash=$4, name_binding=$5::jsonb, source_type=$6, source_uri=$7, source_revision=$8, source_author=$9, source_upload_id=$10, loaded_at=$11, contract_name=$12, state_type_name=$13 WHERE "
                 + KEY + " AND kind='CODE'";
 
-        this.sqlRecordFailure = "UPDATE " + definitions + " SET failure_reason=$4 WHERE " + KEY;
+        this.sqlRecordFailure = "UPDATE " + definitions + " SET failure_reason=$4 WHERE " + KEY
+                + " AND kind='DOCUMENT' AND scope_key <> 'default'";
 
         this.sqlResetStale = "UPDATE " + definitions
                 + " SET status='CANDIDATE', publish_token=NULL, status_changed_at=clock_timestamp() WHERE definition_id=$1 AND status='PUBLISHING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2)";

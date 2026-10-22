@@ -6,6 +6,7 @@ package dev.vertique.workflow.postgresql.registry;
 import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
+import dagger.multibindings.IntoSet;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
 import dev.vertique.core.json.JsonMapperProfileRegistry;
@@ -13,11 +14,13 @@ import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.deploy.DeployerModule;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
+import dev.vertique.workflow.definition.callbacks.StartStateMapperContributor;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParserProbe;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.di.WorkflowDefinitionsConfigModule;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.migration.WorkflowMigrationModule;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
@@ -55,6 +58,20 @@ final class SchemaDefinitionGraph {
             Class<?> testClass,
             List<WorkflowDefinition<?, ?>> codeDefinitions,
             List<WorkflowTypeCatalogEntry> catalogEntries) {
+        return build(vertx, pool, testClass, codeDefinitions, catalogEntries, builder -> {});
+    }
+
+    /**
+     * Builds the graph like {@link #build(Vertx, Pool, Class, List, List)} with one more start state mapper
+     * contributor, so that documents of a test can name a state class by its logical name.
+     */
+    static AppComponent build(
+            Vertx vertx,
+            Pool pool,
+            Class<?> testClass,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            List<WorkflowTypeCatalogEntry> catalogEntries,
+            StartStateMapperContributor extraMapper) {
         WorkflowDefinitionSource none = List::of;
         return DaggerSchemaDefinitionGraph_SchemaApp.builder()
                 .vertxModule(new VertxModule(vertx, new JsonObject()))
@@ -66,7 +83,25 @@ final class SchemaDefinitionGraph {
                 .largeUnicodeMapperModule(new LargeUnicodeMapperModule(false))
                 .parserModule(new WorkflowDefinitionParserProbe().module())
                 .typeCatalogModule(new TypeCatalogModule(testClass, catalogEntries))
+                .extraMapperModule(new ExtraMapperModule(extraMapper))
                 .build();
+    }
+
+    /** Adds one start state mapper contributor to the callback catalog. */
+    @Module
+    static final class ExtraMapperModule {
+
+        private final StartStateMapperContributor contributor;
+
+        ExtraMapperModule(StartStateMapperContributor contributor) {
+            this.contributor = contributor;
+        }
+
+        @Provides
+        @IntoSet
+        StartStateMapperContributor contributor() {
+            return contributor;
+        }
     }
 
     /** The JSON bindings the schema module reads. */
@@ -104,6 +139,8 @@ final class SchemaDefinitionGraph {
                 WorkflowDefinitionParserProbe.ParserModule.class,
                 TypeCatalogModule.class,
                 WorkflowSchemaModule.class,
+                WorkflowMigrationModule.class,
+                ExtraMapperModule.class,
                 JsonBindings.class
             })
     interface SchemaApp extends AppComponent {
@@ -126,6 +163,8 @@ final class SchemaDefinitionGraph {
             Builder parserModule(WorkflowDefinitionParserProbe.ParserModule module);
 
             Builder typeCatalogModule(TypeCatalogModule module);
+
+            Builder extraMapperModule(ExtraMapperModule module);
 
             SchemaApp build();
         }

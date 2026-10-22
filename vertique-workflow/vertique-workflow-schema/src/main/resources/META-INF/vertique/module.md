@@ -82,7 +82,7 @@ whether one state class extends another. It compares the canonical JSON Schemas 
 profile (the same generator as the payload check, without the bean-validation supplement): every property of the source
 class must exist in the target class with the same type, and the target may add properties. Nested objects compare
 property by property by the same rule, collection items and map values compare their item type, and an enum target must
-contain every constant of the source. `firstIncompatibility(source, target)` answers the first incompatible schema path,
+contain every constant of the source; a source property without constants (free text) is not compatible with an enum target. Required properties and `additionalProperties` narrowing are not compared. A refusal that cannot describe a state class names no class (the class name is logged at DEBUG level only). `firstIncompatibility(source, target)` answers the first incompatible schema path,
 such as `amount`, `address.city` or `items[].sku`, or an empty `Optional`; a path never carries a value.
 
 The registry applies it when a scope-owned definition and the default scope's definition of the same id and contract name
