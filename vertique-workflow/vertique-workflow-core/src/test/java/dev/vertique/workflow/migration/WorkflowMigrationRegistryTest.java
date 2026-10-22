@@ -54,33 +54,24 @@ class WorkflowMigrationRegistryTest {
 
     // --- Contract interfaces ---
 
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
-    interface OrderSagaContractV1 {}
+    @WorkflowContract
+    interface OrderSagaContract {}
 
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 2)
-    interface OrderSagaContractV2 {}
-
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 3)
-    interface OrderSagaContractV3 {}
-
-    @WorkflowContract(definitionId = "payment-flow", definitionVersion = 1)
-    interface PaymentFlowContractV1 {}
-
-    @WorkflowContract(definitionId = "payment-flow", definitionVersion = 2)
-    interface PaymentFlowContractV2 {}
+    @WorkflowContract
+    interface PaymentFlowContract {}
 
     // --- Workflow definitions ---
 
-    static WorkflowDefinition<StateV1, OrderSagaContractV1> orderSagaV1Def() {
+    static WorkflowDefinition<StateV2, OrderSagaContract> orderSagaV1Def() {
         return new WorkflowDefinition<>() {
             @Override
-            public Class<OrderSagaContractV1> contract() {
-                return OrderSagaContractV1.class;
+            public Class<OrderSagaContract> contract() {
+                return OrderSagaContract.class;
             }
 
             @Override
-            public Class<StateV1> stateType() {
-                return StateV1.class;
+            public Class<StateV2> stateType() {
+                return StateV2.class;
             }
 
             @Override
@@ -94,19 +85,19 @@ class WorkflowMigrationRegistryTest {
             }
 
             @Override
-            public void define(WorkflowBuilder<StateV1> wf) {
-                wf.init(StartCmd.class, cmd -> new StateV1(cmd.id()))
+            public void define(WorkflowBuilder<StateV2> wf) {
+                wf.init(StartCmd.class, cmd -> new StateV2(cmd.id(), 0))
                         .initialStep("done")
                         .complete("done");
             }
         };
     }
 
-    static WorkflowDefinition<StateV2, OrderSagaContractV2> orderSagaV2Def() {
+    static WorkflowDefinition<StateV2, OrderSagaContract> orderSagaV2Def() {
         return new WorkflowDefinition<>() {
             @Override
-            public Class<OrderSagaContractV2> contract() {
-                return OrderSagaContractV2.class;
+            public Class<OrderSagaContract> contract() {
+                return OrderSagaContract.class;
             }
 
             @Override
@@ -133,11 +124,11 @@ class WorkflowMigrationRegistryTest {
         };
     }
 
-    static WorkflowDefinition<StateV2, OrderSagaContractV3> orderSagaV3Def() {
+    static WorkflowDefinition<StateV2, OrderSagaContract> orderSagaV3Def() {
         return new WorkflowDefinition<>() {
             @Override
-            public Class<OrderSagaContractV3> contract() {
-                return OrderSagaContractV3.class;
+            public Class<OrderSagaContract> contract() {
+                return OrderSagaContract.class;
             }
 
             @Override
@@ -164,16 +155,16 @@ class WorkflowMigrationRegistryTest {
         };
     }
 
-    static WorkflowDefinition<StateV1, PaymentFlowContractV1> paymentFlowV1Def() {
+    static WorkflowDefinition<StateV2, PaymentFlowContract> paymentFlowV1Def() {
         return new WorkflowDefinition<>() {
             @Override
-            public Class<PaymentFlowContractV1> contract() {
-                return PaymentFlowContractV1.class;
+            public Class<PaymentFlowContract> contract() {
+                return PaymentFlowContract.class;
             }
 
             @Override
-            public Class<StateV1> stateType() {
-                return StateV1.class;
+            public Class<StateV2> stateType() {
+                return StateV2.class;
             }
 
             @Override
@@ -187,19 +178,19 @@ class WorkflowMigrationRegistryTest {
             }
 
             @Override
-            public void define(WorkflowBuilder<StateV1> wf) {
-                wf.init(StartCmd.class, cmd -> new StateV1(cmd.id()))
+            public void define(WorkflowBuilder<StateV2> wf) {
+                wf.init(StartCmd.class, cmd -> new StateV2(cmd.id(), 0))
                         .initialStep("done")
                         .complete("done");
             }
         };
     }
 
-    static WorkflowDefinition<StateV2, PaymentFlowContractV2> paymentFlowV2Def() {
+    static WorkflowDefinition<StateV2, PaymentFlowContract> paymentFlowV2Def() {
         return new WorkflowDefinition<>() {
             @Override
-            public Class<PaymentFlowContractV2> contract() {
-                return PaymentFlowContractV2.class;
+            public Class<PaymentFlowContract> contract() {
+                return PaymentFlowContract.class;
             }
 
             @Override
@@ -238,7 +229,7 @@ class WorkflowMigrationRegistryTest {
 
     // --- Minimal valid handler from StateV1 → StateV2 for "order-saga" ---
 
-    static WorkflowMigrationHandler<StateV1, StateV2> orderSagaV1toV2Handler() {
+    static WorkflowMigrationHandler<StateV2, StateV2> orderSagaV1toV2Handler() {
         return new WorkflowMigrationHandler<>() {
             @Override
             public String definitionId() {
@@ -256,8 +247,8 @@ class WorkflowMigrationRegistryTest {
             }
 
             @Override
-            public Class<StateV1> sourceStateType() {
-                return StateV1.class;
+            public Class<StateV2> sourceStateType() {
+                return StateV2.class;
             }
 
             @Override
@@ -266,8 +257,8 @@ class WorkflowMigrationRegistryTest {
             }
 
             @Override
-            public MigrationResult<StateV2> migrate(StateV1 sourceState, MigrationContext ctx) {
-                return MigrationResult.anchorAtInitial(new StateV2(sourceState.id(), 0));
+            public MigrationResult<StateV2> migrate(StateV2 sourceState, MigrationContext ctx) {
+                return MigrationResult.anchorAtInitial(sourceState);
             }
         };
     }
@@ -306,7 +297,7 @@ class WorkflowMigrationRegistryTest {
         };
     }
 
-    static WorkflowMigrationHandler<StateV1, StateV2> paymentFlowV1toV2Handler() {
+    static WorkflowMigrationHandler<StateV2, StateV2> paymentFlowV1toV2Handler() {
         return new WorkflowMigrationHandler<>() {
             @Override
             public String definitionId() {
@@ -324,8 +315,8 @@ class WorkflowMigrationRegistryTest {
             }
 
             @Override
-            public Class<StateV1> sourceStateType() {
-                return StateV1.class;
+            public Class<StateV2> sourceStateType() {
+                return StateV2.class;
             }
 
             @Override
@@ -334,8 +325,8 @@ class WorkflowMigrationRegistryTest {
             }
 
             @Override
-            public MigrationResult<StateV2> migrate(StateV1 sourceState, MigrationContext ctx) {
-                return MigrationResult.anchorAtInitial(new StateV2(sourceState.id(), 0));
+            public MigrationResult<StateV2> migrate(StateV2 sourceState, MigrationContext ctx) {
+                return MigrationResult.anchorAtInitial(sourceState);
             }
         };
     }
@@ -357,7 +348,7 @@ class WorkflowMigrationRegistryTest {
         @DisplayName("find(...) returns Optional.empty() when no handlers registered")
         void findReturnsEmpty() {
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(), workflowRegistry);
-            assertThat(reg.find("order-saga", 1L, 2L)).isEmpty();
+            assertThat(reg.find("default", "order-saga", 1L, "default", 2L)).isEmpty();
         }
 
         @Test
@@ -376,10 +367,10 @@ class WorkflowMigrationRegistryTest {
         @DisplayName("find(...) returns the handler when key matches")
         void findReturnsSingleHandler() {
             WorkflowRegistry wfReg = registryWith(orderSagaV1Def(), orderSagaV2Def());
-            WorkflowMigrationHandler<StateV1, StateV2> handler = orderSagaV1toV2Handler();
+            WorkflowMigrationHandler<StateV2, StateV2> handler = orderSagaV1toV2Handler();
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(handler), wfReg);
 
-            Optional<WorkflowMigrationHandler<?, ?>> found = reg.find("order-saga", 1L, 2L);
+            Optional<WorkflowMigrationHandler<?, ?>> found = reg.find("default", "order-saga", 1L, "default", 2L);
             assertThat(found).isPresent().containsSame(handler);
         }
 
@@ -387,18 +378,18 @@ class WorkflowMigrationRegistryTest {
         @DisplayName("find(...) returns Optional.empty() for non-matching key")
         void findReturnsEmptyForMismatch() {
             WorkflowRegistry wfReg = registryWith(orderSagaV1Def(), orderSagaV2Def());
-            WorkflowMigrationHandler<StateV1, StateV2> handler = orderSagaV1toV2Handler();
+            WorkflowMigrationHandler<StateV2, StateV2> handler = orderSagaV1toV2Handler();
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(handler), wfReg);
 
-            assertThat(reg.find("order-saga", 1L, 3L)).isEmpty();
-            assertThat(reg.find("other-def", 1L, 2L)).isEmpty();
+            assertThat(reg.find("default", "order-saga", 1L, "default", 3L)).isEmpty();
+            assertThat(reg.find("default", "other-def", 1L, "default", 2L)).isEmpty();
         }
 
         @Test
         @DisplayName("all() returns a collection with the single handler")
         void allReturnsSingleElement() {
             WorkflowRegistry wfReg = registryWith(orderSagaV1Def(), orderSagaV2Def());
-            WorkflowMigrationHandler<StateV1, StateV2> handler = orderSagaV1toV2Handler();
+            WorkflowMigrationHandler<StateV2, StateV2> handler = orderSagaV1toV2Handler();
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(handler), wfReg);
 
             assertThat(reg.all()).containsExactly(handler);
@@ -413,8 +404,8 @@ class WorkflowMigrationRegistryTest {
         @DisplayName("duplicate (defId, from, target) triple throws WorkflowDefinitionException listing both classes")
         void duplicateTripleThrows() {
             WorkflowRegistry wfReg = registryWith(orderSagaV1Def(), orderSagaV2Def());
-            WorkflowMigrationHandler<StateV1, StateV2> h1 = orderSagaV1toV2Handler();
-            WorkflowMigrationHandler<StateV1, StateV2> h2 = orderSagaV1toV2Handler();
+            WorkflowMigrationHandler<StateV2, StateV2> h1 = orderSagaV1toV2Handler();
+            WorkflowMigrationHandler<StateV2, StateV2> h2 = orderSagaV1toV2Handler();
 
             assertThatThrownBy(() -> new DefaultWorkflowMigrationRegistry(Set.of(h1, h2), wfReg))
                     .isInstanceOf(WorkflowDefinitionException.class)
@@ -433,13 +424,13 @@ class WorkflowMigrationRegistryTest {
         void sourceVersionUnregisteredDoesNotThrowAtConstructionButFindReturnsEmpty() {
             // Only v2 registered; handler migrates from v1 → v2; v1 is absent
             WorkflowRegistry wfReg = registryWith(orderSagaV2Def());
-            WorkflowMigrationHandler<StateV1, StateV2> handler = orderSagaV1toV2Handler();
+            WorkflowMigrationHandler<StateV2, StateV2> handler = orderSagaV1toV2Handler();
 
             // Construction must not throw — version check is deferred
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(handler), wfReg);
 
             // find() returns empty because source version v1 is not registered
-            assertThat(reg.find("order-saga", 1L, 2L)).isEmpty();
+            assertThat(reg.find("default", "order-saga", 1L, "default", 2L)).isEmpty();
         }
 
         @Test
@@ -447,13 +438,13 @@ class WorkflowMigrationRegistryTest {
         void targetVersionUnregisteredDoesNotThrowAtConstructionButFindReturnsEmpty() {
             // Only v1 registered; handler migrates from v1 → v2; v2 is absent
             WorkflowRegistry wfReg = registryWith(orderSagaV1Def());
-            WorkflowMigrationHandler<StateV1, StateV2> handler = orderSagaV1toV2Handler();
+            WorkflowMigrationHandler<StateV2, StateV2> handler = orderSagaV1toV2Handler();
 
             // Construction must not throw — version check is deferred
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(handler), wfReg);
 
             // find() returns empty because target version v2 is not registered
-            assertThat(reg.find("order-saga", 1L, 2L)).isEmpty();
+            assertThat(reg.find("default", "order-saga", 1L, "default", 2L)).isEmpty();
         }
     }
 
@@ -465,68 +456,10 @@ class WorkflowMigrationRegistryTest {
         @DisplayName(
                 "handler sourceStateType differs from plan stateType → find() throws WorkflowMigrationStateTypeMismatchException")
         void sourceStateTypeMismatchThrowsAtFindTime() {
-            // orderSagaV1Def has stateType=StateV1, but this handler claims StateV2 as source type
+            // orderSagaV1Def has stateType=StateV2, but this handler claims StateV1 as source type
             WorkflowRegistry wfReg = registryWith(orderSagaV1Def(), orderSagaV2Def());
 
-            WorkflowMigrationHandler<StateV2, StateV2> badHandler = new WorkflowMigrationHandler<>() {
-                @Override
-                public String definitionId() {
-                    return "order-saga";
-                }
-
-                @Override
-                public long fromDefinitionVersion() {
-                    return 1L;
-                }
-
-                @Override
-                public long targetDefinitionVersion() {
-                    return 2L;
-                }
-
-                @Override
-                public Class<StateV2> sourceStateType() {
-                    return StateV2.class; // mismatch: plan v1 has StateV1
-                }
-
-                @Override
-                public Class<StateV2> targetStateType() {
-                    return StateV2.class;
-                }
-
-                @Override
-                public MigrationResult<StateV2> migrate(StateV2 sourceState, MigrationContext ctx) {
-                    return MigrationResult.anchorAtInitial(sourceState);
-                }
-            };
-
-            // Construction must NOT throw — type checking is deferred
-            DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(badHandler), wfReg);
-
-            // find() must throw typed WorkflowMigrationStateTypeMismatchException
-            assertThatThrownBy(() -> reg.find("order-saga", 1L, 2L))
-                    .isInstanceOf(WorkflowMigrationStateTypeMismatchException.class)
-                    .hasMessageContaining("order-saga")
-                    .hasMessageContaining("sourceStateType")
-                    .satisfies(ex -> {
-                        WorkflowMigrationStateTypeMismatchException typed =
-                                (WorkflowMigrationStateTypeMismatchException) ex;
-                        assertThat(typed.definitionId()).isEqualTo("order-saga");
-                        assertThat(typed.fromVersion()).isEqualTo(1L);
-                        assertThat(typed.targetVersion()).isEqualTo(2L);
-                        assertThat(typed.expectedStateType()).isEqualTo(StateV2.class);
-                        assertThat(typed.actualStateType()).isEqualTo(StateV1.class);
-                    });
-        }
-
-        @Test
-        @DisplayName(
-                "handler targetStateType differs from plan stateType → find() throws WorkflowMigrationStateTypeMismatchException")
-        void targetStateTypeMismatchThrowsAtFindTime() {
-            // orderSagaV2Def has stateType=StateV2, but this handler claims StateV1 as target type
-            WorkflowRegistry wfReg = registryWith(orderSagaV1Def(), orderSagaV2Def());
-
-            WorkflowMigrationHandler<StateV1, StateV1> badHandler = new WorkflowMigrationHandler<>() {
+            WorkflowMigrationHandler<StateV1, StateV2> badHandler = new WorkflowMigrationHandler<>() {
                 @Override
                 public String definitionId() {
                     return "order-saga";
@@ -544,7 +477,65 @@ class WorkflowMigrationRegistryTest {
 
                 @Override
                 public Class<StateV1> sourceStateType() {
-                    return StateV1.class;
+                    return StateV1.class; // mismatch: plan v1 has StateV2
+                }
+
+                @Override
+                public Class<StateV2> targetStateType() {
+                    return StateV2.class;
+                }
+
+                @Override
+                public MigrationResult<StateV2> migrate(StateV1 sourceState, MigrationContext ctx) {
+                    return MigrationResult.anchorAtInitial(new StateV2(sourceState.id(), 0));
+                }
+            };
+
+            // Construction must NOT throw — type checking is deferred
+            DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(badHandler), wfReg);
+
+            // find() must throw typed WorkflowMigrationStateTypeMismatchException
+            assertThatThrownBy(() -> reg.find("default", "order-saga", 1L, "default", 2L))
+                    .isInstanceOf(WorkflowMigrationStateTypeMismatchException.class)
+                    .hasMessageContaining("order-saga")
+                    .hasMessageContaining("sourceStateType")
+                    .satisfies(ex -> {
+                        WorkflowMigrationStateTypeMismatchException typed =
+                                (WorkflowMigrationStateTypeMismatchException) ex;
+                        assertThat(typed.definitionId()).isEqualTo("order-saga");
+                        assertThat(typed.fromVersion()).isEqualTo(1L);
+                        assertThat(typed.targetVersion()).isEqualTo(2L);
+                        assertThat(typed.expectedStateType()).isEqualTo(StateV1.class);
+                        assertThat(typed.actualStateType()).isEqualTo(StateV2.class);
+                    });
+        }
+
+        @Test
+        @DisplayName(
+                "handler targetStateType differs from plan stateType → find() throws WorkflowMigrationStateTypeMismatchException")
+        void targetStateTypeMismatchThrowsAtFindTime() {
+            // orderSagaV2Def has stateType=StateV2, but this handler claims StateV1 as target type
+            WorkflowRegistry wfReg = registryWith(orderSagaV1Def(), orderSagaV2Def());
+
+            WorkflowMigrationHandler<StateV2, StateV1> badHandler = new WorkflowMigrationHandler<>() {
+                @Override
+                public String definitionId() {
+                    return "order-saga";
+                }
+
+                @Override
+                public long fromDefinitionVersion() {
+                    return 1L;
+                }
+
+                @Override
+                public long targetDefinitionVersion() {
+                    return 2L;
+                }
+
+                @Override
+                public Class<StateV2> sourceStateType() {
+                    return StateV2.class;
                 }
 
                 @Override
@@ -553,8 +544,8 @@ class WorkflowMigrationRegistryTest {
                 }
 
                 @Override
-                public MigrationResult<StateV1> migrate(StateV1 sourceState, MigrationContext ctx) {
-                    return MigrationResult.anchorAtInitial(sourceState);
+                public MigrationResult<StateV1> migrate(StateV2 sourceState, MigrationContext ctx) {
+                    return MigrationResult.anchorAtInitial(new StateV1(sourceState.id()));
                 }
             };
 
@@ -562,7 +553,7 @@ class WorkflowMigrationRegistryTest {
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(badHandler), wfReg);
 
             // find() must throw typed WorkflowMigrationStateTypeMismatchException
-            assertThatThrownBy(() -> reg.find("order-saga", 1L, 2L))
+            assertThatThrownBy(() -> reg.find("default", "order-saga", 1L, "default", 2L))
                     .isInstanceOf(WorkflowMigrationStateTypeMismatchException.class)
                     .hasMessageContaining("order-saga")
                     .hasMessageContaining("targetStateType")
@@ -675,15 +666,21 @@ class WorkflowMigrationRegistryTest {
             WorkflowRegistry wfReg = registryWith(
                     orderSagaV1Def(), orderSagaV2Def(), orderSagaV3Def(), paymentFlowV1Def(), paymentFlowV2Def());
 
-            WorkflowMigrationHandler<StateV1, StateV2> h1 = orderSagaV1toV2Handler();
+            WorkflowMigrationHandler<StateV2, StateV2> h1 = orderSagaV1toV2Handler();
             WorkflowMigrationHandler<StateV2, StateV2> h2 = orderSagaV2toV3Handler();
-            WorkflowMigrationHandler<StateV1, StateV2> h3 = paymentFlowV1toV2Handler();
+            WorkflowMigrationHandler<StateV2, StateV2> h3 = paymentFlowV1toV2Handler();
 
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(h1, h2, h3), wfReg);
 
-            assertThat(reg.find("order-saga", 1L, 2L)).isPresent().containsSame(h1);
-            assertThat(reg.find("order-saga", 2L, 3L)).isPresent().containsSame(h2);
-            assertThat(reg.find("payment-flow", 1L, 2L)).isPresent().containsSame(h3);
+            assertThat(reg.find("default", "order-saga", 1L, "default", 2L))
+                    .isPresent()
+                    .containsSame(h1);
+            assertThat(reg.find("default", "order-saga", 2L, "default", 3L))
+                    .isPresent()
+                    .containsSame(h2);
+            assertThat(reg.find("default", "payment-flow", 1L, "default", 2L))
+                    .isPresent()
+                    .containsSame(h3);
             assertThat(reg.all()).hasSize(3);
         }
 
@@ -710,20 +707,23 @@ class WorkflowMigrationRegistryTest {
             DefaultWorkflowRegistry wfReg = new DefaultWorkflowRegistry();
             wfReg.register(orderSagaV1Def());
 
-            WorkflowMigrationHandler<StateV1, StateV2> handler = orderSagaV1toV2Handler();
+            WorkflowMigrationHandler<StateV2, StateV2> handler = orderSagaV1toV2Handler();
 
             // Construction must not throw — version resolution is deferred to find()
             DefaultWorkflowMigrationRegistry migrationReg =
                     new DefaultWorkflowMigrationRegistry(Set.of(handler), wfReg);
 
             // find() returns empty because v2 is not yet registered
-            assertThat(migrationReg.find("order-saga", 1L, 2L)).isEmpty();
+            assertThat(migrationReg.find("default", "order-saga", 1L, "default", 2L))
+                    .isEmpty();
 
             // Now register v2 dynamically (simulating WorkflowDefinitionService.activate())
             wfReg.register(orderSagaV2Def());
 
             // find() now returns the handler because both versions are registered
-            assertThat(migrationReg.find("order-saga", 1L, 2L)).isPresent().containsSame(handler);
+            assertThat(migrationReg.find("default", "order-saga", 1L, "default", 2L))
+                    .isPresent()
+                    .containsSame(handler);
         }
 
         @Test
@@ -731,11 +731,11 @@ class WorkflowMigrationRegistryTest {
         void stateTypeMismatchAtFindTimeThrows() {
             // Both versions registered; but the handler declares wrong source state type
             DefaultWorkflowRegistry wfReg = new DefaultWorkflowRegistry();
-            wfReg.register(orderSagaV1Def()); // stateType = StateV1
+            wfReg.register(orderSagaV1Def()); // stateType = StateV2
             wfReg.register(orderSagaV2Def()); // stateType = StateV2
 
-            // Handler claims StateV2 as source type, but plan v1 has StateV1
-            WorkflowMigrationHandler<StateV2, StateV2> badHandler = new WorkflowMigrationHandler<>() {
+            // Handler claims StateV1 as source type, but plan v1 has StateV2
+            WorkflowMigrationHandler<StateV1, StateV2> badHandler = new WorkflowMigrationHandler<>() {
                 @Override
                 public String definitionId() {
                     return "order-saga";
@@ -752,8 +752,99 @@ class WorkflowMigrationRegistryTest {
                 }
 
                 @Override
+                public Class<StateV1> sourceStateType() {
+                    return StateV1.class; // mismatch: plan v1 has StateV2
+                }
+
+                @Override
+                public Class<StateV2> targetStateType() {
+                    return StateV2.class;
+                }
+
+                @Override
+                public MigrationResult<StateV2> migrate(StateV1 sourceState, MigrationContext ctx) {
+                    return MigrationResult.anchorAtInitial(new StateV2(sourceState.id(), 0));
+                }
+            };
+
+            // Construction must NOT throw — type checking is deferred to find()
+            DefaultWorkflowMigrationRegistry migrationReg =
+                    new DefaultWorkflowMigrationRegistry(Set.of(badHandler), wfReg);
+
+            // find() must throw typed WorkflowMigrationStateTypeMismatchException
+            assertThatThrownBy(() -> migrationReg.find("default", "order-saga", 1L, "default", 2L))
+                    .isInstanceOf(WorkflowMigrationStateTypeMismatchException.class)
+                    .hasMessageContaining("order-saga")
+                    .hasMessageContaining("sourceStateType");
+        }
+    }
+
+    @Nested
+    @DisplayName("Scoped handler keys")
+    class ScopedHandlerKeys {
+
+        private static WorkflowDefinition<StateV2, OrderSagaContract> definition(long version) {
+            return new WorkflowDefinition<>() {
+                @Override
+                public Class<OrderSagaContract> contract() {
+                    return OrderSagaContract.class;
+                }
+
+                @Override
+                public Class<StateV2> stateType() {
+                    return StateV2.class;
+                }
+
+                @Override
+                public String definitionId() {
+                    return "m-x";
+                }
+
+                @Override
+                public long definitionVersion() {
+                    return version;
+                }
+
+                @Override
+                public void define(WorkflowBuilder<StateV2> wf) {
+                    wf.init(StartCmd.class, cmd -> new StateV2(cmd.id(), 0))
+                            .initialStep("done")
+                            .complete("done");
+                }
+            };
+        }
+
+        private static WorkflowMigrationHandler<StateV2, StateV2> handler(
+                String sourceScope, long from, String targetScope, long to) {
+            return new WorkflowMigrationHandler<>() {
+                @Override
+                public String sourceScope() {
+                    return sourceScope;
+                }
+
+                @Override
+                public String definitionId() {
+                    return "m-x";
+                }
+
+                @Override
+                public long fromDefinitionVersion() {
+                    return from;
+                }
+
+                @Override
+                public String targetScope() {
+                    return targetScope;
+                }
+
+                @Override
+                public long targetDefinitionVersion() {
+                    return to;
+                }
+
+                @Override
                 public Class<StateV2> sourceStateType() {
-                    return StateV2.class; // mismatch: plan v1 has StateV1
+                    return StateV2.class;
                 }
 
                 @Override
@@ -766,16 +857,39 @@ class WorkflowMigrationRegistryTest {
                     return MigrationResult.anchorAtInitial(sourceState);
                 }
             };
+        }
 
-            // Construction must NOT throw — type checking is deferred to find()
-            DefaultWorkflowMigrationRegistry migrationReg =
-                    new DefaultWorkflowMigrationRegistry(Set.of(badHandler), wfReg);
+        @Test
+        @DisplayName("handlers are keyed by scopes and ordered only within one scope")
+        void handlersAreKeyedByScopesAndOrderedOnlyWithinOneScope() {
+            // Given: handlers (default, m-x, 1) -> (default, 2) and (default, m-x, 2) -> (acme, 1), and a
+            // third (acme, m-x, 2) -> (acme, 1); the definitions of every key registered
+            DefaultWorkflowRegistry wfReg = new DefaultWorkflowRegistry();
+            wfReg.register(definition(1L));
+            wfReg.register(definition(2L));
+            wfReg.register("acme", definition(1L));
+            WorkflowMigrationHandler<StateV2, StateV2> withinDefault = handler("default", 1L, "default", 2L);
+            WorkflowMigrationHandler<StateV2, StateV2> intoAcme = handler("default", 2L, "acme", 1L);
+            WorkflowMigrationHandler<StateV2, StateV2> downgradeInAcme = handler("acme", 2L, "acme", 1L);
 
-            // find() must throw typed WorkflowMigrationStateTypeMismatchException
-            assertThatThrownBy(() -> migrationReg.find("order-saga", 1L, 2L))
-                    .isInstanceOf(WorkflowMigrationStateTypeMismatchException.class)
-                    .hasMessageContaining("order-saga")
-                    .hasMessageContaining("sourceStateType");
+            // When: the registry is built and find is called for each key and for (default, m-x, 1, acme, 1)
+            DefaultWorkflowMigrationRegistry reg =
+                    new DefaultWorkflowMigrationRegistry(Set.of(withinDefault, intoAcme), wfReg);
+            Optional<WorkflowMigrationHandler<?, ?>> first = reg.find("default", "m-x", 1L, "default", 2L);
+            Optional<WorkflowMigrationHandler<?, ?>> second = reg.find("default", "m-x", 2L, "acme", 1L);
+            Optional<WorkflowMigrationHandler<?, ?>> unkeyed = reg.find("default", "m-x", 1L, "acme", 1L);
+
+            // Then: the first two index
+            assertThat(first).containsSame(withinDefault);
+            assertThat(second).containsSame(intoAcme);
+
+            // and: the key with no handler is empty
+            assertThat(unkeyed).isEmpty();
+
+            // and: a downgrade within one scope fails construction
+            assertThatThrownBy(() -> new DefaultWorkflowMigrationRegistry(Set.of(downgradeInAcme), wfReg))
+                    .isInstanceOf(WorkflowDefinitionException.class)
+                    .hasMessageContaining("m-x");
         }
     }
 }

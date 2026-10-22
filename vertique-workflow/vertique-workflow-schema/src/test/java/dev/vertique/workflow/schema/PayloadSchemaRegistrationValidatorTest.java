@@ -14,8 +14,13 @@ import dev.vertique.core.json.JsonProfileConfigurationException;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.schema.validation.PatternInputGuard;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.plan.HumanTaskNode;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RegisteredWorkflowDefinition;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.Payloads;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import io.vertx.core.json.JsonObject;
 import jakarta.validation.Validation;
 import java.util.ArrayList;
@@ -23,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -126,6 +132,67 @@ class PayloadSchemaRegistrationValidatorTest {
         CachedPayloadSchema entry = entryOf(Payloads.GoodPattern.class.getName(), "vertique");
         assertThat(Entries.accepts(entry, new JsonObject().put("code", "abc"))).isTrue();
         assertThat(Entries.accepts(entry, new JsonObject().put("code", "ABC"))).isFalse();
+    }
+
+    // --- Logical type names ---
+
+    @Test
+    @DisplayName("payload schemas are keyed and found by logical name, and plans store the logical names")
+    void annotatedPayloadSchemasAreKeyedByLogicalName() {
+        // Given: a registry wired with the schema validator over one shared type-name index, and a definition
+        // whose start payload is named order.place and whose decision payload is named order.approval
+        DefaultWorkflowTypeNames names = new DefaultWorkflowTypeNames();
+        PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
+                PayloadSchemaTestProfiles.builtIn(),
+                PayloadSchemaTestProfiles.VERTIQUE,
+                Optional.empty(),
+                cache,
+                names);
+        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry(null, Set.of(validator), names);
+
+        // When: the definition registers and is described
+        registry.register(Definitions.withStartAndDecision(
+                "order-saga", 1L, Payloads.PlaceOrder.class, Payloads.OrderApproval.class));
+        Optional<WorkflowDefinitionDescriptor> described = new DefaultWorkflowPayloadSchemas(registry, cache, names)
+                .describe(new DefinitionKey(WorkflowScopes.DEFAULT, "order-saga", 1L));
+
+        // Then: the plan names the decision payload by its logical name, never by its binary class name
+        List<String> decisionTypeNames =
+                registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "order-saga", 1L)).plan().nodes().stream()
+                        .filter(HumanTaskNode.class::isInstance)
+                        .map(HumanTaskNode.class::cast)
+                        .flatMap(task -> task.decisions().stream())
+                        .map(HumanTaskNode.TaskDecision::payloadTypeName)
+                        .toList();
+        assertThat(decisionTypeNames).containsExactly("order.approval");
+
+        // And: the cache holds one entry per logical name and none for a binary class name
+        JsonProfileId vertique = JsonProfileId.of("vertique");
+        assertThat(cache.snapshot().keySet())
+                .containsExactlyInAnyOrder(
+                        new SchemaKey("order.place", vertique), new SchemaKey("order.approval", vertique));
+
+        // And: the description finds both schemas through those keys
+        assertThat(described).isPresent();
+        WorkflowDefinitionDescriptor descriptor = described.get();
+        assertThat(descriptor
+                        .startPayload()
+                        .document()
+                        .getJsonObject("properties")
+                        .fieldNames())
+                .containsExactly("customer");
+        assertThat(descriptor.humanTasks()).hasSize(1);
+        assertThat(descriptor.humanTasks().get(0).decisions()).hasSize(1);
+        assertThat(descriptor
+                        .humanTasks()
+                        .get(0)
+                        .decisions()
+                        .get(0)
+                        .payload()
+                        .document()
+                        .getJsonObject("properties")
+                        .fieldNames())
+                .containsExactly("comment");
     }
 
     // --- Cache sharing and reuse ---

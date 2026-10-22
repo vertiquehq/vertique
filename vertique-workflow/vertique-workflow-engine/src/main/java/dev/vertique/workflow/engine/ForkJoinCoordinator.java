@@ -161,7 +161,14 @@ final class ForkJoinCoordinator {
         String parentSubjectVersion =
                 inst.subjectRef() == null ? null : inst.subjectRef().version();
         return branchEngine
-                .driveBranchTransitions(cleared, inst.stateJson(), parentSubjectVersion, rw, tx, null)
+                .driveBranchTransitions(
+                        cleared,
+                        inst.stateJson(),
+                        parentSubjectVersion,
+                        rw,
+                        BranchTransitionEngine.InstanceScope.of(inst),
+                        tx,
+                        null)
                 .compose(advanced -> {
                     if (isBranchTerminal(advanced.status())) {
                         return evaluateJoinForRecoveredBranch(inst, advanced, rw, tx);
@@ -428,6 +435,7 @@ final class ForkJoinCoordinator {
                                         ? null
                                         : inst.subjectRef().version(),
                                 rw,
+                                BranchTransitionEngine.InstanceScope.of(inst),
                                 tx,
                                 null)
                         .compose(advanced -> {
@@ -884,18 +892,21 @@ final class ForkJoinCoordinator {
                     .withWait(null, null)
                     .withState(reducedStateJson)
                     .withUpdatedAt(clock.instant());
+            // The plan the join advance runs is looked up before the instance row is written; a node without the
+            // code refuses with the typed not-runnable failure and the transaction rolls back.
+            RuntimeWorkflow advancedPlan;
+            try {
+                advancedPlan = PinnedPlans.resolve(registry, advanced);
+            } catch (Exception e) {
+                return Future.<Void>failedFuture(e);
+            }
             return instances.updateOptimistic(advanced, prevVersion, tx).compose(rowCount -> {
                 if (rowCount == 0) {
                     return Future.<Void>failedFuture(new WorkflowConflictException(
                             "Optimistic concurrency conflict advancing instance after join '" + joinNode.stepId()
                                     + "'"));
                 }
-                return driverPvd
-                        .get()
-                        .driveTransitionsStep(
-                                advanced,
-                                registry.resolvePinned(advanced.definitionId(), advanced.definitionVersion()),
-                                tx);
+                return driverPvd.get().driveTransitionsStep(advanced, advancedPlan, tx);
             });
         });
     }

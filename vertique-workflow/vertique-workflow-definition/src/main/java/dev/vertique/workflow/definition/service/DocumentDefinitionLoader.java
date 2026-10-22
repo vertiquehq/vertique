@@ -15,10 +15,13 @@ import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /** Internal source compiler and cache adapter for durable YAML/JSON definitions. */
@@ -28,17 +31,47 @@ public final class DocumentDefinitionLoader implements PersistedDefinitionLoader
     private final WorkflowDefinitionBootstrap bootstrap;
     private final WorkflowDefinitionStore cache;
     private final WorkflowDefinitionsConfig config;
+    private final WorkflowTypeNames typeNames;
 
-    @Inject
+    /**
+     * Creates a loader with an empty type-name index, so every state class is hashed and cached under
+     * its binary name. For callers that do not use logical type names.
+     *
+     * @param pipeline the pipeline that compiles a stored document
+     * @param bootstrap the bootstrap that reports the packaged document origins
+     * @param cache the definition store that caches restored definitions
+     * @param config the typed definition policy, when one is configured
+     */
     public DocumentDefinitionLoader(
             WorkflowDefinitionPipeline pipeline,
             WorkflowDefinitionBootstrap bootstrap,
             WorkflowDefinitionStore cache,
             Optional<WorkflowDefinitionsConfig> config) {
+        this(pipeline, bootstrap, cache, config, new DefaultWorkflowTypeNames());
+    }
+
+    /**
+     * Creates a loader that hashes and caches a restored definition under the logical name of its
+     * state class, as the registry does when it registers the definition.
+     *
+     * @param pipeline the pipeline that compiles a stored document
+     * @param bootstrap the bootstrap that reports the packaged document origins
+     * @param cache the definition store that caches restored definitions
+     * @param config the typed definition policy, when one is configured
+     * @param typeNames the type-name index that names the state class
+     */
+    @Inject
+    public DocumentDefinitionLoader(
+            WorkflowDefinitionPipeline pipeline,
+            WorkflowDefinitionBootstrap bootstrap,
+            WorkflowDefinitionStore cache,
+            Optional<WorkflowDefinitionsConfig> config,
+            WorkflowTypeNames typeNames) {
         this.pipeline = pipeline;
         this.bootstrap = bootstrap;
         this.cache = cache;
         this.config = config.orElseGet(WorkflowDefinitionsConfig::defaults);
+        this.typeNames = typeNames;
     }
 
     @Override
@@ -65,14 +98,21 @@ public final class DocumentDefinitionLoader implements PersistedDefinitionLoader
     }
 
     @Override
-    @SuppressWarnings({"rawtypes", "unchecked"})
     public String planHash(WorkflowDefinition<?, ?> definition) {
-        WorkflowBuilder builder = new WorkflowBuilder();
+        return planHash(definition, typeNames);
+    }
+
+    @Override
+    public String planHash(WorkflowDefinition<?, ?> definition, Map<String, String> nameBinding) {
+        return planHash(definition, DefaultWorkflowTypeNames.bound(typeNames, nameBinding));
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static String planHash(WorkflowDefinition<?, ?> definition, WorkflowTypeNames names) {
+        WorkflowBuilder builder = new WorkflowBuilder(names);
         definition.define(builder);
         return builder.build(
-                        definition.definitionId(),
-                        definition.definitionVersion(),
-                        definition.stateType().getName())
+                        definition.definitionId(), definition.definitionVersion(), names.nameOf(definition.stateType()))
                 .planHash();
     }
 
@@ -85,8 +125,8 @@ public final class DocumentDefinitionLoader implements PersistedDefinitionLoader
                             definition,
                             record.planHash(),
                             DefaultWorkflowDefinitionService.source(record.provenance()),
-                            definition.stateType().getName(),
-                            definition.contract().getName()));
+                            typeNames.nameOf(definition.stateType()),
+                            typeNames.contractNameOf(definition.contract())));
         cache.metadata(record);
     }
 

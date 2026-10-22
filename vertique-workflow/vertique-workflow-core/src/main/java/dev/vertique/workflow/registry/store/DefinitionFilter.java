@@ -4,24 +4,22 @@
 package dev.vertique.workflow.registry.store;
 
 import jakarta.annotation.Nullable;
-import java.util.Objects;
 import java.util.Set;
 
-/** Explicit tenant and status selection; null statuses selects every status. */
+/**
+ * Selection of definition records by scope, definition id and status; a {@code null} component selects every value.
+ *
+ * @param scopeKey the exact scope to select, or {@code null} for every scope
+ * @param definitionId the exact definition id to select, or {@code null} for every id
+ * @param statuses the statuses to select, or {@code null} for every status
+ */
 public record DefinitionFilter(
-        TenantScope scope,
-        @Nullable String tenantKey,
+        @Nullable String scopeKey,
+        @Nullable String definitionId,
         @Nullable Set<DefinitionStatus> statuses) {
-    public enum TenantScope {
-        ALL,
-        GLOBAL,
-        TENANT
-    }
-
     public DefinitionFilter {
-        Objects.requireNonNull(scope, "scope");
-        if (scope == TenantScope.TENANT) DefinitionValues.text(tenantKey, "tenantKey", 255, true);
-        else if (tenantKey != null) throw new IllegalArgumentException("ALL and GLOBAL require null tenantKey");
+        if (scopeKey != null) DefinitionValues.text(scopeKey, "scopeKey", 255, true);
+        if (definitionId != null) DefinitionValues.text(definitionId, "definitionId", 255, true);
         if (statuses != null) statuses = Set.copyOf(statuses);
     }
 }

@@ -7,6 +7,7 @@ import dagger.Binds;
 import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.multibindings.IntoSet;
+import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
 
 /**
@@ -23,7 +24,9 @@ import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
  * generated schemas also reflect the constraints it reports. Install the validation module alongside so that the
  * schema and the engine's payload enforcement agree.
  *
- * <p>It also binds {@link WorkflowPayloadSchemas}, which reads the cached schemas back as descriptors for clients.
+ * <p>It also binds {@link WorkflowPayloadSchemas}, which reads the cached schemas back as descriptors for clients,
+ * and {@link WorkflowStateCompatibility}, which compares the state classes of definitions that share an id across
+ * scopes by their JSON Schemas: added properties are allowed, removed or retyped properties are not.
  *
  * <p>Registration validators run synchronously on the registering thread; call {@code activate} off the event loop.
  */
@@ -49,6 +52,16 @@ public abstract class WorkflowSchemaModule {
     @IntoSet
     abstract WorkflowDefinitionValidator payloadSchemaRegistrationValidator(
             PayloadSchemaRegistrationValidator validator);
+
+    /**
+     * Binds the comparison the workflow registry and the engine use to decide whether one state class extends
+     * another, so differing state classes of one definition id across scopes are compared instead of refused.
+     *
+     * @param compatibility the schema-based comparison
+     * @return the comparison as the public interface
+     */
+    @Binds
+    abstract WorkflowStateCompatibility stateCompatibility(SchemaStateCompatibility compatibility);
 
     /**
      * Declares the optional bean validator the schema generator reads constraints from.

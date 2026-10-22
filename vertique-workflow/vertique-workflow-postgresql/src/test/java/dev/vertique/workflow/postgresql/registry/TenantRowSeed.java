@@ -18,6 +18,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import io.vertx.core.Future;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Map;
 
 /**
  * Seeds tenant document rows of any id, including ids outside the tenant's namespace, the way an older release
@@ -27,7 +28,8 @@ import java.time.Instant;
  * load rules do not apply. The document is compiled by the real definition pipeline of the given graph, so the row
  * carries the plan hash that restoring it later will recompute; the store derives the document digest. Seeding only
  * queues behind the definition id lock like any other store operation, so it can be called while a test holds that
- * lock.
+ * lock. The row names the contract of the compiled document, so a scope's row of an id the default scope
+ * holds under the same contract is accepted like a load of it.
  */
 final class TenantRowSeed {
 
@@ -39,16 +41,18 @@ final class TenantRowSeed {
      * <p>The key's id and version are those of the compiled document, so the id may be any the document declares.
      */
     static Future<DefinitionKey> insertCandidate(
-            AppComponent app, String tenantKey, byte[] document, DocumentFormat format, SourceMetadata source) {
+            AppComponent app, String scopeKey, byte[] document, DocumentFormat format, SourceMetadata source) {
         CompiledDefinition compiled = app.definitionPipeline().load(new DefinitionResource(document, format, source));
         DefinitionKey key = new DefinitionKey(
-                tenantKey,
+                scopeKey,
                 compiled.definition().definitionId(),
                 compiled.definition().definitionVersion());
         Instant now = Instant.now();
         WorkflowDefinitionRecord record = new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
+                compiled.contractName(),
+                "example.State",
                 compiled.planHash(),
                 DefinitionStatus.CANDIDATE,
                 new DefinitionProvenance(
@@ -60,7 +64,9 @@ final class TenantRowSeed {
                         source.loadedAt()),
                 format.name(),
                 now,
-                now);
+                now,
+                Map.of(),
+                null);
         WorkflowDefinitionDocument text =
                 new WorkflowDefinitionDocument(key, new String(document, StandardCharsets.UTF_8), format.name());
         return app.definitionRegistryStore().insertCandidate(record, text).map(key);
@@ -70,23 +76,23 @@ final class TenantRowSeed {
      * Seeds the YAML document as a tenant row and moves it to the target status through the registry store
      * contract, blocking until the row is committed.
      *
-     * <p>{@code CANDIDATE} stops after the insert, {@code ACTIVE} also claims and completes the activation, and
-     * {@code DEPRECATED} then moves the active row to deprecated. The row is not registered in the graph's
+     * <p>{@code CANDIDATE} stops after the insert, {@code AVAILABLE} also claims and completes the publication, and
+     * {@code DEPRECATED} then moves the available row to deprecated. The row is not registered in the graph's
      * executable registry; a graph started afterwards restores it from the table.
      */
     static DefinitionKey seed(
-            AppComponent app, String tenantKey, byte[] document, SourceMetadata source, DefinitionStatus target) {
+            AppComponent app, String scopeKey, byte[] document, SourceMetadata source, DefinitionStatus target) {
         if (target != DefinitionStatus.CANDIDATE
-                && target != DefinitionStatus.ACTIVE
+                && target != DefinitionStatus.AVAILABLE
                 && target != DefinitionStatus.DEPRECATED)
-            throw new IllegalArgumentException("A seeded row can be CANDIDATE, ACTIVE or DEPRECATED, not " + target);
+            throw new IllegalArgumentException("A seeded row can be CANDIDATE, AVAILABLE or DEPRECATED, not " + target);
         WorkflowDefinitionRegistryStore store = app.definitionRegistryStore();
         DefinitionKey key =
-                DefinitionScenario.await(insertCandidate(app, tenantKey, document, DocumentFormat.YAML, source));
+                DefinitionScenario.await(insertCandidate(app, scopeKey, document, DocumentFormat.YAML, source));
         if (target == DefinitionStatus.CANDIDATE) return key;
         DefinitionScenario.await(store.claim(key).compose(store::complete));
         if (target == DefinitionStatus.DEPRECATED)
-            DefinitionScenario.await(store.transition(key, DefinitionStatus.ACTIVE, DefinitionStatus.DEPRECATED));
+            DefinitionScenario.await(store.transition(key, DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
         return key;
     }
 }

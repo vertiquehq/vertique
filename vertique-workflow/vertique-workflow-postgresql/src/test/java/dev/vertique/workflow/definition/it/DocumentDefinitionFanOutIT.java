@@ -38,6 +38,7 @@ import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.it.fixture.FraudScreenedDoc;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
 import dev.vertique.workflow.definition.it.fixture.OrderFanOutState;
+import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentFanOutDocumentWorkflowV1;
 import dev.vertique.workflow.definition.it.fixture.PaymentAuthorizedDoc;
 import dev.vertique.workflow.definition.it.fixture.PlaceFanOutOrder;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
@@ -57,6 +58,7 @@ import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
@@ -515,8 +517,16 @@ public class DocumentDefinitionFanOutIT {
     @DisplayName("AC #2 — document-defined fan-out drives ALL_REQUIRED branches to COMPLETED via branch signals")
     void documentDefinedFanOut_allRequiredBranches_completesAfterThreeSignals(VertxTestContext ctx) {
         PlaceFanOutOrder payload = new PlaceFanOutOrder("fanout-" + UUID.randomUUID());
-        StartCommand cmd =
-                new StartCommand("order-fulfillment-fanout-doc", payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "order-fulfillment-fanout-doc",
+                OrderFulfillmentFanOutDocumentWorkflowV1.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         // Re-enter on a duplicated Vert.x context so the entire async chain — including the
         // pool.withTransaction(tx -> txEngine.signal(...)) bodies that hit
@@ -626,7 +636,7 @@ public class DocumentDefinitionFanOutIT {
     @DisplayName("planHash is accessible via WorkflowDefinitionService.list() after fan-out bootstrap")
     void fanOutDefinitionPlanHashIsAccessibleViaService(VertxTestContext ctx) {
         definitionService
-                .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "definition metadata query must succeed: " + ar.cause());
                     List<WorkflowDefinitionRecord> refs = ar.result();
@@ -634,7 +644,7 @@ public class DocumentDefinitionFanOutIT {
                     WorkflowDefinitionRecord ref = refs.get(0);
                     assertEquals("order-fulfillment-fanout-doc", ref.key().definitionId());
                     assertEquals(1L, ref.key().definitionVersion());
-                    assertEquals(DefinitionStatus.ACTIVE, ref.status());
+                    assertEquals(DefinitionStatus.AVAILABLE, ref.status());
                     assertNotNull(ref.planHash(), "planHash must not be null");
                     assertTrue(!ref.planHash().isBlank(), "planHash must not be blank");
                     ctx.completeNow();

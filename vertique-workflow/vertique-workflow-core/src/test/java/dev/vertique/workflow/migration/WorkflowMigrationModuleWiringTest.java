@@ -31,16 +31,13 @@ class WorkflowMigrationModuleWiringTest {
 
     record StartCmd(String id) {}
 
-    @WorkflowContract(definitionId = "wiring-saga", definitionVersion = 1)
-    interface WiringSagaContractV1 {}
-
-    @WorkflowContract(definitionId = "wiring-saga", definitionVersion = 2)
-    interface WiringSagaContractV2 {}
+    @WorkflowContract
+    interface WiringSagaContract {}
 
     static WorkflowRegistry twoVersionRegistry() {
         DefaultWorkflowRegistry reg = new DefaultWorkflowRegistry();
-        reg.register(wiringDef(1L, WiringSagaContractV1.class));
-        reg.register(wiringDef(2L, WiringSagaContractV2.class));
+        reg.register(wiringDef(1L, WiringSagaContract.class));
+        reg.register(wiringDef(2L, WiringSagaContract.class));
         return reg;
     }
 
@@ -127,7 +124,9 @@ class WorkflowMigrationModuleWiringTest {
 
         WorkflowMigrationRegistry registry = new DefaultWorkflowMigrationRegistry(Set.of(handler), wfReg);
 
-        assertThat(registry.find("wiring-saga", 1L, 2L)).isPresent().containsSame(handler);
+        assertThat(registry.find("default", "wiring-saga", 1L, "default", 2L))
+                .isPresent()
+                .containsSame(handler);
         assertThat(registry.all()).containsExactly(handler);
     }
 }

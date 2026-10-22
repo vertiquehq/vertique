@@ -12,13 +12,15 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
-import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
@@ -26,6 +28,7 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -80,7 +83,10 @@ public class WorkflowVersionPinUnavailableIT {
     record SimpleStartType(String value) {}
 
     /** Marker contract for the version-test workflow. */
-    interface VersionTestContract {}
+    interface VersionTestContract {
+        @WorkflowSignal("go")
+        Future<Void> go(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     // --- Workflow definition (v1) ---
 
@@ -201,7 +207,16 @@ public class WorkflowVersionPinUnavailableIT {
     void signalViaEngineWithoutPinnedVersionFails(VertxTestContext ctx) {
         SimpleStartType payload = new SimpleStartType("test-value");
         String idempotencyKey = "version-pin-test-" + UUID.randomUUID();
-        StartCommand startCmd = new StartCommand("version-test", payload, idempotencyKey, null, null);
+        StartCommand startCmd = new StartCommand(
+                "version-test",
+                VersionTestContract.class.getName(),
+                payload,
+                idempotencyKey,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         // Engine A starts the instance; it will be WAITING for signal "go".
         engineA.start(startCmd)
@@ -226,41 +241,61 @@ public class WorkflowVersionPinUnavailableIT {
     }
 
     /**
-     * Querying an instance via engine B must succeed (query is read-only and definition-independent).
-     *
-     * <p>Engine A starts the instance. Engine B queries it without needing the definition
-     * registered. The returned {@link WorkflowView} must reflect the persisted instance state.
+     * Querying an instance via engine B, which lacks the pinned version's code, returns the stored view: reading
+     * needs no plan.
      */
     @Test
-    @DisplayName("query via engine without pinned version returns WorkflowView from snapshot (definition-independent)")
-    void queryViaEngineWithoutPinnedVersionReturnsViewFromSnapshot(VertxTestContext ctx) {
+    @DisplayName("query via engine without pinned version returns the stored view")
+    void queryViaEngineWithoutPinnedVersionReturnsStoredView(VertxTestContext ctx) {
         SimpleStartType payload = new SimpleStartType("query-value");
         String idempotencyKey = "version-pin-query-" + UUID.randomUUID();
-        StartCommand startCmd = new StartCommand("version-test", payload, idempotencyKey, null, null);
+        StartCommand startCmd = new StartCommand(
+                "version-test",
+                VersionTestContract.class.getName(),
+                payload,
+                idempotencyKey,
+                null,
+                null,
+                null,
+                null,
+                null);
 
-        // Engine A starts the instance.
         engineA.start(startCmd)
-                .compose(id -> {
-                    // Engine B queries it — must succeed without the definition registered.
-                    return engineB.query(id).map(view -> new Object[] {id, view});
-                })
+                .compose(id -> engineB.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
+                    assertTrue(ar.succeeded(), "engineB.query must read without the pinned code: " + ar.cause());
                     assertTrue(
-                            ar.succeeded(),
-                            "engineB.query must succeed (read-only, no definition needed): " + ar.cause());
-                    Object[] result = ar.result();
-                    WorkflowInstanceId startedId = (WorkflowInstanceId) result[0];
-                    WorkflowView view = (WorkflowView) result[1];
+                            "version-test".equals(ar.result().instance().definitionId()),
+                            "expected the stored instance but was: " + ar.result());
+                    ctx.completeNow();
+                }));
+    }
 
-                    assertNotNull(view, "WorkflowView must not be null");
-                    assertEquals(
-                            startedId.value(),
-                            view.instance().id().value(),
-                            "returned instance id must match the started instance");
-                    assertEquals("version-test", view.instance().definitionId(), "definitionId must be 'version-test'");
-                    assertEquals(1L, view.instance().definitionVersion(), "definitionVersion must be 1");
-                    assertNotNull(view.recentHistory(), "history must not be null");
-                    assertFalse(view.recentHistory().isEmpty(), "history must have at least a START entry");
+    /**
+     * A typed client's query compares its contract with the pinned plan; engine B has no plan to compare with, so
+     * it refuses with the not-runnable error.
+     */
+    @Test
+    @DisplayName("query with a contract name via engine without pinned version fails with the not-runnable refusal")
+    void queryWithContractNameWithoutPinnedVersionFailsNotRunnable(VertxTestContext ctx) {
+        StartCommand startCmd = new StartCommand(
+                "version-test",
+                VersionTestContract.class.getName(),
+                new SimpleStartType("query-contract-value"),
+                "version-pin-query-contract-" + UUID.randomUUID(),
+                null,
+                null,
+                null,
+                null,
+                null);
+
+        engineA.start(startCmd)
+                .compose(id -> engineB.query(id, "version-test"))
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertTrue(ar.failed(), "engineB.query with a contract name must fail without the pinned code");
+                    assertTrue(
+                            ar.cause() instanceof WorkflowVersionNotRunnableException,
+                            "expected the not-runnable refusal but was: " + ar.cause());
                     ctx.completeNow();
                 }));
     }

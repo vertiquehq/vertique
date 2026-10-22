@@ -36,7 +36,7 @@ Recorder behavior:
 
 - Resolve the workflow target id through `ServiceTargetResolver`.
 - Require the target to be a one-payload, `Future<Void>` service operation.
-- Write an outbox entry with workflow correlation headers.
+- Write an outbox entry with workflow correlation headers: `x-workflow-id`, `x-workflow-step-sequence`, `x-workflow-definition-id`, `x-workflow-definition-scope` (the scope of the definition the instance is pinned to), `x-workflow-scope` (the scope the instance was started in), `x-workflow-step-id`, and the branch identity headers for a branch dispatch. A correlation header replaces an intent header of the same name.
 - Fail the workflow transaction on an unknown or invalid target.
 - Treat a `null` intent header map as no headers, and fail the returned future with an `IllegalArgumentException` naming the key when an intent header has a `null` key or value.
 

@@ -38,6 +38,8 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -161,7 +163,8 @@ class WorkflowEngineExplicitCarrierSignalTest {
                 WorkflowCallbackRegistry.class,
                 org.mockito.Mockito.withSettings().lenient());
         when(callbacks.stateUpdater(new CallbackId("state-updater"))).thenReturn((a, b) -> Map.of());
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /** Builds a {@link WorkflowInstance} waiting on {@code approve}, carrying the given metadata. */
@@ -285,7 +288,8 @@ class WorkflowEngineExplicitCarrierSignalTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow();
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         // Instance metadata carries a namespace (region) absent from the explicit carrier.
         DurableMetadata instanceMetadata = DurableMetadata.of(REGION_NAMESPACE, new JsonObject().put("regionId", "R1"));
@@ -332,7 +336,8 @@ class WorkflowEngineExplicitCarrierSignalTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow();
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = instanceWaitingOnSignal(null);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -406,7 +411,8 @@ class WorkflowEngineExplicitCarrierSignalTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow();
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         // Persisted instance metadata carries the authenticated-only namespace — a framework-
         // persisted carrier (instance metadata) is never routed through the sanitization seam, so it

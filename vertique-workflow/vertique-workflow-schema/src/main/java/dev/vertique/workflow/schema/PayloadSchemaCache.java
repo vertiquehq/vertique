@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 /**
- * The process-wide store of generated payload schemas, keyed by payload type name and JSON profile.
+ * The process-wide store of generated payload schemas, keyed by the logical payload type name and JSON profile.
  *
  * <p>A computation runs at most once per key. A computation that throws leaves no entry behind, so a failure is
  * never cached.
@@ -40,7 +40,8 @@ final class PayloadSchemaCache {
      * <p>A process has one effective system profile, so the read side knows only the type name. The lookup scans the
      * entries, which are few: one per distinct payload type.
      *
-     * @param typeName the binary class name of the payload type
+     * @param typeName the logical name of the payload type, which is the binary class name for a class without a
+     *     name annotation
      * @return the entry, or empty when none has been computed for the type
      * @throws IllegalStateException if entries for the type exist under more than one profile
      */

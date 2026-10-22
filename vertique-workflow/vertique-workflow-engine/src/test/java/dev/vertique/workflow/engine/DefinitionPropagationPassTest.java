@@ -11,15 +11,17 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.WorkflowPlan;
+import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
-import dev.vertique.workflow.registry.store.ActivationOutcome;
+import dev.vertique.workflow.registry.store.DefinitionActivation;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
+import dev.vertique.workflow.registry.store.DefinitionFailure.Rule;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -32,6 +34,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
@@ -92,20 +95,49 @@ class DefinitionPropagationPassTest {
     @DisplayName("a status change of a held document row is handed to the loader as a restoration")
     void handsOverAStatusChangeOfAHeldDocumentRow() {
         // Given a document row whose runtime this node holds and that the first pass has applied
-        WorkflowDefinitionRecord active = document(null, "wf-held", DefinitionStatus.ACTIVE, T0);
-        world.hold(null, "wf-held", 1, HASH);
+        WorkflowDefinitionRecord active = document(WorkflowScopes.DEFAULT, "wf-held", DefinitionStatus.AVAILABLE, T0);
+        world.hold(WorkflowScopes.DEFAULT, "wf-held", 1, HASH);
         world.store.put(active);
         world.runOk();
         assertThat(world.loader.restored).containsExactly(active);
 
         // When the row is deprecated by another node and the next pass runs
-        WorkflowDefinitionRecord deprecated = document(null, "wf-held", DefinitionStatus.DEPRECATED, T0.plusSeconds(5));
+        WorkflowDefinitionRecord deprecated =
+                document(WorkflowScopes.DEFAULT, "wf-held", DefinitionStatus.DEPRECATED, T0.plusSeconds(5));
         world.store.put(deprecated);
         world.runOk();
 
         // Then the new status was handed over and the runtime is marked
         assertThat(world.loader.restored).containsExactly(active, deprecated);
-        assertThat(world.registry.isDeprecated("wf-held", 1)).isTrue();
+        assertThat(world.registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, "wf-held", 1)))
+                .isTrue();
+        assertThat(world.view.applyFailures()).isZero();
+    }
+
+    @Test
+    @DisplayName("a deprecated row that another node reinstated has its mark cleared and is handed to the loader")
+    void clearsTheMarkOfAReinstatedRow() {
+        // Given a deprecated document row whose runtime this node holds marked, and that a first pass applied
+        WorkflowDefinitionRecord deprecated =
+                document(WorkflowScopes.DEFAULT, "wf-reinstated", DefinitionStatus.DEPRECATED, T0);
+        world.hold(WorkflowScopes.DEFAULT, "wf-reinstated", 1, HASH);
+        world.store.put(deprecated);
+        world.runOk();
+        DefinitionKey key = deprecated.key();
+        assertThat(world.registry.isDeprecated(key)).isTrue();
+
+        // When the row is reinstated by another node and the next pass runs
+        WorkflowDefinitionRecord reinstated =
+                document(WorkflowScopes.DEFAULT, "wf-reinstated", DefinitionStatus.AVAILABLE, T0.plusSeconds(5));
+        world.store.put(reinstated);
+        world.runOk();
+
+        // Then the mark is cleared, the registration is the same one, and the new status was handed over
+        assertThat(world.registry.isDeprecated(key)).isFalse();
+        assertThat(world.registry.holds("wf-reinstated", 1)).isTrue();
+        assertThat(world.registry.unregistered).isEmpty();
+        assertThat(world.loader.restored).containsExactly(deprecated, reinstated);
+        assertThat(world.view.recorded(key)).contains(reinstated);
         assertThat(world.view.applyFailures()).isZero();
     }
 
@@ -113,8 +145,8 @@ class DefinitionPropagationPassTest {
     @DisplayName("a hand-off that throws once leaves the row failing, and the next pass delivers it and clears it")
     void retriesAHandOffThatThrew() {
         // Given a held document row whose loader fails the first delivery
-        WorkflowDefinitionRecord active = document(null, "wf-retry", DefinitionStatus.ACTIVE, T0);
-        world.hold(null, "wf-retry", 1, HASH);
+        WorkflowDefinitionRecord active = document(WorkflowScopes.DEFAULT, "wf-retry", DefinitionStatus.AVAILABLE, T0);
+        world.hold(WorkflowScopes.DEFAULT, "wf-retry", 1, HASH);
         world.store.put(active);
         world.loader.failRestored = 1;
 
@@ -138,8 +170,9 @@ class DefinitionPropagationPassTest {
     @DisplayName("a retired and a candidate document row each deliver their metadata")
     void handsOverMetadataOfRetiredAndCandidateRows() {
         // Given a retired and a candidate document row
-        WorkflowDefinitionRecord retired = document(null, "wf-retired", DefinitionStatus.RETIRED, T0);
-        WorkflowDefinitionRecord candidate = document(null, "wf-candidate", DefinitionStatus.CANDIDATE, T0);
+        WorkflowDefinitionRecord retired = document(WorkflowScopes.DEFAULT, "wf-retired", DefinitionStatus.RETIRED, T0);
+        WorkflowDefinitionRecord candidate =
+                document(WorkflowScopes.DEFAULT, "wf-candidate", DefinitionStatus.CANDIDATE, T0);
         world.store.put(retired);
         world.store.put(candidate);
 
@@ -155,8 +188,8 @@ class DefinitionPropagationPassTest {
     @DisplayName("a held runtime whose definition is not retained is handed over as metadata")
     void handsOverMetadataWhenTheHeldDefinitionIsNotRetained() {
         // Given a held runtime that was registered without a retained definition
-        WorkflowDefinitionRecord active = document(null, "wf-bare", DefinitionStatus.ACTIVE, T0);
-        world.holdWithoutDefinition(null, "wf-bare", 1, HASH);
+        WorkflowDefinitionRecord active = document(WorkflowScopes.DEFAULT, "wf-bare", DefinitionStatus.AVAILABLE, T0);
+        world.holdWithoutDefinition(WorkflowScopes.DEFAULT, "wf-bare", 1, HASH);
         world.store.put(active);
 
         // When a pass runs
@@ -171,7 +204,8 @@ class DefinitionPropagationPassTest {
     @DisplayName("a restoration from the stored document delivers the restored definition")
     void handsOverARestoration() {
         // Given a live document row whose runtime this node does not hold
-        WorkflowDefinitionRecord active = document(null, "wf-restore", DefinitionStatus.ACTIVE, T0);
+        WorkflowDefinitionRecord active =
+                document(WorkflowScopes.DEFAULT, "wf-restore", DefinitionStatus.AVAILABLE, T0);
         world.store.put(active);
 
         // When a pass runs
@@ -189,8 +223,9 @@ class DefinitionPropagationPassTest {
     @DisplayName("a row whose apply never completes is timed out and counted, and the other rows still apply")
     void timesOutAHungRow() {
         // Given a first row whose stored document never arrives and a second row that applies at once
-        WorkflowDefinitionRecord hung = document(null, "wf-hung", DefinitionStatus.ACTIVE, T0);
-        WorkflowDefinitionRecord healthy = document(null, "wf-healthy", DefinitionStatus.ACTIVE, T0);
+        WorkflowDefinitionRecord hung = document(WorkflowScopes.DEFAULT, "wf-hung", DefinitionStatus.AVAILABLE, T0);
+        WorkflowDefinitionRecord healthy =
+                document(WorkflowScopes.DEFAULT, "wf-healthy", DefinitionStatus.AVAILABLE, T0);
         world.store.put(hung);
         world.store.put(healthy);
         Promise<Optional<WorkflowDefinitionDocument>> never = Promise.promise();
@@ -227,7 +262,7 @@ class DefinitionPropagationPassTest {
     void rowDeadlineFollowsTheConfiguredPeriod() {
         // Given a node that polls every five seconds and a row that never completes
         world = new World(Optional.of(new WorkflowDefinitionsConfig(5, 1024)));
-        WorkflowDefinitionRecord hung = document(null, "wf-hung", DefinitionStatus.ACTIVE, T0);
+        WorkflowDefinitionRecord hung = document(WorkflowScopes.DEFAULT, "wf-hung", DefinitionStatus.AVAILABLE, T0);
         world.store.put(hung);
         world.store.documentGates.put(hung.key(), Promise.promise());
 
@@ -245,8 +280,9 @@ class DefinitionPropagationPassTest {
     @DisplayName("a row that overflows the stack is counted like any failing row and later rows still apply")
     void containsAStackOverflowInOneRow() {
         // Given a row whose loader overflows the stack and a later healthy row
-        WorkflowDefinitionRecord overflowing = document(null, "wf-deep", DefinitionStatus.ACTIVE, T0);
-        WorkflowDefinitionRecord healthy = document(null, "wf-later", DefinitionStatus.ACTIVE, T0);
+        WorkflowDefinitionRecord overflowing =
+                document(WorkflowScopes.DEFAULT, "wf-deep", DefinitionStatus.AVAILABLE, T0);
+        WorkflowDefinitionRecord healthy = document(WorkflowScopes.DEFAULT, "wf-later", DefinitionStatus.AVAILABLE, T0);
         world.store.put(overflowing);
         world.store.put(healthy);
         world.loader.loadError = new StackOverflowError();
@@ -266,7 +302,7 @@ class DefinitionPropagationPassTest {
     @DisplayName("an out-of-memory error is not contained: it fails the pass")
     void doesNotContainAnOutOfMemoryError() {
         // Given a row whose loader runs out of memory
-        world.store.put(document(null, "wf-oom", DefinitionStatus.ACTIVE, T0));
+        world.store.put(document(WorkflowScopes.DEFAULT, "wf-oom", DefinitionStatus.AVAILABLE, T0));
         world.loader.loadError = new OutOfMemoryError("heap");
         world.loader.loadErrorFor = "wf-oom";
 
@@ -283,15 +319,15 @@ class DefinitionPropagationPassTest {
     @Test
     @DisplayName("a second pass over unchanged settled rows reads and queues nothing for them")
     void skipsSettledRows() {
-        // Given every kind of settled row: held live, retired, candidate, activating, and code live and deprecated
-        world.hold(null, "wf-live", 1, HASH);
-        world.store.put(document(null, "wf-live", DefinitionStatus.ACTIVE, T0));
-        world.store.put(document(null, "wf-retired", DefinitionStatus.RETIRED, T0));
-        world.store.put(document(null, "wf-candidate", DefinitionStatus.CANDIDATE, T0));
-        world.store.put(document(null, "wf-activating", DefinitionStatus.ACTIVATING, T0));
+        // Given every kind of settled row: held live, retired, candidate, publishing, and code live and deprecated
+        world.hold(WorkflowScopes.DEFAULT, "wf-live", 1, HASH);
+        world.store.put(document(WorkflowScopes.DEFAULT, "wf-live", DefinitionStatus.AVAILABLE, T0));
+        world.store.put(document(WorkflowScopes.DEFAULT, "wf-retired", DefinitionStatus.RETIRED, T0));
+        world.store.put(document(WorkflowScopes.DEFAULT, "wf-candidate", DefinitionStatus.CANDIDATE, T0));
+        world.store.put(document(WorkflowScopes.DEFAULT, "wf-publishing", DefinitionStatus.PUBLISHING, T0));
         world.deployCode("wf-code", HASH);
         world.deployCode("wf-dep", HASH);
-        world.store.put(code("wf-code", DefinitionStatus.ACTIVE, T0));
+        world.store.put(code("wf-code", DefinitionStatus.AVAILABLE, T0));
         world.store.put(code("wf-dep", DefinitionStatus.DEPRECATED, T0));
         world.runOk();
         assertThat(world.store.totalFinds()).isEqualTo(6);
@@ -312,23 +348,24 @@ class DefinitionPropagationPassTest {
     @DisplayName("a changed status or change instant takes the full path again")
     void rereadsARowWhoseStatusChanged() {
         // Given settled live and retired rows
-        world.hold(null, "wf-live", 1, HASH);
-        WorkflowDefinitionRecord live = document(null, "wf-live", DefinitionStatus.ACTIVE, T0);
-        WorkflowDefinitionRecord retired = document(null, "wf-retired", DefinitionStatus.RETIRED, T0);
+        world.hold(WorkflowScopes.DEFAULT, "wf-live", 1, HASH);
+        WorkflowDefinitionRecord live = document(WorkflowScopes.DEFAULT, "wf-live", DefinitionStatus.AVAILABLE, T0);
+        WorkflowDefinitionRecord retired = document(WorkflowScopes.DEFAULT, "wf-retired", DefinitionStatus.RETIRED, T0);
         world.store.put(live);
         world.store.put(retired);
         world.runOk();
         world.store.finds.clear();
 
         // When the live row is deprecated and the retired row is rewritten with a later instant
-        world.store.put(document(null, "wf-live", DefinitionStatus.DEPRECATED, T0.plusSeconds(1)));
-        world.store.put(document(null, "wf-retired", DefinitionStatus.RETIRED, T0.plusSeconds(1)));
+        world.store.put(document(WorkflowScopes.DEFAULT, "wf-live", DefinitionStatus.DEPRECATED, T0.plusSeconds(1)));
+        world.store.put(document(WorkflowScopes.DEFAULT, "wf-retired", DefinitionStatus.RETIRED, T0.plusSeconds(1)));
         world.runOk();
 
         // Then both were re-read once and the deprecation was applied
         assertThat(world.store.findCount(live.key())).isEqualTo(1);
         assertThat(world.store.findCount(retired.key())).isEqualTo(1);
-        assertThat(world.registry.isDeprecated("wf-live", 1)).isTrue();
+        assertThat(world.registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, "wf-live", 1)))
+                .isTrue();
     }
 
     @Test
@@ -336,7 +373,7 @@ class DefinitionPropagationPassTest {
     void healsAnExternallyRemovedRuntime() {
         // Given an applied code row
         world.deployCode("wf-code", HASH);
-        WorkflowDefinitionRecord row = code("wf-code", DefinitionStatus.ACTIVE, T0);
+        WorkflowDefinitionRecord row = code("wf-code", DefinitionStatus.AVAILABLE, T0);
         world.store.put(row);
         world.runOk();
         assertThat(world.registry.holds("wf-code", 1)).isTrue();
@@ -352,16 +389,16 @@ class DefinitionPropagationPassTest {
     }
 
     @Test
-    @DisplayName("a retired row is removed when its owner's runtime reappears after it was settled")
+    @DisplayName("a retired row is removed when its own runtime reappears after it was settled")
     void removesARuntimeThatReappearsForASettledRetiredRow() {
         // Given a retired row that the pass has settled
-        WorkflowDefinitionRecord retired = document(null, "wf-retired", DefinitionStatus.RETIRED, T0);
+        WorkflowDefinitionRecord retired = document(WorkflowScopes.DEFAULT, "wf-retired", DefinitionStatus.RETIRED, T0);
         world.store.put(retired);
         world.runOk();
         world.store.finds.clear();
 
-        // When its owner's runtime shows up again
-        world.hold(null, "wf-retired", 1, HASH);
+        // When its own runtime shows up again
+        world.hold(WorkflowScopes.DEFAULT, "wf-retired", 1, HASH);
         world.runOk();
 
         // Then the row was re-read and the runtime removed
@@ -373,8 +410,8 @@ class DefinitionPropagationPassTest {
     @DisplayName("a live row that failed is re-read until it heals, and only then skipped")
     void rereadsAFailingLiveRowUntilItHeals() {
         // Given a held live row whose first delivery fails
-        WorkflowDefinitionRecord row = document(null, "wf-heal", DefinitionStatus.ACTIVE, T0);
-        world.hold(null, "wf-heal", 1, HASH);
+        WorkflowDefinitionRecord row = document(WorkflowScopes.DEFAULT, "wf-heal", DefinitionStatus.AVAILABLE, T0);
+        world.hold(WorkflowScopes.DEFAULT, "wf-heal", 1, HASH);
         world.store.put(row);
         world.loader.failRestored = 1;
         world.runOk();
@@ -397,7 +434,7 @@ class DefinitionPropagationPassTest {
     @DisplayName("a retired row is settled only after its hand-off succeeded")
     void settlesARetiredRowOnlyAfterSuccess() {
         // Given a retired document row whose first metadata hand-off fails
-        WorkflowDefinitionRecord retired = document(null, "wf-retired", DefinitionStatus.RETIRED, T0);
+        WorkflowDefinitionRecord retired = document(WorkflowScopes.DEFAULT, "wf-retired", DefinitionStatus.RETIRED, T0);
         world.store.put(retired);
         world.loader.failMetadata = 1;
         world.runOk();
@@ -435,7 +472,7 @@ class DefinitionPropagationPassTest {
         assertThat(world.registry.holds("wf-code", 1)).isFalse();
         assertThat(world.registry.unregistered).containsExactly("wf-code@1");
         RuntimeWorkflow published = world.registry.history.getFirst();
-        assertThat(world.registrations.classify(null, "wf-code", 1, published))
+        assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf-code", 1, published))
                 .isEqualTo(ManagedRegistrations.Standing.UNATTRIBUTED);
         assertThat(world.view.applyFailures()).isEqualTo(1);
         assertThat(world.view.recorded(row.key())).isEmpty();
@@ -447,15 +484,16 @@ class DefinitionPropagationPassTest {
     @DisplayName("a deprecated row marks its held runtime even when the hash drifted, and still counts as drift")
     void marksBeforeReportingDrift() {
         // Given a deprecated row and a held runtime with another hash
-        WorkflowDefinitionRecord row = document(null, "wf-drift", DefinitionStatus.DEPRECATED, T0);
-        world.hold(null, "wf-drift", 1, OTHER_HASH);
+        WorkflowDefinitionRecord row = document(WorkflowScopes.DEFAULT, "wf-drift", DefinitionStatus.DEPRECATED, T0);
+        world.hold(WorkflowScopes.DEFAULT, "wf-drift", 1, OTHER_HASH);
         world.store.put(row);
 
         // When a pass runs
         world.runOk();
 
         // Then the runtime is marked deprecated and the row is counted as drift
-        assertThat(world.registry.isDeprecated("wf-drift", 1)).isTrue();
+        assertThat(world.registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, "wf-drift", 1)))
+                .isTrue();
         assertThat(world.view.applyFailures()).isEqualTo(1);
         assertThat(log.warnings())
                 .singleElement()
@@ -463,8 +501,8 @@ class DefinitionPropagationPassTest {
     }
 
     @Test
-    @DisplayName("a retired row of one owner never evicts the runtime another owner holds for the same id and version")
-    void neverEvictsAnotherOwnersRuntimeForARetiredRow() {
+    @DisplayName("a retired row of one scope never evicts the runtime another scope holds for the same id and version")
+    void neverEvictsAnotherScopesRuntimeForARetiredRow() {
         // Given a runtime held for tenant-b and a retired row of tenant-a with the same id, version and hash
         WorkflowDefinitionRecord retired = document("tenant-a", "wf-shared", DefinitionStatus.RETIRED, T0);
         world.hold("tenant-b", "wf-shared", 1, HASH);
@@ -483,15 +521,15 @@ class DefinitionPropagationPassTest {
     @DisplayName("a settled live row is checked again when the held runtime carries another plan hash")
     void rechecksALiveRowWhoseHeldRuntimeHashChanged() {
         // Given an active row that a first pass applied and the next pass would skip
-        WorkflowDefinitionRecord row = document(null, "wf-rehash", DefinitionStatus.ACTIVE, T0);
-        world.hold(null, "wf-rehash", 1, HASH);
+        WorkflowDefinitionRecord row = document(WorkflowScopes.DEFAULT, "wf-rehash", DefinitionStatus.AVAILABLE, T0);
+        world.hold(WorkflowScopes.DEFAULT, "wf-rehash", 1, HASH);
         world.store.put(row);
         world.runOk();
         assertThat(world.view.applyFailures()).isZero();
 
         // When the node's runtime for that version is replaced by one with another plan hash
         world.registry.drop("wf-rehash", 1);
-        world.hold(null, "wf-rehash", 1, OTHER_HASH);
+        world.hold(WorkflowScopes.DEFAULT, "wf-rehash", 1, OTHER_HASH);
         world.store.finds.clear();
         world.runOk();
 
@@ -503,10 +541,10 @@ class DefinitionPropagationPassTest {
     // ----- unattributed runtimes -----
 
     @Test
-    @DisplayName("a retired row with an unattributed runtime has nothing of its owner to remove and does not fail")
+    @DisplayName("a retired row with an unattributed runtime has nothing of its own to remove and does not fail")
     void settlesARetiredRowWithAnUnattributedRuntime() {
         // Given a retired row, an applied-looking view entry, and a runtime that nobody attributed
-        WorkflowDefinitionRecord retired = document(null, "wf-foreign", DefinitionStatus.RETIRED, T0);
+        WorkflowDefinitionRecord retired = document(WorkflowScopes.DEFAULT, "wf-foreign", DefinitionStatus.RETIRED, T0);
         world.holdWithoutDefinitionOrAttribution("wf-foreign", 1, HASH);
         world.store.put(retired);
         world.view.applied(retired);
@@ -527,7 +565,7 @@ class DefinitionPropagationPassTest {
     void failsALiveRowWithAnUnattributedRuntime() {
         // Given a live row and a runtime that nobody attributed
         world.holdWithoutDefinitionOrAttribution("wf-foreign", 1, HASH);
-        world.store.put(document(null, "wf-foreign", DefinitionStatus.ACTIVE, T0));
+        world.store.put(document(WorkflowScopes.DEFAULT, "wf-foreign", DefinitionStatus.AVAILABLE, T0));
 
         // When a pass runs
         world.runOk();
@@ -549,10 +587,10 @@ class DefinitionPropagationPassTest {
         world.deployCode("wf-a", HASH);
         world.deployCode("wf-b", HASH);
         world.deployCode("wf-c", HASH);
-        world.store.put(code("wf-a", DefinitionStatus.ACTIVE, T0));
-        WorkflowDefinitionRecord unreadable = code("wf-b", DefinitionStatus.ACTIVE, T0);
+        world.store.put(code("wf-a", DefinitionStatus.AVAILABLE, T0));
+        WorkflowDefinitionRecord unreadable = code("wf-b", DefinitionStatus.AVAILABLE, T0);
         world.store.put(unreadable);
-        world.store.put(code("wf-c", DefinitionStatus.ACTIVE, T0));
+        world.store.put(code("wf-c", DefinitionStatus.AVAILABLE, T0));
         IllegalStateException refused = new IllegalStateException("connection reset");
         world.store.findFailures.put(unreadable.key(), refused);
 
@@ -571,9 +609,10 @@ class DefinitionPropagationPassTest {
     @DisplayName("a row listed as not live but re-read as live is left untouched, failure included")
     void leavesARowThatBecameLiveUntouchedByTheRemovalRound() {
         // Given a listing that shows a candidate row, a table that holds the row active, and a recorded failure
-        WorkflowDefinitionRecord listed = document(null, "wf-moved", DefinitionStatus.CANDIDATE, T0);
-        WorkflowDefinitionRecord actual = document(null, "wf-moved", DefinitionStatus.ACTIVE, T0.plusSeconds(1));
-        world.hold(null, "wf-moved", 1, HASH);
+        WorkflowDefinitionRecord listed = document(WorkflowScopes.DEFAULT, "wf-moved", DefinitionStatus.CANDIDATE, T0);
+        WorkflowDefinitionRecord actual =
+                document(WorkflowScopes.DEFAULT, "wf-moved", DefinitionStatus.AVAILABLE, T0.plusSeconds(1));
+        world.hold(WorkflowScopes.DEFAULT, "wf-moved", 1, HASH);
         world.store.put(actual);
         world.store.listing = () -> List.of(listed);
         world.view.failed(listed.key());
@@ -592,9 +631,10 @@ class DefinitionPropagationPassTest {
     @DisplayName("a row listed as live but re-read as retired is left untouched, failure included")
     void leavesARowThatRetiredUntouchedByTheRestoreRound() {
         // Given a listing that shows a live row, a table that holds it retired, a held runtime and a failure
-        WorkflowDefinitionRecord listed = document(null, "wf-moved", DefinitionStatus.ACTIVE, T0);
-        WorkflowDefinitionRecord actual = document(null, "wf-moved", DefinitionStatus.RETIRED, T0.plusSeconds(1));
-        world.hold(null, "wf-moved", 1, HASH);
+        WorkflowDefinitionRecord listed = document(WorkflowScopes.DEFAULT, "wf-moved", DefinitionStatus.AVAILABLE, T0);
+        WorkflowDefinitionRecord actual =
+                document(WorkflowScopes.DEFAULT, "wf-moved", DefinitionStatus.RETIRED, T0.plusSeconds(1));
+        world.hold(WorkflowScopes.DEFAULT, "wf-moved", 1, HASH);
         world.store.put(actual);
         world.store.listing = () -> List.of(listed);
         world.view.failed(listed.key());
@@ -613,7 +653,7 @@ class DefinitionPropagationPassTest {
     @DisplayName("a listed row that vanished before it was re-read loses its view entry and its failure")
     void forgetsARowThatVanished() {
         // Given a listed row that is no longer in the table, with a view entry and a failure
-        WorkflowDefinitionRecord listed = document(null, "wf-gone", DefinitionStatus.ACTIVE, T0);
+        WorkflowDefinitionRecord listed = document(WorkflowScopes.DEFAULT, "wf-gone", DefinitionStatus.AVAILABLE, T0);
         world.store.listing = () -> List.of(listed);
         world.view.applied(listed);
         world.view.failed(listed.key());
@@ -632,7 +672,7 @@ class DefinitionPropagationPassTest {
     @DisplayName("a repeated identical failure logs a warning once, a changed reason warns again, the count stays")
     void throttlesRepeatedFailureWarnings() {
         // Given a code row the deployed code does not provide
-        WorkflowDefinitionRecord row = code("wf-missing", DefinitionStatus.ACTIVE, T0);
+        WorkflowDefinitionRecord row = code("wf-missing", DefinitionStatus.AVAILABLE, T0);
         world.store.put(row);
 
         // When three passes fail the same way
@@ -667,61 +707,41 @@ class DefinitionPropagationPassTest {
         assertThat(log.warnings()).hasSize(3);
     }
 
+    @Test
+    @DisplayName("a failing and an applied row log a bounded form of a long definition id")
+    void logsABoundedFormOfALongDefinitionId() {
+        // Given a code row the deployed code does not provide and a held document row, both with a long id
+        String longId = "wf-" + "y".repeat(200);
+        world.store.put(code(longId, DefinitionStatus.AVAILABLE, T0));
+        String heldId = "wf-" + "z".repeat(200);
+        world.hold(WorkflowScopes.DEFAULT, heldId, 1, HASH);
+        world.store.put(document(WorkflowScopes.DEFAULT, heldId, DefinitionStatus.AVAILABLE, T0));
+
+        // When a pass runs
+        world.runOk();
+
+        // Then the warning and the applied line were logged, and neither repeats the whole id
+        assertThat(log.warnings()).isNotEmpty();
+        assertThat(log.everything()).anySatisfy(line -> assertThat(line).contains("Applied definition"));
+        assertThat(log.everything())
+                .noneSatisfy(line -> assertThat(line).containsAnyOf(longId, heldId))
+                .allSatisfy(line -> assertThat(line).doesNotContain("y".repeat(100), "z".repeat(100)));
+    }
+
     // ----- remaining outcomes -----
 
     @Test
-    @DisplayName("a row whose registration belongs to an owner that still holds the id fails as an owner conflict")
-    void failsWithAnOwnerConflict() {
-        // Given a runtime published for tenant-old, whose row is still active, and a listed row of tenant-new
-        world.hold("tenant-old", "wf-shared", 1, HASH);
-        world.store.put(document("tenant-old", "wf-shared", DefinitionStatus.ACTIVE, T0));
-        WorkflowDefinitionRecord newcomer = document("tenant-new", "wf-shared", DefinitionStatus.ACTIVE, T0);
-        world.store.put(newcomer);
-        world.store.listing = () -> List.of(newcomer);
-
-        // When a pass runs
-        world.runOk();
-
-        // Then the newcomer is counted as an owner conflict and the registration stays
-        assertThat(world.view.applyFailures()).isEqualTo(1);
-        assertThat(world.registry.unregistered).isEmpty();
-        assertThat(log.warnings()).singleElement().satisfies(text -> assertThat(text)
-                .contains("OWNER_CONFLICT"));
-    }
-
-    @Test
-    @DisplayName("a registration of an owner that no longer holds the id is released and replaced")
-    void releasesAStaleRegistration() {
-        // Given a runtime published for tenant-old, whose row is gone, and a listed row of tenant-new
-        world.hold("tenant-old", "wf-shared", 1, HASH);
-        DefinitionKey oldKey = new DefinitionKey("tenant-old", "wf-shared", 1);
-        world.view.applied(document("tenant-old", "wf-shared", DefinitionStatus.ACTIVE, T0));
-        WorkflowDefinitionRecord newcomer = document("tenant-new", "wf-shared", DefinitionStatus.ACTIVE, T0);
-        world.store.put(newcomer);
-
-        // When a pass runs
-        world.runOk();
-
-        // Then the stale registration was released, its view entry dropped, and the newcomer published
-        assertThat(world.registry.unregistered).containsExactly("wf-shared@1");
-        assertThat(world.view.recorded(oldKey)).isEmpty();
-        assertThat(world.registry.holds("wf-shared", 1)).isTrue();
-        assertThat(world.view.recorded(newcomer.key())).contains(newcomer);
-        assertThat(world.view.applyFailures()).isZero();
-    }
-
-    @Test
-    @DisplayName("an activating row is left alone, even when its runtime is held")
-    void leavesAnActivatingRowAlone() {
-        // Given an activating row whose runtime this node holds
-        world.hold(null, "wf-activating", 1, HASH);
-        world.store.put(document(null, "wf-activating", DefinitionStatus.ACTIVATING, T0));
+    @DisplayName("a publishing row is left alone, even when its runtime is held")
+    void leavesAPublishingRowAlone() {
+        // Given a publishing row whose runtime this node holds
+        world.hold(WorkflowScopes.DEFAULT, "wf-publishing", 1, HASH);
+        world.store.put(document(WorkflowScopes.DEFAULT, "wf-publishing", DefinitionStatus.PUBLISHING, T0));
 
         // When a pass runs
         world.runOk();
 
         // Then nothing happened to it
-        assertThat(world.registry.holds("wf-activating", 1)).isTrue();
+        assertThat(world.registry.holds("wf-publishing", 1)).isTrue();
         assertThat(world.registry.unregistered).isEmpty();
         assertThat(world.loader.metadata).isEmpty();
         assertThat(world.loader.restored).isEmpty();
@@ -733,7 +753,7 @@ class DefinitionPropagationPassTest {
     @DisplayName("a stored document that compiles to another hash fails as drift and publishes nothing")
     void failsADocumentWhoseCompiledHashDiffers() {
         // Given a live document row whose loader compiles it to another hash
-        world.store.put(document(null, "wf-doc", DefinitionStatus.ACTIVE, T0));
+        world.store.put(document(WorkflowScopes.DEFAULT, "wf-doc", DefinitionStatus.AVAILABLE, T0));
         world.loader.hash = OTHER_HASH;
 
         // When a pass runs
@@ -751,7 +771,7 @@ class DefinitionPropagationPassTest {
     @DisplayName("the logged message of a parse failure carries no source text")
     void logsNoSourceTextOfAParseFailure() {
         // Given a stored document whose loader fails with a message that quotes the text
-        WorkflowDefinitionRecord row = document(null, "wf-parse", DefinitionStatus.ACTIVE, T0);
+        WorkflowDefinitionRecord row = document(WorkflowScopes.DEFAULT, "wf-parse", DefinitionStatus.AVAILABLE, T0);
         world.store.put(row);
         world.store.documents.put(row.key(), new WorkflowDefinitionDocument(row.key(), "SECRET-DOCUMENT-TEXT", "YAML"));
         world.loader.quoteDocumentInFailure = true;
@@ -765,6 +785,111 @@ class DefinitionPropagationPassTest {
         assertThat(log.everything()).noneSatisfy(text -> assertThat(text).contains("SECRET-DOCUMENT-TEXT"));
     }
 
+    // ----- scope rows that newly deployed code conflicts with -----
+
+    @Test
+    @DisplayName("a scope row that another node published and this node's code conflicts with is settled, not failed")
+    void settlesAScopeRowThatThisNodesCodeConflictsWith() {
+        // Given: a live scope document row whose plain registration the state comparison refuses
+        WorkflowDefinitionRecord row = document("acme", "wf-scope-state", DefinitionStatus.AVAILABLE, T0);
+        world.registry.stateConflicts.add("wf-scope-state");
+        world.store.put(row);
+
+        // When: a pass runs, and runs again
+        world.runOk();
+        world.runOk();
+
+        // Then: no pass counts the row as an apply failure and nothing warns about it
+        assertThat(world.view.applyFailures()).isZero();
+        assertThat(world.view.failing(row.key())).isFalse();
+        assertThat(log.warnings()).isEmpty();
+
+        // and: the plan is registered as failing and the table holds the state rule for the row
+        assertThat(world.registry.holds("wf-scope-state", 1)).isTrue();
+        assertThat(world.store.failures).containsOnlyKeys(row.key());
+        assertThat(world.store.failures.get(row.key()).rule()).isEqualTo(Rule.STATE_TYPE_NOT_EXTENDED);
+    }
+
+    @Test
+    @DisplayName("a default scope row that the state comparison refuses is still an apply failure")
+    void defaultScopeRowConflictIsStillAnApplyFailure() {
+        // Given: a live default scope document row whose registration fails
+        WorkflowDefinitionRecord row =
+                document(WorkflowScopes.DEFAULT, "wf-default-state", DefinitionStatus.AVAILABLE, T0);
+        world.registry.stateConflicts.add("wf-default-state");
+        world.store.put(row);
+
+        // When: a pass runs
+        world.runOk();
+
+        // Then: the row is counted as failing, unregistered and unmarked
+        assertThat(world.view.applyFailures()).isEqualTo(1);
+        assertThat(world.registry.holds("wf-default-state", 1)).isFalse();
+        assertThat(world.store.failures).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a scope row whose recorded type name no longer resolves is settled and marked, not failed")
+    void settlesAScopeRowWhoseBoundNameNoLongerResolves() {
+        // Given: a live scope document row recorded with a type name that no class resolves
+        WorkflowDefinitionRecord row = new WorkflowDefinitionRecord(
+                new DefinitionKey("acme", "wf-scope-binding", 1),
+                DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
+                HASH,
+                DefinitionStatus.AVAILABLE,
+                PROVENANCE,
+                "YAML",
+                T0,
+                T0,
+                Map.of("example.State", "no.such.Name"),
+                null);
+        world.store.put(row);
+
+        // When: a pass runs, and runs again
+        world.runOk();
+        world.runOk();
+
+        // Then: no pass counts the row as an apply failure and nothing warns about it
+        assertThat(world.view.applyFailures()).isZero();
+        assertThat(world.view.failing(row.key())).isFalse();
+        assertThat(log.warnings()).isEmpty();
+
+        // and: no plan is registered, and the table holds the binding rule for the row
+        assertThat(world.registry.holds("wf-scope-binding", 1)).isFalse();
+        assertThat(world.store.failures).containsOnlyKeys(row.key());
+        assertThat(world.store.failures.get(row.key()).rule()).isEqualTo(Rule.NAME_BINDING_UNRESOLVED);
+    }
+
+    @Test
+    @DisplayName("a default scope row whose recorded type name no longer resolves is still an apply failure")
+    void defaultScopeRowWithUnresolvableBoundNameIsStillAnApplyFailure() {
+        // Given: a live default scope document row recorded with a type name that no class resolves
+        WorkflowDefinitionRecord row = new WorkflowDefinitionRecord(
+                new DefinitionKey(WorkflowScopes.DEFAULT, "wf-default-binding", 1),
+                DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
+                HASH,
+                DefinitionStatus.AVAILABLE,
+                PROVENANCE,
+                "YAML",
+                T0,
+                T0,
+                Map.of("example.State", "no.such.Name"),
+                null);
+        world.store.put(row);
+
+        // When: a pass runs
+        world.runOk();
+
+        // Then: the row is counted as failing, unregistered and unmarked
+        assertThat(world.view.applyFailures()).isEqualTo(1);
+        assertThat(world.registry.holds("wf-default-binding", 1)).isFalse();
+        assertThat(world.store.failures).isEmpty();
+    }
+
     // ----- fixtures -----
 
     private static WorkflowDefinitionRecord document(
@@ -772,17 +897,32 @@ class DefinitionPropagationPassTest {
         return new WorkflowDefinitionRecord(
                 new DefinitionKey(tenant, id, 1),
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 HASH,
                 status,
                 PROVENANCE,
                 "YAML",
                 T0,
-                changedAt);
+                changedAt,
+                Map.of(),
+                null);
     }
 
     private static WorkflowDefinitionRecord code(String id, DefinitionStatus status, Instant changedAt) {
         return new WorkflowDefinitionRecord(
-                new DefinitionKey(null, id, 1), DefinitionKind.CODE, HASH, status, PROVENANCE, null, T0, changedAt);
+                new DefinitionKey(WorkflowScopes.DEFAULT, id, 1),
+                DefinitionKind.CODE,
+                "example.Contract",
+                "example.State",
+                HASH,
+                status,
+                PROVENANCE,
+                null,
+                T0,
+                changedAt,
+                Map.of(),
+                null);
     }
 
     /** The pass under test together with its fakes. */
@@ -821,7 +961,8 @@ class DefinitionPropagationPassTest {
         void hold(String tenant, String id, long version, String hash) {
             registry.hashes.put(id + "@" + version, hash);
             registry.register(registry.definition(id, version));
-            registrations.attribute(tenant, id, version, registry.resolvePinned(id, version));
+            registrations.attribute(
+                    tenant, id, version, registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)));
         }
 
         void holdWithoutDefinition(String tenant, String id, long version, String hash) {
@@ -851,6 +992,7 @@ class DefinitionPropagationPassTest {
         final Map<DefinitionKey, Integer> finds = new HashMap<>();
         final Map<DefinitionKey, Throwable> findFailures = new HashMap<>();
         final Map<DefinitionKey, Promise<Optional<WorkflowDefinitionDocument>>> documentGates = new HashMap<>();
+        final Map<DefinitionKey, DefinitionFailure> failures = new LinkedHashMap<>();
         Supplier<List<WorkflowDefinitionRecord>> listing;
         int lists;
 
@@ -895,12 +1037,12 @@ class DefinitionPropagationPassTest {
 
         @Override
         public Future<ReconcileOutcome> upsertDocument(
-                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 
@@ -910,7 +1052,7 @@ class DefinitionPropagationPassTest {
         }
 
         @Override
-        public Future<ActivationOutcome> complete(ActivationClaim claim) {
+        public Future<Void> complete(ActivationClaim claim) {
             throw new UnsupportedOperationException();
         }
 
@@ -925,17 +1067,34 @@ class DefinitionPropagationPassTest {
         }
 
         @Override
+        public Future<Void> resetStalePublishing(String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> putActivation(DefinitionActivation activation) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> removeActivation(String scopeKey, String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
+            return Future.succeededFuture(List.of());
+        }
+
+        @Override
+        public Future<Void> recordFailure(DefinitionKey key, DefinitionFailure failure) {
+            if (failure == null) failures.remove(key);
+            else failures.put(key, failure);
+            return Future.succeededFuture();
+        }
+
+        @Override
         public Future<Void> retire(DefinitionKey key) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Future<Void> resetStaleActivating(String definitionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Future<Void> recomputeActive(String tenantKey, String definitionId) {
             throw new UnsupportedOperationException();
         }
     }
@@ -948,6 +1107,9 @@ class DefinitionPropagationPassTest {
         final Map<String, String> hashes = new HashMap<>();
         final List<RuntimeWorkflow> history = new ArrayList<>();
         final List<String> unregistered = new ArrayList<>();
+        /** The definition ids whose plain registration is refused by the state comparison. */
+        final Set<String> stateConflicts = new HashSet<>();
+
         boolean failMark;
 
         WorkflowDefinition<?, ?> definition(String id, long version) {
@@ -981,6 +1143,7 @@ class DefinitionPropagationPassTest {
             Mockito.when(plan.definitionVersion()).thenReturn(version);
             RuntimeWorkflow runtime = Mockito.mock(RuntimeWorkflow.class);
             Mockito.when(runtime.plan()).thenReturn(plan);
+            Mockito.when(runtime.definitionScopeKey()).thenReturn(WorkflowScopes.DEFAULT);
             history.add(runtime);
             return runtime;
         }
@@ -996,20 +1159,40 @@ class DefinitionPropagationPassTest {
         }
 
         @Override
-        public RuntimeWorkflow resolveCurrent(String definitionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+        public RuntimeWorkflow resolve(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             RuntimeWorkflow found = runtimes.get(definitionId + "@" + version);
             if (found == null) throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
             return found;
         }
 
         @Override
-        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
+        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
+            return Optional.ofNullable(runtimes.get(key.definitionId() + "@" + key.definitionVersion()));
+        }
+
+        @Override
+        public List<DefinitionKey> keysFor(String definitionId) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
+            if (stateConflicts.contains(def.definitionId()))
+                throw new WorkflowDefinitionException("definition '" + def.definitionId()
+                        + "' has a state type that does not extend the default scope's");
+            register(def);
+        }
+
+        @Override
+        public void registerFailing(String scopeKey, WorkflowDefinition<?, ?> def) {
+            register(def);
+        }
+
+        @Override
+        public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
+            return Optional.empty();
         }
 
         @Override
@@ -1018,12 +1201,16 @@ class DefinitionPropagationPassTest {
         }
 
         @Override
-        public Optional<WorkflowDefinition<?, ?>> registeredDefinition(String definitionId, long version) {
+        public Optional<WorkflowDefinition<?, ?>> registeredDefinition(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             return Optional.ofNullable(definitions.get(definitionId + "@" + version));
         }
 
         @Override
-        public void unregister(String definitionId, long version) {
+        public void unregister(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             String name = definitionId + "@" + version;
             unregistered.add(name);
             runtimes.remove(name);
@@ -1032,13 +1219,22 @@ class DefinitionPropagationPassTest {
         }
 
         @Override
-        public void markDeprecated(String definitionId, long version) {
+        public void markDeprecated(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             if (failMark) throw new IllegalStateException("cannot mark");
             deprecated.add(definitionId + "@" + version);
         }
 
         @Override
-        public boolean isDeprecated(String definitionId, long version) {
+        public void unmarkDeprecated(DefinitionKey key) {
+            deprecated.remove(key.definitionId() + "@" + key.definitionVersion());
+        }
+
+        @Override
+        public boolean isDeprecated(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             return deprecated.contains(definitionId + "@" + version);
         }
     }

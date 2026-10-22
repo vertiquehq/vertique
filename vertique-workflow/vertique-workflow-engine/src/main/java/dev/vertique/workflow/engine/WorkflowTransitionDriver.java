@@ -255,7 +255,13 @@ final class WorkflowTransitionDriver {
                     sdn.targetId(),
                     payload,
                     Map.of(),
-                    WorkflowSideEffectIntent.Correlation.singlePath(inst.id(), seq, inst.definitionId(), sdn.stepId()));
+                    WorkflowSideEffectIntent.Correlation.singlePath(
+                            inst.id(),
+                            seq,
+                            inst.definitionId(),
+                            inst.definitionScopeKey(),
+                            inst.scopeKey(),
+                            sdn.stepId()));
 
             return recorders
                     .route(intent, tx)
@@ -350,7 +356,13 @@ final class WorkflowTransitionDriver {
                     wsn.stepId(),
                     new TimerIntentPayload(fireAt, TimerPurpose.SIGNAL_TIMEOUT, null),
                     Map.of(),
-                    WorkflowSideEffectIntent.Correlation.singlePath(inst.id(), seq, inst.definitionId(), wsn.stepId()));
+                    WorkflowSideEffectIntent.Correlation.singlePath(
+                            inst.id(),
+                            seq,
+                            inst.definitionId(),
+                            inst.definitionScopeKey(),
+                            inst.scopeKey(),
+                            wsn.stepId()));
 
             return recorders.route(intent, tx).compose(recorderResult -> {
                 if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
@@ -548,7 +560,13 @@ final class WorkflowTransitionDriver {
                     tn.stepId(),
                     new TimerIntentPayload(fireAt, TimerPurpose.STANDALONE, null),
                     Map.of(),
-                    WorkflowSideEffectIntent.Correlation.singlePath(inst.id(), seq, inst.definitionId(), tn.stepId()));
+                    WorkflowSideEffectIntent.Correlation.singlePath(
+                            inst.id(),
+                            seq,
+                            inst.definitionId(),
+                            inst.definitionScopeKey(),
+                            inst.scopeKey(),
+                            tn.stepId()));
 
             return recorders.route(intent, tx).compose(recorderResult -> {
                 if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
@@ -701,7 +719,13 @@ final class WorkflowTransitionDriver {
                     htn.stepId(),
                     new TimerIntentPayload(fireAt, TimerPurpose.TASK_DUE, taskId),
                     Map.of(),
-                    WorkflowSideEffectIntent.Correlation.singlePath(inst.id(), seq, inst.definitionId(), htn.stepId()));
+                    WorkflowSideEffectIntent.Correlation.singlePath(
+                            inst.id(),
+                            seq,
+                            inst.definitionId(),
+                            inst.definitionScopeKey(),
+                            inst.scopeKey(),
+                            htn.stepId()));
 
             return recorders.route(intent, tx).compose(recorderResult -> {
                 if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {

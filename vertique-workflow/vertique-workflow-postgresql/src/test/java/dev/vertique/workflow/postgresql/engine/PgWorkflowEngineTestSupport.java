@@ -14,6 +14,8 @@ import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
+import dev.vertique.workflow.migration.WorkflowStateCompatibility;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
@@ -275,6 +277,42 @@ final class PgWorkflowEngineTestSupport {
                 propagator,
                 Set.of(),
                 beanValidator);
+    }
+
+    /**
+     * Builds an engine that compares state types through {@code stateCompatibility} when it migrates an instance.
+     * Recorders are empty, workflow events are the only intent kind, and branch and join repositories are absent.
+     */
+    static WorkflowEngineHandle createWithStateCompatibility(
+            Pool pool,
+            WorkflowRegistry registry,
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            WorkflowDedupRepository<SqlClient> dedup,
+            TimerStore<SqlClient> timerStore,
+            TaskStore<SqlClient> taskStore,
+            Clock clock,
+            WorkflowMigrationRegistry migrationRegistry,
+            Optional<WorkflowStateCompatibility> stateCompatibility) {
+        return WorkflowEngineFactory.create(
+                runnerFor(pool),
+                registry,
+                instances,
+                history,
+                dedup,
+                null,
+                null,
+                timerStore,
+                taskStore,
+                clock,
+                Set.of(),
+                Set.of(IntentKind.WORKFLOW_EVENT),
+                Optional.of(migrationRegistry),
+                null,
+                Set.of(),
+                Optional.empty(),
+                ((DefaultWorkflowRegistry) registry).typeNames(),
+                stateCompatibility);
     }
 
     // --- dialect-specific runner construction (stays in postgresql) ---

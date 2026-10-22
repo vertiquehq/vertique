@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+# Waits for a signal that the contract does not declare.
+definitionId: parity-doc-bad
+definitionVersion: 1
+contract: parity-orders
+stateType: parity.state
+startPayloadType: parity.start
+initialStateMapper: parity.init
+initialStep: wait-refund
+steps:
+  - id: wait-refund
+    type: wait-signal
+    signal: refund
+    payloadType: parity.refund
+    stateReducer: parity.apply
+    next: done
+  - id: done
+    type: complete

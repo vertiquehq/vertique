@@ -2,7 +2,7 @@
   "definitionId": "order-fulfillment-doc",
   "definitionVersion": 2,
   "stateType": "dev.vertique.workflow.definition.it.fixture.OrderDocState",
-  "contract": "dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV2",
+  "contract": "dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV1",
   "startPayloadType": "dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc",
   "initialStateMapper": "doc.order.fromPlaceOrder",
   "initialStep": "reserve-inventory",

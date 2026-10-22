@@ -13,6 +13,8 @@ import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -28,6 +30,8 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
@@ -109,7 +113,10 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
 
     record State(String id) {}
 
-    interface TaskCallbackContract {}
+    interface TaskCallbackContract {
+        @WorkflowSignal("my-signal")
+        Future<Void> mySignal(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Workflow plan:
@@ -240,7 +247,8 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
 
     private WorkflowInstanceId seedInstance() {
         UUID id = UUID.randomUUID();
-        String planHash = registry.resolvePinned(DEFINITION.definitionId(), DEFINITION.definitionVersion())
+        String planHash = registry.resolve(new DefinitionKey(
+                        WorkflowScopes.DEFAULT, DEFINITION.definitionId(), DEFINITION.definitionVersion()))
                 .plan()
                 .planHash();
         // Park the parent at current_step_id='join' with wait_key='fork-step' — production

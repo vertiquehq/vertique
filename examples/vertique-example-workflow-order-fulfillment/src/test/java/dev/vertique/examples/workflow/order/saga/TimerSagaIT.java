@@ -90,7 +90,16 @@ public class TimerSagaIT extends SagaTestBase {
 
         component
                 .workflowOperations()
-                .start(new StartCommand("timer-standalone", start, testId, null, null))
+                .start(new StartCommand(
+                        "timer-standalone",
+                        TimerWorkflowDefinition.StandaloneTimerContract.class.getName(),
+                        start,
+                        testId,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(id -> {
                     // Workflow should be WAITING on the timer step
                     return component.workflowOperations().query(id).map(view -> {
@@ -130,7 +139,16 @@ public class TimerSagaIT extends SagaTestBase {
 
         component
                 .workflowOperations()
-                .start(new StartCommand("timer-signal-timeout", start, testId, null, null))
+                .start(new StartCommand(
+                        "timer-signal-timeout",
+                        TimerWorkflowDefinition.SignalWithTimeoutContract.class.getName(),
+                        start,
+                        testId,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(id -> {
                     // Workflow should be WAITING on the signal/timeout step
                     return component.workflowOperations().query(id).map(view -> {
@@ -171,7 +189,16 @@ public class TimerSagaIT extends SagaTestBase {
 
         component
                 .workflowOperations()
-                .start(new StartCommand("timer-signal-timeout", start, testId, null, null))
+                .start(new StartCommand(
+                        "timer-signal-timeout",
+                        TimerWorkflowDefinition.SignalWithTimeoutContract.class.getName(),
+                        start,
+                        testId,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(id -> {
                     // Send the signal immediately — before any timer fires
                     var sig = new TimerWorkflowDefinition.OkSignal(testId);
@@ -215,7 +242,16 @@ public class TimerSagaIT extends SagaTestBase {
 
         component
                 .workflowOperations()
-                .start(new StartCommand("timer-standalone", start, testId, null, null))
+                .start(new StartCommand(
+                        "timer-standalone",
+                        TimerWorkflowDefinition.StandaloneTimerContract.class.getName(),
+                        start,
+                        testId,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(id -> {
                     // Immediately cancel the workflow while it waits on the timer
                     return component

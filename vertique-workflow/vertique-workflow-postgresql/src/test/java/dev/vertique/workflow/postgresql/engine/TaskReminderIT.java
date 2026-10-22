@@ -550,7 +550,16 @@ public class TaskReminderIT {
     @DisplayName("One-shot: 2 reminder timers fire; second has isLast=true; workflow stays WAITING")
     void oneShotRemindersFire(VertxTestContext ctx) {
         State state = new State("one-shot-" + UUID.randomUUID());
-        engine.start(new StartCommand("reminder-one-shot", state, state.idempotencyKey(), null, null))
+        engine.start(new StartCommand(
+                        "reminder-one-shot",
+                        OneShotContract.class.getName(),
+                        state,
+                        state.idempotencyKey(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     // After start, insertedTimerIds has 2 one-shot reminder timer ids
                     assertEquals(2, insertedTimerIds.size(), "2 reminder timers should be scheduled on start");
@@ -640,7 +649,16 @@ public class TaskReminderIT {
     @DisplayName("Recurring: 3 fires with maxFires=3; 3rd has isLast=true; no 4th timer scheduled")
     void recurringRemindersCappedAtMaxFires(VertxTestContext ctx) {
         State state = new State("recurring-" + UUID.randomUUID());
-        engine.start(new StartCommand("reminder-recurring", state, state.idempotencyKey(), null, null))
+        engine.start(new StartCommand(
+                        "reminder-recurring",
+                        RecurringContract.class.getName(),
+                        state,
+                        state.idempotencyKey(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     // After start, 1 recurring reminder timer is scheduled
                     assertEquals(1, insertedTimerIds.size(), "1 recurring reminder timer should be scheduled");
@@ -711,7 +729,16 @@ public class TaskReminderIT {
     @DisplayName("Reminder cancel cascade: pending reminder becomes CANCELLED when task is completed")
     void reminderCancelledOnTaskCompletion(VertxTestContext ctx) {
         State state = new State("cancel-complete-" + UUID.randomUUID());
-        engine.start(new StartCommand("reminder-recurring", state, state.idempotencyKey(), null, null))
+        engine.start(new StartCommand(
+                        "reminder-recurring",
+                        RecurringContract.class.getName(),
+                        state,
+                        state.idempotencyKey(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     UUID reminderId = insertedTimerIds.get(0);
@@ -760,7 +787,16 @@ public class TaskReminderIT {
     @DisplayName("Reminder cancel cascade: pending reminder becomes CANCELLED when workflow is cancelled")
     void reminderCancelledOnWorkflowCancel(VertxTestContext ctx) {
         State state = new State("cancel-wf-" + UUID.randomUUID());
-        engine.start(new StartCommand("reminder-recurring", state, state.idempotencyKey(), null, null))
+        engine.start(new StartCommand(
+                        "reminder-recurring",
+                        RecurringContract.class.getName(),
+                        state,
+                        state.idempotencyKey(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(workflowId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     UUID reminderId = insertedTimerIds.get(0);
@@ -796,7 +832,16 @@ public class TaskReminderIT {
     @DisplayName("Reminder cancel cascade: pending reminder becomes CANCELLED when task due-date expires")
     void reminderCancelledOnDueDateExpiry(VertxTestContext ctx) {
         State state = new State("cancel-due-" + UUID.randomUUID());
-        engine.start(new StartCommand("reminder-due-date", state, state.idempotencyKey(), null, null))
+        engine.start(new StartCommand(
+                        "reminder-due-date",
+                        DueDateReminderContract.class.getName(),
+                        state,
+                        state.idempotencyKey(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     // insertedTimerIds[0] = due-date timer, insertedTimerIds[1] = reminder timer
                     // (order: handleHumanTaskNode calls scheduleDueDateTimer first, then scheduleReminderTimers)
@@ -845,7 +890,16 @@ public class TaskReminderIT {
     @DisplayName("Reminders survive reassignment: SCHEDULED reminder stays SCHEDULED after taskReassigned")
     void remindersSurviveReassignment(VertxTestContext ctx) {
         State state = new State("reassign-reminder-" + UUID.randomUUID());
-        engine.start(new StartCommand("reminder-recurring", state, state.idempotencyKey(), null, null))
+        engine.start(new StartCommand(
+                        "reminder-recurring",
+                        RecurringContract.class.getName(),
+                        state,
+                        state.idempotencyKey(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     UUID reminderId = insertedTimerIds.get(0);
@@ -888,7 +942,16 @@ public class TaskReminderIT {
     @DisplayName("Idempotent fire on closed task: no event emitted; timer ends FIRED not FAILED")
     void reminderFireOnClosedTaskIsIdempotent(VertxTestContext ctx) {
         State state = new State("idempotent-closed-" + UUID.randomUUID());
-        engine.start(new StartCommand("reminder-recurring", state, state.idempotencyKey(), null, null))
+        engine.start(new StartCommand(
+                        "reminder-recurring",
+                        RecurringContract.class.getName(),
+                        state,
+                        state.idempotencyKey(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     // insertedTimerIds.get(0) is the initial reminder timer — cancel cascade will
@@ -983,7 +1046,16 @@ public class TaskReminderIT {
     @DisplayName("TASK_REMINDER_FIRED history entries: one per reminder fire")
     void reminderHistoryEntriesWritten(VertxTestContext ctx) {
         State state = new State("history-" + UUID.randomUUID());
-        engine.start(new StartCommand("reminder-one-shot", state, state.idempotencyKey(), null, null))
+        engine.start(new StartCommand(
+                        "reminder-one-shot",
+                        OneShotContract.class.getName(),
+                        state,
+                        state.idempotencyKey(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(2, insertedTimerIds.size(), "2 one-shot timers scheduled");
                     UUID timerId1 = insertedTimerIds.get(0);

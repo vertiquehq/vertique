@@ -18,20 +18,23 @@ import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.plan.CompensationNode;
 import dev.vertique.workflow.plan.CompleteNode;
 import dev.vertique.workflow.plan.ServiceDispatchNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.CallbackId;
+import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -282,7 +285,16 @@ class WorkflowOutboxComposeValidatorTest {
 
     private static WorkflowRegistry registryWith(WorkflowPlan plan) {
         RuntimeWorkflow rw = new RuntimeWorkflow(
-                plan, String.class, String.class, Function.identity(), Map.of(), emptyCallbacks(), Map.of(), Map.of());
+                plan,
+                "test-contract",
+                WorkflowScopes.DEFAULT,
+                String.class,
+                String.class,
+                Function.identity(),
+                Map.of(),
+                emptyCallbacks(),
+                Map.of(),
+                Map.of());
         return new StaticRegistry(List.of(rw));
     }
 
@@ -324,18 +336,28 @@ class WorkflowOutboxComposeValidatorTest {
         }
 
         @Override
-        public RuntimeWorkflow resolveCurrent(String definitionId) {
+        public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+        public RuntimeWorkflow resolve(DefinitionKey key) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
-            throw new UnsupportedOperationException();
+        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
+            return Optional.empty();
+        }
+
+        @Override
+        public List<DefinitionKey> keysFor(String definitionId) {
+            return List.of();
+        }
+
+        @Override
+        public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
+            return Optional.empty();
         }
 
         @Override

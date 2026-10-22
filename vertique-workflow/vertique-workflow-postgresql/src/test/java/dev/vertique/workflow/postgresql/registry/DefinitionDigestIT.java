@@ -14,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
@@ -29,6 +30,7 @@ import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootO
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
@@ -48,11 +50,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionDigestIT {
 
-    @WorkflowContract(definitionId = "digest-guarded-read-active-doc", definitionVersion = 1)
-    public interface ActiveCaseV1 {}
+    @WorkflowContract
+    public interface ActiveCaseV1 extends OrderDocumentSignals {}
 
-    @WorkflowContract(definitionId = "digest-guarded-read-edited-doc", definitionVersion = 1)
-    public interface EditedCaseV1 {}
+    @WorkflowContract
+    public interface EditedCaseV1 extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_definition_digest_it")
@@ -66,8 +68,8 @@ public class DefinitionDigestIT {
         String editedId = "digest-guarded-read-edited-doc";
         String validOversizedId = "digest-oversized-valid-doc";
         String badOversizedId = "digest-oversized-bad-doc";
-        DefinitionKey activeKey = new DefinitionKey(null, activeId, 1);
-        DefinitionKey editedKey = new DefinitionKey(null, editedId, 1);
+        DefinitionKey activeKey = new DefinitionKey(WorkflowScopes.DEFAULT, activeId, 1);
+        DefinitionKey editedKey = new DefinitionKey(WorkflowScopes.DEFAULT, editedId, 1);
         String editMarker = "# edited directly in the database";
 
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
@@ -81,22 +83,25 @@ public class DefinitionDigestIT {
             String activeText = documentText(activeId, 1, ActiveCaseV1.class);
             String editedText = documentText(editedId, 1, EditedCaseV1.class);
             CompiledDefinitionRef activeLoaded = await(service.load(
+                    WorkflowScopes.DEFAULT,
                     activeText.getBytes(StandardCharsets.UTF_8),
                     DocumentFormat.YAML,
-                    source("active", Instant.parse("2026-10-18T12:00:00Z")),
-                    null));
+                    source("active", Instant.parse("2026-10-18T12:00:00Z"))));
             CompiledDefinitionRef editedLoaded = await(service.load(
+                    WorkflowScopes.DEFAULT,
                     editedText.getBytes(StandardCharsets.UTF_8),
                     DocumentFormat.YAML,
-                    source("edited", Instant.parse("2026-10-18T12:01:00Z")),
-                    null));
+                    source("edited", Instant.parse("2026-10-18T12:01:00Z"))));
 
             // When the unedited candidate is activated
-            await(service.activate(activeKey));
+            await(service.publish(activeKey));
 
             // Then it is active and registered, and the guarded read returns exactly the text that was loaded
-            assertThat(scenario.stored(activeId, 1).status()).isEqualTo("ACTIVE");
-            assertThat(app.workflowRegistry().resolvePinned(activeId, 1).plan().planHash())
+            assertThat(scenario.stored(activeId, 1).status()).isEqualTo("AVAILABLE");
+            assertThat(app.workflowRegistry()
+                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, activeId, 1))
+                            .plan()
+                            .planHash())
                     .isEqualTo(activeLoaded.planHash());
             assertThat(await(store.findDocument(activeKey)))
                     .map(WorkflowDefinitionDocument::document)
@@ -107,7 +112,7 @@ public class DefinitionDigestIT {
             assertThat(planHashOf(app, editedStored, "edited-check")).isEqualTo(editedLoaded.planHash());
             scenario.execute("""
                     UPDATE workflow_definitions SET document = $1
-                    WHERE tenant_key IS NULL AND definition_id = $2 AND definition_version = 1
+                    WHERE scope_key = 'default' AND definition_id = $2 AND definition_version = 1
                     """, Tuple.of(editedStored, editedId));
             Stored candidateBefore = scenario.stored(editedId, 1);
             assertThat(candidateBefore.status()).isEqualTo("CANDIDATE");
@@ -115,7 +120,7 @@ public class DefinitionDigestIT {
             assertThat(candidateBefore.document()).isEqualTo(editedStored);
 
             // When the edited candidate is activated
-            Throwable activation = failureOf(service.activate(editedKey));
+            Throwable activation = failureOf(service.publish(editedKey));
 
             // Then activation fails as drift naming the row, without echoing the document
             assertThat(activation)
@@ -137,7 +142,8 @@ public class DefinitionDigestIT {
                     .isEqualTo(candidateBefore);
             assertThat(app.workflowRegistry().allRegistered())
                     .noneMatch(runtime -> runtime.plan().definitionId().equals(editedId));
-            assertThatThrownBy(() -> app.workflowRegistry().resolvePinned(editedId, 1))
+            assertThatThrownBy(() ->
+                            app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, editedId, 1)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
 
             // When the edited row is read through the guarded accessor
@@ -163,7 +169,7 @@ public class DefinitionDigestIT {
             node.close();
             scenario.execute("""
                     UPDATE workflow_definitions SET document = $1
-                    WHERE tenant_key IS NULL AND definition_id = $2 AND definition_version = 1
+                    WHERE scope_key = 'default' AND definition_id = $2 AND definition_version = 1
                     """, Tuple.of(activeEdited, activeId));
 
             // When the application restarts
@@ -202,10 +208,10 @@ public class DefinitionDigestIT {
 
             // When each is read through the guarded accessor
             WorkflowDefinitionRegistryStore oversizedStore = reader.app().definitionRegistryStore();
-            Throwable validDigestFailure =
-                    failureOf(oversizedStore.findDocument(new DefinitionKey(null, validOversizedId, 1)));
-            Throwable badDigestFailure =
-                    failureOf(oversizedStore.findDocument(new DefinitionKey(null, badOversizedId, 1)));
+            Throwable validDigestFailure = failureOf(
+                    oversizedStore.findDocument(new DefinitionKey(WorkflowScopes.DEFAULT, validOversizedId, 1)));
+            Throwable badDigestFailure = failureOf(
+                    oversizedStore.findDocument(new DefinitionKey(WorkflowScopes.DEFAULT, badOversizedId, 1)));
 
             // Then both give the existing size error, because the envelope is checked before any digest
             for (Throwable failure : new Throwable[] {validDigestFailure, badDigestFailure}) {
@@ -234,7 +240,7 @@ public class DefinitionDigestIT {
     private static String storedDigest(DefinitionScenario scenario, String definitionId) {
         return await(scenario.admin().preparedQuery("""
                                 SELECT document_digest FROM workflow_definitions
-                                WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = 1
+                                WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = 1
                                 """).execute(Tuple.of(definitionId)))
                 .iterator()
                 .next()
@@ -246,9 +252,9 @@ public class DefinitionDigestIT {
             DefinitionScenario scenario, String definitionId, int length, String digest) {
         scenario.execute("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                      document, document_format, document_digest, source_type, loaded_at)
-                VALUES (NULL, $1, 1, 'DOCUMENT', repeat('a', 64), 'CANDIDATE',
+                VALUES ('default', $1, 1, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), 'CANDIDATE',
                         repeat('x', $2), 'JSON', $3, 'digest-test', now())
                 """, Tuple.of(definitionId, length, digest));
     }

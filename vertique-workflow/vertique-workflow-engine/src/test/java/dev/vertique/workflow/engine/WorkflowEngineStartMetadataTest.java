@@ -31,6 +31,8 @@ import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WorkflowInstance;
 import io.vertx.core.Future;
@@ -96,7 +98,8 @@ class WorkflowEngineStartMetadataTest {
         WorkflowPlan plan =
                 new WorkflowPlan(DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), INITIAL_STEP_ID, nodes, null);
         WorkflowCallbackRegistry callbacks = org.mockito.Mockito.mock();
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /** Test harness bundling the assembled engine handle plus its mocked SPI collaborators. */
@@ -125,10 +128,15 @@ class WorkflowEngineStartMetadataTest {
         dev.vertique.workflow.tasks.TaskStore<SqlClient> taskStore = org.mockito.Mockito.mock();
 
         RuntimeWorkflow rw = minimalRuntimeWorkflow();
-        when(registry.resolveCurrent(DEFINITION_ID)).thenReturn(rw);
+        DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
+        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
+        when(registry.isDeployed(currentKey)).thenReturn(true);
+        when(registry.resolve(currentKey)).thenReturn(rw);
 
         UUID winningId = UUID.randomUUID();
-        when(dedup.claimOrResolveStart(eq(DEFINITION_ID), any(), any(), any(), any()))
+        when(dedup.findStart(any(), eq(DEFINITION_ID), any(), any()))
+                .thenReturn(Future.succeededFuture(Optional.empty()));
+        when(dedup.claimOrResolveStart(any(), eq(DEFINITION_ID), any(), any(), any(), any()))
                 .thenAnswer(inv -> Future.succeededFuture(
                         new StartDedupResult(new WorkflowInstanceId(winningId), true, "definitionVersion=1")));
 
@@ -156,7 +164,8 @@ class WorkflowEngineStartMetadataTest {
     }
 
     private static StartCommand startCommand() {
-        return new StartCommand(DEFINITION_ID, Map.of(), "idem-" + UUID.randomUUID(), null, null);
+        return new StartCommand(
+                DEFINITION_ID, "test-contract", Map.of(), "idem-" + UUID.randomUUID(), null, null, null, null, null);
     }
 
     @Test

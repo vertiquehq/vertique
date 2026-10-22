@@ -341,7 +341,7 @@ class WorkflowTimerSideEffectRecorderDurableCaptureTest {
      */
     private static WorkflowSideEffectIntent buildIntent(Instant fireAt, WorkflowInstanceId workflowId, String stepId) {
         WorkflowSideEffectIntent.Correlation correlation =
-                WorkflowSideEffectIntent.Correlation.singlePath(workflowId, 1L, "test-def", stepId);
+                WorkflowSideEffectIntent.Correlation.singlePath(workflowId, 1L, "test-def", "acme", "tenant-1", stepId);
         TimerIntentPayload payload = new TimerIntentPayload(fireAt, TimerPurpose.STANDALONE, null);
         return new WorkflowSideEffectIntent(IntentKind.WORKFLOW_TIMER, stepId, payload, Map.of(), correlation);
     }

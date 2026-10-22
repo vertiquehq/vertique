@@ -6,6 +6,7 @@ package dev.vertique.workflow.query;
 import dev.vertique.db.query.PageCursor;
 import dev.vertique.db.query.PagedResult;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.WorkflowInstance;
 import io.vertx.core.Future;
 import java.util.Optional;
@@ -18,8 +19,9 @@ import java.util.Optional;
  *   <li>{@link #list(WorkflowInstanceQuery, PageCursor)} — keyset-paginated list of instances
  *       matching a {@link WorkflowInstanceQuery} filter.</li>
  *   <li>{@link #getById(WorkflowInstanceId)} — single-instance lookup by primary key.</li>
- *   <li>{@link #countNonTerminal(String, long)} — number of unfinished instances pinned to one
- *       definition version.</li>
+ *   <li>{@link #countNonTerminal(DefinitionKey)} — number of unfinished instances pinned to one
+ *       definition version of one scope; {@link #countNonTerminal(String, long)} counts in the default
+ *       scope.</li>
  * </ul>
  *
  * <p>History is intentionally <em>not</em> surfaced here. The cycle-4 ADR-0049 drew a deliberate
@@ -75,6 +77,23 @@ public interface WorkflowInstanceQueryService {
      *     fails or is unsupported
      */
     default Future<Long> countNonTerminal(String definitionId, long version) {
+        return Future.failedFuture(new UnsupportedOperationException(
+                getClass().getName() + " does not support the countNonTerminal operation"));
+    }
+
+    /**
+     * Counts the instances pinned to exactly one definition version of one scope that are running, waiting or
+     * compensating, archived instances included. Instances pinned to the same id and version in another scope
+     * are not counted.
+     *
+     * <p>The default implementation fails the returned future with {@link UnsupportedOperationException}, so
+     * existing implementors keep compiling and never silently report zero.
+     *
+     * @param key the scope, definition id and exact version of the pinned definition
+     * @return a {@link Future} that completes with the number of non-terminal instances, or fails if the count
+     *     fails or is unsupported
+     */
+    default Future<Long> countNonTerminal(DefinitionKey key) {
         return Future.failedFuture(new UnsupportedOperationException(
                 getClass().getName() + " does not support the countNonTerminal operation"));
     }

@@ -11,12 +11,12 @@ import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
-import dev.vertique.workflow.exception.WorkflowProxyContractException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
 import java.util.List;
@@ -45,13 +45,13 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
 
     record RejectPayload(String reason) {}
 
-    @WorkflowContract(definitionId = "validated-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ValidatedSagaContract {}
 
-    @WorkflowContract(definitionId = "broken-saga", definitionVersion = 1)
+    @WorkflowContract
     interface BrokenSagaContract {}
 
-    @WorkflowContract(definitionId = "reviewed-saga", definitionVersion = 3)
+    @WorkflowContract
     interface ReviewedSagaContract {}
 
     /** Validator that records every candidate it receives and can run an extra check. */
@@ -153,9 +153,13 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
     void validatorsRunAfterPlanValidationAndBeforePublish() {
         // Given: a validator that asserts, from inside the callback, that the candidate is not yet resolvable
         AtomicReference<WorkflowRegistry> registryRef = new AtomicReference<>();
-        RecordingValidator recording = new RecordingValidator(definition -> assertThatThrownBy(
-                        () -> registryRef.get().resolveCurrent(definition.plan().definitionId()))
-                .isInstanceOf(WorkflowDefinitionMissingException.class));
+        RecordingValidator recording = new RecordingValidator(definition -> assertThatThrownBy(() -> registryRef
+                        .get()
+                        .resolve(new DefinitionKey(
+                                WorkflowScopes.DEFAULT,
+                                definition.plan().definitionId(),
+                                definition.plan().definitionVersion())))
+                .isInstanceOf(WorkflowVersionPinUnavailableException.class));
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry(null, Set.of(recording));
         registryRef.set(registry);
 
@@ -165,7 +169,9 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
         // Then: the validator ran once, saw the candidate unpublished, and the definition resolves afterwards
         assertThat(recording.received).hasSize(1);
         assertThat(recording.received.get(0).plan().definitionId()).isEqualTo("validated-saga");
-        assertThat(registry.resolveCurrent("validated-saga").plan().definitionId())
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L))
+                        .plan()
+                        .definitionId())
                 .isEqualTo("validated-saga");
 
         // Given: a second registry and a definition whose plan graph is broken
@@ -196,12 +202,10 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
         assertThatThrownBy(() -> registry.register(definition)).isSameAs(boom);
 
         // Then: nothing about the definition is resolvable
-        assertThatThrownBy(() -> registry.resolveCurrent("validated-saga"))
-                .isInstanceOf(WorkflowDefinitionMissingException.class);
-        assertThatThrownBy(() -> registry.resolvePinned("validated-saga", 1L))
+        assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-        assertThatThrownBy(() -> registry.contractMetadata(definition.contract()))
-                .isInstanceOf(WorkflowProxyContractException.class);
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
+                .isEmpty();
         assertThat(registry.allRegistered()).isEmpty();
 
         // When: the validator passes and the same definition is registered again
@@ -209,11 +213,14 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
         registry.register(definition);
 
         // Then: the registration succeeds, so the failed attempt left no half-registered state
-        assertThat(registry.resolveCurrent("validated-saga").plan().definitionVersion())
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L))
+                        .plan()
+                        .definitionVersion())
                 .isEqualTo(1L);
-        assertThat(registry.resolvePinned("validated-saga", 1L)).isNotNull();
-        assertThat(registry.contractMetadata(definition.contract()).definitionId())
-                .isEqualTo("validated-saga");
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
+                .isNotNull();
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
+                .containsSame(definition);
     }
 
     @Test
@@ -247,7 +254,9 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
                         tuple("reject", RejectPayload.class.getName()));
 
         // Then: it is the plan the registry went on to publish
-        assertThat(plan).isEqualTo(registry.resolveCurrent("reviewed-saga").plan());
+        assertThat(plan)
+                .isEqualTo(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reviewed-saga", 3L))
+                        .plan());
         assertThat(plan.nodes()).extracting(WorkflowNode::stepId).contains("start", "review", "ship", "notify");
 
         // Then: the record has exactly the plan and the start payload type as components, no callbacks
@@ -283,7 +292,9 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
         registry.register(Definitions.valid());
 
         // Then: it resolves
-        assertThat(registry.resolveCurrent("validated-saga").plan().definitionId())
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L))
+                        .plan()
+                        .definitionId())
                 .isEqualTo("validated-saga");
     }
 

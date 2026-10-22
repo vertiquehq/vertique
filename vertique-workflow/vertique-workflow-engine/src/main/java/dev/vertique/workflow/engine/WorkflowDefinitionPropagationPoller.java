@@ -27,6 +27,10 @@ import org.slf4j.LoggerFactory;
  * the pass needs to apply is the only bound on how long a change takes to arrive. A row that cannot be applied is
  * counted by {@link WorkflowDefinitionRegistryView#applyFailures()} and retried by the next pass.
  *
+ * <p>The same pass refreshes this node's activation view from the committed activation records, after the
+ * definition rows, so an activation, {@code follow} or {@code deactivateDefault} committed on another node changes
+ * which version a start selects here within the same bound. A start never reads the activation table.
+ *
  * <p>At most one pass runs at a time. A trigger that arrives while a pass runs, from the timer or from
  * {@link #pollNow()}, joins that pass. A node without a durable definition store schedules nothing.
  *

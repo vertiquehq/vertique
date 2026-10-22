@@ -31,7 +31,7 @@ interface NestedSelectionHost {
      * <p>Targets the {@code selection-saga-nested} definition (v1) registered in
      * {@link WorkflowClientFactorySelectionTest}.
      */
-    @WorkflowContract(definitionId = "selection-saga-nested", definitionVersion = 1)
+    @WorkflowContract
     interface NestedJob {
 
         /**

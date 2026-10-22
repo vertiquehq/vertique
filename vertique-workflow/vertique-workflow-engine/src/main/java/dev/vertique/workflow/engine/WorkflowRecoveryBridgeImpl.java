@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -29,6 +30,7 @@ final class WorkflowRecoveryBridgeImpl implements WorkflowRecoveryBridge {
 
     private final BranchTransitionEngine branchEngine;
     private final ForkJoinCoordinator forkJoin;
+    private final WorkflowInstanceRepository<SqlClient> instances;
 
     /**
      * Constructs a new recovery bridge.
@@ -36,11 +38,17 @@ final class WorkflowRecoveryBridgeImpl implements WorkflowRecoveryBridge {
      * @param branchEngine the branch transition engine used to drive a recovered branch
      * @param forkJoin the fork/join coordinator used to evaluate the parent join when a recovered
      *     branch reaches a terminal state
+     * @param instances the instance repository, read to learn the scopes of the branch's owning
+     *     instance
      */
     @Inject
-    WorkflowRecoveryBridgeImpl(BranchTransitionEngine branchEngine, ForkJoinCoordinator forkJoin) {
+    WorkflowRecoveryBridgeImpl(
+            BranchTransitionEngine branchEngine,
+            ForkJoinCoordinator forkJoin,
+            WorkflowInstanceRepository<SqlClient> instances) {
         this.branchEngine = branchEngine;
         this.forkJoin = forkJoin;
+        this.instances = instances;
     }
 
     @Override
@@ -51,8 +59,20 @@ final class WorkflowRecoveryBridgeImpl implements WorkflowRecoveryBridge {
             RuntimeWorkflow rw,
             SqlClient tx,
             @Nullable dev.vertique.core.context.DurableMetadata effectiveBaseOverride) {
-        return branchEngine.driveBranchTransitions(
-                token, parentStateJson, parentSubjectVersion, rw, tx, effectiveBaseOverride);
+        return instances.findById(token.workflowId(), tx).compose(opt -> {
+            if (opt.isEmpty()) {
+                return Future.failedFuture(new IllegalStateException(
+                        "Workflow instance " + token.workflowId().value() + " not found for recovered branch"));
+            }
+            return branchEngine.driveBranchTransitions(
+                    token,
+                    parentStateJson,
+                    parentSubjectVersion,
+                    rw,
+                    BranchTransitionEngine.InstanceScope.of(opt.get()),
+                    tx,
+                    effectiveBaseOverride);
+        });
     }
 
     @Override

@@ -28,6 +28,10 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.types.WorkflowTypeCatalog;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
 import io.vertx.core.Future;
 import jakarta.inject.Singleton;
 import java.nio.charset.StandardCharsets;
@@ -45,10 +49,10 @@ class DefinitionAsyncFallbackTest {
 
     record PlaceOrder(String orderId) {}
 
-    @WorkflowContract(definitionId = "fallback-order", definitionVersion = 1)
+    @WorkflowContract
     interface FallbackOrderV1 {}
 
-    @WorkflowContract(definitionId = "second-fallback-order", definitionVersion = 1)
+    @WorkflowContract
     interface FallbackOrderV2 {}
 
     @Singleton
@@ -76,6 +80,18 @@ class DefinitionAsyncFallbackTest {
                     "fallback.order.init", PlaceOrder.class, OrderState.class, p -> new OrderState(p.orderId())));
         }
 
+        /** Lists the classes a service-loaded document may name; the service resolves names through the catalog only. */
+        @Provides
+        @dagger.multibindings.IntoSet
+        static WorkflowTypeCatalog typeCatalog() {
+            return () -> List.of(
+                    new WorkflowTypeCatalogEntry(Kind.TYPE, OrderState.class.getName(), OrderState.class),
+                    new WorkflowTypeCatalogEntry(Kind.TYPE, PlaceOrder.class.getName(), PlaceOrder.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, FallbackOrderV1.class.getName(), FallbackOrderV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, FallbackOrderV2.class.getName(), FallbackOrderV2.class));
+        }
+
         @Provides
         @jakarta.inject.Singleton
         static WorkflowPlanValidator workflowPlanValidator() {
@@ -88,7 +104,7 @@ class DefinitionAsyncFallbackTest {
     void preservesNoStoreOutcomes() {
         NoStoreComponent component = DaggerDefinitionAsyncFallbackTest_NoStoreComponent.create();
         WorkflowDefinitionService service = component.definitionService();
-        DefinitionKey key = new DefinitionKey(null, "fallback-order", 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, "fallback-order", 1);
         SourceMetadata provenance =
                 new SourceMetadata("test", "opaque:source", "rev-1", "author", "upload", Instant.now());
 
@@ -97,43 +113,56 @@ class DefinitionAsyncFallbackTest {
         assertThat(component.definitionsConfig()).isEmpty();
 
         CompiledDefinitionRef loaded = ServiceTestHelpers.await(service.load(
-                yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, provenance, null));
+                WorkflowScopes.DEFAULT,
+                yamlFor("fallback-order", 1, FallbackOrderV1.class),
+                DocumentFormat.YAML,
+                provenance));
         assertThat(loaded.status()).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(component.workflowRegistry().allRegistered()).isEmpty();
 
-        ServiceTestHelpers.await(service.activate(key));
+        ServiceTestHelpers.await(service.publish(key));
         assertThat(component
                         .workflowRegistry()
-                        .resolveCurrent("fallback-order")
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "fallback-order", 1L))
                         .plan()
                         .definitionVersion())
                 .isEqualTo(1);
 
-        DefinitionFilter global = new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null);
+        DefinitionFilter global = new DefinitionFilter(WorkflowScopes.DEFAULT, null, null);
         java.util.List<WorkflowDefinitionRecord> records = ServiceTestHelpers.await(service.list(global));
         assertThat(records).hasSize(1);
         assertThat(records.get(0).key()).isEqualTo(key);
-        assertThat(records.get(0).status()).isEqualTo(DefinitionStatus.ACTIVE);
+        assertThat(records.get(0).status()).isEqualTo(DefinitionStatus.AVAILABLE);
         assertThat(ServiceTestHelpers.await(service.sourceMetadata(key))).contains(provenance);
         assertThatThrownBy(records::clear).isInstanceOf(UnsupportedOperationException.class);
         ServiceTestHelpers.await(service.load(
-                yamlFor("second-fallback-order", 1, FallbackOrderV2.class), DocumentFormat.YAML, provenance, null));
+                WorkflowScopes.DEFAULT,
+                yamlFor("second-fallback-order", 1, FallbackOrderV2.class),
+                DocumentFormat.YAML,
+                provenance));
         assertThat(records).hasSize(1);
         assertThat(ServiceTestHelpers.await(service.list(global))).hasSize(2);
 
-        DefinitionFilter none = new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, Set.of());
+        DefinitionFilter none = new DefinitionFilter(null, null, Set.of());
         assertThat(ServiceTestHelpers.await(service.list(none))).isEmpty();
 
-        Future<CompiledDefinitionRef> malformed =
-                service.load("definitionId: [".getBytes(StandardCharsets.UTF_8), DocumentFormat.YAML, provenance, null);
+        Future<CompiledDefinitionRef> malformed = service.load(
+                WorkflowScopes.DEFAULT,
+                "definitionId: [".getBytes(StandardCharsets.UTF_8),
+                DocumentFormat.YAML,
+                provenance);
         assertThatThrownBy(() -> ServiceTestHelpers.await(malformed))
                 .isInstanceOf(WorkflowDefinitionParseException.class);
         Future<CompiledDefinitionRef> duplicate = service.load(
-                yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, provenance, null);
+                WorkflowScopes.DEFAULT,
+                yamlFor("fallback-order", 1, FallbackOrderV1.class),
+                DocumentFormat.YAML,
+                provenance);
         assertThatThrownBy(() -> ServiceTestHelpers.await(duplicate)).isInstanceOf(WorkflowDefinitionException.class);
-        Future<CompiledDefinitionRef> invalidArgument = service.load(null, DocumentFormat.YAML, provenance, null);
+        Future<CompiledDefinitionRef> invalidArgument =
+                service.load(WorkflowScopes.DEFAULT, null, DocumentFormat.YAML, provenance);
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidArgument)).isInstanceOf(NullPointerException.class);
-        Future<Void> invalidActivation = service.activate(null);
+        Future<Void> invalidActivation = service.publish(null);
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidActivation)).isInstanceOf(RuntimeException.class);
         Future<List<WorkflowDefinitionRecord>> invalidFilter = service.list(null);
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidFilter)).isInstanceOf(RuntimeException.class);
@@ -141,7 +170,7 @@ class DefinitionAsyncFallbackTest {
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidKey)).isInstanceOf(RuntimeException.class);
         assertThat(component
                         .workflowRegistry()
-                        .resolveCurrent("fallback-order")
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "fallback-order", 1L))
                         .plan()
                         .definitionVersion())
                 .isEqualTo(1);
@@ -157,12 +186,15 @@ class DefinitionAsyncFallbackTest {
                 new SourceMetadata("test", "opaque:source", "r".repeat(300), null, null, Instant.now());
 
         // When the document is loaded
-        Future<CompiledDefinitionRef> loaded =
-                service.load(yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, overLong, null);
+        Future<CompiledDefinitionRef> loaded = service.load(
+                WorkflowScopes.DEFAULT,
+                yamlFor("fallback-order", 1, FallbackOrderV1.class),
+                DocumentFormat.YAML,
+                overLong);
 
         // Then the Future fails with IllegalArgumentException and nothing was stored or published
         assertThatThrownBy(() -> ServiceTestHelpers.await(loaded)).isInstanceOf(IllegalArgumentException.class);
-        DefinitionFilter all = new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null);
+        DefinitionFilter all = new DefinitionFilter(null, null, null);
         assertThat(ServiceTestHelpers.await(service.list(all))).isEmpty();
         assertThat(component.workflowRegistry().allRegistered()).isEmpty();
     }
@@ -176,12 +208,15 @@ class DefinitionAsyncFallbackTest {
         SourceMetadata overLong = new SourceMetadata("test", "u".repeat(2049), "rev-1", null, null, Instant.now());
 
         // When the document is loaded
-        Future<CompiledDefinitionRef> loaded =
-                service.load(yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, overLong, null);
+        Future<CompiledDefinitionRef> loaded = service.load(
+                WorkflowScopes.DEFAULT,
+                yamlFor("fallback-order", 1, FallbackOrderV1.class),
+                DocumentFormat.YAML,
+                overLong);
 
         // Then the Future fails with IllegalArgumentException and nothing was stored or published
         assertThatThrownBy(() -> ServiceTestHelpers.await(loaded)).isInstanceOf(IllegalArgumentException.class);
-        DefinitionFilter all = new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null);
+        DefinitionFilter all = new DefinitionFilter(null, null, null);
         assertThat(ServiceTestHelpers.await(service.list(all))).isEmpty();
         assertThat(component.workflowRegistry().allRegistered()).isEmpty();
     }
@@ -197,12 +232,15 @@ class DefinitionAsyncFallbackTest {
 
         // When the document is loaded
         CompiledDefinitionRef loaded = ServiceTestHelpers.await(service.load(
-                yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, provenance, null));
+                WorkflowScopes.DEFAULT,
+                yamlFor("fallback-order", 1, FallbackOrderV1.class),
+                DocumentFormat.YAML,
+                provenance));
 
         // Then it is a candidate that keeps the full uri, and it is listed but not published
         assertThat(loaded.status()).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(loaded.source().uri()).isEqualTo(atBound);
-        DefinitionFilter all = new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null);
+        DefinitionFilter all = new DefinitionFilter(null, null, null);
         assertThat(ServiceTestHelpers.await(service.list(all))).hasSize(1);
         assertThat(component.workflowRegistry().allRegistered()).isEmpty();
     }

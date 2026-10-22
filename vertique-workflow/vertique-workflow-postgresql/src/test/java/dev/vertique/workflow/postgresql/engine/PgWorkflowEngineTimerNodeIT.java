@@ -276,8 +276,12 @@ public class PgWorkflowEngineTimerNodeIT {
         String taskId = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "timer-node-test",
+                FakeTimerContract.class.getName(),
                 new TimerTask(taskId),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 
@@ -366,8 +370,12 @@ public class PgWorkflowEngineTimerNodeIT {
         String taskId = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "timer-node-test",
+                FakeTimerContract.class.getName(),
                 new TimerTask(taskId),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 
@@ -423,8 +431,12 @@ public class PgWorkflowEngineTimerNodeIT {
         String taskId = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "timer-node-test",
+                FakeTimerContract.class.getName(),
                 new TimerTask(taskId),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 
@@ -462,8 +474,12 @@ public class PgWorkflowEngineTimerNodeIT {
         String taskId = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "timer-node-test",
+                FakeTimerContract.class.getName(),
                 new TimerTask(taskId),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 

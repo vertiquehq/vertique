@@ -15,6 +15,8 @@ import dev.vertique.inboxoutbox.InboxResult;
 import dev.vertique.inboxoutbox.InboxService;
 import dev.vertique.inboxoutbox.postgresql.PgInboxOutboxRepository;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -126,7 +128,10 @@ public class SignalDedupInstanceScopingIT {
     record GoPayload(String value) {}
 
     /** Marker contract. */
-    interface WaitGoContract {}
+    interface WaitGoContract {
+        @WorkflowSignal("go")
+        Future<Void> go(WorkflowInstanceId id, GoPayload payload, @SignalDedupKey String dedupKey);
+    }
 
     /** Definition: init → waitFor("wait", "go") → complete. */
     static final WorkflowDefinition<WaitGoState, WaitGoContract> WAIT_GO_DEF = new WorkflowDefinition<>() {
@@ -309,10 +314,28 @@ public class SignalDedupInstanceScopingIT {
     @DisplayName("two instances with shared dedupKey both receive signal — inbox has two distinct rows")
     void twoInstancesWithSharedDedupKeyBothReceiveSignal(VertxTestContext ctx) {
         WaitGoStart startA = new WaitGoStart("instance-a");
-        StartCommand cmdA = new StartCommand("wait-go-saga", startA, startA.idempotencyKey(), null, null);
+        StartCommand cmdA = new StartCommand(
+                "wait-go-saga",
+                WaitGoContract.class.getName(),
+                startA,
+                startA.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         WaitGoStart startB = new WaitGoStart("instance-b");
-        StartCommand cmdB = new StartCommand("wait-go-saga", startB, startB.idempotencyKey(), null, null);
+        StartCommand cmdB = new StartCommand(
+                "wait-go-saga",
+                WaitGoContract.class.getName(),
+                startB,
+                startB.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmdA)
                 .compose(idA -> engine.start(cmdB).map(idB -> new WorkflowInstanceId[] {idA, idB}))

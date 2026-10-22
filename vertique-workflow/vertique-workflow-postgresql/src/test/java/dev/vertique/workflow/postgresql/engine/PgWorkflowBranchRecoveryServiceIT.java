@@ -29,6 +29,8 @@ import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.postgresql.PgInboxOutboxRepository;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
@@ -146,7 +148,13 @@ public class PgWorkflowBranchRecoveryServiceIT {
 
     record State(String orderId) {}
 
-    interface FanoutContract {}
+    interface FanoutContract {
+        @WorkflowSignal("signal-a")
+        Future<Void> signalA(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("signal-b")
+        Future<Void> signalB(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Fork with two signal-wait branches under {@code ALL_REQUIRED}. After {@code start}, both
@@ -212,12 +220,18 @@ public class PgWorkflowBranchRecoveryServiceIT {
     record Ac2State(String orderId) {}
 
     /** Contract marker for the AC-2 single-branch fanout. */
-    interface Ac2Contract {}
+    interface Ac2Contract {
+        @WorkflowSignal("signal-a")
+        Future<Void> signalA(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /** Contract marker for the AC-2 live-fork-absorption fanout (distinct from {@link Ac2Contract}
      *  because {@link dev.vertique.workflow.registry.DefaultWorkflowRegistry#register} keys plans
      *  by contract type, not just definitionId). */
-    interface Ac2LiveContract {}
+    interface Ac2LiveContract {
+        @WorkflowSignal("signal-start")
+        Future<Void> signalStart(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Fork with a single {@code ALL_REQUIRED} branch: {@code wait-a} (signal wait) →
@@ -335,7 +349,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
 
     /** Contract marker for the AC-2 demote-terminal-evaluation fanout (distinct from
      *  {@link Ac2Contract} / {@link Ac2LiveContract} for the same registry-keying reason). */
-    interface Ac2DemoteContract {}
+    interface Ac2DemoteContract {
+        @WorkflowSignal("signal-a")
+        Future<Void> signalA(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Fork with a single {@code ALL_REQUIRED} branch and a <b>declared failure route</b>
@@ -424,6 +441,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 .create(pool, Clock.systemUTC());
 
         engine = component.workflowOperations();
+        DefaultVersionSeed.recordAndActivate(
+                component.pgWorkflowDefinitionRegistryStore(),
+                component.definitionLifecycle(),
+                component.workflowRegistry());
 
         // Construct the recovery service through the engine-graph-provided WorkflowRecoveryBridge.
         // Use the null-propagator public ctor (no DurableContextPropagator) so the per-branch
@@ -453,6 +474,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
         Ac2TestComponent ac2Component = DaggerPgWorkflowBranchRecoveryServiceIT_Ac2TestComponent.factory()
                 .create(pool, Clock.systemUTC());
         ac2Engine = ac2Component.workflowOperations();
+        DefaultVersionSeed.recordAndActivate(
+                ac2Component.pgWorkflowDefinitionRegistryStore(),
+                ac2Component.definitionLifecycle(),
+                ac2Component.workflowRegistry());
         ac2Holder = ac2Component.contextHolder();
         ac2CorrelationFactory = ac2Component.correlationContextFactory();
         ac2Recovery = new PgWorkflowBranchRecoveryService(
@@ -575,6 +600,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
          * @return the workflow registry
          */
         dev.vertique.workflow.registry.WorkflowRegistry workflowRegistry();
+
+        dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
+
+        dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle();
 
         /**
          * Factory binding the per-test {@link Pool} and {@link Clock} instances into the graph.
@@ -777,6 +806,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
 
         dev.vertique.workflow.registry.WorkflowRegistry workflowRegistry();
 
+        dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
+
+        dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle();
+
         DurableContextPropagator durableContextPropagator();
 
         dev.vertique.core.context.ContextHolder contextHolder();
@@ -829,7 +862,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
     @DisplayName("AC #9 — stale RUNNING branch with no retries left is demoted to FAILED and the join is evaluated")
     void recoverySweepDemotesStaleRunningAndEvaluatesJoin(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("o-rec");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> engine.start(cmd)
                 // Force branch 'a' into stale RUNNING (no retry budget left).
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
@@ -880,7 +922,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // Sweep should drive branch a through CompleteNode → COMPLETED, then evaluateJoin
         // sees both terminal, ALL_REQUIRED decides COMPLETED, instance advances past join.
         StartFanout payload = new StartFanout("o-resume");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> engine.start(cmd)
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
                                 + " current_step_id = 'complete-a', wait_type = NULL, wait_key = NULL,"
@@ -948,7 +999,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // Bump max_attempts at the row level so canRetry = (0+1 < 3) is true. The runtime policy
         // declared on the fork is irrelevant — recovery reads max_attempts directly from the row.
         StartFanout payload = new StartFanout("o-retry");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         Instant past = Instant.now().minusSeconds(3600);
         runOnDuplicatedContext(() -> engine.start(cmd)
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
@@ -1010,7 +1070,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // processDue.recover handler must swallow the exception; the branch row must remain
         // RETRY_SCHEDULED (no resume happened) and no FAN_IN_* entry should be appended.
         StartFanout payload = new StartFanout("o-drift");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> engine.start(cmd)
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
                                 + " current_step_id = 'complete-a', wait_type = NULL, wait_key = NULL,"
@@ -1057,7 +1126,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 () -> recovery, new WorkflowBranchRecoveryConfig(10, java.time.Duration.ofSeconds(1)));
 
         StartFanout payload = new StartFanout("o-adapter");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> engine.start(cmd)
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
                                 + " updated_at = $1, attempt_count = max_attempts - 1 WHERE workflow_id = $2"
@@ -1233,8 +1311,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
             + " T fill on both the SERVICE and WORKFLOW_EVENT outbox entries")
     void recoverDueBranch_carrierAuthoritativePlusInstanceFill_headlineAc2(VertxTestContext ctx) {
         Ac2Start payload = new Ac2Start("ac2-headline");
-        StartCommand cmd =
-                new StartCommand(AC2_DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                AC2_DEFINITION.definitionId(),
+                AC2_DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> withAc2AmbientTenantAndCorrelation(
                         "T", "IGNORED-AT-START", () -> ac2Engine.start(cmd))
                 // Seed a degraded branch token: correlation C only, no tenant — simulating the
@@ -1323,8 +1409,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // instance-fill supplies tenant T (absent from ambient) before the fork dispatch runs in
         // the same drive, so the freshly-created branch token's fork-time capture absorbs it.
         Ac2Start payload = new Ac2Start("ac2-live-fill");
-        StartCommand cmd =
-                new StartCommand(AC2_LIVE_DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                AC2_LIVE_DEFINITION.definitionId(),
+                AC2_LIVE_DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmd)
                 .compose(id -> pool.preparedQuery("UPDATE workflow_instances SET metadata = $1 WHERE id = $2")
@@ -1367,8 +1461,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
     void recoverBranch_nullInstanceMetadata_noFillContributed_branchCarrierUnchanged(VertxTestContext ctx) {
         // Start with NO ambient context at all so instance.metadata() persists NULL (FR-WF-CTX-010).
         Ac2Start payload = new Ac2Start("ac2-null-instance");
-        StartCommand cmd =
-                new StartCommand(AC2_DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                AC2_DEFINITION.definitionId(),
+                AC2_DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmd)
                 // Seed the branch token with its OWN carrier (correlation D only) — instance
@@ -1420,10 +1522,26 @@ public class PgWorkflowBranchRecoveryServiceIT {
     void recoverBranch_bindFailureIsolatedToThatRow_sweepContinues(VertxTestContext ctx) {
         Ac2Start payloadBad = new Ac2Start("ac2-isolation-bad");
         Ac2Start payloadGood = new Ac2Start("ac2-isolation-good");
-        StartCommand cmdBad =
-                new StartCommand(AC2_DEFINITION.definitionId(), payloadBad, payloadBad.idempotencyKey(), null, null);
-        StartCommand cmdGood =
-                new StartCommand(AC2_DEFINITION.definitionId(), payloadGood, payloadGood.idempotencyKey(), null, null);
+        StartCommand cmdBad = new StartCommand(
+                AC2_DEFINITION.definitionId(),
+                AC2_DEFINITION.contract().getName(),
+                payloadBad,
+                payloadBad.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
+        StartCommand cmdGood = new StartCommand(
+                AC2_DEFINITION.definitionId(),
+                AC2_DEFINITION.contract().getName(),
+                payloadGood,
+                payloadGood.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmdBad)
                 .compose(badId -> ac2Engine.start(cmdGood).map(goodId -> new WorkflowInstanceId[] {badId, goodId}))
@@ -1470,8 +1588,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // the only asserted proof available: the join's no-failure-route variant (AC #9's DEFINITION)
         // never reaches an outbox write on this path, so binding cannot be observed through it.
         Ac2Start payload = new Ac2Start("ac2-demote");
-        StartCommand cmd =
-                new StartCommand(AC2_DEMOTE_DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                AC2_DEMOTE_DEFINITION.definitionId(),
+                AC2_DEMOTE_DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> withAc2AmbientTenantAndCorrelation(
                         "T-DEMOTE", "IGNORED-AT-START", () -> ac2Engine.start(cmd))
                 // Seed a degraded branch token: correlation C-DEMOTE only, no tenant — simulating

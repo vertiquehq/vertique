@@ -13,7 +13,8 @@ import java.util.Objects;
  * workflow plan. Carries no internal callback ids — those are engine-private.
  *
  * @param name the decision name as declared in the plan (e.g., {@code "approve"}, {@code "reject"})
- * @param payloadTypeName the fully-qualified class name of the expected decision payload; callers
+ * @param payloadTypeName the logical type name of the expected decision payload (its binary name when
+ *     the class has no {@code @WorkflowType} name); callers
  *     use this to coerce the raw payload before submitting a
  *     {@link dev.vertique.workflow.ops.TaskCompletionCommand}
  * @param nextStepId the plan step id the workflow will advance to after this decision is applied

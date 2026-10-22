@@ -50,7 +50,7 @@ class RecorderRouterTest {
                 new Object(),
                 Map.of(),
                 WorkflowSideEffectIntent.Correlation.singlePath(
-                        new WorkflowInstanceId(UUID.randomUUID()), 1L, "test-def", "test-step"));
+                        new WorkflowInstanceId(UUID.randomUUID()), 1L, "test-def", "acme", "tenant-1", "test-step"));
     }
 
     /**

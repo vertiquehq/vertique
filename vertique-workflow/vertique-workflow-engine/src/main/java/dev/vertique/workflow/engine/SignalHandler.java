@@ -8,10 +8,10 @@ import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.exception.WorkflowConflictException;
+import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -24,6 +24,7 @@ import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
@@ -155,7 +156,7 @@ final class SignalHandler {
         if (!(node instanceof WaitSignalNode wsn) || !signalName.equals(wsn.signalName())) {
             return Future.failedFuture(new WorkflowDefinitionException("Branch '" + waiting.branchId()
                     + "' currentStepId '" + waiting.currentStepId() + "' is not a WaitSignalNode for signal '"
-                    + signalName + "'"));
+                    + EchoedNames.bounded(signalName) + "'"));
         }
         // Coerce the payload to the declared type.
         Class<?> payloadClass = rw.signalPayloadTypes().get(signalName);
@@ -217,6 +218,7 @@ final class SignalHandler {
                                                 updatedInst.stateJson(),
                                                 parentSubjectVersionForBranch,
                                                 rw,
+                                                BranchTransitionEngine.InstanceScope.of(updatedInst),
                                                 tx,
                                                 effectiveBaseOverride)
                                         .compose(advanced -> {
@@ -250,8 +252,9 @@ final class SignalHandler {
 
     /**
      * Applies a validated signal to the given instance after dedup check. Resolves the pinned
-     * runtime workflow, validates the waiting state, coerces the payload, updates state, persists,
-     * and drives transitions.
+     * runtime workflow, refuses a caller of another contract and a signal the pinned plan never waits
+     * for, validates the waiting state, coerces the payload, updates state, persists, and drives
+     * transitions.
      *
      * @param inst the locked instance
      * @param ctx the bundled signal name, payload, and dedup key
@@ -261,11 +264,7 @@ final class SignalHandler {
     Future<Void> doApplySignal(WorkflowInstance inst, SignalDeliveryContext ctx, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
-        } catch (WorkflowVersionPinUnavailableException e) {
-            // Enrich with the actual instance id.
-            return Future.failedFuture(
-                    new WorkflowVersionPinUnavailableException(e.definitionId(), e.version(), inst.id()));
+            rw = PinnedPlans.resolve(registry, inst);
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -275,13 +274,31 @@ final class SignalHandler {
             return Future.failedFuture(e);
         }
 
+        // A client of another contract than the pinned definition's is refused before anything else.
+        WorkflowDefinitionContractMismatchException contractRefusal =
+                ContractMismatch.refusal(inst, rw, ctx.callerContractName(), "signal");
+        if (contractRefusal != null) {
+            return Future.failedFuture(contractRefusal);
+        }
+
+        // A signal the pinned plan never waits for is refused naming the pinned version.
+        if (!waitsForSignal(rw, ctx.signalName())) {
+            return Future.failedFuture(
+                    new WorkflowSignalRejectedException("Instance '" + inst.id().value()
+                            + "' cannot receive signal '" + EchoedNames.bounded(ctx.signalName()) + "': '"
+                            + rw.plan().definitionId() + "' v"
+                            + rw.plan().definitionVersion() + " does not wait for signal '"
+                            + EchoedNames.bounded(ctx.signalName()) + "'"));
+        }
+
         // Validate instance is in WAITING status for this signal.
         if (inst.status() != WorkflowStatus.WAITING
                 || inst.waitType() != WaitType.SIGNAL
                 || !ctx.signalName().equals(inst.waitKey())) {
-            return Future.failedFuture(new WorkflowSignalRejectedException(
-                    "Instance '" + inst.id().value() + "' cannot receive signal '" + ctx.signalName()
-                            + "': status=" + inst.status() + ", waitType=" + inst.waitType()
+            return Future.failedFuture(
+                    new WorkflowSignalRejectedException("Instance '" + inst.id().value() + "' cannot receive signal '"
+                            + EchoedNames.bounded(ctx.signalName()) + "': status=" + inst.status() + ", waitType="
+                            + inst.waitType()
                             + ", waitKey=" + inst.waitKey()));
         }
 
@@ -357,6 +374,19 @@ final class SignalHandler {
     }
 
     // --- Internal helpers ---
+
+    /**
+     * Returns whether any wait node of the pinned plan, including the waits inside fork branches and
+     * the waits guarded by a timeout, waits for the named signal.
+     */
+    private static boolean waitsForSignal(RuntimeWorkflow rw, String signalName) {
+        for (WorkflowNode node : rw.plan().nodes()) {
+            if (node instanceof WaitSignalNode wait && signalName.equals(wait.signalName())) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /**
      * Finds the {@link WaitSignalNode} for the given step id and signal name using the O(1)

@@ -35,6 +35,10 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.types.WorkflowTypeCatalog;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -66,70 +70,70 @@ public class DefinitionSourceTextTest {
 
     record ReaderStart(String value) {}
 
-    @WorkflowContract(definitionId = "reader-static-yaml", definitionVersion = 1)
+    @WorkflowContract
     interface StaticYamlV1 {}
 
-    @WorkflowContract(definitionId = "reader-static-json", definitionVersion = 1)
+    @WorkflowContract
     interface StaticJsonV1 {}
 
-    @WorkflowContract(definitionId = "reader-static-json-large", definitionVersion = 1)
+    @WorkflowContract
     interface StaticJsonLargeV1 {}
 
-    @WorkflowContract(definitionId = "reader-valid-trailing-json", definitionVersion = 1)
+    @WorkflowContract
     interface StaticTrailingJsonV1 {}
 
-    @WorkflowContract(definitionId = "reader-encoding", definitionVersion = 1)
+    @WorkflowContract
     interface ReaderEncodingV1 {}
 
-    @WorkflowContract(definitionId = "reader-encoding-😀", definitionVersion = 1)
+    @WorkflowContract
     interface ReaderEncodingUnicodeV1 {}
 
-    @WorkflowContract(definitionId = "reader-exact-limit", definitionVersion = 1)
+    @WorkflowContract
     interface ExactLimitV1 {}
 
-    @WorkflowContract(definitionId = "reader-over-limit", definitionVersion = 1)
+    @WorkflowContract
     interface OverLimitV1 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 1)
+    @WorkflowContract
     interface PersistedJsonV1 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 2)
+    @WorkflowContract
     interface PersistedJsonV2 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 3)
+    @WorkflowContract
     interface PersistedJsonV3 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 4)
+    @WorkflowContract
     interface PersistedJsonV4 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 5)
+    @WorkflowContract
     interface PersistedJsonV5 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 6)
+    @WorkflowContract
     interface PersistedJsonV6 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 7)
+    @WorkflowContract
     interface PersistedJsonV7 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 8)
+    @WorkflowContract
     interface PersistedJsonV8 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 9)
+    @WorkflowContract
     interface PersistedJsonV9 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-json", definitionVersion = 10)
+    @WorkflowContract
     interface PersistedJsonV10 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-yaml", definitionVersion = 1)
+    @WorkflowContract
     interface PersistedYamlV1 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-invalid-tail", definitionVersion = 1)
+    @WorkflowContract
     interface PersistedInvalidTailV1 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-nul", definitionVersion = 1)
+    @WorkflowContract
     interface PersistedNulV1 {}
 
-    @WorkflowContract(definitionId = "reader-persisted-unpaired", definitionVersion = 1)
+    @WorkflowContract
     interface PersistedUnpairedV1 {}
 
     @Singleton
@@ -198,6 +202,44 @@ public class DefinitionSourceTextTest {
         static StartStateMapperContributor startStateMapper() {
             return builder -> builder.register(new NamedStartStateMapper<>(
                     "reader.init", ReaderStart.class, ReaderState.class, start -> new ReaderState(start.value())));
+        }
+
+        /** Lists the classes a service-loaded document may name; the service resolves names through the catalog only. */
+        @Provides
+        @IntoSet
+        static WorkflowTypeCatalog typeCatalog() {
+            return () -> List.of(
+                    new WorkflowTypeCatalogEntry(Kind.TYPE, ReaderState.class.getName(), ReaderState.class),
+                    new WorkflowTypeCatalogEntry(Kind.TYPE, ReaderStart.class.getName(), ReaderStart.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, StaticYamlV1.class.getName(), StaticYamlV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, StaticJsonV1.class.getName(), StaticJsonV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, StaticJsonLargeV1.class.getName(), StaticJsonLargeV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, StaticTrailingJsonV1.class.getName(), StaticTrailingJsonV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, ReaderEncodingV1.class.getName(), ReaderEncodingV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, ReaderEncodingUnicodeV1.class.getName(), ReaderEncodingUnicodeV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, ExactLimitV1.class.getName(), ExactLimitV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, OverLimitV1.class.getName(), OverLimitV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV1.class.getName(), PersistedJsonV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV2.class.getName(), PersistedJsonV2.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV3.class.getName(), PersistedJsonV3.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV4.class.getName(), PersistedJsonV4.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV5.class.getName(), PersistedJsonV5.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV6.class.getName(), PersistedJsonV6.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV7.class.getName(), PersistedJsonV7.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV8.class.getName(), PersistedJsonV8.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV9.class.getName(), PersistedJsonV9.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, PersistedJsonV10.class.getName(), PersistedJsonV10.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedYamlV1.class.getName(), PersistedYamlV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, PersistedInvalidTailV1.class.getName(), PersistedInvalidTailV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedNulV1.class.getName(), PersistedNulV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, PersistedUnpairedV1.class.getName(), PersistedUnpairedV1.class));
         }
 
         @Provides
@@ -275,13 +317,15 @@ public class DefinitionSourceTextTest {
                 graph(vertx, List.of(staticYaml(), staticLargeJson(), malformedTailJson(), validTrailingJson()));
         String json = json("reader-encoding-😀", 1, ReaderEncodingUnicodeV1.class);
 
-        assertThat(graph.workflowRegistry().resolvePinned("reader-static-yaml", 1))
+        assertThat(graph.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-static-yaml", 1)))
                 .isNotNull();
-        assertThat(graph.workflowRegistry().resolvePinned("reader-static-json", 1))
+        assertThat(graph.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-static-json", 1)))
                 .isNotNull();
-        assertThat(graph.workflowRegistry().resolvePinned("reader-static-json-large", 1))
+        assertThat(graph.workflowRegistry()
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-static-json-large", 1)))
                 .isNotNull();
-        assertThat(graph.workflowRegistry().resolvePinned("reader-valid-trailing-json", 1))
+        assertThat(graph.workflowRegistry()
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-valid-trailing-json", 1)))
                 .isNotNull();
 
         for (byte[] encoded : jsonEncodings(json)) {
@@ -329,17 +373,21 @@ public class DefinitionSourceTextTest {
 
         Future<CompiledDefinitionRef> exactLimit = graph.definitionService()
                 .load(
+                        WorkflowScopes.DEFAULT,
                         yamlAtByteLength("reader-exact-limit", 1, ExactLimitV1.class, DEFAULT_LIMIT),
                         DocumentFormat.YAML,
-                        metadata("exact-limit"),
-                        null);
+                        metadata("exact-limit"));
         exactLimit
                 .compose(exact -> {
                     assertThat(exact.definitionId()).isEqualTo("reader-exact-limit");
                     byte[] overLimitInvalid = new byte[DEFAULT_LIMIT + 1];
                     java.util.Arrays.fill(overLimitInvalid, (byte) '[');
                     Future<CompiledDefinitionRef> rejected = graph.definitionService()
-                            .load(overLimitInvalid, DocumentFormat.YAML, metadata("over-limit"), null);
+                            .load(
+                                    WorkflowScopes.DEFAULT,
+                                    overLimitInvalid,
+                                    DocumentFormat.YAML,
+                                    metadata("over-limit"));
                     return rejected.transform(result -> {
                         assertThat(result.failed()).isTrue();
                         assertThat(result.cause()).isNotInstanceOf(WorkflowDefinitionParseException.class);
@@ -362,7 +410,7 @@ public class DefinitionSourceTextTest {
         Future<Void> work = Future.succeededFuture();
         for (EncodedSource source : persistedJsonSources()) {
             work = work.compose(ignored -> graph.definitionService()
-                    .load(source.bytes(), DocumentFormat.JSON, metadata(source.uri()), null)
+                    .load(WorkflowScopes.DEFAULT, source.bytes(), DocumentFormat.JSON, metadata(source.uri()))
                     .map(compiled -> {
                         assertThat(compiled.planHash()).isNotBlank();
                         assertCapturedAndRecompiled(graph, capturingStore, source, DocumentFormat.JSON, compiled);
@@ -375,7 +423,7 @@ public class DefinitionSourceTextTest {
                 withBom(StandardCharsets.UTF_8, new byte[] {(byte) 0xef, (byte) 0xbb, (byte) 0xbf}, yamlSource);
         EncodedSource yaml = new EncodedSource("yaml", "reader-persisted-yaml", 1, "\uFEFF" + yamlSource, yamlBytes);
         work = work.compose(ignored -> graph.definitionService()
-                .load(yaml.bytes(), DocumentFormat.YAML, metadata(yaml.uri()), null)
+                .load(WorkflowScopes.DEFAULT, yaml.bytes(), DocumentFormat.YAML, metadata(yaml.uri()))
                 .map(compiled -> {
                     assertCapturedAndRecompiled(graph, capturingStore, yaml, DocumentFormat.YAML, compiled);
                     return (Void) null;
@@ -385,7 +433,7 @@ public class DefinitionSourceTextTest {
             work = work.compose(ignored -> {
                 int capturedBefore = capturingStore.documents.size();
                 Future<CompiledDefinitionRef> load = graph.definitionService()
-                        .load(invalid.bytes(), invalid.format(), metadata(invalid.uri()), null);
+                        .load(WorkflowScopes.DEFAULT, invalid.bytes(), invalid.format(), metadata(invalid.uri()));
                 return load.transform(result -> {
                     assertThat(result.failed()).isTrue();
                     assertThat(result.cause()).isInstanceOf(WorkflowDefinitionException.class);
@@ -481,7 +529,7 @@ public class DefinitionSourceTextTest {
             CompiledDefinitionRef compiled) {
         assertThat(store.documents).anySatisfy(captured -> {
             assertThat(captured.record().key())
-                    .isEqualTo(new DefinitionKey(null, source.definitionId(), source.version()));
+                    .isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, source.definitionId(), source.version()));
             assertThat(captured.document().key()).isEqualTo(captured.record().key());
             assertThat(captured.document().document()).isEqualTo(source.expectedText());
             assertThat(captured.document().documentFormat()).isEqualTo(format.name());

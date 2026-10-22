@@ -4,6 +4,7 @@
 package dev.vertique.workflow.postgresql.repository;
 
 import dev.vertique.db.DbSchemas;
+import dev.vertique.db.exception.UniqueConstraintViolationException;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
 import dev.vertique.db.postgresql.PgTableNames;
@@ -11,9 +12,12 @@ import dev.vertique.db.query.OrderKey;
 import dev.vertique.db.query.PageCursor;
 import dev.vertique.db.query.PagedResult;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
+import dev.vertique.workflow.exception.WorkflowBusinessKeyConflictException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.registry.DefinitionPinAdmission;
 import dev.vertique.workflow.query.WorkflowInstanceQuery;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
@@ -149,14 +153,14 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 + " (id, definition_id, definition_version, plan_hash, version, status,"
                 + " business_key, subject_type, subject_id, subject_version,"
                 + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
-                + " error_type, error_message, metadata, created_at, updated_at, tenant_key)"
+                + " error_type, error_message, metadata, created_at, updated_at, scope_key, definition_scope_key)"
                 + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17,"
-                + " $18::jsonb, $19, $20, $21)";
+                + " $18::jsonb, $19, $20, $21, $22)";
 
         this.sqlSelectAllColumns = "SELECT id, definition_id, definition_version, plan_hash, version, status,"
                 + " business_key, subject_type, subject_id, subject_version,"
                 + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
-                + " error_type, error_message, metadata, created_at, updated_at, completed_at, tenant_key"
+                + " error_type, error_message, metadata, created_at, updated_at, completed_at, scope_key, definition_scope_key"
                 + " FROM " + instances;
 
         this.sqlFindById = sqlSelectAllColumns + " WHERE id = $1";
@@ -165,9 +169,10 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
 
         this.sqlCountNonTerminal = "SELECT count(*) AS total FROM " + instances
                 + " WHERE definition_id = $1 AND definition_version = $2"
-                + " AND status IN ('RUNNING','WAITING','COMPENSATING')";
+                + " AND definition_scope_key = $3 AND status IN ('RUNNING','WAITING','COMPENSATING')";
 
-        this.sqlFindByBusinessKey = sqlSelectAllColumns + " WHERE definition_id = $1 AND business_key = $2";
+        this.sqlFindByBusinessKey =
+                sqlSelectAllColumns + " WHERE scope_key = $1 AND definition_id = $2 AND business_key = $3";
 
         this.sqlUpdateOptimistic = "UPDATE " + instances
                 + " SET version = $2, status = $3, current_step_id = $4,"
@@ -179,12 +184,13 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
 
         this.sqlUpdateOptimisticLive = sqlUpdateOptimistic + " AND status IN ('RUNNING','WAITING','COMPENSATING')";
 
-        this.sqlReadPin = "SELECT definition_id, definition_version, plan_hash, status, version FROM " + instances
-                + " WHERE id = $1";
+        this.sqlReadPin =
+                "SELECT definition_scope_key, definition_id, definition_version, plan_hash, status, version FROM "
+                        + instances + " WHERE id = $1";
 
         this.sqlMigratePinAndState = "UPDATE " + instances
                 + " SET definition_version = $2, plan_hash = $3, version = $4,"
-                + " status = 'RUNNING', current_step_id = $5,"
+                + " status = 'RUNNING', current_step_id = $5, definition_scope_key = $8,"
                 + " wait_type = NULL, wait_key = NULL, wait_aux_id = NULL,"
                 + " state_json = $6::jsonb,"
                 + " error_type = NULL, error_message = NULL,"
@@ -232,19 +238,32 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 inst.metadata() == null ? null : inst.metadata().toCarrier(),
                 toOffsetDateTime(inst.createdAt()),
                 toOffsetDateTime(inst.updatedAt()),
-                inst.tenantKey());
+                inst.scopeKey(),
+                inst.definitionScopeKey());
 
         return DefinitionPinAdmission.admitPin(
                         tx,
                         definitionsTable,
-                        inst.definitionId(),
-                        inst.definitionVersion(),
+                        new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()),
                         inst.planHash(),
                         exceptionMapper)
                 .compose(admitted -> tx.preparedQuery(sqlInsert)
                         .execute(params)
                         .<Void>mapEmpty()
-                        .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances insert"))));
+                        .recover(t -> Future.failedFuture(insertFailure(inst, t))));
+    }
+
+    /**
+     * Maps an insert failure: a violation of the business-key index is a business-key conflict, anything else
+     * keeps the database-layer translation.
+     */
+    private Throwable insertFailure(WorkflowInstance inst, Throwable failure) {
+        Throwable mapped = exceptionMapper.translate(failure, "workflow_instances insert");
+        if (mapped instanceof UniqueConstraintViolationException unique
+                && "idx_workflow_instances_business_key".equals(unique.constraintName())) {
+            return new WorkflowBusinessKeyConflictException(inst.scopeKey(), inst.definitionId(), unique);
+        }
+        return mapped;
     }
 
     /**
@@ -262,7 +281,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * transaction. A missing row, a version other than {@code expectedVersion} or a persisted status that
      * is not terminal returns {@code 0}. A persisted terminal status means the update would resurrect a
      * finished instance: the pinned version is then admitted (see {@link DefinitionPinAdmission}; a
-     * deprecated version still admits it, a retired, candidate or activating one, or a different plan
+     * deprecated version still admits it, a retired, candidate or publishing one, or a different plan
      * hash, does not) and the original update is run again. A refusal fails the returned future.
      *
      * @param updated         the updated workflow instance snapshot to write
@@ -314,8 +333,10 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                     return DefinitionPinAdmission.admitResurrection(
                                     tx,
                                     definitionsTable,
-                                    persisted.getString("definition_id"),
-                                    persisted.getLong("definition_version"),
+                                    new DefinitionKey(
+                                            persisted.getString("definition_scope_key"),
+                                            persisted.getString("definition_id"),
+                                            persisted.getLong("definition_version")),
                                     persisted.getString("plan_hash"),
                                     exceptionMapper)
                             .compose(admitted -> executeUpdate(sqlUpdateOptimistic, params, tx));
@@ -338,15 +359,15 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * and plan hash, clears all wait and error fields, forces {@code status = 'RUNNING'} and
      * {@code completed_at = NULL}, and writes the migrated state JSON.
      *
-     * <p>Unlike {@link #updateOptimistic}, this method also updates {@code definition_version},
-     * {@code plan_hash}, and unconditionally nulls the wait columns and {@code completed_at},
+     * <p>Unlike {@link #updateOptimistic}, this method also updates {@code definition_scope_key},
+     * {@code definition_version}, {@code plan_hash}, and unconditionally nulls the wait columns and {@code completed_at},
      * because a post-migration instance is by definition non-terminal and in a clean RUNNING
      * state regardless of what the source instance held.
      *
      * <p>The target version is admitted before the update (see {@link DefinitionPinAdmission}).
      *
      * @param updated         the post-migration workflow instance snapshot; must carry the new
-     *                        {@code definitionVersion}, {@code planHash}, {@code version},
+     *                        {@code definitionScopeKey}, {@code definitionVersion}, {@code planHash}, {@code version},
      *                        {@code currentStepId}, and {@code stateJson}
      * @param expectedVersion the version value that must be present in the DB row for the update
      *                        to succeed (optimistic concurrency guard)
@@ -366,13 +387,14 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 updated.version(),
                 updated.currentStepId(),
                 updated.stateJson(),
-                expectedVersion);
+                expectedVersion,
+                updated.definitionScopeKey());
 
         return DefinitionPinAdmission.admitPin(
                         tx,
                         definitionsTable,
-                        updated.definitionId(),
-                        updated.definitionVersion(),
+                        new DefinitionKey(
+                                updated.definitionScopeKey(), updated.definitionId(), updated.definitionVersion()),
                         updated.planHash(),
                         exceptionMapper)
                 .compose(admitted -> tx.preparedQuery(sqlMigratePinAndState)
@@ -404,16 +426,27 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     }
 
     /**
-     * Counts the instances pinned to exactly one definition version that are running, waiting or
-     * compensating, archived instances included. Uses the pool directly without row locking.
+     * Counts the instances pinned to exactly one definition version of the default scope that are running,
+     * waiting or compensating, archived instances included.
      *
      * @param definitionId the workflow definition id
      * @param version the exact definition version
      * @return a {@link Future} containing the number of non-terminal instances
      */
     public Future<Long> countNonTerminal(String definitionId, long version) {
+        return countNonTerminal(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version));
+    }
+
+    /**
+     * Counts the instances pinned to exactly one definition version of one scope that are running, waiting or
+     * compensating, archived instances included. Uses the pool directly without row locking.
+     *
+     * @param key the scope, definition id and exact version of the pinned definition
+     * @return a {@link Future} containing the number of non-terminal instances
+     */
+    public Future<Long> countNonTerminal(DefinitionKey key) {
         return pool.preparedQuery(sqlCountNonTerminal)
-                .execute(Tuple.of(definitionId, version))
+                .execute(Tuple.of(key.definitionId(), key.definitionVersion(), key.scopeKey()))
                 .<Long>map(rs -> rs.iterator().next().getLong("total"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances countNonTerminal")));
     }
@@ -442,6 +475,23 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     }
 
     /**
+     * Reads the contract name of the definition row through the given transaction, so the read takes no further
+     * pool connection.
+     */
+    @Override
+    public Future<Optional<String>> findDefinitionContract(DefinitionKey key, SqlClient tx) {
+        return tx.preparedQuery("SELECT contract_name FROM " + definitionsTable
+                        + " WHERE scope_key = $1 AND definition_id = $2 AND definition_version = $3")
+                .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion()))
+                .<Optional<String>>map(rs -> {
+                    var it = rs.iterator();
+                    return it.hasNext() ? Optional.of(it.next().getString("contract_name")) : Optional.empty();
+                })
+                .recover(t -> Future.failedFuture(
+                        exceptionMapper.translate(t, "workflow_definitions findDefinitionContract")));
+    }
+
+    /**
      * Loads a workflow instance by id and acquires a {@code SELECT FOR UPDATE} row lock within
      * the given transaction.
      *
@@ -464,24 +514,27 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     }
 
     /**
-     * Loads a workflow instance by definition id and business key within the given transaction.
+     * Loads a workflow instance by start scope, definition id and business key within the given
+     * transaction.
      *
      * <p>The business key uniqueness is enforced by a partial unique index on
-     * {@code (definition_id, business_key) WHERE business_key IS NOT NULL}. This method returns
-     * empty immediately when {@code bk} is {@code null}.
+     * {@code (scope_key, definition_id, business_key) WHERE business_key IS NOT NULL}. This method
+     * returns empty immediately when {@code bk} is {@code null}.
      *
+     * @param scopeKey the start scope the instance was created in
      * @param defId the definition id scope for the business key
      * @param bk    the business key value to look up; may be {@code null}
      * @param tx    the active transaction to use
      * @return a {@link Future} containing the instance if found, or {@link Optional#empty()}
      */
     @Override
-    public Future<Optional<WorkflowInstance>> findByBusinessKey(String defId, String bk, SqlClient tx) {
+    public Future<Optional<WorkflowInstance>> findByBusinessKey(
+            String scopeKey, String defId, String bk, SqlClient tx) {
         if (bk == null) {
             return Future.succeededFuture(Optional.empty());
         }
         return tx.preparedQuery(sqlFindByBusinessKey)
-                .execute(Tuple.of(defId, bk))
+                .execute(Tuple.of(scopeKey, defId, bk))
                 .<Optional<WorkflowInstance>>map(rs -> {
                     var it = rs.iterator();
                     return it.hasNext()
@@ -557,10 +610,10 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
             sql.append(" subject_version = $").append(paramValues.size());
             hasWhere = true;
         }
-        if (query.tenantKey() != null) {
+        if (query.scopeKey() != null) {
             sql.append(hasWhere ? " AND" : " WHERE");
-            paramValues.add(query.tenantKey());
-            sql.append(" tenant_key = $").append(paramValues.size());
+            paramValues.add(query.scopeKey());
+            sql.append(" scope_key = $").append(paramValues.size());
             hasWhere = true;
         }
         if (!query.includeArchived()) {

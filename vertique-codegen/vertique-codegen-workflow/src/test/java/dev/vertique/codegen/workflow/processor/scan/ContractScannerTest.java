@@ -62,7 +62,7 @@ class ContractScannerTest {
             import dev.vertique.workflow.ops.WorkflowInstanceId;
             import dev.vertique.workflow.ops.WorkflowView;
             import io.vertx.core.Future;
-            @WorkflowContract(definitionId = "order", definitionVersion = 2L)
+            @WorkflowContract
             public interface OrderContract {
                 @WorkflowStart
                 Future<WorkflowInstanceId> start(OrderPayload p);
@@ -87,7 +87,7 @@ class ContractScannerTest {
             import dev.vertique.workflow.contract.IdempotencyKey;
             import dev.vertique.workflow.ops.WorkflowInstanceId;
             import io.vertx.core.Future;
-            @WorkflowContract(definitionId = "keyparam", definitionVersion = 1L)
+            @WorkflowContract
             public interface KeyParamContract {
                 @WorkflowStart
                 Future<WorkflowInstanceId> start(@IdempotencyKey String key, PlainPayload p);
@@ -95,20 +95,6 @@ class ContractScannerTest {
             """);
 
     // --- Tests ---
-
-    @Test
-    @DisplayName("reads @WorkflowContract definitionId and definitionVersion")
-    void readsContractAttributes() {
-        CapturingProcessor processor = new CapturingProcessor();
-
-        ProcessorTestHarness.run(processor, ORDER_PAYLOAD, CANCEL_PAYLOAD, ORDER_CONTRACT)
-                .assertSuccess();
-
-        assertEquals(1, processor.models.size());
-        ContractModel model = processor.models.get(0);
-        assertEquals("order", model.definitionId());
-        assertEquals(2L, model.definitionVersion());
-    }
 
     @Test
     @DisplayName("scans three operations with correct roles on a full contract")
@@ -236,7 +222,7 @@ class ContractScannerTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "inherited", definitionVersion = 1L)
+                @WorkflowContract
                 public interface InheritedStartContract extends BaseOrderOps {
                     @Override
                     @WorkflowStart

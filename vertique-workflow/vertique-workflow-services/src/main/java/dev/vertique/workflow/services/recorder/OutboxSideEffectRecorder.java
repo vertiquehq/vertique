@@ -189,7 +189,8 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
      * Merges the intent's explicit headers with workflow-correlation headers.
      *
      * <p>The correlation headers ({@code x-workflow-id}, {@code x-workflow-step-sequence},
-     * {@code x-workflow-definition-id}) are added on top of the base map from the intent.
+     * {@code x-workflow-definition-id}, {@code x-workflow-definition-scope},
+     * {@code x-workflow-scope}) are added on top of the base map from the intent.
      * Correlation headers take precedence if the intent supplies a key with the same name.
      *
      * @param base        headers from the intent (may be empty, must not be {@code null} and must not
@@ -203,6 +204,8 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
         merged.put("x-workflow-id", correlation.workflowId().value().toString());
         merged.put("x-workflow-step-sequence", Long.toString(correlation.sequence()));
         merged.put("x-workflow-definition-id", correlation.definitionId());
+        merged.put("x-workflow-definition-scope", correlation.definitionScopeKey());
+        merged.put("x-workflow-scope", correlation.scopeKey());
         merged.put("x-workflow-step-id", correlation.stepId());
         // PRD-WF-002 D8a: branch-identity headers when the intent originates from a fan-out branch.
         if (correlation.branchTokenId() != null) {

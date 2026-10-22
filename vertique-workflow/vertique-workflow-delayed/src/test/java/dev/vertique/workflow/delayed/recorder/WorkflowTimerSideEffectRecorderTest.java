@@ -213,7 +213,15 @@ class WorkflowTimerSideEffectRecorderTest {
             when(timerStore.insertScheduled(any(TimerRecord.class), eq(tx))).thenReturn(Future.succeededFuture());
 
             WorkflowSideEffectIntent.Correlation branchCorrelation = new WorkflowSideEffectIntent.Correlation(
-                    workflowId, 1L, "test-def", "branch-timer-step", branchTokenId, "fork-step", "branch-a");
+                    workflowId,
+                    1L,
+                    "test-def",
+                    "acme",
+                    "tenant-1",
+                    "branch-timer-step",
+                    branchTokenId,
+                    "fork-step",
+                    "branch-a");
             TimerIntentPayload payload = new TimerIntentPayload(fireAt, TimerPurpose.STANDALONE, null);
             WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
                     IntentKind.WORKFLOW_TIMER, "branch-timer-step", payload, Map.of(), branchCorrelation);
@@ -304,7 +312,7 @@ class WorkflowTimerSideEffectRecorderTest {
      */
     private static WorkflowSideEffectIntent buildIntent(Instant fireAt, WorkflowInstanceId workflowId, String stepId) {
         WorkflowSideEffectIntent.Correlation correlation =
-                WorkflowSideEffectIntent.Correlation.singlePath(workflowId, 1L, "test-def", stepId);
+                WorkflowSideEffectIntent.Correlation.singlePath(workflowId, 1L, "test-def", "acme", "tenant-1", stepId);
         TimerIntentPayload payload = new TimerIntentPayload(fireAt, TimerPurpose.STANDALONE, null);
         return new WorkflowSideEffectIntent(IntentKind.WORKFLOW_TIMER, stepId, payload, Map.of(), correlation);
     }

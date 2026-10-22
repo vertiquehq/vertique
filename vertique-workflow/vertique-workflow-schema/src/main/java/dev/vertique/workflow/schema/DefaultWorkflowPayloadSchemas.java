@@ -12,6 +12,9 @@ import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.OutputUnit;
 import jakarta.annotation.Nullable;
@@ -25,10 +28,10 @@ import java.util.Optional;
  * Assembles descriptors from the workflow registry and the schemas cached at registration.
  *
  * <p>The service is stateless. It resolves the pinned definition from the registry, walks the human tasks in plan
- * order and their decisions in declaration order, and looks each payload type up in the cache by name. It never loads
- * a class and never generates a schema. A definition that is registered but has no cached schema for one of its
- * payload types means the registration validator was not installed for the registry; that is reported as an
- * {@link IllegalStateException} rather than as an unknown definition.
+ * order and their decisions in declaration order, and looks each payload type up in the cache by its logical name.
+ * It never loads a class and never generates a schema. A definition that is registered but has no cached schema for
+ * one of its payload types means the registration validator was not installed for the registry; that is reported as
+ * an {@link IllegalStateException} rather than as an unknown definition.
  *
  * <p>Validation resolves the same keys, then runs the compiled validator held by the cache entry inside a window of
  * its pattern-input guard. Nothing is generated, compiled or loaded per call, and the submitted payload is only read.
@@ -52,18 +55,24 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
 
     private final WorkflowRegistry registry;
     private final PayloadSchemaCache cache;
+    private final WorkflowTypeNames typeNames;
+
+    DefaultWorkflowPayloadSchemas(WorkflowRegistry registry, PayloadSchemaCache cache) {
+        this(registry, cache, new DefaultWorkflowTypeNames());
+    }
 
     @Inject
-    DefaultWorkflowPayloadSchemas(WorkflowRegistry registry, PayloadSchemaCache cache) {
+    DefaultWorkflowPayloadSchemas(WorkflowRegistry registry, PayloadSchemaCache cache, WorkflowTypeNames typeNames) {
         this.registry = registry;
         this.cache = cache;
+        this.typeNames = typeNames;
     }
 
     @Override
-    public Optional<WorkflowDefinitionDescriptor> describe(String definitionId, long definitionVersion) {
-        return resolve(definitionId, definitionVersion).map(workflow -> {
+    public Optional<WorkflowDefinitionDescriptor> describe(DefinitionKey key) {
+        return resolve(key).map(workflow -> {
             Class<?> startType = workflow.startPayloadType();
-            PayloadSchema start = startType == null ? null : schemaOf(startType.getName());
+            PayloadSchema start = startType == null ? null : schemaOf(typeNames.nameOf(startType));
             List<HumanTaskStepDescriptor> steps = new ArrayList<>();
             for (WorkflowNode node : workflow.plan().nodes()) {
                 if (node instanceof HumanTaskNode task) {
@@ -74,26 +83,21 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
                     steps.add(new HumanTaskStepDescriptor(task.stepId(), decisions));
                 }
             }
-            return new WorkflowDefinitionDescriptor(definitionId, definitionVersion, start, steps);
+            return new WorkflowDefinitionDescriptor(key.definitionId(), key.definitionVersion(), start, steps);
         });
     }
 
     @Override
-    public Optional<DecisionDescriptor> decision(
-            String definitionId, long definitionVersion, String stepId, String decisionName) {
-        return resolve(definitionId, definitionVersion)
+    public Optional<DecisionDescriptor> decision(DefinitionKey key, String stepId, String decisionName) {
+        return resolve(key)
                 .flatMap(workflow -> findDecision(workflow, stepId, decisionName))
                 .map(this::descriptorOf);
     }
 
     @Override
     public PayloadValidationResult validateDecision(
-            String definitionId,
-            long definitionVersion,
-            String stepId,
-            String decisionName,
-            @Nullable JsonObject payload) {
-        Optional<RuntimeWorkflow> workflow = resolve(definitionId, definitionVersion);
+            DefinitionKey key, String stepId, String decisionName, @Nullable JsonObject payload) {
+        Optional<RuntimeWorkflow> workflow = resolve(key);
         if (workflow.isEmpty()) {
             return single(UNKNOWN_DEFINITION, DEFINITION_TYPE);
         }
@@ -105,9 +109,8 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
     }
 
     @Override
-    public PayloadValidationResult validateStart(
-            String definitionId, long definitionVersion, @Nullable JsonObject payload) {
-        Optional<RuntimeWorkflow> workflow = resolve(definitionId, definitionVersion);
+    public PayloadValidationResult validateStart(DefinitionKey key, @Nullable JsonObject payload) {
+        Optional<RuntimeWorkflow> workflow = resolve(key);
         if (workflow.isEmpty()) {
             return single(UNKNOWN_DEFINITION, DEFINITION_TYPE);
         }
@@ -115,7 +118,7 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
         if (startType == null) {
             return new PayloadValidationResult(List.of());
         }
-        return validatePayload(startType.getName(), payload, VOID_START_PAYLOAD);
+        return validatePayload(typeNames.nameOf(startType), payload, VOID_START_PAYLOAD);
     }
 
     private static Optional<HumanTaskNode.TaskDecision> findDecision(
@@ -165,9 +168,9 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
         return VOID_PRIMITIVE.equals(typeName) || VOID_WRAPPER.equals(typeName);
     }
 
-    private Optional<RuntimeWorkflow> resolve(String definitionId, long definitionVersion) {
+    private Optional<RuntimeWorkflow> resolve(DefinitionKey key) {
         try {
-            return Optional.of(registry.resolvePinned(definitionId, definitionVersion));
+            return Optional.of(registry.resolve(key));
         } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException e) {
             return Optional.empty();
         }

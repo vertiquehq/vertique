@@ -28,6 +28,7 @@ import dev.vertique.workflow.definition.callbacks.StateReducerContributor;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
 import dev.vertique.workflow.definition.it.fixture.OrderDocState;
+import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV1;
 import dev.vertique.workflow.definition.it.fixture.PaymentCapturedDoc;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.it.fixture.ShipmentCreatedDoc;
@@ -49,6 +50,7 @@ import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootO
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
@@ -93,8 +95,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>It owns its own PostgreSQL container (separate database name).</li>
  *   <li>It uses its own Dagger component (component B) and in-memory registry.</li>
  *   <li>It registers version 2 of {@code order-fulfillment-doc} (the JSON fixture uses
- *       {@link dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV2} as
- *       the contract class), so there is no conflict with the YAML IT's version 1 registration even
+ *       {@link dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV1} as
+ *       the contract class, which the YAML IT's version 1 shares), so the two versions coexist even
  *       if the two ITs somehow shared a registry (they do not).</li>
  * </ul>
  *
@@ -447,7 +449,16 @@ public class DocumentDefinitionEndToEndJsonIT {
     @DisplayName("JSON-defined order fulfillment runs to COMPLETED through manual signal chain")
     void endToEnd_jsonOrderFulfillment_completesThroughSignalChain(VertxTestContext ctx) {
         PlaceOrderDoc payload = new PlaceOrderDoc("json-order-" + UUID.randomUUID());
-        StartCommand cmd = new StartCommand("order-fulfillment-doc", payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "order-fulfillment-doc",
+                OrderFulfillmentDocumentWorkflowV1.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(this::driveToCompletion)
@@ -471,13 +482,13 @@ public class DocumentDefinitionEndToEndJsonIT {
 
     /**
      * Verifies that the JSON-compiled {@code planHash} is non-blank and the definition is listed
-     * as {@link DefinitionStatus#ACTIVE} by the service after bootstrap (AC #10, AC #12).
+     * as {@link DefinitionStatus#AVAILABLE} by the service after bootstrap (AC #10, AC #12).
      */
     @Test
     @DisplayName("JSON planHash is non-blank and definition is active in the service after bootstrap")
     void jsonDefinitionPlanHashIsNonBlankAndListedAsActive(VertxTestContext ctx) {
         definitionService
-                .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "definition metadata query must succeed: " + ar.cause());
                     List<WorkflowDefinitionRecord> refs = ar.result();
@@ -485,7 +496,7 @@ public class DocumentDefinitionEndToEndJsonIT {
                     WorkflowDefinitionRecord ref = refs.get(0);
                     assertEquals("order-fulfillment-doc", ref.key().definitionId());
                     assertEquals(2L, ref.key().definitionVersion());
-                    assertEquals(DefinitionStatus.ACTIVE, ref.status());
+                    assertEquals(DefinitionStatus.AVAILABLE, ref.status());
                     assertNotNull(ref.planHash(), "planHash must not be null");
                     assertTrue(!ref.planHash().isBlank(), "planHash must not be blank");
                     ctx.completeNow();

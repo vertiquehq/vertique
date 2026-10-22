@@ -28,13 +28,13 @@ Install this module when workflows must survive process restarts, run across mor
 | Pg repo impls | `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository` — implement the engine SPIs; each is one scoped instance built with the optional `DbSchemas` placement |
 | `TaskStore<SqlClient>` | Human task persistence (`PgTaskStore`), one scoped instance built with the placement |
 | `TimerStore<SqlClient>` | Workflow timer persistence (`PgTimerStore`), one scoped instance built with the placement |
-| `WorkflowDefinitionRegistryStore` | Durable definition metadata, TEXT sources, and fenced activation (`PgWorkflowDefinitionRegistryStore`), one scoped instance built with the placement |
+| `WorkflowDefinitionRegistryStore` | Durable definition metadata, TEXT sources, and fenced publication (`PgWorkflowDefinitionRegistryStore`), one scoped instance built with the placement |
 | `WorkflowTransactionRunner<SqlClient>` | Pg implementation of the engine's transaction seam |
 | Query services | `PgWorkflowInstanceQueryService` — read model for workflow instances and branch state |
 | Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep; the application drives the batch loop and cadence, there is no built-in scheduler. It archives and purges through the scoped `PgWorkflowRetentionRepository`, so it follows the same placement |
 | Recovery service | `PgWorkflowBranchRecoveryService` — opt-in cluster-singleton branch recovery cron |
 | Migration declaration | `WorkflowMigrationsModule` — contributes the `workflow` `MigrationDefinition` (`classpath:db/migration/workflow`) with `@IntoSet`; see [Flyway Configuration](#flyway-configuration) |
-| Flyway schema | Shipped `V1__create_workflow_tables.sql` plus the additive `V002__create_workflow_definitions_and_tenant_key.sql` |
+| Flyway schema | Shipped `V1__create_workflow_tables.sql` plus the single additive `V002__workflow_definitions_and_scopes.sql` |
 
 The module `includes WorkflowEngineModule`, which provides the `WorkflowOperations` binding and recorder-router wiring. It also includes `WorkflowMigrationsModule` and `DbSchemasModule` (the optional `DbSchemas` binding). It does not deliver downstream service calls or execute delayed jobs by itself; those are separate modules.
 
@@ -71,7 +71,7 @@ public PgWorkflowDefinitionRegistryStore(
 ```
 
 - **Unmapped means unchanged.** The constructors without `DbSchemas` leave every table unqualified, so the workflow tables resolve through the connection's default schema. With no `workflow` entry in the `DbSchemas` passed to the other constructor, the SQL is the same as theirs.
-- **Mapped means every reference is qualified.** The `DbSchemas` constructors qualify every workflow table reference, in every statement, with the schema that `schemas` maps to `workflow`. This covers lifecycle, history, dedup, branch and join, task, timer, definition registry, query, recovery and retention statements, including the joins and subqueries between workflow tables (the task insert's tenant subselect on `workflow_instances` and the narrowed instances projection that `PgTaskStore.findByFilter` joins for a subject filter among them) and the pin-admission and retirement-guard statements that read `workflow_definitions` and `workflow_instances`. Statements are built once at construction.
+- **Mapped means every reference is qualified.** The `DbSchemas` constructors qualify every workflow table reference, in every statement, with the schema that `schemas` maps to `workflow`. This covers lifecycle, history, dedup, branch and join, task, timer, definition registry, query, recovery and retention statements, including the joins and subqueries between workflow tables (the task insert's scope subselect on `workflow_instances` and the narrowed instances projection that `PgTaskStore.findByFilter` joins for a subject filter among them) and the pin-admission and retirement-guard statements that read `workflow_definitions` and `workflow_instances`. Statements are built once at construction.
 - **Invalid mappings fail at construction.** A schema that is not a single valid PostgreSQL identifier (or is reserved by PostgreSQL) throws `IllegalArgumentException` when the store is created, before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`).
 - **Column qualifiers are never schema-qualified.** Qualifiers inside the SQL, such as `workflow_dedup.workflow_id` in the dedup upsert, name the table within the statement. SQL in this document is shown with unqualified table names.
 - **Transactions are unchanged.** Placement changes only where tables are named. Every method that takes a `SqlClient` still runs on the client the caller passes, so workflow rows commit or roll back with the application's and the outbox's own writes.
@@ -92,7 +92,7 @@ Each workflow operation opens a Postgres transaction via the `WorkflowTransactio
 
 The engine stores serialized workflow state as JSON. The Java state type comes from the registered workflow plan.
 
-In-flight instances are pinned to the definition version and plan hash recorded at start. They do not silently move to a newer definition.
+In-flight instances are pinned to the definition version and plan hash recorded at start. They do not silently move to a newer definition. The pin includes the definition scope, and branch recovery resolves the plan of the pinned definition scope, id and version. A node whose registry holds no plan for the pin fails the sweep of that token with `WorkflowVersionNotRunnableException`: the transaction rolls back, the token stays `RETRY_SCHEDULED` for a node that has the code, and the instance is not failed.
 
 The `WorkflowTransactionRunner` in this module delegates to `vertique-db-core`'s `TransactionBuilder`. Write paths run at the connection's default isolation (0 `SET TRANSACTION` statements); the `query()` read path uses `REPEATABLE READ` (1 statement, no `READ ONLY`).
 
@@ -108,28 +108,38 @@ The module owns workflow persistence tables, including:
 |---|---|
 | `workflow_instances` | Current snapshot of each workflow instance; includes `metadata JSONB` for the durable context captured once at start |
 | `workflow_history` | Append-only engine history |
-| `workflow_dedup` | Idempotency and signal deduplication |
+| `workflow_dedup` | Idempotency and signal deduplication, keyed by `(kind, scope_key, dedup_namespace, key)` |
 | `workflow_timers` | Durable timer state; includes `metadata JSONB` for durable context. This row is the authoritative source of timer status — `vertique-workflow-delayed` treats it as such when reconciling against the delayed-job scheduler. |
 | `workflow_tasks` | Human task rows |
 | `workflow_branch_tokens` | Active branch execution state; includes `metadata JSONB` for durable context |
 | `workflow_join_states` | Fan-in state for fork/join workflows |
-| `workflow_definitions` | Durable definition metadata and DOCUMENT source text, added by `V002__create_workflow_definitions_and_tenant_key.sql` (see [Definition Registry And Source Storage](#definition-registry-and-source-storage)) |
+| `workflow_definitions` | Durable definition metadata and DOCUMENT source text, added by `V002__workflow_definitions_and_scopes.sql` (see [Definition Registry And Source Storage](#definition-registry-and-source-storage)) |
+| `workflow_definition_activations` | The current version of a definition id per scope, added by the same script (see [Definition Registry And Source Storage](#definition-registry-and-source-storage)) |
 
-The migration files live with the module under `db/migration/workflow`. The shipped `V1__create_workflow_tables.sql` contains the instance/runtime tables, including branch tokens and durable metadata. The additive `V002__create_workflow_definitions_and_tenant_key.sql` adds the definition registry with its `document_digest` column, a nullable `tenant_key VARCHAR(255)` column on `workflow_tasks` and `workflow_instances` (existing rows read `null`) and one partial index per table for tenant-filtered keyset queries, `idx_workflow_tasks_tenant_updated_at` and `idx_workflow_instances_tenant_updated_at`, each on `(tenant_key, updated_at DESC, <id>)` where `tenant_key IS NOT NULL`. Each `ALTER TABLE` and `CREATE INDEX` takes an `ACCESS EXCLUSIVE` lock on its table until the migration commits, and each index build is a sequential scan of its table under that lock, so the blocked time grows with table size. The script bounds its wait for each lock with `SET LOCAL lock_timeout = '30s'`: run it when no long transaction (a retention sweep, a long read) is open. While a statement waits for its lock, new statements on that table queue behind it for up to the timeout, per table, and then the migration fails and can be rerun; a manual run must be one transaction (`psql --single-transaction`), or the timeout has no effect. Every tenant column and tenant index statement is `IF NOT EXISTS`, so an operator of a very large installation can run the two `ALTER TABLE ... ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255)` statements (tasks first; each still takes the exclusive lock briefly) and build the two indexes with the exact statements of the migration as `CREATE INDEX CONCURRENTLY IF NOT EXISTS` on an autocommit connection ahead of the upgrade (set `lock_timeout` on that session too; a statement that times out changes nothing and can be rerun), and the migration then adds no scan. Both `IF NOT EXISTS` forms match by name only, so use the exact statements; a failed concurrent build leaves an `INVALID` index that `IF NOT EXISTS` skips, so check `pg_index.indisvalid` and drop it first. Instances started and tasks created by nodes of the previous release keep a null tenant permanently (nothing backfills the column), so any writer that starts stamping a tenant should do so only after every node runs this release; tasks of a stamped instance that were created earlier can be backfilled with `UPDATE workflow_tasks t SET tenant_key = i.tenant_key FROM workflow_instances i WHERE t.workflow_id = i.id AND t.tenant_key IS NULL AND i.tenant_key IS NOT NULL`. `V1__` is unchanged. A development database that applied an earlier snapshot of this release must be recreated, because Flyway validation fails on the changed checksum and description of version 2.
+The migration files live with the module under `db/migration/workflow`. The shipped `V1__create_workflow_tables.sql` contains the instance/runtime tables, including branch tokens and durable metadata. The single additive `V002__workflow_definitions_and_scopes.sql` creates the definition registry and converts the released tables to scope keys:
 
-`PgWorkflowInstanceRepository.insert` writes `tenant_key` from `WorkflowInstance.tenantKey()` and no update statement changes it. `PgTaskStore.insertOpen` writes the task's `tenant_key` from the owning instance row (`SELECT tenant_key FROM workflow_instances WHERE id = …`; the instances table is qualified like every other reference when a `workflow` schema is mapped) and ignores the value on the `TaskRecord`, so every task creation path inherits the instance tenant; the guarantee belongs to this store, not to the `TaskStore` SPI. `WorkflowInstanceQuery.tenantKey()` and `TaskFilter.tenantKey()` add an exact-match `tenant_key = ?` condition when non-null and leave keyset order and archived handling unchanged; `null` matches every tenant. The column and the filters are information and a filter, not an isolation or authorization boundary: callers must not pass an unresolved tenant as `null` expecting scoping, and start idempotency and business keys stay global. No operation addressed by instance or task id checks the tenant either. This module only stores the tenant; the engine sets none at start, so an engine-started instance stays `null` until the tenant context stamps it.
+- `workflow_definitions` is keyed by `(scope_key, definition_id, definition_version)`; it carries the logical `contract_name` and `state_type_name`, the `document_digest` column and `kind VARCHAR(16)`, `plan_hash VARCHAR(128)` and `name_binding JSONB NOT NULL DEFAULT '{}'`; a `CODE` row must be in the `default` scope.
+- `workflow_definition_activations` is keyed by `(scope_key, definition_id)`, one record per scope and id, with `target_scope_key`, `definition_version` and `activated_at`. A check requires the target scope to be the scope itself or `default`, and `default` to name only itself; a foreign key from `(target_scope_key, definition_id, definition_version)` to `workflow_definitions` is `ON DELETE RESTRICT`, so a definition row that a record names cannot be deleted. No row means the scope follows the default scope.
+- `workflow_instances` gains `scope_key` (the start scope) and `definition_scope_key` (the scope of the pinned definition version), and `workflow_tasks` gains `scope_key`, each `VARCHAR(255) NOT NULL DEFAULT 'default'`. Existing rows read `default`; the script rewrites no row.
+- The business-key index `idx_workflow_instances_business_key` becomes unique per `(scope_key, definition_id, business_key)` where the business key is not null, and `idx_workflow_instances_scope_updated_at` and `idx_workflow_tasks_scope_updated_at` serve scope-filtered keyset queries on `(scope_key, updated_at DESC, <id>)`.
+- `workflow_dedup.scope` is renamed `dedup_namespace` (for start rows it still holds the definition id), a `scope_key` column is added, and the primary key becomes `(kind, scope_key, dedup_namespace, key)`. Stored fingerprints and namespaces are kept as they were.
+
+Each `ALTER TABLE`, the index rebuild on `workflow_instances` and the primary-key rebuild on `workflow_dedup` take an `ACCESS EXCLUSIVE` lock on their table until the migration commits, and each index build is a sequential scan of its table under that lock, so the blocked time grows with table size. The script bounds its wait for each lock with `SET LOCAL lock_timeout = '30s'`: run it when no long transaction (a retention sweep, a long read) is open. While a statement waits for its lock, new statements on that table queue behind it for up to the timeout, per table, and then the migration fails and can be rerun; a manual run must be one transaction (`psql --single-transaction`), or the timeout has no effect. The column and index statements are `IF NOT EXISTS`, so an operator of a very large installation can add the scope columns on tasks and then instances and build the two scope keyset indexes with the exact statements of the migration as `CREATE INDEX CONCURRENTLY IF NOT EXISTS` on an autocommit connection ahead of the upgrade (set `lock_timeout` on that session too; a statement that times out changes nothing and can be rerun), and the migration then builds nothing for them. The business-key index is always dropped and rebuilt by the migration, and the `workflow_dedup` rename and primary-key change always run inside it: `ALTER TABLE ... RENAME COLUMN` has no `IF EXISTS` form, so do not run it ahead of time. Both `IF NOT EXISTS` forms match by name only, so use the exact statements; a failed concurrent build leaves an `INVALID` index that `IF NOT EXISTS` skips, so check `pg_index.indisvalid` and drop it first. `V1__` is unchanged. A development database that applied an earlier snapshot of this release must be recreated, because Flyway validation fails on the changed checksum and description of version 2.
+
+**Upgrade from 0.3.0.** Stop all nodes that run 0.3.0 before the first 0.4.0 node starts and applies the migration. The 0.3.0 dedup statements use `ON CONFLICT (kind, scope, key)`; the renamed column and the new primary key `(kind, scope_key, dedup_namespace, key)` leave that conflict target without a matching index, so a 0.3.0 node that is still running after the migration fails every start. Keeping the old column name would not help, because the primary key change alone breaks the target. Pre-applying statements ahead of the upgrade does not lift this rule: run them only after the last 0.3.0 node has stopped. Rolling-deploy guidance applies only from 0.4.0 on, and rolling code back to 0.3.0 against a migrated database is not supported. After the upgrade the instances of 0.3.0 resume in the default scope and complete their stored task decisions.
+
+`PgWorkflowInstanceRepository.insert` writes `scope_key` and `definition_scope_key` from `WorkflowInstance.scopeKey()` and `definitionScopeKey()` and no update statement changes them. `PgTaskStore.insertOpen` writes the task's `scope_key` from the owning instance row (`SELECT scope_key FROM workflow_instances WHERE id = …`; the instances table is qualified like every other reference when a `workflow` schema is mapped) and ignores the value on the `TaskRecord`, so every task creation path inherits the start scope of its instance; the guarantee belongs to this store, not to the `TaskStore` SPI. `WorkflowInstanceQuery.scopeKey()` and `TaskFilter.scopeKey()` add an exact-match `scope_key = ?` condition when non-null and leave keyset order and archived handling unchanged; `null` matches every scope. The columns and the filters are information and a filter, not an isolation or authorization boundary: callers must not pass an unresolved scope as `null` expecting scoping. No operation addressed by instance or task id checks the scope either. Start dedup statements (`findStart`, `claimOrResolveStart`) and `findByBusinessKey` take the start scope and filter on `scope_key`; signal, task and dispatch dedup statements address the `default` scope. `PgWorkflowInstanceRepository.findDefinitionContract(key, tx)` reads `contract_name` from `workflow_definitions` through the caller's transaction, so a start replay on a node without the pinned plan takes no second pool connection.
 
 ---
 
 ## Definition Registry And Source Storage
 
-The definition registry requires **PostgreSQL 15 or later** for null-tenant uniqueness using
-`NULLS NOT DISTINCT`. `workflow_definitions` stores CODE metadata and DOCUMENT source text separately
+The definition registry is built and tested against **PostgreSQL 15 or later**. `workflow_definitions` stores CODE metadata and DOCUMENT source text separately
 from compiled plans. DOCUMENT source uses TEXT with kind/nullability constraints and no fixed database
 size cap. The adapter enforces the shared `WorkflowDefinitionsConfig` policy at document boundaries.
 
-Runtime document load writes a CANDIDATE. Activation uses a fresh UUID claim, local registration, then
-a fenced completion; obsolete completions fail and obsolete releases are no-ops. Every definition
+Runtime document load writes a CANDIDATE. Publication uses a fresh UUID claim (`publish_token`, present exactly while the
+status is `PUBLISHING`), local registration, then a fenced completion that makes the row `AVAILABLE`; obsolete completions fail and obsolete releases are no-ops. Every definition
 mutation takes an id-derived transaction advisory lock followed by ordered locks on all rows of that
 id. Claim ages use PostgreSQL wall clock after lock acquisition, with twice `maxStalenessSeconds`
 (default 30 seconds) as the stale age. These locks serialize each store transaction, not the whole
@@ -140,42 +150,51 @@ reused. SQLSTATE `55P03` is surfaced as a retryable `WorkflowPersistenceExceptio
 definition id in its context and the pessimistic-locking database failure preserved as its cause. The
 store does not retry inside the aborted transaction.
 
-`recomputeActive` operates on one exact tenant owner and id. It chooses the highest version whose status
-is ACTIVE or SUPERSEDED, demotes an older ACTIVE row before promotion to satisfy the immediate
-one-ACTIVE index, and leaves other statuses and owners untouched. Both status changes commit together;
-a failed promotion rolls back its preceding demotion. Rows whose status already matches the result keep
-their original `status_changed_at`.
+The status column allows exactly `CANDIDATE`, `PUBLISHING`, `AVAILABLE`, `DEPRECATED` and `RETIRED`. No unique index limits
+the available rows of a scope and id, so any number of versions and scopes of one id are `AVAILABLE` at once, and `complete`
+changes only the row of its claim. Rows for the same id and version may coexist under different scope keys in every status, and
+`list` returns them by optional scope, id and status set without reading document bodies. A claim, a completion and a
+static document or code reconciliation look only at their own row; there is no per-id holder and no conflict between scopes.
 
-Candidates for the same id and version may coexist under different tenant keys (or the global owner), and
-`list` returns them by exact tenant scope and status set without reading document bodies. Executable
-membership is stricter: one owner at a time holds a definition id. Rows of another owner in ACTIVE,
-SUPERSEDED or DEPRECATED, or holding a fresh ACTIVATING claim, hold the id; a stale claim does not.
-`claim` and `complete` (with a current token; an obsolete token fails as a stale claim first) for a
-different owner fail with `OWNER_CONFLICT` naming the holders, and `upsertDocument` reports `OWNER_CONFLICT`. The check runs under the id lock, so concurrent activations
-by different owners, including for an id with no rows yet, admit exactly one. Within one owner,
-completion demotes lower ACTIVE versions before promotion, and a lower version completing after a higher
-one becomes SUPERSEDED, so the one-ACTIVE index is never violated.
-
-`transition(key, from, to)` is a conditional status change under the same id lock: it checks the row,
-the owner and the expected current status, and updates only a row still in that status. The store
-accepts ACTIVE to DEPRECATED and SUPERSEDED to DEPRECATED (which do not recompute or promote other versions) and RETIRED
-to SUPERSEDED (which does); any other pair, a missing row or a changed status fails with `INVALID_TRANSITION`.
-
-`transition(key, RETIRED, SUPERSEDED)` is the atomic reinstatement: in one transaction under the id lock it checks the row is RETIRED
-and that no other owner holds the id, sets it SUPERSEDED, demotes lower ACTIVE versions of the owner and then promotes the highest
-eligible version; any failure rolls back everything. Like every registry mutation (see `retire` below), its transaction runs at READ COMMITTED whatever the server
-default, so the owner check sees every row another owner committed while the call waited for the id lock. The store does not check
-that an executable source exists or that its hash matches; the lifecycle does that before it calls the store.
+`transition(key, from, to)` is a conditional status change under the id lock: it checks the row and the expected current status,
+and updates only a row still in that status. The store accepts `AVAILABLE` to `DEPRECATED`, `DEPRECATED` to `AVAILABLE` and
+`RETIRED` to `AVAILABLE` and no other pair; an unsupported pair, a missing row or a changed status fails with
+`INVALID_TRANSITION`. A pair outside those three is refused before any statement is issued. The last two are the
+reinstatement: the store does not check that an executable source exists or that its hash matches; the lifecycle does that
+before it calls the store. Like every registry mutation (see `retire` below), the transaction runs at READ COMMITTED whatever the
+server default.
 
 `retire(key)` moves a CANDIDATE row, or a DEPRECATED row past the cooling window (`maxStalenessSeconds`, database
-clock), to RETIRED. Every registry mutation runs at READ COMMITTED, whatever the server default, so the owner checks and the pin count see
+clock), to RETIRED. Every registry mutation runs at READ COMMITTED, whatever the server default, so the pin count sees
 every row and pin committed while the mutation waited for the id lock. Under the id lock it checks the row, the status, and for a
 DEPRECATED row the cooling age and then the exact-version count of RUNNING, WAITING and COMPENSATING instances (archived
 rows included), in that order; a CANDIDATE row is retired without the pin check because a candidate is not admitted for
-pinning (a runtime registered directly for the same version is outside the guard). ACTIVE and SUPERSEDED rows cannot retire. The count scans `workflow_instances` by definition id and version while
+pinning (a runtime registered directly for the same version is outside the guard). AVAILABLE rows cannot retire. The count scans `workflow_instances` by definition id and version while
 retirement holds the exclusive id lock and no index covers that predicate, so on a very large live instance table a
-retirement can delay new starts of that id. `PgWorkflowInstanceQueryService.countNonTerminal(definitionId, version)` exposes the same
-informational count; it is not the retirement guard.
+retirement can delay new starts of that id. `PgWorkflowInstanceQueryService.countNonTerminal(DefinitionKey)` exposes the same
+scope-aware informational count (`countNonTerminal(definitionId, version)` counts the default scope); it is not the
+retirement guard. The count and the retirement guard include only instances pinned to the definition's own scope.
+
+`upsertCode(record, activateDefault)` and `upsertDocument(record, document, activateDefault)` insert a missing row and, only when
+the outcome is `INSERTED` and `activateDefault` is true, write `(default, id) -> (default, version)` into
+`workflow_definition_activations` in the same transaction and under the same id lock: one statement inserts the record or
+replaces it only when the stored version is lower, so concurrent first boots write one record, the highest version wins in any
+order, and a failure of either statement rolls back the row as well. `UNCHANGED`, `REHASHED`, conflicts and drift write no
+record, so a restart never activates and never undoes an operator's choice. Deploy a new version with `activateOnDeploy` false
+while nodes running the previous code are still up, and activate it once every node runs the new code.
+
+`insertCandidate` of a row in a scope other than the default one reads the locked rows of the id across every scope, after the advisory lock was granted, and refuses with `WorkflowDefinitionContractMismatchException` when the default scope holds the id, in any status, under another contract and the scope holds no row of the id; a default-scope insert is never refused for the rows of other scopes.
+
+`putActivation`, `removeActivation` and `listActivations` maintain `workflow_definition_activations`. A write runs like every registry mutation, under the id lock at READ COMMITTED: `putActivation` requires the target row `(target_scope_key, id, version)` to exist and be `AVAILABLE` (a refusal is `INVALID_TRANSITION` naming the target key), refuses with `WorkflowDefinitionContractMismatchException` a scope's record that names a default-scope version of another contract than the scope's own rows of the id, and then inserts or replaces the scope's record; `removeActivation` deletes it and accepts an absent record. The default-current guard lives in `transition` and `retire`: in the same transaction and after the lock was granted, a default-scope row is refused with `INVALID_TRANSITION` while the default scope's record of the id names its version, so a concurrent activation and deprecation serialize on the lock and the record never ends on a deprecated target. Rows of other scopes are not guarded. Delete a record with `removeActivation` (or `deactivateDefault` through the lifecycle) before deleting the definition rows it names, and note that tests or tools that delete definition rows directly must remove the id's records first because of the restricting foreign key.
+
+Activation records reach the other nodes of the same database through the engine's propagation pass: each pass reads
+`listActivations(null)` once, and the cadence is `workflow.definitions.maxStalenessSeconds`, so an `activate`, `follow` or
+`deactivateDefault` committed on one node changes which version a start selects on the others within that bound plus the apply
+time. Records are durable and restored into the node's view at startup; a start never reads `workflow_definition_activations`.
+
+Registry refusal messages can name other scopes and plan hashes: do not forward them to end users.
+
+`migratePinAndState` writes the definition scope, the definition version and the plan hash of the re-pinned instance, so a migration to another scope's definition changes the stored definition scope. Run the cross-scope migration with `vertique-workflow-schema` installed when the two definitions use different state classes.
 
 Pin admission: before `insert` creates an instance pin, `migratePinAndState` changes one, or `updateOptimistic`
 resurrects a terminal instance (FAILED retry or FAILED to COMPENSATING), the repository takes
@@ -183,8 +202,7 @@ resurrects a terminal instance (FAILED retry or FAILED to COMPENSATING), the rep
 statement. Starts share the lock, so they do not serialize each other, but a queued deprecate or retire waits for them and
 PostgreSQL queues later admissions behind that waiting writer, so long caller transactions can delay lifecycle and startup
 mutations. The caller's pin transaction must therefore end before it awaits any store-owned lifecycle call for the same
-id. At READ COMMITTED an id with no definition rows is admitted (a definition registered only by direct runtime registration after startup, or an engine built without the registry bootstrap, has none); otherwise the sole
-holding owner must have the exact version and plan hash ACTIVE or SUPERSEDED, and a resurrection also accepts DEPRECATED.
+id. At READ COMMITTED an id with no definition rows is admitted (a definition registered only by direct runtime registration after startup, or an engine built without the registry bootstrap, has none); otherwise the row of the pin's exact definition scope, id and version must exist with the plan hash and be `AVAILABLE`, and a resurrection also accepts `DEPRECATED`; the rows of other scopes and versions of the id play no part, so a plan hash of another scope's row is a drift against this scope's row. The pin is the instance's definition scope, definition id and definition version, so an instance pinned to a definition scope is admitted only against the row of that scope.
 Under REPEATABLE READ or SERIALIZABLE the rows are read `FOR SHARE`, a changed row raises a serialization failure, and an id
 with no visible row is refused with `INVALID_TRANSITION` (a snapshot taken before the first row cannot tell absence from a
 newly managed id; this includes engines built by hand that skip the registry bootstrap). Every admission sets
@@ -202,7 +220,24 @@ UTF-8 byte length and code-point count in the same SQL statement that conditiona
 Oversized rows return identity/counts with no body transfer, then fail with a sanitized key/limit
 message; they are not treated as absent. Metadata listing never selects the source body.
 
-The stored plan hash covers the compiled plan structure, not callback bodies. The `document_digest` column holds
+`failure_reason` (`VARCHAR(64)`, nullable, no check constraint) holds the name of the rule a failing scope row breaks,
+`STATE_TYPE_NOT_EXTENDED` or `NAME_BINDING_UNRESOLVED`, and is null for every other row. Only `recordFailure(key, failure)`
+writes it, in one `UPDATE` under the definition id lock that only matches a DOCUMENT row of a scope other than `default` (a default scope row or a CODE row is left untouched), and a startup or a reconciliation pass that finds no conflict clears it. `find` and
+`list` read it into `WorkflowDefinitionRecord.failure()` with the rule's fixed description as the detail; a reason this
+release does not know reads as no failure. A node refuses starts from its own startup evaluation, not from this column, so
+nodes that ship different code can rewrite it during a rolling deploy.
+
+The stored plan hash covers the compiled plan structure, not callback bodies. `name_binding` holds, as a JSON
+object, the binary name of each state and payload class the plan names, mapped to the name the hash used. The
+adapter writes it in the same statement as the plan hash and never alone: when a version is first recorded (a code
+row, or a document candidate) and when a changed code hash replaces the stored one. Publication, deprecation,
+retirement, reinstatement and propagation leave it as it is. Every start hashes the version with the stored
+binding, so annotating a class after the version was published keeps the hash of that version, and a version first
+published afterwards records the logical name. A class that a non-retired version is bound to by its binary name
+cannot move until those versions are retired; startup fails naming the version and the recorded name. A version that
+instances of an earlier release started under is recorded by the first start of this release with the names its
+classes have then, so upgrade before you annotate a class those instances use.
+Annotate contracts and types before moving them. The `document_digest` column holds
 the lowercase hex SHA-256 of the stored UTF-8 text (present exactly on
 DOCUMENT rows). The adapter writes it with every document, treats an equal plan hash with a different text
 digest as drift when a packaged document is reconciled, and verifies it on every guarded source read (after the
@@ -210,15 +245,15 @@ size-envelope check): altered stored text is never returned and fails as drift. 
 concurrent change of stored text; it does not authenticate the writer, so restrict write access to the table.
 Any other writer of DOCUMENT rows must supply the digest. On first boot after upgrading, every application that uses the PostgreSQL module writes a global CODE row per code-first definition even if it never touches documents; the `V002__` migration must have run.
 
-With a durable registry store bound (the PostgreSQL module binds one), the engine records every code definition, and with `WorkflowDefinitionModule` installed also the packaged documents, and restores activated documents of every owner after
-Flyway migration, recomputes active membership per owner, and refreshes verified definition-cache entries
+With a durable registry store bound (the PostgreSQL module binds one), the engine records every code definition, and with `WorkflowDefinitionModule` installed also the packaged documents, and restores available documents of every scope after
+Flyway migration, and refreshes verified definition-cache entries
 from committed metadata before BOOTSTRAP verticle deployment. Every node sharing live document rows must
 carry their loaders and callback/type catalogs. Source locations are attribution, never remote fetch
 instructions. Configure the same policy on every node; raising the input limit increases memory and
 parse cost, and lowering it below required stored sources makes startup fail. The stored envelope is
 floor(3L/2) UTF-8 bytes and L code points for configured raw input limit L (default 262144 bytes).
 
-**Placement.** The migration script is unqualified, so the migration instance's default schema decides where the eight tables and their indexes land. In named Flyway mode with a `db.schemas.workflow` entry, that schema is the default, and the stores qualify every table with it, so both agree. In single mode the migration lands where the single-run configuration says (see [Flyway Configuration](#flyway-configuration)). The module creates no sequences, views, functions or triggers and uses no notification channel, so tables and indexes are everything a mapped schema receives.
+**Placement.** The migration script is unqualified, so the migration instance's default schema decides where the nine tables and their indexes land. In named Flyway mode with a `db.schemas.workflow` entry, that schema is the default, and the stores qualify every table with it, so both agree. In single mode the migration lands where the single-run configuration says (see [Flyway Configuration](#flyway-configuration)). The module creates no sequences, views, functions or triggers and uses no notification channel, so tables and indexes are everything a mapped schema receives.
 
 ---
 
@@ -357,7 +392,7 @@ Workflow operations require caller-supplied idempotency or dedup keys where dupl
 
 | Operation | Scope | Key |
 |---|---|---|
-| Start | Definition id | Start idempotency key |
+| Start | Start scope and definition id | Start idempotency key |
 | Signal | Workflow instance | Signal dedup key |
 | Task completion | Task id | Task completion idempotency key |
 | Task reassignment | Task id | Task reassignment idempotency key |
@@ -427,7 +462,7 @@ This module implements the workflow-side durable context propagation surfaces fo
 
 **Branch create:** `WorkflowEngine.handleForkNode` (in `vertique-workflow-engine`) captures the current durable context into `workflow_branch_tokens.metadata` under the `"WORKFLOW"` boundary. Metadata is written once and never updated.
 
-**Branch drive:** `BranchTransitionEngine.driveBranchTransitions` binds `token.metadata()` at the start of every per-branch drive via `InboundExecutionContextScope.installDurable(metadata, DispatchBoundary.WORKFLOW)`. The bind covers timer-step, signal-step, service-dispatch, and decision step types and closes on `Future.eventually(...)`. The substrate helper wraps the authoritative `DurableContextPropagator.bindFrom(...)` — every registered durable type absent from `token.metadata()` is cleared for the drive's scope so a downstream `mergeCaptured(...)` (e.g. the timer side-effect recorder dual-write) cannot pick up ambient context that did not cross the workflow boundary. After the durable bind, registered `InboundContextInitializer`s run (notably the correlation seeder), so a branch whose metadata carries no encoded `CorrelationContext` still gets one bound for the duration of the drive (FR-COR-125). Empty metadata still triggers the bind. Production reaches branch-drive on a duplicated context: dispatcher entry points (event bus, Kafka per-record, cron callback, service-method invoker) are all duplicates, and `vertx-sql-client` 5.x preserves the caller's duplicate through `pool.withTransaction(tx -> …)`. Per FR-CTX-157b, `installDurable` propagates the strict `bindFrom` invariant — `IllegalStateException` on a non-duplicated Vert.x context — so tests that call into the engine directly from a JUnit thread must first switch to a duplicate.
+**Branch drive:** `BranchTransitionEngine.driveBranchTransitions` binds `token.metadata()` at the start of every per-branch drive via `InboundExecutionContextScope.installDurable(metadata, DispatchBoundary.WORKFLOW)`. The bind covers timer-step, signal-step, service-dispatch, and decision step types and closes on `Future.eventually(...)`. The substrate helper wraps the authoritative `DurableContextPropagator.bindFrom(...)` — every registered durable type absent from `token.metadata()` is cleared for the drive's scope so a downstream `mergeCaptured(...)` (e.g. the timer side-effect recorder dual-write) cannot pick up ambient context that did not cross the workflow boundary. After the durable bind, registered `InboundContextInitializer`s run (notably the correlation seeder), so a branch whose metadata carries no encoded `CorrelationContext` still gets one bound for the duration of the drive. Empty metadata still triggers the bind. Production reaches branch-drive on a duplicated context: dispatcher entry points (event bus, Kafka per-record, cron callback, service-method invoker) are all duplicates, and `vertx-sql-client` 5.x preserves the caller's duplicate through `pool.withTransaction(tx -> …)`. `installDurable` propagates the strict `bindFrom` invariant — `IllegalStateException` on a non-duplicated Vert.x context — so tests that call into the engine directly from a JUnit thread must first switch to a duplicate.
 
 `driveBranchTransitions` accepts an additional `@Nullable DurableMetadata effectiveBaseOverride` parameter. When non-`null` — as supplied by branch recovery below, and by a branch-targeted explicit signal carrier — the drive binds that already-merged effective document instead of raw `token.metadata()`. This is the seam every branch-owned drive routes through under the bind-once routing rule: it is never additionally wrapped by the instance-path `WorkflowContextBinder`, so a branch-owned drive is bound exactly once.
 

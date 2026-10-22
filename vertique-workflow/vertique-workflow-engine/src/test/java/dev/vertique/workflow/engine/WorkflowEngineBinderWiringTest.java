@@ -10,6 +10,9 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import dev.vertique.context.DefaultContextHolder;
@@ -24,6 +27,7 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
@@ -42,6 +46,8 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -164,7 +170,8 @@ class WorkflowEngineBinderWiringTest {
         List<WorkflowNode> nodes = List.of(waitSignal, humanTask, timerNode, complete);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), waitSignal.stepId(), nodes, null);
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**
@@ -184,7 +191,8 @@ class WorkflowEngineBinderWiringTest {
         List<WorkflowNode> nodes = List.of(waitSignal, branchTimerNode, complete);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), waitSignal.stepId(), nodes, null);
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**
@@ -356,7 +364,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -419,7 +428,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         // Gate opened via the tenant namespace only; no correlation namespace on the instance and
         // no ambient correlation bound — the seeder must fire because the effective document has no
@@ -466,7 +476,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -537,7 +548,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = new WorkflowInstance(
                 new WorkflowInstanceId(UUID.randomUUID()),
@@ -607,9 +619,17 @@ class WorkflowEngineBinderWiringTest {
                 List.of(new CompleteNode(COMPLETE_STEP)),
                 null);
         RuntimeWorkflow targetRw = RuntimeWorkflow.of(
-                targetPlan, Object.class, Object.class, payload -> Map.of(), Map.of(), stubCallbacks());
-        when(registry.resolvePinned(DEFINITION_ID, 1L)).thenReturn(sourceRw);
-        when(registry.resolvePinned(DEFINITION_ID, 2L)).thenReturn(targetRw);
+                targetPlan,
+                "test-contract",
+                Object.class,
+                Object.class,
+                payload -> Map.of(),
+                Map.of(),
+                stubCallbacks());
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(sourceRw);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2L)))
+                .thenReturn(targetRw);
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, null, null, null, tenantMetadata("T1"));
         when(instances.findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -625,7 +645,8 @@ class WorkflowEngineBinderWiringTest {
         when(handler.sourceStateType()).thenReturn((Class) Object.class);
         when(handler.migrate(any(), any()))
                 .thenReturn(dev.vertique.workflow.migration.MigrationResult.anchorAtInitial(Map.of()));
-        when(migrationRegistry.find(DEFINITION_ID, 1L, 2L)).thenReturn(Optional.of(handler));
+        when(migrationRegistry.find("default", DEFINITION_ID, 1L, "default", 2L))
+                .thenReturn(Optional.of(handler));
 
         WorkflowEngineHandle handle = WorkflowEngineFactory.create(
                 txRunner,
@@ -668,7 +689,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, tenantMetadata("T1"));
@@ -762,7 +784,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         UUID dueTimerId = UUID.randomUUID();
@@ -813,11 +836,16 @@ class WorkflowEngineBinderWiringTest {
         when(h.taskStore().lockForCompletion(taskId, tx))
                 .thenReturn(Future.succeededFuture(Optional.of(closedBranchTask)));
 
-        // No stub on instances.findById/updateOptimistic for the instance-path: if the branch-owned
-        // route incorrectly fell through to the instance-path bind, it would call
-        // instances.findById(workflowId, tx), which is unstubbed here and returns Mockito's default
-        // null-Future — surfacing as a NullPointerException that fails the test, proving the
-        // instance-path binder route was never taken for this branch-owned drive.
+        // The branch-owned route reads the instance without a lock only to check that this node can run its pin,
+        // before any write. The instance carries tenant metadata, so a fall-through to the instance-path bind would
+        // fill the ambient TenantCtx and fail the assertion below.
+        RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
+        WorkflowInstance inst =
+                instanceAt("human-task-due", WaitType.TASK, taskId.toString(), dueTimerId, tenantMetadata("T1"));
+        when(h.instances().findById(workflowId, tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+
         runOnDuplicated(vertx, v -> h.taskCallbacks()
                 .taskDueFired(workflowId, taskId, tx)
                 .onComplete(ar -> ctx.verify(() -> {
@@ -828,6 +856,100 @@ class WorkflowEngineBinderWiringTest {
                     assertThat(holder.current(TenantCtx.class))
                             .as("no instance-path bind should have touched the ambient TenantCtx binding")
                             .isEmpty();
+                    verify(h.taskStore(), never()).markExpired(any(), any(), any());
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("taskDueFired(): branch-owned expiry on a node without the pinned plan writes nothing")
+    void taskDueFired_branchOwned_withoutPinnedPlan_writesNothing(Vertx vertx, VertxTestContext ctx) {
+        DefaultContextHolder holder = new DefaultContextHolder();
+        Harness h = buildHarness(TenantCtxCodec.propagator(holder), holder);
+        SqlClient tx = ActiveTransactionClient.create();
+
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        UUID taskId = UUID.randomUUID();
+        UUID dueTimerId = UUID.randomUUID();
+        UUID branchTokenId = UUID.randomUUID();
+        TaskRecord branchTask = openBranchTaskWithDueDate(taskId, workflowId, dueTimerId, branchTokenId);
+        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(branchTask)));
+        DefinitionKey pin = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L);
+        when(h.registry().resolve(pin)).thenThrow(new WorkflowVersionNotRunnableException(pin));
+        WorkflowInstance inst =
+                instanceAt("human-task-due", WaitType.TASK, taskId.toString(), dueTimerId, tenantMetadata("T1"));
+        when(h.instances().findById(workflowId, tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+
+        runOnDuplicated(vertx, v -> h.taskCallbacks()
+                .taskDueFired(workflowId, taskId, tx)
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertThat(ar.failed()).isTrue();
+                    assertThat(ar.cause()).isInstanceOf(WorkflowVersionNotRunnableException.class);
+                    verify(h.timerStore(), never()).markCancelled(any(), any(), any());
+                    verify(h.taskStore(), never()).lockForCompletion(any(), any());
+                    verify(h.taskStore(), never()).markExpired(any(), any(), any());
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("taskDueFired(): branch-owned expiry acts on the instance it resolved the plan for")
+    void taskDueFired_branchOwned_readsTheInstanceOnceBeforeItWrites(Vertx vertx, VertxTestContext ctx) {
+        DefaultContextHolder holder = new DefaultContextHolder();
+        Harness h = buildHarness(TenantCtxCodec.propagator(holder), holder);
+        SqlClient tx = ActiveTransactionClient.create();
+
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        UUID taskId = UUID.randomUUID();
+        UUID dueTimerId = UUID.randomUUID();
+        UUID branchTokenId = UUID.randomUUID();
+        TaskRecord branchTask = openBranchTaskWithDueDate(taskId, workflowId, dueTimerId, branchTokenId);
+        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(branchTask)));
+        when(h.timerStore().findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
+        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(branchTask)));
+        BranchToken branch = new BranchToken(
+                branchTokenId,
+                workflowId,
+                "fork-step",
+                "branch-1",
+                "branch-human-task-due",
+                dev.vertique.workflow.state.BranchStatus.WAITING,
+                WaitType.TASK,
+                taskId.toString(),
+                dueTimerId,
+                null,
+                null,
+                null,
+                0,
+                3,
+                null,
+                null,
+                null,
+                null,
+                0L,
+                FIXED_NOW,
+                FIXED_NOW,
+                tenantMetadata("BRANCH"));
+        when(h.branchTokens().findByIdForUpdate(branchTokenId, tx))
+                .thenReturn(Future.succeededFuture(Optional.of(branch)));
+        when(h.taskStore().markExpired(eq(taskId), any(), eq(tx)))
+                .thenReturn(Future.succeededFuture(TaskTransition.APPLIED));
+        RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
+        WorkflowInstance inst =
+                instanceAt("human-task-due", WaitType.TASK, taskId.toString(), dueTimerId, tenantMetadata("T1"));
+        when(h.instances().findById(workflowId, tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+
+        // The task row names a step the plan does not have, so the drive fails right after markExpired; what the
+        // test observes is that nothing was read or resolved again after that write.
+        runOnDuplicated(vertx, v -> h.taskCallbacks()
+                .taskDueFired(workflowId, taskId, tx)
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertThat(ar.failed()).isTrue();
+                    verify(h.taskStore()).markExpired(eq(taskId), any(), eq(tx));
+                    verify(h.instances(), times(1)).findById(workflowId, tx);
+                    verify(h.registry(), times(1)).resolve(any(DefinitionKey.class));
                     ctx.completeNow();
                 })));
     }
@@ -867,7 +989,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         UUID dueTimerId = UUID.randomUUID();
@@ -903,7 +1026,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildReminderRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         UUID reminderTimerId = UUID.randomUUID();
@@ -1032,7 +1156,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildReminderRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         UUID reminderTimerId = UUID.randomUUID();
@@ -1065,7 +1190,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID timerId = UUID.randomUUID();
         WorkflowInstance inst =
@@ -1230,7 +1356,8 @@ class WorkflowEngineBinderWiringTest {
         // pulling join evaluation (ForkNode/JoinNode resolution) into this binder-wiring-focused
         // test; only the branch drive's own context bind is under test here.
         RuntimeWorkflow rw = buildBranchTimerToWaitSignalRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
         UUID timerId = UUID.randomUUID();
@@ -1374,7 +1501,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, null);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -1485,7 +1613,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         WorkflowInstance inst = new WorkflowInstance(
                 new WorkflowInstanceId(UUID.randomUUID()),
@@ -1561,9 +1690,17 @@ class WorkflowEngineBinderWiringTest {
                 List.of(new CompleteNode(COMPLETE_STEP)),
                 null);
         RuntimeWorkflow targetRw = RuntimeWorkflow.of(
-                targetPlan, Object.class, Object.class, payload -> Map.of(), Map.of(), stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(sourceRw);
-        when(h.registry().resolvePinned(DEFINITION_ID, 2L)).thenReturn(targetRw);
+                targetPlan,
+                "test-contract",
+                Object.class,
+                Object.class,
+                payload -> Map.of(),
+                Map.of(),
+                stubCallbacks());
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(sourceRw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2L)))
+                .thenReturn(targetRw);
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, null, null, null, null);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -1576,7 +1713,8 @@ class WorkflowEngineBinderWiringTest {
         when(handler.sourceStateType()).thenReturn((Class) Object.class);
         when(handler.migrate(any(), any()))
                 .thenReturn(dev.vertique.workflow.migration.MigrationResult.anchorAtInitial(Map.of()));
-        when(mh.migrationRegistry().find(DEFINITION_ID, 1L, 2L)).thenReturn(Optional.of(handler));
+        when(mh.migrationRegistry().find("default", DEFINITION_ID, 1L, "default", 2L))
+                .thenReturn(Optional.of(handler));
 
         runOnNonDuplicated(vertx, v -> h.txOps()
                 .migrate(inst.id(), 2L, tx)
@@ -1628,7 +1766,8 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         UUID taskId = UUID.randomUUID();
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, null);
@@ -1771,7 +1910,8 @@ class WorkflowEngineBinderWiringTest {
         List<WorkflowNode> nodes = List.of(humanTaskDue, complete);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), humanTaskDue.stepId(), nodes, null);
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**
@@ -1794,7 +1934,8 @@ class WorkflowEngineBinderWiringTest {
         List<WorkflowNode> nodes = List.of(humanTaskReminder, complete);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), humanTaskReminder.stepId(), nodes, null);
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**

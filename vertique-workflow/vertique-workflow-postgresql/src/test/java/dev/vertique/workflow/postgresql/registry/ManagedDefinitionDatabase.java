@@ -10,6 +10,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.application.VertiqueApplicationComponent;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
+import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.core.lifecycle.LifecyclePhase;
@@ -26,9 +27,16 @@ import dev.vertique.workflow.definition.callbacks.PayloadMapperContributor;
 import dev.vertique.workflow.definition.callbacks.StartStateMapperContributor;
 import dev.vertique.workflow.definition.callbacks.StateReducerContributor;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
+import dev.vertique.workflow.definition.it.fixture.FraudScreenedDoc;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
 import dev.vertique.workflow.definition.it.fixture.OrderDocState;
+import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
+import dev.vertique.workflow.definition.it.fixture.OrderFanOutState;
+import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV1;
+import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentFanOutDocumentWorkflowV1;
+import dev.vertique.workflow.definition.it.fixture.PaymentAuthorizedDoc;
 import dev.vertique.workflow.definition.it.fixture.PaymentCapturedDoc;
+import dev.vertique.workflow.definition.it.fixture.PlaceFanOutOrder;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.it.fixture.ShipmentCreatedDoc;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParserProbe;
@@ -44,6 +52,7 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowDefinitionPropagationPoller;
 import dev.vertique.workflow.engine.WorkflowDefinitionRegistryView;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
@@ -58,11 +67,19 @@ import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
+import dev.vertique.workflow.timer.TimerIntentPayload;
+import dev.vertique.workflow.timer.TimerRecord;
+import dev.vertique.workflow.timer.TimerStatus;
+import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.WorkflowTypeCatalog;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -85,6 +102,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Real PostgreSQL, generated application graph and the full callbacks for the workflow fixture. */
@@ -207,17 +225,33 @@ public final class ManagedDefinitionDatabase {
                 .codeCatalogModule(new CodeCatalogModule(includeCodeDefinition))
                 .largeUnicodeMapperModule(new LargeUnicodeMapperModule(includeLargeUnicodeMapper))
                 .parserModule(parserProbe.module())
+                .typeCatalogModule(new TypeCatalogModule(callingTestClass()))
                 .build();
     }
 
     /** Builds a graph whose application contributes the given code-first definitions to the registry. */
-    static AppComponent appWithCode(
+    public static AppComponent appWithCode(
             Vertx vertx,
             Pool pool,
             JsonObject config,
             BootObservation observation,
             WorkflowDefinitionSource source,
             List<WorkflowDefinition<?, ?>> codeDefinitions) {
+        return appWithCode(vertx, pool, config, observation, source, codeDefinitions, List.of());
+    }
+
+    /**
+     * Builds a graph like {@link #appWithCode(Vertx, Pool, JsonObject, BootObservation, WorkflowDefinitionSource,
+     * List)} whose type catalog also lists the given entries, for types the test class does not nest.
+     */
+    static AppComponent appWithCode(
+            Vertx vertx,
+            Pool pool,
+            JsonObject config,
+            BootObservation observation,
+            WorkflowDefinitionSource source,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            List<WorkflowTypeCatalogEntry> extraCatalogEntries) {
         return DaggerManagedDefinitionDatabase_AppComponent.builder()
                 .vertxModule(new VertxModule(vertx, config))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
@@ -226,6 +260,7 @@ public final class ManagedDefinitionDatabase {
                 .codeCatalogModule(new CodeCatalogModule(false, codeDefinitions))
                 .largeUnicodeMapperModule(new LargeUnicodeMapperModule(false))
                 .parserModule(new WorkflowDefinitionParserProbe().module())
+                .typeCatalogModule(new TypeCatalogModule(callingTestClass(), extraCatalogEntries))
                 .build();
     }
 
@@ -253,7 +288,8 @@ public final class ManagedDefinitionDatabase {
                 CallbackCatalogModule.class,
                 PostgresInfrastructureModule.class,
                 BootObservationModule.class,
-                WorkflowDefinitionParserProbe.ParserModule.class
+                WorkflowDefinitionParserProbe.ParserModule.class,
+                TypeCatalogModule.class
             })
     public interface AppComponent extends VertiqueApplicationComponent {
 
@@ -274,6 +310,8 @@ public final class ManagedDefinitionDatabase {
 
             Builder parserModule(WorkflowDefinitionParserProbe.ParserModule module);
 
+            Builder typeCatalogModule(TypeCatalogModule module);
+
             AppComponent build();
         }
 
@@ -283,6 +321,12 @@ public final class ManagedDefinitionDatabase {
 
         dev.vertique.workflow.ops.TransactionalWorkflowOperations<io.vertx.sqlclient.SqlClient>
                 transactionalOperations();
+
+        dev.vertique.workflow.ops.TransactionalTaskCallbacks<io.vertx.sqlclient.SqlClient> taskCallbacks();
+
+        dev.vertique.workflow.ops.TransactionalTimerCallbacks<io.vertx.sqlclient.SqlClient> timerCallbacks();
+
+        dev.vertique.workflow.timer.TimerStore<io.vertx.sqlclient.SqlClient> timerStore();
 
         WorkflowDefinitionPipeline definitionPipeline();
 
@@ -301,6 +345,76 @@ public final class ManagedDefinitionDatabase {
         WorkflowDefinitionPropagationPoller definitionPropagationPoller();
 
         Pool pool();
+    }
+
+    /**
+     * The test class that is building the graph: the first caller outside the fixture classes. Taken on the
+     * calling thread because the graph resolves its bindings later, on other threads.
+     */
+    private static Class<?> callingTestClass() {
+        return StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE)
+                .walk(frames -> frames.map(StackWalker.StackFrame::getDeclaringClass)
+                        .map(Class::getNestHost)
+                        .filter(host -> host != ManagedDefinitionDatabase.class
+                                && host != DefinitionScenario.class
+                                && host != DefinitionRaceFixtures.class)
+                        .findFirst()
+                        .orElse(ManagedDefinitionDatabase.class));
+    }
+
+    /**
+     * Lists the classes a service-loaded document in these tests may name: the shared order fulfillment fixture
+     * and every class nested in the test class that builds the graph (its contracts as contracts, the rest as
+     * types). The service resolves names through the catalog only, so a test document can name exactly these.
+     */
+    @Module
+    static class TypeCatalogModule {
+
+        private final Class<?> testClass;
+        private final List<WorkflowTypeCatalogEntry> extraEntries;
+
+        TypeCatalogModule(Class<?> testClass) {
+            this(testClass, List.of());
+        }
+
+        TypeCatalogModule(Class<?> testClass, List<WorkflowTypeCatalogEntry> extraEntries) {
+            this.testClass = testClass;
+            this.extraEntries = List.copyOf(extraEntries);
+        }
+
+        @Provides
+        @IntoSet
+        WorkflowTypeCatalog typeCatalog() {
+            List<WorkflowTypeCatalogEntry> entries = new ArrayList<>();
+            for (Class<?> contract : List.of(
+                    OrderFulfillmentDocumentWorkflowV1.class,
+                    OrderFulfillmentFanOutDocumentWorkflowV1.class,
+                    RegistryProbeContract.class)) {
+                entries.add(new WorkflowTypeCatalogEntry(Kind.CONTRACT, contract.getName(), contract));
+            }
+            for (Class<?> type : List.of(
+                    OrderDocState.class,
+                    OrderFanOutState.class,
+                    PlaceOrderDoc.class,
+                    PlaceFanOutOrder.class,
+                    InventoryReservedDoc.class,
+                    PaymentAuthorizedDoc.class,
+                    PaymentCapturedDoc.class,
+                    FraudScreenedDoc.class,
+                    ShipmentCreatedDoc.class)) {
+                entries.add(new WorkflowTypeCatalogEntry(Kind.TYPE, type.getName(), type));
+            }
+            for (Class<?> member : testClass.getNestMembers()) {
+                if (member == testClass || member.isAnonymousClass() || member.isSynthetic()) {
+                    continue;
+                }
+                boolean contract = member.isAnnotationPresent(WorkflowContract.class);
+                entries.add(
+                        new WorkflowTypeCatalogEntry(contract ? Kind.CONTRACT : Kind.TYPE, member.getName(), member));
+            }
+            entries.addAll(extraEntries);
+            return () -> entries;
+        }
     }
 
     @Module
@@ -372,15 +486,17 @@ public final class ManagedDefinitionDatabase {
         }
     }
 
-    private record RegistryProbeState(String value) {}
-
     private record RegistryProbeStart(String value) {}
 
-    @WorkflowContract(definitionId = "definition-policy-code", definitionVersion = 1)
-    private interface RegistryProbeContract {}
+    /**
+     * The contract of the contributed probe workflow, shared by the document version 2 that the retirement
+     * scenarios register under the same definition id.
+     */
+    @WorkflowContract
+    private interface RegistryProbeContract extends OrderDocumentSignals {}
 
     private static final class RegistryProbeWorkflow
-            implements WorkflowDefinition<RegistryProbeState, RegistryProbeContract> {
+            implements WorkflowDefinition<OrderDocState, RegistryProbeContract> {
 
         @Override
         public Class<RegistryProbeContract> contract() {
@@ -388,8 +504,8 @@ public final class ManagedDefinitionDatabase {
         }
 
         @Override
-        public Class<RegistryProbeState> stateType() {
-            return RegistryProbeState.class;
+        public Class<OrderDocState> stateType() {
+            return OrderDocState.class;
         }
 
         @Override
@@ -403,8 +519,8 @@ public final class ManagedDefinitionDatabase {
         }
 
         @Override
-        public void define(WorkflowBuilder<RegistryProbeState> workflow) {
-            workflow.init(RegistryProbeStart.class, start -> new RegistryProbeState(start.value()))
+        public void define(WorkflowBuilder<OrderDocState> workflow) {
+            workflow.init(RegistryProbeStart.class, start -> new OrderDocState(start.value(), null, null, null))
                     .initialStep("done")
                     .complete("done");
         }
@@ -472,6 +588,67 @@ public final class ManagedDefinitionDatabase {
         @Singleton
         static PgDbExceptionMapper pgDbExceptionMapper() {
             return new PgDbExceptionMapper();
+        }
+
+        /**
+         * Records a timer intent as a scheduled timer row with a random execution id and enqueues no job, so tests
+         * decide when and where a timer fires.
+         */
+        @Provides
+        @IntoSet
+        @WorkflowRecorders
+        @Singleton
+        static WorkflowSideEffectRecorder<SqlClient> timerRecorder(TimerStore<SqlClient> timerStore, Clock clock) {
+            return new WorkflowSideEffectRecorder<>() {
+                @Override
+                public IntentKind kind() {
+                    return IntentKind.WORKFLOW_TIMER;
+                }
+
+                @Override
+                public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient transaction) {
+                    TimerIntentPayload payload = (TimerIntentPayload) intent.payload();
+                    UUID timerId = UUID.randomUUID();
+                    TimerRecord row = new TimerRecord(
+                            timerId,
+                            intent.correlation().workflowId(),
+                            intent.targetId(),
+                            payload.fireAt(),
+                            TimerStatus.SCHEDULED,
+                            UUID.randomUUID(),
+                            clock.instant(),
+                            null,
+                            null,
+                            null,
+                            null,
+                            payload.purpose(),
+                            payload.taskId(),
+                            intent.correlation().branchTokenId(),
+                            intent.correlation().forkStepId(),
+                            intent.correlation().branchId(),
+                            DurableMetadata.empty());
+                    return timerStore.insertScheduled(row, transaction).map(ignored -> RecorderResult.ofTimer(timerId));
+                }
+            };
+        }
+
+        /** Accepts an emitted workflow event and keeps nothing, so that plans with task reminders boot and run. */
+        @Provides
+        @IntoSet
+        @WorkflowRecorders
+        @Singleton
+        static WorkflowSideEffectRecorder<SqlClient> eventRecorder() {
+            return new WorkflowSideEffectRecorder<>() {
+                @Override
+                public IntentKind kind() {
+                    return IntentKind.WORKFLOW_EVENT;
+                }
+
+                @Override
+                public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient transaction) {
+                    return Future.succeededFuture(RecorderResult.empty());
+                }
+            };
         }
 
         @Provides
@@ -555,6 +732,8 @@ public final class ManagedDefinitionDatabase {
                         OrderDocState.class,
                         (state, signal) -> OrderDocState.applyShipmentCreated(
                                 (OrderDocState) state, coerce(signal, ShipmentCreatedDoc.class))));
+                builder.register(new NamedStateReducer<>(
+                        "doc.order.keepState", OrderDocState.class, (state, decision) -> state));
                 builder.register(new NamedStateReducer<>(
                         "doc.order.applyInventoryReservedDrift",
                         OrderDocState.class,
@@ -681,9 +860,13 @@ public final class ManagedDefinitionDatabase {
             if (!enabled || !verifyPinnedDefinition) {
                 return;
             }
-            String actualHash = registry.resolvePinned(definitionId, definitionVersion)
-                    .plan()
-                    .planHash();
+            // The version is published under the scope of its owner, which the observation does not name
+            String actualHash = registry.keysFor(definitionId).stream()
+                    .filter(key -> key.definitionVersion() == definitionVersion)
+                    .map(key -> registry.resolve(key).plan().planHash())
+                    .findFirst()
+                    .orElseThrow(
+                            () -> new WorkflowVersionPinUnavailableException(definitionId, definitionVersion, null));
             if (!expectedPlanHash.equals(actualHash)) {
                 throw new IllegalStateException("Restored workflow plan hash differs from the expected publication");
             }
@@ -696,7 +879,7 @@ public final class ManagedDefinitionDatabase {
                 WorkflowRegistry registry) {
             if (expectedDefinitions.isEmpty()) return Future.succeededFuture();
             return pool.preparedQuery("""
-                            SELECT tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                            SELECT scope_key, definition_id, definition_version, kind, plan_hash, status,
                                 document_format, source_type, source_uri, source_revision, source_author,
                                 source_upload_id, loaded_at, created_at, status_changed_at
                             FROM workflow_definitions WHERE definition_id = $1
@@ -708,8 +891,7 @@ public final class ManagedDefinitionDatabase {
                         for (Row row : rows) durable.add(metadata(row));
                         return List.copyOf(durable);
                     })
-                    .compose(durable -> service.list(
-                                    new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                    .compose(durable -> service.list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                             .map(serviceRows -> {
                                 List<WorkflowDefinitionRecord> scopedServiceRows = serviceRows.stream()
                                         .filter(record ->
@@ -740,10 +922,12 @@ public final class ManagedDefinitionDatabase {
         private static WorkflowDefinitionRecord metadata(Row row) {
             return new WorkflowDefinitionRecord(
                     new DefinitionKey(
-                            row.getString("tenant_key"),
+                            row.getString("scope_key"),
                             row.getString("definition_id"),
                             row.getLong("definition_version")),
                     DefinitionKind.valueOf(row.getString("kind")),
+                    "example.Contract",
+                    "example.State",
                     row.getString("plan_hash"),
                     DefinitionStatus.valueOf(row.getString("status")),
                     new DefinitionProvenance(
@@ -755,7 +939,9 @@ public final class ManagedDefinitionDatabase {
                             row.getOffsetDateTime("loaded_at").toInstant()),
                     row.getString("document_format"),
                     row.getOffsetDateTime("created_at").toInstant(),
-                    row.getOffsetDateTime("status_changed_at").toInstant());
+                    row.getOffsetDateTime("status_changed_at").toInstant(),
+                    Map.of(),
+                    null);
         }
 
         private static void verifyMetadata(
@@ -798,7 +984,9 @@ public final class ManagedDefinitionDatabase {
                 require(durable != null, "missing durable metadata for version " + version);
                 require(service != null, "missing service metadata for version " + version);
                 require(compiled != null, "missing compiled cache entry for version " + version);
-                require(durable.key().tenantKey() == null, "startup metadata is not global");
+                require(
+                        WorkflowScopes.DEFAULT.equals(durable.key().scopeKey()),
+                        "startup metadata is not in the default scope");
                 require(durable.kind() == DefinitionKind.DOCUMENT, "startup row is not DOCUMENT");
                 require(durable.status() == item.status(), "durable status differs for version " + version);
                 require(service.status() == item.status(), "service status differs for version " + version);

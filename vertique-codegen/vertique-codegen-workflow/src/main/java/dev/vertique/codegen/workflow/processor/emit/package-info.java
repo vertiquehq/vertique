@@ -4,7 +4,7 @@
 /**
  * Source emitters for {@code {Contract}_WorkflowClientProxy} (a static, zero-reflection implementation of a
  * {@code @WorkflowContract} interface that delegates to {@code WorkflowOperations}) and for
- * {@code GeneratedWorkflowClientsModule} (a Dagger module binding each contract via
- * {@code WorkflowClientFactory.create}).
+ * {@code GeneratedWorkflowTypeCatalogModule} (a Dagger module contributing the
+ * {@code WorkflowTypeCatalog} of the contracts and workflow types of one compilation).
  */
 package dev.vertique.codegen.workflow.processor.emit;

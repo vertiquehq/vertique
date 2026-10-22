@@ -5,9 +5,11 @@ package dev.vertique.workflow.tasks;
 
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -56,8 +58,8 @@ import java.util.UUID;
  *     null for single-path (non-branch) tasks
  * @param forkStepId the fork step id when this task belongs to a branch; null for single-path tasks
  * @param branchId the branch id within the fork group; null for single-path tasks
- * @param tenantKey the tenant key of the owning workflow instance; {@code null} when the instance
- *     has none. The PostgreSQL store derives the persisted value from the owning instance row on
+ * @param scopeKey the start scope of the owning workflow instance; {@link WorkflowScopes#DEFAULT} for tasks
+ *     created without one. The PostgreSQL store derives the persisted value from the owning instance row on
  *     insert and ignores the value carried here. It is information, not an isolation boundary.
  */
 public record TaskRecord(
@@ -84,11 +86,20 @@ public record TaskRecord(
         @Nullable UUID branchTokenId,
         @Nullable String forkStepId,
         @Nullable String branchId,
-        @Nullable String tenantKey) {
+        String scopeKey) {
 
     /**
-     * Creates a task record without a tenant key. Retained so existing callers keep compiling;
-     * equivalent to the canonical constructor with a {@code null} {@code tenantKey}.
+     * Validates that the scope key is present.
+     *
+     * @throws NullPointerException if the scope key is {@code null}
+     */
+    public TaskRecord {
+        Objects.requireNonNull(scopeKey, "scopeKey");
+    }
+
+    /**
+     * Creates a task record in the default scope. Retained so existing callers keep compiling; equivalent to the
+     * canonical constructor with {@link WorkflowScopes#DEFAULT} as the scope key.
      */
     public TaskRecord(
             UUID taskId,
@@ -138,6 +149,6 @@ public record TaskRecord(
                 branchTokenId,
                 forkStepId,
                 branchId,
-                null);
+                WorkflowScopes.DEFAULT);
     }
 }

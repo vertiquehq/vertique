@@ -18,15 +18,11 @@ import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.contract.WorkflowQuery;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.contract.WorkflowStart;
-import dev.vertique.workflow.dsl.WorkflowBuilder;
-import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowProxyContractException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowView;
-import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import io.vertx.core.Future;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -38,8 +34,6 @@ import org.junit.jupiter.api.Test;
 class WorkflowProxyValidatorTest {
 
     // --- Shared state types ---
-
-    record OrderState(String id) {}
 
     record StartPayload(String orderId) implements IdempotencyKeyed, BusinessKeyed, SubjectReferenced {
         @Override
@@ -65,48 +59,9 @@ class WorkflowProxyValidatorTest {
         }
     }
 
-    // --- Registry setup helper ---
-
-    /** Registers a simple definition with two signals: "order.confirmed" and "order.shipped". */
-    private static DefaultWorkflowRegistry buildRegistry() {
-        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
-        registry.register(new WorkflowDefinition<OrderState, ValidContract>() {
-            @Override
-            public Class<ValidContract> contract() {
-                return ValidContract.class;
-            }
-
-            @Override
-            public Class<OrderState> stateType() {
-                return OrderState.class;
-            }
-
-            @Override
-            public String definitionId() {
-                return "order-saga";
-            }
-
-            @Override
-            public long definitionVersion() {
-                return 1L;
-            }
-
-            @Override
-            public void define(WorkflowBuilder<OrderState> wf) {
-                wf.init(StartPayload.class, p -> new OrderState(p.orderId()))
-                        .initialStep("charge")
-                        .dispatch("charge", "payment-svc", s -> new Object(), "wait-confirm")
-                        .waitFor("wait-confirm", "order.confirmed", SignalPayload.class, (s, p) -> s, "wait-shipped")
-                        .waitFor("wait-shipped", "order.shipped", SignalPayload.class, (s, p) -> s, "done")
-                        .complete("done");
-            }
-        });
-        return registry;
-    }
-
     // --- Contract fixtures ---
 
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ValidContract {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -119,7 +74,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Happy path: @IdempotencyKey parameter. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithIdempotencyKeyParam {
         @WorkflowStart
         Future<WorkflowInstanceId> start(@IdempotencyKey String key, StartPayload payload);
@@ -132,7 +87,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Happy path: @BusinessKey parameter wins over BusinessKeyed interface. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithBusinessKeyParam {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload, @BusinessKey String bk);
@@ -145,7 +100,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Happy path: @SubjectRef parameter wins over SubjectReferenced interface. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithSubjectRefParam {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload, @SubjectRef WorkflowSubjectRef ref);
@@ -158,7 +113,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Happy path: @SignalDedupKey parameter. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithSignalDedupKeyParam {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -177,14 +132,14 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: wrong return type on @WorkflowStart (not Future<WorkflowInstanceId>). */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface WrongStartReturnType {
         @WorkflowStart
         Future<String> start(StartPayload payload); // wrong: Future<String>
     }
 
     /** Failure: no idempotency key source. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface NoIdempotencyKeySource {
         record PlainPayload(String id) {} // does NOT implement IdempotencyKeyed
 
@@ -199,7 +154,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: wrong return type on @WorkflowSignal (not Future<Void>). */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface WrongSignalReturnType {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -208,18 +163,8 @@ class WorkflowProxyValidatorTest {
         Future<String> confirm(WorkflowInstanceId id, SignalPayload payload); // wrong: Future<String>
     }
 
-    /** Failure: signal name not in plan. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
-    interface SignalNameNotInPlan {
-        @WorkflowStart
-        Future<WorkflowInstanceId> start(StartPayload payload);
-
-        @WorkflowSignal("nonexistent.signal")
-        Future<Void> confirm(WorkflowInstanceId id, SignalPayload payload);
-    }
-
     /** Failure: no dedup key source on signal. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface NoDedupKeySource {
         record PlainSignalPayload(String data) {} // does NOT implement SignalDedupKeyed
 
@@ -231,7 +176,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: wrong parameter shape for @WorkflowQuery (extra parameter). */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface QueryWrongParamShape {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -241,7 +186,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowQuery return type is a WorkflowView supertype (Future<Object>), not exact. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface QuerySupertypeReturn {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -251,7 +196,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowQuery return type is a wildcard (Future<? extends WorkflowView>), not exact. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface QueryWildcardReturn {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -261,21 +206,21 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowStart return type is a wildcard (Future<? extends WorkflowInstanceId>), not exact. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface StartWildcardReturn {
         @WorkflowStart
         Future<? extends WorkflowInstanceId> start(StartPayload payload); // wrong: wildcard
     }
 
     /** Failure: @WorkflowContract on a class, not an interface — must be rejected like the codegen path does. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     abstract static class NotAnInterfaceContract {
         @WorkflowStart
         abstract Future<WorkflowInstanceId> start(StartPayload payload);
     }
 
     /** Failure: two @WorkflowSignal methods with same name. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface DuplicateSignalMethods {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -288,7 +233,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: method carries two conflicting role annotations. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ConflictingAnnotations {
         @WorkflowStart
         @WorkflowSignal("order.confirmed") // conflict!
@@ -296,7 +241,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowStart method has a WorkflowInstanceId parameter (forbidden). */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface StartWithInstanceId {
         @WorkflowStart
         Future<WorkflowInstanceId> start(WorkflowInstanceId id, StartPayload payload);
@@ -309,7 +254,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowStart with more than one payload parameter. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface StartWithTwoPayloads {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload, StartPayload anotherPayload);
@@ -322,7 +267,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowStart with duplicate @IdempotencyKey parameters. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface StartWithDuplicateIdempotencyKey {
         @WorkflowStart
         Future<WorkflowInstanceId> start(
@@ -336,7 +281,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowSignal with no WorkflowInstanceId parameter. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithNoInstanceId {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -346,7 +291,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowSignal with two WorkflowInstanceId parameters. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithTwoInstanceIds {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -356,7 +301,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowSignal with WorkflowInstanceId NOT at position 0. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithInstanceIdNotFirst {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -369,7 +314,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowSignal with duplicate @SignalDedupKey parameters. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithDuplicateDedupKey {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -380,7 +325,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: @WorkflowSignal with more than one payload parameter. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithTwoPayloads {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -394,7 +339,7 @@ class WorkflowProxyValidatorTest {
      * declares just an @IdempotencyKey String and no payload object. Previously accepted; now
      * rejected because the proxy would route a null payload through WorkflowOperations.start().
      */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface StartWithNoPayload {
         @WorkflowStart
         Future<WorkflowInstanceId> start(@IdempotencyKey String key);
@@ -411,7 +356,7 @@ class WorkflowProxyValidatorTest {
      * Previously accepted; now rejected because the proxy would route a null payload through
      * WorkflowOperations.signal().
      */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SignalWithNoPayload {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -424,7 +369,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: method with no role annotation (not @WorkflowStart, @WorkflowSignal, or @WorkflowQuery). */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithNoRoleMethod {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -440,7 +385,7 @@ class WorkflowProxyValidatorTest {
     }
 
     /** Failure: interface declares a default method — not supported in cycle 1. */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ContractWithDefaultMethod {
         @WorkflowStart
         Future<WorkflowInstanceId> start(StartPayload payload);
@@ -455,48 +400,6 @@ class WorkflowProxyValidatorTest {
         default String helperMethod() {
             return "helper";
         }
-    }
-
-    /** Failure: @WorkflowStart payload type doesn't match plan's startPayloadType (StartPayload). */
-    record WrongStartPayload(String orderId) implements IdempotencyKeyed {
-        @Override
-        public String idempotencyKey() {
-            return orderId;
-        }
-    }
-
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
-    interface WrongStartPayloadType {
-        // Plan declares startPayloadType=StartPayload; this contract uses WrongStartPayload
-        @WorkflowStart
-        Future<WorkflowInstanceId> start(WrongStartPayload payload);
-
-        @WorkflowSignal("order.confirmed")
-        Future<Void> confirm(WorkflowInstanceId id, SignalPayload payload);
-
-        @WorkflowQuery("view")
-        Future<WorkflowView> query(WorkflowInstanceId id);
-    }
-
-    /** Failure: @WorkflowSignal payload type doesn't match plan's signalPayloadTypes for "order.confirmed". */
-    record WrongSignalPayload(String code) implements SignalDedupKeyed {
-        @Override
-        public String dedupKey() {
-            return code;
-        }
-    }
-
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
-    interface WrongSignalPayloadType {
-        @WorkflowStart
-        Future<WorkflowInstanceId> start(StartPayload payload);
-
-        // Plan declares "order.confirmed" with payloadClass=SignalPayload; this uses WrongSignalPayload
-        @WorkflowSignal("order.confirmed")
-        Future<Void> confirm(WorkflowInstanceId id, WrongSignalPayload payload);
-
-        @WorkflowQuery("view")
-        Future<WorkflowView> query(WorkflowInstanceId id);
     }
 
     /** Sibling interface declaring an annotated start; paired with {@link StartSiblingUnannotated}. */
@@ -516,20 +419,13 @@ class WorkflowProxyValidatorTest {
      * the validator must reject the ambiguous shape rather than depend on which one it encounters
      * first — the divergence that would otherwise let codegen and the reflective runtime disagree.
      */
-    @WorkflowContract(definitionId = "order-saga", definitionVersion = 1)
+    @WorkflowContract
     interface SiblingDuplicateStartContract extends StartSiblingAnnotated, StartSiblingUnannotated {
         @WorkflowSignal("order.confirmed")
         Future<Void> confirm(WorkflowInstanceId id, SignalPayload payload);
 
         @WorkflowQuery("view")
         Future<WorkflowView> query(WorkflowInstanceId id);
-    }
-
-    private DefaultWorkflowRegistry registry;
-
-    @BeforeEach
-    void setUp() {
-        registry = buildRegistry();
     }
 
     // --- Tests ---
@@ -541,35 +437,35 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("well-formed contract with IdempotencyKeyed payload passes validation")
         void validContractWithIdempotencyKeyedPayload() {
-            assertThatCode(() -> WorkflowProxyValidator.validate(ValidContract.class, registry))
+            assertThatCode(() -> WorkflowProxyValidator.validate(ValidContract.class))
                     .doesNotThrowAnyException();
         }
 
         @Test
         @DisplayName("@IdempotencyKey String parameter is accepted as idempotency key source")
         void idempotencyKeyAnnotationAccepted() {
-            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithIdempotencyKeyParam.class, registry))
+            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithIdempotencyKeyParam.class))
                     .doesNotThrowAnyException();
         }
 
         @Test
         @DisplayName("@SignalDedupKey String parameter is accepted as dedup key source")
         void signalDedupKeyAnnotationAccepted() {
-            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithSignalDedupKeyParam.class, registry))
+            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithSignalDedupKeyParam.class))
                     .doesNotThrowAnyException();
         }
 
         @Test
         @DisplayName("@BusinessKey parameter is accepted alongside BusinessKeyed payload")
         void businessKeyAnnotationAccepted() {
-            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithBusinessKeyParam.class, registry))
+            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithBusinessKeyParam.class))
                     .doesNotThrowAnyException();
         }
 
         @Test
         @DisplayName("@SubjectRef parameter is accepted alongside SubjectReferenced payload")
         void subjectRefAnnotationAccepted() {
-            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithSubjectRefParam.class, registry))
+            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithSubjectRefParam.class))
                     .doesNotThrowAnyException();
         }
     }
@@ -581,7 +477,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("missing @WorkflowContract annotation → reject")
         void missingContractAnnotation() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(NoContractAnnotation.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(NoContractAnnotation.class))
                     .isInstanceOf(WorkflowProxyContractException.class);
         }
 
@@ -591,48 +487,23 @@ class WorkflowProxyValidatorTest {
             // C extends A, B where both declare start(StartPayload); getMethods() returns both, so the
             // validator must reject regardless of which declaration it sees first — parity with codegen,
             // which preserves both via MethodOverrides and rejects the same shape before emission.
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SiblingDuplicateStartContract.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SiblingDuplicateStartContract.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("inherits an ambiguous operation")
                     .hasMessageContaining("sibling interfaces");
         }
 
         @Test
-        @DisplayName("@WorkflowContract with unregistered definitionId → reject")
-        void unregisteredDefinition() {
-            @WorkflowContract(definitionId = "unknown-saga", definitionVersion = 1)
-            interface Unknown {
-                @WorkflowStart
-                Future<WorkflowInstanceId> start(StartPayload p);
-            }
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(Unknown.class, registry))
-                    .isInstanceOf(WorkflowProxyContractException.class)
-                    .hasMessageContaining("unknown-saga");
-        }
-
-        @Test
-        @DisplayName("@WorkflowContract with unregistered version → reject")
-        void unregisteredVersion() {
-            @WorkflowContract(definitionId = "order-saga", definitionVersion = 99)
-            interface WrongVersion {
-                @WorkflowStart
-                Future<WorkflowInstanceId> start(StartPayload p);
-            }
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(WrongVersion.class, registry))
-                    .isInstanceOf(WorkflowProxyContractException.class);
-        }
-
-        @Test
         @DisplayName("@WorkflowStart return type not Future<WorkflowInstanceId> → reject")
         void wrongStartReturnType() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(WrongStartReturnType.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(WrongStartReturnType.class))
                     .isInstanceOf(WorkflowProxyContractException.class);
         }
 
         @Test
         @DisplayName("@WorkflowStart with no idempotency key source → reject")
         void noIdempotencyKeySource() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(NoIdempotencyKeySource.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(NoIdempotencyKeySource.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("idempotency");
         }
@@ -640,22 +511,14 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowSignal return type not Future<Void> → reject")
         void wrongSignalReturnType() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(WrongSignalReturnType.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(WrongSignalReturnType.class))
                     .isInstanceOf(WorkflowProxyContractException.class);
-        }
-
-        @Test
-        @DisplayName("@WorkflowSignal signal name not in plan → reject")
-        void signalNameNotInPlan() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalNameNotInPlan.class, registry))
-                    .isInstanceOf(WorkflowProxyContractException.class)
-                    .hasMessageContaining("nonexistent.signal");
         }
 
         @Test
         @DisplayName("@WorkflowSignal with no dedup key source → reject")
         void noDedupKeySource() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(NoDedupKeySource.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(NoDedupKeySource.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("dedup");
         }
@@ -663,14 +526,14 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowQuery with extra parameter → reject")
         void queryWrongParamShape() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(QueryWrongParamShape.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(QueryWrongParamShape.class))
                     .isInstanceOf(WorkflowProxyContractException.class);
         }
 
         @Test
         @DisplayName("@WorkflowQuery returning a WorkflowView supertype (Future<Object>) → reject (exact-match rule)")
         void querySupertypeReturn() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(QuerySupertypeReturn.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(QuerySupertypeReturn.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("return type is not Future<WorkflowView>");
         }
@@ -678,7 +541,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowQuery returning Future<? extends WorkflowView> → reject (exact-match rule)")
         void queryWildcardReturn() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(QueryWildcardReturn.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(QueryWildcardReturn.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("return type is not Future<WorkflowView>");
         }
@@ -686,7 +549,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowStart returning Future<? extends WorkflowInstanceId> → reject (exact-match rule)")
         void startWildcardReturn() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(StartWildcardReturn.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(StartWildcardReturn.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("return type is not Future<WorkflowInstanceId>");
         }
@@ -694,7 +557,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowContract on a class (not an interface) → reject (parity with codegen)")
         void contractMustBeInterface() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(NotAnInterfaceContract.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(NotAnInterfaceContract.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("must be an interface");
         }
@@ -702,7 +565,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("two @WorkflowSignal methods with same name → reject")
         void duplicateSignalMethods() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(DuplicateSignalMethods.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(DuplicateSignalMethods.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("order.confirmed");
         }
@@ -710,14 +573,14 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("method with two conflicting role annotations → reject")
         void conflictingAnnotations() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(ConflictingAnnotations.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(ConflictingAnnotations.class))
                     .isInstanceOf(WorkflowProxyContractException.class);
         }
 
         @Test
         @DisplayName("@WorkflowStart with WorkflowInstanceId parameter → reject")
         void startWithInstanceIdParam() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(StartWithInstanceId.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(StartWithInstanceId.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("WorkflowInstanceId");
         }
@@ -725,7 +588,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowStart with two payload parameters → reject")
         void startWithTwoPayloads() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(StartWithTwoPayloads.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(StartWithTwoPayloads.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("payload");
         }
@@ -733,7 +596,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowStart with duplicate @IdempotencyKey parameters → reject")
         void startWithDuplicateIdempotencyKey() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(StartWithDuplicateIdempotencyKey.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(StartWithDuplicateIdempotencyKey.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("IdempotencyKey");
         }
@@ -741,7 +604,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowSignal with no WorkflowInstanceId parameter → reject")
         void signalWithNoInstanceId() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithNoInstanceId.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithNoInstanceId.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("WorkflowInstanceId");
         }
@@ -749,7 +612,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowSignal with two WorkflowInstanceId parameters → reject")
         void signalWithTwoInstanceIds() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithTwoInstanceIds.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithTwoInstanceIds.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("WorkflowInstanceId");
         }
@@ -757,7 +620,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowSignal with WorkflowInstanceId not at position 0 → reject")
         void signalWithInstanceIdNotFirst() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithInstanceIdNotFirst.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithInstanceIdNotFirst.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("first");
         }
@@ -765,7 +628,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowSignal with duplicate @SignalDedupKey parameters → reject")
         void signalWithDuplicateDedupKey() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithDuplicateDedupKey.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithDuplicateDedupKey.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("SignalDedupKey");
         }
@@ -773,7 +636,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowSignal with two payload parameters → reject")
         void signalWithTwoPayloads() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithTwoPayloads.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithTwoPayloads.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("payload");
         }
@@ -781,7 +644,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowStart with no payload parameter (only annotated params) → reject")
         void startWithNoPayload() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(StartWithNoPayload.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(StartWithNoPayload.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("payload");
         }
@@ -789,7 +652,7 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("@WorkflowSignal with no payload parameter (only WorkflowInstanceId + @SignalDedupKey) → reject")
         void signalWithNoPayload() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithNoPayload.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(SignalWithNoPayload.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("payload");
         }
@@ -798,7 +661,7 @@ class WorkflowProxyValidatorTest {
         @DisplayName(
                 "method with no role annotation (@WorkflowStart/@WorkflowSignal/@WorkflowQuery) → reject at validate time")
         void methodWithNoRoleAnnotation() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(ContractWithNoRoleMethod.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(ContractWithNoRoleMethod.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("doSomethingUnannotated")
                     .hasMessageContaining("no workflow role annotation");
@@ -807,30 +670,10 @@ class WorkflowProxyValidatorTest {
         @Test
         @DisplayName("default method on workflow contract interface → reject at validate time")
         void defaultMethodOnContractInterface() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(ContractWithDefaultMethod.class, registry))
+            assertThatThrownBy(() -> WorkflowProxyValidator.validate(ContractWithDefaultMethod.class))
                     .isInstanceOf(WorkflowProxyContractException.class)
                     .hasMessageContaining("helperMethod")
                     .hasMessageContaining("default method");
-        }
-
-        @Test
-        @DisplayName("@WorkflowStart payload type does not match plan's startPayloadType → reject")
-        void startPayloadTypeMismatch() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(WrongStartPayloadType.class, registry))
-                    .isInstanceOf(WorkflowProxyContractException.class)
-                    .hasMessageContaining("WrongStartPayload")
-                    .hasMessageContaining("startPayloadType")
-                    .hasMessageContaining("StartPayload");
-        }
-
-        @Test
-        @DisplayName("@WorkflowSignal payload type does not match plan's signalPayloadTypes → reject")
-        void signalPayloadTypeMismatch() {
-            assertThatThrownBy(() -> WorkflowProxyValidator.validate(WrongSignalPayloadType.class, registry))
-                    .isInstanceOf(WorkflowProxyContractException.class)
-                    .hasMessageContaining("WrongSignalPayload")
-                    .hasMessageContaining("payloadType")
-                    .hasMessageContaining("SignalPayload");
         }
     }
 
@@ -842,14 +685,14 @@ class WorkflowProxyValidatorTest {
         @DisplayName("@BusinessKey annotation source wins over BusinessKeyed interface")
         void businessKeyAnnotationWinsOverInterface() {
             // Both annotation and interface are present; validation must succeed (annotation wins at runtime)
-            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithBusinessKeyParam.class, registry))
+            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithBusinessKeyParam.class))
                     .doesNotThrowAnyException();
         }
 
         @Test
         @DisplayName("@SubjectRef annotation source wins over SubjectReferenced interface")
         void subjectRefAnnotationWinsOverInterface() {
-            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithSubjectRefParam.class, registry))
+            assertThatCode(() -> WorkflowProxyValidator.validate(ContractWithSubjectRefParam.class))
                     .doesNotThrowAnyException();
         }
     }

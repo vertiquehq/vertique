@@ -15,6 +15,8 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -36,6 +38,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
 
 /**
  * Owns the application graphs, pools and test rows of one scenario against a migrated database.
@@ -48,7 +51,7 @@ final class DefinitionScenario implements AutoCloseable {
 
     /** One committed definition row read straight from the table, without the source text digest. */
     record Stored(
-            String tenant,
+            String scopeKey,
             long version,
             String kind,
             String status,
@@ -62,7 +65,7 @@ final class DefinitionScenario implements AutoCloseable {
             OffsetDateTime loadedAt,
             OffsetDateTime createdAt,
             OffsetDateTime changedAt,
-            UUID activationToken) {}
+            UUID publishToken) {}
 
     @FunctionalInterface
     interface Cleanup {
@@ -146,6 +149,52 @@ final class DefinitionScenario implements AutoCloseable {
         return boot;
     }
 
+    /** Starts a graph that must start with the given application config and contributes the given code definitions. */
+    Boot node(
+            WorkflowDefinitionSource source,
+            BootObservation observation,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            JsonObject config) {
+        Boot boot =
+                begin(source, observation, codeDefinitions, null, 10, config).await();
+        if (boot.failure() != null) {
+            boot.close();
+            throw new AssertionError("The application graph was expected to start", boot.failure());
+        }
+        return boot;
+    }
+
+    /**
+     * Starts a graph that must start with the given application config, code definitions and extra type catalog
+     * entries.
+     */
+    Boot node(
+            WorkflowDefinitionSource source,
+            BootObservation observation,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            JsonObject config,
+            List<WorkflowTypeCatalogEntry> catalogEntries) {
+        Boot boot = begin(source, observation, codeDefinitions, null, 10, config, catalogEntries)
+                .await();
+        if (boot.failure() != null) {
+            boot.close();
+            throw new AssertionError("The application graph was expected to start", boot.failure());
+        }
+        return boot;
+    }
+
+    /** Starts a graph like {@link #node} with extra type catalog entries and reports its startup failure, if any. */
+    Boot attempt(
+            WorkflowDefinitionSource source,
+            BootObservation observation,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            WorkflowDefinitionSqlObserver observer,
+            JsonObject config,
+            List<WorkflowTypeCatalogEntry> catalogEntries) {
+        return begin(source, observation, codeDefinitions, observer, 10, config, catalogEntries)
+                .await();
+    }
+
     /** Starts a graph and reports its startup failure, if any; a graph that did start is closed with the scenario. */
     Boot attempt(WorkflowDefinitionSource source, BootObservation observation) {
         return attempt(source, observation, List.of(), null, 10);
@@ -198,12 +247,35 @@ final class DefinitionScenario implements AutoCloseable {
             List<WorkflowDefinition<?, ?>> codeDefinitions,
             WorkflowDefinitionSqlObserver observer,
             int poolSize) {
+        return begin(source, observation, codeDefinitions, observer, poolSize, new JsonObject());
+    }
+
+    /** Requests a startup like {@link #attempt} with the given application config but returns before it finished. */
+    PendingBoot begin(
+            WorkflowDefinitionSource source,
+            BootObservation observation,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            WorkflowDefinitionSqlObserver observer,
+            int poolSize,
+            JsonObject config) {
+        return begin(source, observation, codeDefinitions, observer, poolSize, config, List.of());
+    }
+
+    /** Requests a startup like {@link #attempt} whose type catalog also lists the given entries. */
+    PendingBoot begin(
+            WorkflowDefinitionSource source,
+            BootObservation observation,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            WorkflowDefinitionSqlObserver observer,
+            int poolSize,
+            JsonObject config,
+            List<WorkflowTypeCatalogEntry> catalogEntries) {
         Pool raw = ManagedDefinitionDatabase.openPool(vertx, db, poolSize);
         Pool pool = observer == null ? raw : observer.observe(raw);
         AppComponent app;
         try {
             app = ManagedDefinitionDatabase.appWithCode(
-                    vertx, pool, new JsonObject(), observation, source, codeDefinitions);
+                    vertx, pool, config, observation, source, codeDefinitions, catalogEntries);
         } catch (RuntimeException | Error failure) {
             await(pool.close());
             throw failure;
@@ -213,6 +285,36 @@ final class DefinitionScenario implements AutoCloseable {
         PendingBoot pending = new PendingBoot(pool, app, starting);
         onClose(() -> pending.await().close());
         return pending;
+    }
+
+    /**
+     * Starts a graph that must start, built by the factory over a pool of its own, for tests whose graph differs from
+     * the shared one in its modules.
+     */
+    Boot nodeOf(Function<Pool, AppComponent> graph) {
+        Boot boot = attemptOf(graph);
+        if (boot.failure() != null) {
+            boot.close();
+            throw new AssertionError("The application graph was expected to start", boot.failure());
+        }
+        return boot;
+    }
+
+    /** Starts a graph built by the factory over a pool of its own and reports its startup failure, if any. */
+    Boot attemptOf(Function<Pool, AppComponent> graph) {
+        Pool pool = ManagedDefinitionDatabase.openPool(vertx, db, 10);
+        AppComponent app;
+        try {
+            app = graph.apply(pool);
+        } catch (RuntimeException | Error failure) {
+            await(pool.close());
+            throw failure;
+        }
+        Future<VertiqueApplicationHandle<AppComponent>> starting =
+                VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, new JsonObject()), ignored -> app);
+        PendingBoot pending = new PendingBoot(pool, app, starting);
+        onClose(() -> pending.await().close());
+        return pending.await();
     }
 
     /** Counts the backends that hold or await the definition id's advisory lock in the given mode. */
@@ -274,34 +376,35 @@ final class DefinitionScenario implements AutoCloseable {
         for (String definitionId : definitionIds) {
             await(admin().preparedQuery("DELETE FROM workflow_instances WHERE definition_id = $1")
                     .execute(Tuple.of(definitionId)));
+            await(admin().preparedQuery("DELETE FROM workflow_definition_activations WHERE definition_id = $1")
+                    .execute(Tuple.of(definitionId)));
             await(admin().preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
                     .execute(Tuple.of(definitionId)));
         }
     }
 
-    /** Inserts a global code row directly, with the code provenance and no document. */
+    /** Inserts a default-scope code row directly, with the code provenance and no document. */
     void seedCode(String definitionId, long version, String planHash, String status) {
         execute("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status, source_type, loaded_at)
-                VALUES (NULL, $1, $2, 'CODE', $3, $4, 'code', now())
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, source_type, loaded_at)
+                VALUES ('default', $1, $2, 'CODE', 'example.Contract', 'example.State', $3, $4, 'code', now())
                 """, Tuple.of(definitionId, version, planHash, status));
     }
 
     /**
      * Inserts a document row directly. Its digest is the SQL digest of its text, and a row seeded as {@code
-     * ACTIVATING} carries a claim token.
+     * PUBLISHING} carries a claim token.
      */
-    void seedDocument(
-            String tenantKey, String definitionId, long version, String planHash, String status, String text) {
+    void seedDocument(String scopeKey, String definitionId, long version, String planHash, String status, String text) {
         execute("""
                 INSERT INTO workflow_definitions
-                    (tenant_key, definition_id, definition_version, kind, plan_hash, status,
-                     document, document_format, document_digest, source_type, loaded_at, activation_token)
-                VALUES ($1, $2, $3, 'DOCUMENT', $4, $5, $6, 'YAML',
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
+                     document, document_format, document_digest, source_type, loaded_at, publish_token)
+                VALUES ($1, $2, $3, 'DOCUMENT', 'example.Contract', 'example.State', $4, $5, $6, 'YAML',
                         encode(sha256(convert_to($6::text, 'UTF8')), 'hex'), 'seed-docs', now(),
-                        CASE WHEN $5 = 'ACTIVATING' THEN gen_random_uuid() ELSE NULL END)
-                """, Tuple.of(tenantKey, definitionId, version, planHash, status, text));
+                        CASE WHEN $5 = 'PUBLISHING' THEN gen_random_uuid() ELSE NULL END)
+                """, Tuple.of(scopeKey, definitionId, version, planHash, status, text));
     }
 
     /** Moves the row's status change time to the given age, measured by the database clock. */
@@ -309,17 +412,17 @@ final class DefinitionScenario implements AutoCloseable {
         execute("""
                 UPDATE workflow_definitions
                 SET status_changed_at = clock_timestamp() - ($4::bigint * interval '1 second')
-                WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
-                """, Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion(), ageSeconds));
+                WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                """, Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion(), ageSeconds));
     }
 
     /** Moves a global document row into a claim that nobody completed, so only its age decides whether it is stale. */
     void claimWithoutCompleting(DefinitionKey key) {
         execute("""
                 UPDATE workflow_definitions
-                SET status = 'ACTIVATING', activation_token = gen_random_uuid()
-                WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
-                """, Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion()));
+                SET status = 'PUBLISHING', publish_token = gen_random_uuid()
+                WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                """, Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion()));
     }
 
     /** Inserts an instance row pinned to the exact version and plan hash. */
@@ -359,7 +462,7 @@ final class DefinitionScenario implements AutoCloseable {
     /** Counts the start deduplication rows of the definition id. */
     long dedupCount(String definitionId) {
         return await(admin().preparedQuery(
-                                "SELECT count(*) AS total FROM workflow_dedup WHERE kind = 'start' AND scope = $1")
+                                "SELECT count(*) AS total FROM workflow_dedup WHERE kind = 'start' AND dedup_namespace = $1")
                         .execute(Tuple.of(definitionId)))
                 .iterator()
                 .next()
@@ -385,21 +488,21 @@ final class DefinitionScenario implements AutoCloseable {
 
     /** Returns the global row, or empty when there is none. */
     Optional<Stored> findStored(String definitionId, long version) {
-        return findStored(null, definitionId, version);
+        return findStored(WorkflowScopes.DEFAULT, definitionId, version);
     }
 
-    /** Returns the row of the owner (a tenant key, or {@code null} for global), or empty when there is none. */
-    Optional<Stored> findStored(String tenantKey, String definitionId, long version) {
+    /** Returns the row of the owner scope, or empty when there is none. */
+    Optional<Stored> findStored(String scopeKey, String definitionId, long version) {
         List<Stored> rows = new ArrayList<>();
         for (Row row : await(admin().preparedQuery("""
-                        SELECT tenant_key, definition_version, kind, status, plan_hash, document, document_format,
+                        SELECT scope_key, definition_version, kind, status, plan_hash, document, document_format,
                                source_type, source_uri, source_revision, source_author, loaded_at, created_at,
-                               status_changed_at, activation_token
+                               status_changed_at, publish_token
                         FROM workflow_definitions
-                        WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
-                        """).execute(Tuple.of(tenantKey, definitionId, version)))) {
+                        WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                        """).execute(Tuple.of(scopeKey, definitionId, version)))) {
             rows.add(new Stored(
-                    row.getString("tenant_key"),
+                    row.getString("scope_key"),
                     row.getLong("definition_version"),
                     row.getString("kind"),
                     row.getString("status"),
@@ -413,24 +516,24 @@ final class DefinitionScenario implements AutoCloseable {
                     row.getOffsetDateTime("loaded_at"),
                     row.getOffsetDateTime("created_at"),
                     row.getOffsetDateTime("status_changed_at"),
-                    row.getUUID("activation_token")));
+                    row.getUUID("publish_token")));
         }
         assertThat(rows)
-                .as("rows of %s for %s v%s", tenantKey == null ? "global" : tenantKey, definitionId, version)
+                .as("rows of %s for %s v%s", scopeKey, definitionId, version)
                 .hasSizeLessThanOrEqualTo(1);
         return rows.stream().findFirst();
     }
 
-    /** Returns the one global row. */
+    /** Returns the one default-scope row. */
     Stored stored(String definitionId, long version) {
-        return stored(null, definitionId, version);
+        return stored(WorkflowScopes.DEFAULT, definitionId, version);
     }
 
     /** Returns the one row of the owner. */
-    Stored stored(String tenantKey, String definitionId, long version) {
-        return findStored(tenantKey, definitionId, version)
-                .orElseThrow(() -> new AssertionError("No row of " + (tenantKey == null ? "global" : tenantKey)
-                        + " for " + definitionId + " v" + version));
+    Stored stored(String scopeKey, String definitionId, long version) {
+        return findStored(scopeKey, definitionId, version)
+                .orElseThrow(
+                        () -> new AssertionError("No row of " + scopeKey + " for " + definitionId + " v" + version));
     }
 
     /** Counts every row of the definition id, across owners. */

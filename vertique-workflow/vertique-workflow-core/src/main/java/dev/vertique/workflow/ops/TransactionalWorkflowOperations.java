@@ -195,4 +195,25 @@ public interface TransactionalWorkflowOperations<TX> {
                         + " install vertique-workflow-postgresql + WorkflowMigrationModule"
                         + " (or another binding that implements migrate)"));
     }
+
+    /**
+     * Migrates a workflow instance to {@code targetVersion} of the definition of the same id in
+     * {@code targetScope} within the given transaction.
+     *
+     * <p>The rules of {@link WorkflowOperations#migrate(WorkflowInstanceId, String, long)} apply.
+     *
+     * <p>This default implementation throws {@link UnsupportedOperationException}.
+     *
+     * @param id workflow instance to migrate
+     * @param targetScope the scope of the definition to migrate to; the instance's start scope or the default scope
+     * @param targetVersion the definition version to migrate to; must be registered in {@code targetScope}
+     * @param tx the active transaction context
+     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     */
+    default Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException(
+                "migrate() is not implemented by this TransactionalWorkflowOperations binding;"
+                        + " install vertique-workflow-postgresql + WorkflowMigrationModule"
+                        + " (or another binding that implements migrate)"));
+    }
 }

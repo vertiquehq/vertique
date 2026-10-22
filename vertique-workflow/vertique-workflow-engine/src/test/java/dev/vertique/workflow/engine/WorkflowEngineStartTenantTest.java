@@ -32,6 +32,8 @@ import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.tasks.TaskStore;
@@ -59,11 +61,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 
 /**
- * Start-time tenant tests for {@code WorkflowEngine#doCreateInstance}.
+ * Start-time scope tests for {@code WorkflowEngine#doCreateInstance}.
  *
  * <p>The engine is assembled through its package-private constructor over mocked repositories,
- * exactly as {@link WorkflowEngineFactory#create} does. The engine takes no tenant source of its
- * own, so an instance it starts carries no tenant whatever the ambient context holds.
+ * exactly as {@link WorkflowEngineFactory#create} does. The engine takes no scope source of its
+ * own: an instance it starts is in the start scope of its command, and in the default scope when the command
+ * names none, whatever the ambient context holds.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -71,8 +74,9 @@ class WorkflowEngineStartTenantTest {
 
     private static final Instant FIXED_NOW = Instant.parse("2026-05-08T10:00:00Z");
     private static final Clock FIXED_CLOCK = Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
-    private static final String DEFINITION_ID = "wf-start-tenant-test";
+    private static final String DEFINITION_ID = "wf-start-scope-test";
     private static final String INITIAL_STEP_ID = "complete";
+    private static final String CONTRACT_NAME = "test-contract";
     private static final String FINGERPRINT = "definitionVersion=1";
 
     /** The assembled engine plus the mocked collaborators the scenarios assert on. */
@@ -92,7 +96,8 @@ class WorkflowEngineStartTenantTest {
                 List.of(new CompleteNode(INITIAL_STEP_ID)),
                 null);
         WorkflowCallbackRegistry callbacks = mock();
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, CONTRACT_NAME, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**
@@ -110,8 +115,13 @@ class WorkflowEngineStartTenantTest {
         TimerStore<SqlClient> timerStore = mock();
         TaskStore<SqlClient> taskStore = mock();
 
-        when(registry.resolveCurrent(DEFINITION_ID)).thenReturn(minimalRuntimeWorkflow());
-        when(dedup.claimOrResolveStart(eq(DEFINITION_ID), any(), any(), any(), any()))
+        DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
+        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
+        when(registry.isDeployed(currentKey)).thenReturn(true);
+        when(registry.resolve(currentKey)).thenReturn(minimalRuntimeWorkflow());
+        when(dedup.findStart(any(), eq(DEFINITION_ID), any(), any()))
+                .thenReturn(Future.succeededFuture(Optional.empty()));
+        when(dedup.claimOrResolveStart(any(), eq(DEFINITION_ID), any(), any(), any(), any()))
                 .thenReturn(Future.succeededFuture(dedupOutcome));
         when(instances.insert(any(), any())).thenReturn(Future.succeededFuture());
         when(instances.updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
@@ -175,8 +185,17 @@ class WorkflowEngineStartTenantTest {
         return new StartDedupResult(new WorkflowInstanceId(UUID.randomUUID()), true, FINGERPRINT);
     }
 
-    private static StartCommand startCommand() {
-        return new StartCommand(DEFINITION_ID, Map.of(), "idem-" + UUID.randomUUID(), null, null);
+    private static StartCommand startCommand(String startScope) {
+        return new StartCommand(
+                DEFINITION_ID,
+                CONTRACT_NAME,
+                Map.of(),
+                "idem-" + UUID.randomUUID(),
+                null,
+                null,
+                null,
+                startScope,
+                null);
     }
 
     /**
@@ -184,14 +203,17 @@ class WorkflowEngineStartTenantTest {
      * context first (none when {@code null}), and blocks until the start future settles.
      */
     private static AsyncResult<WorkflowInstanceId> start(
-            Vertx vertx, Rig rig, DefaultContextHolder holder, String ambientTenant) throws Exception {
+            Vertx vertx, Rig rig, DefaultContextHolder holder, String ambientTenant, String startScope)
+            throws Exception {
         CompletableFuture<AsyncResult<WorkflowInstanceId>> settled = new CompletableFuture<>();
         ContextInternal duplicated = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
         duplicated.runOnContext(v -> {
             if (ambientTenant != null) {
                 holder.bind(TenantCtx.class, new TenantCtx(ambientTenant));
             }
-            rig.engine().start(startCommand(), ActiveTransactionClient.create()).onComplete(settled::complete);
+            rig.engine()
+                    .start(startCommand(startScope), ActiveTransactionClient.create())
+                    .onComplete(settled::complete);
         });
         return settled.get(5, TimeUnit.SECONDS);
     }
@@ -203,8 +225,25 @@ class WorkflowEngineStartTenantTest {
     }
 
     @Test
-    @DisplayName("no tenant resolver type is shipped and every start leaves the tenant null")
-    void noResolverSeamIsShippedAndEveryStartLeavesTheTenantNull(Vertx vertx) throws Exception {
+    @DisplayName("a start stamps the start scope of its command on the instance, whatever the ambient context holds")
+    void startStampsTheStartScopeOfItsCommand(Vertx vertx) throws Exception {
+        DefaultContextHolder holder = new DefaultContextHolder();
+
+        // Given an engine and an ambient context carrying t1
+        Rig rig = rig(TenantCtxCodec.propagator(holder), winner());
+
+        // When a workflow starts with the start scope acme
+        AsyncResult<WorkflowInstanceId> started = start(vertx, rig, holder, "t1", "acme");
+
+        // Then the stored instance has the acme start scope and the definition's own scope
+        assertThat(started.succeeded()).as("start in acme: %s", started.cause()).isTrue();
+        assertThat(insertedInstance(rig).scopeKey()).isEqualTo("acme");
+        assertThat(insertedInstance(rig).definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
+    }
+
+    @Test
+    @DisplayName("no tenant resolver type is shipped and every start lands in the default scope")
+    void noResolverSeamIsShippedAndEveryStartLandsInTheDefaultScope(Vertx vertx) throws Exception {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
 
@@ -212,25 +251,27 @@ class WorkflowEngineStartTenantTest {
         Rig withPropagator = rig(propagator, winner());
 
         // When a workflow starts
-        AsyncResult<WorkflowInstanceId> propagatedStart = start(vertx, withPropagator, holder, "t1");
+        AsyncResult<WorkflowInstanceId> propagatedStart = start(vertx, withPropagator, holder, "t1", null);
 
-        // Then the start succeeds and the stored instance carries no tenant
+        // Then the start succeeds and the stored instance is in the default scope
         assertThat(propagatedStart.succeeded())
                 .as("start with a propagator: %s", propagatedStart.cause())
                 .isTrue();
-        assertThat(insertedInstance(withPropagator).tenantKey()).isNull();
+        assertThat(insertedInstance(withPropagator).scopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
+        assertThat(insertedInstance(withPropagator).definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
 
         // Given an engine without a propagator and the same ambient context
         Rig withoutPropagator = rig(null, winner());
 
         // When a workflow starts
-        AsyncResult<WorkflowInstanceId> plainStart = start(vertx, withoutPropagator, holder, "t1");
+        AsyncResult<WorkflowInstanceId> plainStart = start(vertx, withoutPropagator, holder, "t1", null);
 
-        // Then the start succeeds and the stored instance carries no tenant
+        // Then the start succeeds and the stored instance is in the default scope
         assertThat(plainStart.succeeded())
                 .as("start without a propagator: %s", plainStart.cause())
                 .isTrue();
-        assertThat(insertedInstance(withoutPropagator).tenantKey()).isNull();
+        assertThat(insertedInstance(withoutPropagator).scopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
+        assertThat(insertedInstance(withoutPropagator).definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
 
         // When the former resolver type is looked up by name
         // Then it is not on the class path

@@ -6,11 +6,13 @@ package dev.vertique.workflow.registry;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.workflow.contract.WorkflowContract;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -24,10 +26,10 @@ class RegistryRegisteredDefinitionTest {
 
     record SourceStart(String id) {}
 
-    @WorkflowContract(definitionId = "registered-source", definitionVersion = 1)
+    @WorkflowContract
     interface SourceContractV1 {}
 
-    @WorkflowContract(definitionId = "registered-source", definitionVersion = 2)
+    @WorkflowContract
     interface SourceContractV2 {}
 
     private static <C> WorkflowDefinition<SourceState, C> definition(String id, long version, Class<C> contract) {
@@ -70,18 +72,28 @@ class RegistryRegisteredDefinitionTest {
         }
 
         @Override
-        public RuntimeWorkflow resolveCurrent(String definitionId) {
+        public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+        public RuntimeWorkflow resolve(DefinitionKey key) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
-            throw new UnsupportedOperationException();
+        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
+            return Optional.empty();
+        }
+
+        @Override
+        public List<DefinitionKey> keysFor(String definitionId) {
+            return List.of();
+        }
+
+        @Override
+        public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
+            return Optional.empty();
         }
 
         @Override
@@ -98,29 +110,36 @@ class RegistryRegisteredDefinitionTest {
 
         // Given an unregistered version
         // Then no source is retained for it
-        assertThat(registry.registeredDefinition(id, 1)).isEmpty();
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .isEmpty();
 
         // When version 1 is registered
         WorkflowDefinition<SourceState, SourceContractV1> first = definition(id, 1, SourceContractV1.class);
         registry.register(first);
 
         // Then that very definition object is returned, and another version is still empty
-        assertThat(registry.registeredDefinition(id, 1)).containsSame(first);
-        assertThat(registry.registeredDefinition(id, 2)).isEmpty();
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .containsSame(first);
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
+                .isEmpty();
 
         // When it is unregistered
-        registry.unregister(id, 1);
+        registry.unregister(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
 
         // Then no source is retained for it any more
-        assertThat(registry.registeredDefinition(id, 1)).isEmpty();
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .isEmpty();
 
         // When the version is registered again with a new source definition
         WorkflowDefinition<SourceState, SourceContractV1> replacement = definition(id, 1, SourceContractV1.class);
         registry.register(replacement);
 
         // Then the new source is returned, not the earlier one
-        assertThat(registry.registeredDefinition(id, 1)).containsSame(replacement);
-        assertThat(registry.registeredDefinition(id, 1).orElseThrow()).isNotSameAs(first);
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .containsSame(replacement);
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
+                        .orElseThrow())
+                .isNotSameAs(first);
     }
 
     @Test
@@ -131,6 +150,7 @@ class RegistryRegisteredDefinitionTest {
 
         // When the source of any version is asked for
         // Then the default is empty
-        assertThat(registry.registeredDefinition("registered-source", 1)).isEmpty();
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, "registered-source", 1)))
+                .isEmpty();
     }
 }

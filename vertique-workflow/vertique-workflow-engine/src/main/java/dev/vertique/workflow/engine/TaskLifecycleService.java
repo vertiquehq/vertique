@@ -20,7 +20,6 @@ import dev.vertique.workflow.exception.WorkflowStaleAssignmentException;
 import dev.vertique.workflow.exception.WorkflowStaleSubjectVersionException;
 import dev.vertique.workflow.exception.WorkflowTaskNotFoundException;
 import dev.vertique.workflow.exception.WorkflowTaskNotWaitingException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
@@ -50,6 +49,7 @@ import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.tasks.TaskTransition;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
@@ -158,6 +158,9 @@ final class TaskLifecycleService {
      */
     private final PayloadConstraintCheck payloadConstraintCheck;
 
+    /** Resolves the logical decision payload type names the plan holds. */
+    private final WorkflowTypeNames typeNames;
+
     /**
      * Constructs a new task-lifecycle service.
      *
@@ -183,6 +186,8 @@ final class TaskLifecycleService {
      *     {@code null} (the engine assembly seam substitutes {@link WorkflowContextBinder#noop()}
      *     when durable-context wiring is not exercised)
      * @param payloadConstraintCheck the opt-in constraint check applied to coerced decision payloads
+     * @param typeNames the type-name index the registry fills as definitions register; a decision
+     *     payload name the index does not know is resolved as a binary class name
      */
     @Inject
     TaskLifecycleService(
@@ -201,7 +206,8 @@ final class TaskLifecycleService {
             Clock clock,
             Provider<TimerLifecycleService> timerPvd,
             WorkflowContextBinder contextBinder,
-            PayloadConstraintCheck payloadConstraintCheck) {
+            PayloadConstraintCheck payloadConstraintCheck,
+            WorkflowTypeNames typeNames) {
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -218,6 +224,7 @@ final class TaskLifecycleService {
         this.timerPvd = timerPvd;
         this.contextBinder = contextBinder;
         this.payloadConstraintCheck = payloadConstraintCheck;
+        this.typeNames = typeNames;
     }
 
     // --- Task-creation helpers (reached by the driver via Provider<TaskLifecycleService>) ---
@@ -316,7 +323,7 @@ final class TaskLifecycleService {
                 null, // branchTokenId
                 null, // forkStepId
                 null, // branchId
-                inst.tenantKey());
+                inst.scopeKey());
     }
 
     /**
@@ -515,10 +522,7 @@ final class TaskLifecycleService {
             TaskCompletionCommand cmd, TaskRecord task, WorkflowInstance inst, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
-        } catch (WorkflowVersionPinUnavailableException e) {
-            return Future.failedFuture(
-                    new WorkflowVersionPinUnavailableException(e.definitionId(), e.version(), inst.id()));
+            rw = PinnedPlans.resolve(registry, inst);
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -564,8 +568,8 @@ final class TaskLifecycleService {
         // Step 3b: Payload-nullability validation + coercion.
         Object coercedPayload;
         try {
-            coercedPayload =
-                    WorkflowPayloads.validateAndCoerceTaskPayload(cmd.payload(), planDecision.payloadTypeName());
+            coercedPayload = WorkflowPayloads.validateAndCoerceTaskPayload(
+                    cmd.payload(), planDecision.payloadTypeName(), typeNames);
             payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.DECISION_REJECTION);
         } catch (Exception e) {
             logRejectedPayloadCause(e);
@@ -820,7 +824,7 @@ final class TaskLifecycleService {
                             Object coercedPayload;
                             try {
                                 coercedPayload = WorkflowPayloads.validateAndCoerceTaskPayload(
-                                        cmd.payload(), planDecision.payloadTypeName());
+                                        cmd.payload(), planDecision.payloadTypeName(), typeNames);
                                 payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.DECISION_REJECTION);
                             } catch (Exception e) {
                                 logRejectedPayloadCause(e);
@@ -967,6 +971,36 @@ final class TaskLifecycleService {
      */
     private Future<TaskMutationResult> doBranchTaskDueFired(
             WorkflowInstanceId workflowId, TaskRecord task, SqlClient tx) {
+        // Resolve the pinned plan BEFORE any write: a node that cannot run the pinned version must
+        // leave the reminders and the task untouched so the timer can be re-queued for a node that can.
+        // The body acts on this instance snapshot and plan; it resolves nothing after its first write.
+        return instances.findById(workflowId, tx).compose(optPinned -> {
+            if (optPinned.isEmpty()) {
+                return Future.<TaskMutationResult>succeededFuture(TaskMutationResult.STALE_NOOP);
+            }
+            WorkflowInstance inst = optPinned.get();
+            RuntimeWorkflow rw;
+            try {
+                rw = resolveAndCheckPlanHash(inst);
+            } catch (Exception e) {
+                return Future.<TaskMutationResult>failedFuture(e);
+            }
+            return doBranchTaskDueFiredResolved(workflowId, task, inst, rw, tx);
+        });
+    }
+
+    /**
+     * Body of {@link #doBranchTaskDueFired} once the pinned plan is known to be runnable on this node.
+     *
+     * @param workflowId the owning workflow instance id
+     * @param task       the task record (non-locking snapshot from the caller)
+     * @param inst       the instance snapshot the plan was resolved for
+     * @param rw         the plan resolved for {@code inst} and checked against its stored hash
+     * @param tx         the active transaction
+     * @return a {@link Future} resolving to the mutation result
+     */
+    private Future<TaskMutationResult> doBranchTaskDueFiredResolved(
+            WorkflowInstanceId workflowId, TaskRecord task, WorkflowInstance inst, RuntimeWorkflow rw, SqlClient tx) {
         UUID taskId = task.taskId();
         UUID branchTokenId = task.branchTokenId();
 
@@ -1008,98 +1042,86 @@ final class TaskLifecycleService {
                             if (transition != TaskTransition.APPLIED) {
                                 return Future.<TaskMutationResult>succeededFuture(TaskMutationResult.STALE_NOOP);
                             }
-                            // Load parent instance for state + plan resolution.
-                            return instances.findById(workflowId, tx).compose(optInst -> {
-                                if (optInst.isEmpty()) {
-                                    return Future.<TaskMutationResult>succeededFuture(TaskMutationResult.STALE_NOOP);
-                                }
-                                WorkflowInstance inst = optInst.get();
-                                RuntimeWorkflow rw;
-                                try {
-                                    rw = resolveAndCheckPlanHash(inst);
-                                } catch (Exception e) {
-                                    return Future.failedFuture(e);
-                                }
-                                WorkflowNode node = rw.nodeById().get(task.stepId());
-                                if (!(node instanceof HumanTaskNode htn) || htn.onDueMutatorCallbackId() == null) {
-                                    return Future.<TaskMutationResult>failedFuture(new WorkflowDefinitionException(
-                                            "Expected HumanTaskNode with due-date at step '"
-                                                    + task.stepId()
-                                                    + "' during branch taskDueFired"));
-                                }
+                            // Act on the instance and plan resolved before the first write.
+                            WorkflowNode node = rw.nodeById().get(task.stepId());
+                            if (!(node instanceof HumanTaskNode htn) || htn.onDueMutatorCallbackId() == null) {
+                                return Future.<TaskMutationResult>failedFuture(
+                                        new WorkflowDefinitionException("Expected HumanTaskNode with due-date at step '"
+                                                + task.stepId()
+                                                + "' during branch taskDueFired"));
+                            }
 
-                                // Apply onDueMutator to parent state — mirrors single-path
-                                // advanceForDueExpired. The parent stays at WAITING/JOIN but its
-                                // state_json is updated so that the branch can see the mutated state.
-                                Object stateObj = Json.decodeValue(Buffer.buffer(inst.stateJson()), rw.stateType());
-                                Object newStateForDue;
-                                try {
-                                    @SuppressWarnings("unchecked")
-                                    var mutator = (java.util.function.Function<Object, Object>)
-                                            (java.util.function.Function<?, ?>)
-                                                    rw.callbacks().stateMutator(htn.onDueMutatorCallbackId());
-                                    newStateForDue = mutator.apply(stateObj);
-                                } catch (Exception e) {
-                                    return Future.<TaskMutationResult>failedFuture(
-                                            new WorkflowDefinitionException("onDueMutator threw for branch step '"
-                                                    + htn.stepId() + "': " + e.getMessage()));
-                                }
-                                String newStateJsonForDue = Json.encode(newStateForDue);
-                                long instVersionForDue = inst.version();
-                                WorkflowInstance updatedInstForDue = inst.withVersion(instVersionForDue + 1)
-                                        .withState(newStateJsonForDue)
-                                        .withUpdatedAt(now);
+                            // Apply onDueMutator to parent state — mirrors single-path
+                            // advanceForDueExpired. The parent stays at WAITING/JOIN but its
+                            // state_json is updated so that the branch can see the mutated state.
+                            Object stateObj = Json.decodeValue(Buffer.buffer(inst.stateJson()), rw.stateType());
+                            Object newStateForDue;
+                            try {
+                                @SuppressWarnings("unchecked")
+                                var mutator = (java.util.function.Function<Object, Object>)
+                                        (java.util.function.Function<?, ?>)
+                                                rw.callbacks().stateMutator(htn.onDueMutatorCallbackId());
+                                newStateForDue = mutator.apply(stateObj);
+                            } catch (Exception e) {
+                                return Future.<TaskMutationResult>failedFuture(
+                                        new WorkflowDefinitionException("onDueMutator threw for branch step '"
+                                                + htn.stepId() + "': " + e.getMessage()));
+                            }
+                            String newStateJsonForDue = Json.encode(newStateForDue);
+                            long instVersionForDue = inst.version();
+                            WorkflowInstance updatedInstForDue = inst.withVersion(instVersionForDue + 1)
+                                    .withState(newStateJsonForDue)
+                                    .withUpdatedAt(now);
 
-                                // Append BRANCH_TASK_DUE_EXPIRED history.
-                                WorkflowActor expiredBy = new WorkflowActor.System("due-date-expired");
-                                return history.nextSequence(workflowId, tx).compose(seq -> {
-                                    String hp = Json.encode(
-                                            new TaskExpiredHistoryPayload(task.stepId(), taskId, now, expiredBy));
-                                    return history.append(
-                                                    new WorkflowHistoryEntry(
-                                                            workflowId,
-                                                            seq,
-                                                            WorkflowEntryType.BRANCH_TASK_DUE_EXPIRED,
-                                                            hp,
-                                                            now),
-                                                    tx)
-                                            .compose(v2 -> {
-                                                // Advance to dueNextStepId.
-                                                BranchToken cleared = WorkflowPayloads.clearBranchWait(
-                                                        branch, htn.dueNextStepId(), now);
-                                                return branchTokens
-                                                        .updateOptimistic(cleared, branch.version(), tx)
-                                                        .compose(rc -> {
-                                                            if (rc == 0) {
-                                                                return Future.<Void>failedFuture(
-                                                                        new WorkflowConflictException(
-                                                                                "Optimistic concurrency conflict"
-                                                                                        + " on branch token"
-                                                                                        + " during taskDueFired"));
-                                                            }
-                                                            // Update parent instance state.
-                                                            return instances
-                                                                    .updateOptimistic(
-                                                                            updatedInstForDue, instVersionForDue, tx)
-                                                                    .compose(instRc -> {
-                                                                        if (instRc == 0) {
-                                                                            return Future.<Void>failedFuture(
-                                                                                    new WorkflowConflictException(
-                                                                                            "Optimistic concurrency"
-                                                                                                    + " conflict on parent"
-                                                                                                    + " instance during"
-                                                                                                    + " branch taskDueFired"));
-                                                                        }
-                                                                        // updatedInstForDue carries the
-                                                                        // post-onDueMutator
-                                                                        // state and the current subject ref.
-                                                                        return forkJoin.driveAndMaybeJoin(
-                                                                                updatedInstForDue, cleared, rw, tx);
-                                                                    });
-                                                        });
-                                            })
-                                            .map(v2 -> TaskMutationResult.APPLIED);
-                                });
+                            // Append BRANCH_TASK_DUE_EXPIRED history.
+                            WorkflowActor expiredBy = new WorkflowActor.System("due-date-expired");
+                            return history.nextSequence(workflowId, tx).compose(seq -> {
+                                String hp = Json.encode(
+                                        new TaskExpiredHistoryPayload(task.stepId(), taskId, now, expiredBy));
+                                return history.append(
+                                                new WorkflowHistoryEntry(
+                                                        workflowId,
+                                                        seq,
+                                                        WorkflowEntryType.BRANCH_TASK_DUE_EXPIRED,
+                                                        hp,
+                                                        now),
+                                                tx)
+                                        .compose(v2 -> {
+                                            // Advance to dueNextStepId.
+                                            BranchToken cleared =
+                                                    WorkflowPayloads.clearBranchWait(branch, htn.dueNextStepId(), now);
+                                            return branchTokens
+                                                    .updateOptimistic(cleared, branch.version(), tx)
+                                                    .compose(rc -> {
+                                                        if (rc == 0) {
+                                                            return Future.<Void>failedFuture(
+                                                                    new WorkflowConflictException(
+                                                                            "Optimistic concurrency conflict"
+                                                                                    + " on branch token"
+                                                                                    + " during taskDueFired"));
+                                                        }
+                                                        // Update parent instance state.
+                                                        return instances
+                                                                .updateOptimistic(
+                                                                        updatedInstForDue, instVersionForDue, tx)
+                                                                .compose(instRc -> {
+                                                                    if (instRc == 0) {
+                                                                        return Future.<Void>failedFuture(
+                                                                                new WorkflowConflictException(
+                                                                                        "Optimistic concurrency"
+                                                                                                + " conflict on parent"
+                                                                                                + " instance during"
+                                                                                                + " branch taskDueFired"));
+                                                                    }
+                                                                    // updatedInstForDue carries the
+                                                                    // post-onDueMutator
+                                                                    // state and the current subject ref.
+                                                                    return forkJoin.driveAndMaybeJoin(
+                                                                            updatedInstForDue, cleared, rw, tx);
+                                                                });
+                                                    });
+                                        })
+                                        .map(v2 -> TaskMutationResult.APPLIED);
                             });
                         });
                     });
@@ -1138,27 +1160,30 @@ final class TaskLifecycleService {
                 // Branch has moved on — reminder is irrelevant.
                 return Future.succeededFuture();
             }
-            // Atomically increment the reminder counter (gated on status='OPEN').
-            return taskStore.incrementRemindersFiredCount(taskId, tx).compose(maybeIndex -> {
-                if (maybeIndex.isEmpty()) {
-                    // Task closed concurrently — no-op.
+            // Resolve the pinned plan BEFORE any write: a node that cannot run the pinned version
+            // must leave the reminder counter untouched, because the executor re-queues the timer
+            // in this same transaction and the re-queue commits.
+            return instances.findById(workflowId, tx).compose(optInst -> {
+                if (optInst.isEmpty()) {
                     return Future.succeededFuture();
                 }
-                int reminderIndex = maybeIndex.get();
-                Instant now = clock.instant();
-
-                // Resolve the HumanTaskNode to get reminder spec for next scheduling.
-                return instances.findById(workflowId, tx).compose(optInst -> {
-                    if (optInst.isEmpty()) {
+                WorkflowInstance inst = optInst.get();
+                RuntimeWorkflow rw;
+                try {
+                    rw = resolveAndCheckPlanHash(inst);
+                } catch (Exception e) {
+                    return Future.<Void>failedFuture(e);
+                }
+                // Atomically increment the reminder counter (gated on status='OPEN').
+                return taskStore.incrementRemindersFiredCount(taskId, tx).compose(maybeIndex -> {
+                    if (maybeIndex.isEmpty()) {
+                        // Task closed concurrently — no-op.
                         return Future.succeededFuture();
                     }
-                    WorkflowInstance inst = optInst.get();
-                    RuntimeWorkflow rw;
-                    try {
-                        rw = resolveAndCheckPlanHash(inst);
-                    } catch (Exception e) {
-                        return Future.<Void>failedFuture(e);
-                    }
+                    int reminderIndex = maybeIndex.get();
+                    Instant now = clock.instant();
+
+                    // Resolve the HumanTaskNode to get reminder spec for next scheduling.
                     WorkflowNode node = rw.nodeById().get(task.stepId());
                     if (!(node instanceof HumanTaskNode htn)) {
                         return Future.<Void>failedFuture(
@@ -1369,6 +1394,14 @@ final class TaskLifecycleService {
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> doTaskDueFiredBound(UUID taskId, WorkflowInstance inst, SqlClient tx) {
+        // Resolve the pinned plan BEFORE any write: a node that cannot run the pinned version must
+        // leave the reminders and the task untouched so the timer can be re-queued for a node that can.
+        RuntimeWorkflow rw;
+        try {
+            rw = resolveAndCheckPlanHash(inst);
+        } catch (Exception e) {
+            return Future.failedFuture(e);
+        }
         return reminderScheduler
                 .cancelPendingReminders(taskId, inst, tx)
                 .compose(v -> taskStore.lockForCompletion(taskId, tx))
@@ -1382,7 +1415,7 @@ final class TaskLifecycleService {
                         if (transition != TaskTransition.APPLIED) {
                             return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
                         }
-                        return advanceForDueExpired(inst, optLocked.get(), taskId, now, tx);
+                        return advanceForDueExpired(inst, rw, taskId, now, tx);
                     });
                 });
     }
@@ -1393,26 +1426,14 @@ final class TaskLifecycleService {
      * transitions. Called only after the wait-slot match has been validated.
      *
      * @param inst   the WAITING instance whose due-date timer fired (slot already validated)
-     * @param task   the locked task row
+     * @param rw     the pinned plan, already resolved and plan-hash checked before any write
      * @param taskId the task id whose due-date timer fired
      * @param now    the expiry timestamp
      * @param tx     the active transaction
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> advanceForDueExpired(
-            WorkflowInstance inst, TaskRecord task, UUID taskId, Instant now, SqlClient tx) {
-        RuntimeWorkflow rw;
-        try {
-            rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
-            // Same plan-hash drift gate as completion / signal / timer paths: if the
-            // pinned-version plan in the registry has drifted from the snapshot the
-            // instance was started against, refuse to apply the due-date mutator
-            // (which could route to a different next-step or use a stale state mutator).
-            WorkflowPayloads.requirePlanHashMatches(inst, rw);
-        } catch (Exception e) {
-            return Future.failedFuture(e);
-        }
-
+            WorkflowInstance inst, RuntimeWorkflow rw, UUID taskId, Instant now, SqlClient tx) {
         WorkflowNode node = rw.nodeById().get(inst.currentStepId());
         if (!(node instanceof HumanTaskNode htn) || htn.onDueMutatorCallbackId() == null) {
             return Future.failedFuture(new WorkflowDefinitionException(
@@ -1694,7 +1715,7 @@ final class TaskLifecycleService {
         // task was already loaded — re-use it below.
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+            rw = PinnedPlans.resolve(registry, inst);
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -1804,11 +1825,12 @@ final class TaskLifecycleService {
      *
      * @param inst the workflow instance whose definition + plan hash to resolve and check
      * @return the resolved {@link RuntimeWorkflow} for {@code inst}'s definition/version
-     * @throws WorkflowVersionPinUnavailableException if the registry no longer has the pinned version
+     * @throws dev.vertique.workflow.exception.WorkflowVersionNotRunnableException if the local registry has no plan
+     *     for the pinned version
      * @throws WorkflowPlanHashDriftException if the stored plan hash differs from the resolved plan
      */
     private RuntimeWorkflow resolveAndCheckPlanHash(WorkflowInstance inst) {
-        RuntimeWorkflow rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+        RuntimeWorkflow rw = PinnedPlans.resolve(registry, inst);
         WorkflowPayloads.requirePlanHashMatches(inst, rw);
         return rw;
     }

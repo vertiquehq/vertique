@@ -6,6 +6,8 @@ package dev.vertique.workflow.engine;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -44,21 +46,68 @@ final class WorkflowCodeDefinitionCatalog {
      */
     List<CodeDefinition> capture(WorkflowRegistry registry, Set<VersionKey> documentOrigins) {
         Map<VersionKey, CodeDefinition> snapshot = registry.allRegistered().stream()
-                .map(RuntimeWorkflow::plan)
-                .map(plan -> new VersionKey(plan.definitionId(), plan.definitionVersion()))
-                .filter(key -> !documentOrigins.contains(key))
+                .filter(runtime -> WorkflowScopes.DEFAULT.equals(runtime.definitionScopeKey()))
+                .filter(runtime -> !documentOrigins.contains(versionKey(runtime)))
                 .collect(Collectors.toUnmodifiableMap(
-                        key -> key,
-                        key -> new CodeDefinition(
-                                key.definitionId(),
-                                key.version(),
-                                registry.resolvePinned(key.definitionId(), key.version())
-                                        .plan()
-                                        .planHash(),
-                                registry.registeredDefinition(key.definitionId(), key.version())
-                                        .orElse(null))));
+                        WorkflowCodeDefinitionCatalog::versionKey,
+                        runtime -> new CodeDefinition(
+                                runtime.plan().definitionId(),
+                                runtime.plan().definitionVersion(),
+                                runtime.contractName(),
+                                runtime.plan().stateTypeName(),
+                                runtime.plan().planHash(),
+                                registeredDefinition(registry, versionKey(runtime)),
+                                nameBinding(registry, versionKey(runtime)))));
         entries = snapshot;
         return ordered(snapshot);
+    }
+
+    private static VersionKey versionKey(RuntimeWorkflow runtime) {
+        return new VersionKey(runtime.plan().definitionId(), runtime.plan().definitionVersion());
+    }
+
+    /**
+     * The definition the registry retained for a default-scope version. An id or version that no key can hold has
+     * no retained definition; the startup step names such a definition when it records it.
+     */
+    private static @Nullable WorkflowDefinition<?, ?> registeredDefinition(WorkflowRegistry registry, VersionKey key) {
+        try {
+            return registry.registeredDefinition(
+                            new DefinitionKey(WorkflowScopes.DEFAULT, key.definitionId(), key.version()))
+                    .orElse(null);
+        } catch (IllegalArgumentException invalidKey) {
+            return null;
+        }
+    }
+
+    /** The binding of the plan the registry holds for a default-scope version, empty for a key no key can hold. */
+    private static Map<String, String> nameBinding(WorkflowRegistry registry, VersionKey key) {
+        try {
+            return registry.nameBinding(new DefinitionKey(WorkflowScopes.DEFAULT, key.definitionId(), key.version()));
+        } catch (IllegalArgumentException invalidKey) {
+            return Map.of();
+        }
+    }
+
+    /**
+     * Records that the registry now holds a rebuilt plan of the version, so that later checks compare the hash
+     * the registry serves. Nothing changes for a version the snapshot does not hold.
+     */
+    void rebound(String definitionId, long version, String planHash) {
+        VersionKey key = new VersionKey(definitionId, version);
+        entries = entries.entrySet().stream().collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, entry -> {
+            CodeDefinition code = entry.getValue();
+            return entry.getKey().equals(key)
+                    ? new CodeDefinition(
+                            code.definitionId(),
+                            code.version(),
+                            code.contractName(),
+                            code.stateTypeName(),
+                            planHash,
+                            code.definition(),
+                            code.nameBinding())
+                    : code;
+        }));
     }
 
     /** Returns the code definition the deployed code provides for the exact id and version, if any. */
@@ -85,12 +134,19 @@ final class WorkflowCodeDefinitionCatalog {
      *
      * @param definitionId the definition id
      * @param version the exact version
+     * @param contractName the logical name of the contract the registered runtime implements
+     * @param stateTypeName the logical name of the state type of the registered runtime's plan
      * @param planHash the plan hash of the registered runtime
      * @param definition the definition as it was registered, or {@code null} when the registry does not retain it
+     * @param nameBinding the binary name of each state and payload class of the registered plan, mapped to the name
+     *     the registered plan hash used
      */
     record CodeDefinition(
             String definitionId,
             long version,
+            String contractName,
+            String stateTypeName,
             String planHash,
-            @Nullable WorkflowDefinition<?, ?> definition) {}
+            @Nullable WorkflowDefinition<?, ?> definition,
+            Map<String, String> nameBinding) {}
 }

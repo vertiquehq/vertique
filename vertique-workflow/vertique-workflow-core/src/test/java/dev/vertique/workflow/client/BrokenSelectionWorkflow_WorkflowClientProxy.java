@@ -19,10 +19,11 @@ public final class BrokenSelectionWorkflow_WorkflowClientProxy implements Broken
     /**
      * Always throws to simulate a broken generated class.
      *
-     * @param ops the workflow operations (unused — constructor throws before any field is set)
+     * @param ops the workflow operations (unused - constructor throws before any field is set)
+     * @param binding the client binding (unused - constructor throws before any field is set)
      * @throws IllegalStateException unconditionally, to trigger the loud-fail path
      */
-    public BrokenSelectionWorkflow_WorkflowClientProxy(WorkflowOperations ops) {
+    public BrokenSelectionWorkflow_WorkflowClientProxy(WorkflowOperations ops, WorkflowClientBinding binding) {
         throw new IllegalStateException("intentionally broken generated proxy");
     }
 

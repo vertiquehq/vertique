@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 final class DefaultWorkflowDefinitionRegistryView implements WorkflowDefinitionRegistryView {
     private static final Comparator<WorkflowDefinitionRecord> ORDER = Comparator.comparing(
                     (WorkflowDefinitionRecord record) -> record.key().definitionId())
-            .thenComparing(record -> record.key().tenantKey(), Comparator.nullsFirst(Comparator.naturalOrder()))
+            .thenComparing(record -> record.key().scopeKey(), Comparator.naturalOrder())
             .thenComparingLong(record -> record.key().definitionVersion());
 
     private final Map<DefinitionKey, WorkflowDefinitionRecord> records = new ConcurrentHashMap<>();

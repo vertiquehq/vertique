@@ -3,6 +3,7 @@
 
 package dev.vertique.codegen.workflow.processor.validate;
 
+import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.Diagnostics;
 import dev.vertique.codegen.support.MethodOverrides;
@@ -21,6 +22,7 @@ import javax.lang.model.element.ElementKind;
  * <p>Enforces contract-level and per-method shape rules:
  * <ul>
  *   <li>The annotated type must be an interface.</li>
+ *   <li>A non-empty logical contract name must not be blank and must have at most 255 code points.</li>
  *   <li>Exactly one {@code @WorkflowStart} method must be declared.</li>
  *   <li>Signal names must be unique across all clean {@code @WorkflowSignal} methods.</li>
  *   <li>No two operations may share an erased signature inherited from unrelated super-interfaces
@@ -33,6 +35,10 @@ import javax.lang.model.element.ElementKind;
  * picture in a single compilation cycle.
  */
 public final class ContractShapeValidator {
+
+    private static final String WORKFLOW_CONTRACT_FQN = "dev.vertique.workflow.contract.WorkflowContract";
+    private static final String ATTR_VALUE = "value";
+    private static final int MAX_CONTRACT_NAME_CODE_POINTS = 255;
 
     private final CodegenContext ctx;
 
@@ -62,6 +68,13 @@ public final class ContractShapeValidator {
         }
 
         boolean ok = true;
+
+        // --- Contract-level: a non-empty logical name must be neither blank, too long nor hold a control character ---
+        String nameProblem = contractNameProblem(model);
+        if (nameProblem != null) {
+            ctx.diagnostics().error(model.contractType(), Diagnostics.workflowContractNameInvalid(fqn, nameProblem));
+            ok = false;
+        }
 
         // --- Contract-level: exactly one @WorkflowStart ---
         long startCount = model.operations().stream()
@@ -141,6 +154,33 @@ public final class ContractShapeValidator {
         }
 
         return ok;
+    }
+
+    /**
+     * Returns the rule the explicit logical name of the contract violates, or {@code null} when the name
+     * is absent (the binary name applies) or valid. The name itself is never part of the result.
+     *
+     * @param model the contract model
+     * @return {@code "blank"}, {@code "longer than 255 code points"}, {@code "not free of control
+     *     characters"}, or {@code null}
+     */
+    private String contractNameProblem(ContractModel model) {
+        String name = AnnotationMirrors.findByFqn(model.contractType(), WORKFLOW_CONTRACT_FQN)
+                .flatMap(mirror -> ctx.annotations().attribute(mirror, ATTR_VALUE, String.class))
+                .orElse("");
+        if (name.isEmpty()) {
+            return null;
+        }
+        if (name.isBlank()) {
+            return "blank";
+        }
+        if (name.codePointCount(0, name.length()) > MAX_CONTRACT_NAME_CODE_POINTS) {
+            return "longer than " + MAX_CONTRACT_NAME_CODE_POINTS + " code points";
+        }
+        if (name.codePoints().anyMatch(Character::isISOControl)) {
+            return "not free of control characters";
+        }
+        return null;
     }
 
     // --- Role-specific per-method validators ---

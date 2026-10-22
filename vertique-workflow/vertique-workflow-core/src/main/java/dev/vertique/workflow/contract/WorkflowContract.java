@@ -11,15 +11,16 @@ import java.lang.annotation.Target;
 
 /**
  * Marks an interface as a typed workflow contract that can be used with
+ * {@code WorkflowClientFactory.create(Class, String)} or created from a definition class with
  * {@code WorkflowClientFactory.create(Class)}.
  *
  * <p>The annotated interface declares methods for starting, signalling, querying, and optionally
- * cancelling a specific workflow definition. Methods must be annotated with
- * {@link WorkflowStart}, {@link WorkflowSignal}, or {@link WorkflowQuery}.
+ * cancelling workflow instances. Methods must be annotated with {@link WorkflowStart},
+ * {@link WorkflowSignal}, or {@link WorkflowQuery}.
  *
- * <p>The {@code definitionId} and {@code definitionVersion} together identify the workflow
- * definition in the {@code WorkflowRegistry}. Proxy creation fails with
- * {@code WorkflowProxyContractException} if the definition is not registered.
+ * <p>A contract is the caller API: it names no definition. Any number of definitions may implement
+ * one contract, and a client is bound to a definition by the factory call that creates it, either
+ * from a definition class or from the contract and a definition id.
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
@@ -27,16 +28,15 @@ import java.lang.annotation.Target;
 public @interface WorkflowContract {
 
     /**
-     * The workflow definition id this contract targets.
+     * The logical contract name.
      *
-     * @return the definition id; must match a registered definition
-     */
-    String definitionId();
-
-    /**
-     * The workflow definition version this contract targets.
+     * <p>Names a contract independently of its package and class name. Contract names form their own
+     * namespace, separate from {@link dev.vertique.workflow.types.WorkflowType} names; within it one
+     * name maps to one interface. The contract name is never part of the plan hash. A non-empty name
+     * must not be blank and must have at most 255 code points; the annotation processor rejects any
+     * other name at compile time.
      *
-     * @return the definition version; must match a registered version
+     * @return the logical name; empty means the interface's binary name
      */
-    long definitionVersion();
+    String value() default "";
 }

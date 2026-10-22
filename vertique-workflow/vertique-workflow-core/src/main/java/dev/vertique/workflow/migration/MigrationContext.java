@@ -23,7 +23,9 @@ import java.util.Objects;
  * @param workflowId identifier of the workflow instance being migrated
  * @param currentStepId step id at which the instance is currently paused; the step belongs to the
  *     source plan
+ * @param sourceScope scope of the definition version the instance is currently pinned to
  * @param sourceVersion definition version the instance is currently pinned to
+ * @param targetScope scope of the definition version the instance will be migrated to
  * @param targetVersion definition version the instance will be migrated to
  * @param sourcePlanHash plan hash of the source definition version at the time of migration
  * @param targetPlanHash plan hash of the target definition version at the time of migration
@@ -33,7 +35,9 @@ import java.util.Objects;
 public record MigrationContext(
         WorkflowInstanceId workflowId,
         String currentStepId,
+        String sourceScope,
         long sourceVersion,
+        String targetScope,
         long targetVersion,
         String sourcePlanHash,
         String targetPlanHash,
@@ -45,7 +49,9 @@ public record MigrationContext(
      *
      * @param workflowId workflow instance id; must not be {@code null}
      * @param currentStepId current step id in the source plan; must not be {@code null}
+     * @param sourceScope scope of the source definition version; must not be {@code null}
      * @param sourceVersion source definition version
+     * @param targetScope scope of the target definition version; must not be {@code null}
      * @param targetVersion target definition version
      * @param sourcePlanHash plan hash of the source version; must not be {@code null}
      * @param targetPlanHash plan hash of the target version; must not be {@code null}
@@ -56,6 +62,8 @@ public record MigrationContext(
     public MigrationContext {
         Objects.requireNonNull(workflowId, "workflowId");
         Objects.requireNonNull(currentStepId, "currentStepId");
+        Objects.requireNonNull(sourceScope, "sourceScope");
+        Objects.requireNonNull(targetScope, "targetScope");
         Objects.requireNonNull(sourcePlanHash, "sourcePlanHash");
         Objects.requireNonNull(targetPlanHash, "targetPlanHash");
         Objects.requireNonNull(recentHistory, "recentHistory");

@@ -27,16 +27,20 @@ import dev.vertique.workflow.definition.compiler.WorkflowDefinitionCompiler;
 import dev.vertique.workflow.definition.expression.ExpressionProfile;
 import dev.vertique.workflow.definition.expression.cel.CelExpressionProfile;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
+import dev.vertique.workflow.definition.parser.ProductionParserFixture;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParser;
 import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
+import dev.vertique.workflow.definition.validator.Violation;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentValidator;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadException;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
@@ -68,26 +72,32 @@ class WorkflowDefinitionBootstrapTest {
 
     record StartTask(String id) {}
 
-    @WorkflowContract(definitionId = "boot-alpha", definitionVersion = 1)
+    @WorkflowContract
     interface BootAlphaV1Contract {}
 
-    @WorkflowContract(definitionId = "boot-beta", definitionVersion = 1)
+    @WorkflowContract
     interface BootBetaV1Contract {}
 
-    @WorkflowContract(definitionId = "boot-gamma", definitionVersion = 1)
+    @WorkflowContract
     interface BootGammaV1Contract {}
+
+    /** One contract shared by several documents; its annotation attributes name an id and version nobody has. */
+    @WorkflowContract
+    interface ParityContract {}
 
     private static final String SIXTY_FOUR_CODE_POINTS =
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private static final String OVER_LONG_ID =
             SIXTY_FOUR_CODE_POINTS + SIXTY_FOUR_CODE_POINTS + SIXTY_FOUR_CODE_POINTS + SIXTY_FOUR_CODE_POINTS;
 
-    @WorkflowContract(definitionId = OVER_LONG_ID, definitionVersion = 1)
+    @WorkflowContract
     interface OverLongIdContract {}
 
     // --- Infrastructure ---
 
     private WorkflowDefinitionPipeline pipeline;
+    private WorkflowDefinitionDocumentValidator validator;
+    private WorkflowDefinitionCompiler compiler;
     private WorkflowDefinitionStore store;
 
     @BeforeEach
@@ -122,10 +132,10 @@ class WorkflowDefinitionBootstrapTest {
         DefaultNamedConditionRegistry conditionRegistry = new DefaultNamedConditionRegistry(Set.of());
         DecisionRouteCompiler decisionRouteCompiler =
                 new DecisionRouteCompiler(profile, conditionRegistry, mapperFactory);
-        WorkflowDefinitionCompiler compiler = new WorkflowDefinitionCompiler(lookup, profile, decisionRouteCompiler);
+        compiler = new WorkflowDefinitionCompiler(lookup, profile, decisionRouteCompiler);
 
         WorkflowDefinitionParser parser = ServiceTestHelpers.realParser();
-        WorkflowDefinitionDocumentValidator validator = new WorkflowDefinitionDocumentValidator(lookup);
+        validator = new WorkflowDefinitionDocumentValidator(lookup);
         pipeline = new WorkflowDefinitionPipeline(parser, validator, compiler);
         store = new WorkflowDefinitionStore();
     }
@@ -170,17 +180,68 @@ class WorkflowDefinitionBootstrapTest {
     class OneGoodResource {
 
         @Test
-        @DisplayName("bootstrap registers the definition; resolveCurrent works")
+        @DisplayName("bootstrap registers the definition and it resolves")
         void bootstrapsOneDefinition() {
             WorkflowDefinitionBootstrap bs =
                     bootstrap(Set.of(() -> List.of(resourceFor("boot-alpha", 1, BootAlphaV1Contract.class))));
             DefaultWorkflowRegistry reg = freshRegistry();
             bs.contribute(reg);
 
-            assertThat(reg.resolveCurrent("boot-alpha").plan().definitionId()).isEqualTo("boot-alpha");
+            assertThat(reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L))
+                            .plan()
+                            .definitionId())
+                    .isEqualTo("boot-alpha");
             assertThat(store.list()).hasSize(1);
-            assertThat(store.list().iterator().next().status()).isEqualTo(ActivationStatus.ACTIVE);
+            assertThat(store.list().iterator().next().status()).isEqualTo(ActivationStatus.AVAILABLE);
         }
+    }
+
+    // --- Packaged documents and the default scope ---
+
+    @Test
+    @DisplayName("packaged documents load into the default scope and a scope field is rejected")
+    void packagedDocumentsLoadIntoTheDefaultScopeAndRejectAScopeField() {
+        // Given: the production parser, one valid packaged document and a second that also names a scope
+        WorkflowDefinitionPipeline strict =
+                new WorkflowDefinitionPipeline(ProductionParserFixture.parser(), validator, compiler);
+        DefinitionResource valid = resourceFor("boot-alpha", 1, BootAlphaV1Contract.class);
+        byte[] withScopeField = (new String(yamlFor("boot-alpha", 1, BootAlphaV1Contract.class), StandardCharsets.UTF_8)
+                        + "scope: acme\n")
+                .getBytes(StandardCharsets.UTF_8);
+        DefinitionResource scoped = new DefinitionResource(
+                withScopeField,
+                DocumentFormat.YAML,
+                new SourceMetadata("test", "test://boot-alpha/scoped", null, null, null, Instant.now()));
+
+        // When: the bootstrap contributes the valid document
+        WorkflowDefinitionStore acceptingStore = new WorkflowDefinitionStore();
+        DefaultWorkflowRegistry accepting = freshRegistry();
+        new WorkflowDefinitionBootstrap(strict, acceptingStore, Set.of(() -> List.of(valid))).contribute(accepting);
+
+        // Then: it is registered under the default scope and under no other
+        assertThat(accepting.find(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L)))
+                .isPresent();
+        assertThat(accepting.find(new DefinitionKey("acme", "boot-alpha", 1L))).isEmpty();
+        assertThat(accepting.allRegistered()).hasSize(1);
+
+        // When: the bootstrap contributes the document that carries a scope field
+        WorkflowDefinitionStore rejectingStore = new WorkflowDefinitionStore();
+        DefaultWorkflowRegistry rejecting = freshRegistry();
+        WorkflowDefinitionBootstrap withScope =
+                new WorkflowDefinitionBootstrap(strict, rejectingStore, Set.of(() -> List.of(scoped)));
+
+        // Then: it fails as a parse failure attributed to the resource, and nothing is registered or stored
+        assertThatThrownBy(() -> withScope.contribute(rejecting))
+                .isInstanceOf(WorkflowDefinitionLoadException.class)
+                .satisfies(ex -> {
+                    List<Violation> violations =
+                            ((WorkflowDefinitionLoadException) ex).violations().toList();
+                    assertThat(violations).extracting(Violation::code).containsExactly("DOCUMENT_PARSE_FAILURE");
+                    assertThat(violations.get(0).message()).contains("test://boot-alpha/scoped");
+                });
+        assertThat(rejecting.allRegistered()).isEmpty();
+        assertThat(rejecting.find(new DefinitionKey("acme", "boot-alpha", 1L))).isEmpty();
+        assertThat(rejectingStore.list()).isEmpty();
     }
 
     // --- Two good resources from one source ---
@@ -198,8 +259,14 @@ class WorkflowDefinitionBootstrapTest {
             DefaultWorkflowRegistry reg = freshRegistry();
             bs.contribute(reg);
 
-            assertThat(reg.resolveCurrent("boot-alpha").plan().definitionId()).isEqualTo("boot-alpha");
-            assertThat(reg.resolveCurrent("boot-beta").plan().definitionId()).isEqualTo("boot-beta");
+            assertThat(reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L))
+                            .plan()
+                            .definitionId())
+                    .isEqualTo("boot-alpha");
+            assertThat(reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-beta", 1L))
+                            .plan()
+                            .definitionId())
+                    .isEqualTo("boot-beta");
             assertThat(store.list()).hasSize(2);
         }
     }
@@ -215,7 +282,7 @@ class WorkflowDefinitionBootstrapTest {
         void duplicateWithinSourceThrows() {
             // Same contract for the duplicate (store collision happens at storeCandidate)
             // Use different contract but same (id, version) → store collision
-            @WorkflowContract(definitionId = "boot-alpha", definitionVersion = 1)
+            @WorkflowContract
             interface BootAlphaDupContract {}
 
             WorkflowDefinitionBootstrap bs = bootstrap(Set.of(() -> List.of(
@@ -239,6 +306,48 @@ class WorkflowDefinitionBootstrapTest {
             // Registry must be untouched
             assertThat(reg.allRegistered()).isEmpty();
         }
+    }
+
+    // --- Documents sharing one contract ---
+
+    @Test
+    @DisplayName("both register, and only an identical (id, version) is a duplicate")
+    void packagedDocumentsSharingOneContractBothRegister() {
+        // Given: two packaged documents naming one contract, and a third repeating the first's id and version
+        DefinitionResource first = resourceFor("parity-doc", 1, ParityContract.class);
+        DefinitionResource variant = resourceFor("parity-variant", 1, ParityContract.class);
+        DefinitionResource repeated = resourceFor("parity-doc", 1, ParityContract.class);
+
+        // When: the bootstrap contributes the first two
+        DefaultWorkflowRegistry registry = freshRegistry();
+        bootstrap(Set.of(() -> List.of(first, variant))).contribute(registry);
+
+        // Then: both are registered and name the same contract
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "parity-doc", 1L))
+                        .contractName())
+                .isEqualTo(ParityContract.class.getName());
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "parity-variant", 1L))
+                        .contractName())
+                .isEqualTo(ParityContract.class.getName());
+
+        // When: the bootstrap contributes all three, the repeat coming from another source
+        DefaultWorkflowRegistry other = freshRegistry();
+        WorkflowDefinitionBootstrap withRepeat = new WorkflowDefinitionBootstrap(
+                pipeline,
+                new WorkflowDefinitionStore(),
+                Set.of(() -> List.of(first, variant), () -> List.of(repeated)));
+
+        // Then: exactly one violation is reported, the duplicate (id, version), and nothing is registered
+        assertThatThrownBy(() -> withRepeat.contribute(other))
+                .isInstanceOf(WorkflowDefinitionLoadException.class)
+                .satisfies(ex -> {
+                    List<Violation> violations =
+                            ((WorkflowDefinitionLoadException) ex).violations().toList();
+                    assertThat(violations).extracting(Violation::code).containsExactly("DUPLICATE_DEFINITION");
+                    assertThat(violations.get(0).message()).contains("'parity-doc' v1");
+                    assertThat(violations).extracting(Violation::code).doesNotContain("DUPLICATE_CONTRACT");
+                });
+        assertThat(other.allRegistered()).isEmpty();
     }
 
     // --- One bad (validation) + one good resource: all-or-nothing ---
@@ -276,8 +385,8 @@ class WorkflowDefinitionBootstrapTest {
 
             // Registry must be untouched — the good resource was not registered
             assertThat(reg.allRegistered()).isEmpty();
-            assertThatThrownBy(() -> reg.resolveCurrent("boot-beta"))
-                    .isInstanceOf(WorkflowDefinitionMissingException.class);
+            assertThatThrownBy(() -> reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-beta", 1L)))
+                    .isInstanceOf(WorkflowVersionPinUnavailableException.class);
 
             // Store must also be untouched — no candidates persisted from the partial run
             assertThat(store.list()).isEmpty();
@@ -324,7 +433,7 @@ class WorkflowDefinitionBootstrapTest {
             WorkflowDefinitionSource sourceA = () -> List.of(resourceFor("boot-alpha", 1, BootAlphaV1Contract.class));
 
             // Source B also contributes boot-alpha v1 — must be detected as duplicate
-            @WorkflowContract(definitionId = "boot-alpha", definitionVersion = 1)
+            @WorkflowContract
             interface BootAlphaSource2Contract {}
 
             WorkflowDefinitionSource sourceB = () -> List.of(new DefinitionResource(

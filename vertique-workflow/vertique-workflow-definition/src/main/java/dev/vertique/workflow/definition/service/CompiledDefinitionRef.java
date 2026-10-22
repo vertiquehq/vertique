@@ -17,7 +17,7 @@ import java.util.Objects;
  * @param definitionId the workflow definition id; must not be {@code null} or blank
  * @param definitionVersion the definition version; must be positive
  * @param planHash the SHA-256 hex digest of the compiled plan; must not be {@code null} or blank
- * @param status the current activation status; must not be {@code null}
+ * @param status the current publication status; must not be {@code null}
  * @param source provenance metadata for the definition; must not be {@code null}
  */
 public record CompiledDefinitionRef(

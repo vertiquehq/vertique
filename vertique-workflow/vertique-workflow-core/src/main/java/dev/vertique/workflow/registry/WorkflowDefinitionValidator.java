@@ -12,7 +12,7 @@ package dev.vertique.workflow.registry;
  * is a candidate, not yet registered: if any validator throws, the definition is not published and
  * its {@code (definitionId, version)} key stays unresolvable.
  *
- * <p>Validators run synchronously on the thread calling {@code register} or {@code activate}; the
+ * <p>Validators run synchronously on the thread calling {@code register} or {@code publish}; the
  * set of contributed validators is unordered. Exceptions thrown by this callback propagate and are
  * fatal to the enclosing operation; processing does not continue.
  */

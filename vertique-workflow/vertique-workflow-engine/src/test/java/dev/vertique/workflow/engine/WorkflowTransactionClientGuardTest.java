@@ -5,7 +5,6 @@ package dev.vertique.workflow.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -38,6 +37,8 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.tasks.TaskAssignment;
 import dev.vertique.workflow.tasks.TaskStore;
@@ -90,8 +91,16 @@ class WorkflowTransactionClientGuardTest {
     private static final WorkflowActor ACTOR = new WorkflowActor.User("alice");
     private static final DurableMetadata CARRIER =
             DurableMetadata.of(TenantCtxCodec.NAMESPACE, new JsonObject().put("tenantId", "CARRIER"));
-    private static final StartCommand START =
-            new StartCommand(DEFINITION_ID, Map.of(), "start-" + UUID.randomUUID(), null, null);
+    private static final StartCommand START = new StartCommand(
+            DEFINITION_ID,
+            Object.class.getName(),
+            Map.of(),
+            "start-" + UUID.randomUUID(),
+            null,
+            null,
+            null,
+            null,
+            null);
 
     /** Raised by every SQL-capable collaborator mock, so a reached boundary is visible as a failure. */
     private static final class SqlBoundaryReached extends RuntimeException {
@@ -286,8 +295,10 @@ class WorkflowTransactionClientGuardTest {
 
         RuntimeWorkflow runtime = runtimeWorkflow();
         WorkflowRegistry registry = mock(WorkflowRegistry.class);
-        when(registry.resolveCurrent(DEFINITION_ID)).thenReturn(runtime);
-        when(registry.resolvePinned(any(), anyLong())).thenReturn(runtime);
+        DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
+        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
+        when(registry.isDeployed(currentKey)).thenReturn(true);
+        when(registry.resolve(any(DefinitionKey.class))).thenReturn(runtime);
 
         DefaultContextHolder holder = new DefaultContextHolder();
         Set<DurableContextMetadataDecoder<?>> decoders = Set.of(TenantCtxCodec.decoder());
@@ -299,7 +310,11 @@ class WorkflowTransactionClientGuardTest {
         WorkflowMigrationRegistry migrations = new WorkflowMigrationRegistry() {
             @Override
             public Optional<WorkflowMigrationHandler<?, ?>> find(
-                    String definitionId, long sourceVersion, long targetVersion) {
+                    String sourceScope,
+                    String definitionId,
+                    long sourceVersion,
+                    String targetScope,
+                    long targetVersion) {
                 return Optional.empty();
             }
 
@@ -348,7 +363,8 @@ class WorkflowTransactionClientGuardTest {
                 DEFINITION_ID, 1, "plan-hash", Object.class.getName(), waitSignal.stepId(), nodes, null);
         WorkflowCallbackRegistry callbacks = mock(WorkflowCallbackRegistry.class);
         when(callbacks.stateUpdater(new CallbackId("state-updater"))).thenReturn((state, payload) -> Map.of());
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /** Returns the failure of the future, or {@code null} when it succeeded; never waits unboundedly. */

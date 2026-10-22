@@ -64,6 +64,12 @@ public abstract class SagaTestBase {
 
     private static final Logger log = LoggerFactory.getLogger(SagaTestBase.class);
 
+    /** The logical contract name of the linear order-fulfillment workflow. */
+    static final String ORDER_CONTRACT = "order-fulfillment";
+
+    /** The logical contract name of the fan-out order-fulfillment workflow. */
+    static final String FAN_OUT_CONTRACT = "order-fulfillment-fanout";
+
     /** Multi-module migrations: inbox-outbox tables + workflow tables. */
     static final String MIGRATIONS = "classpath:db/migration/inbox-outbox,classpath:db/migration/workflow";
 
@@ -211,16 +217,17 @@ public abstract class SagaTestBase {
      * {@code AFTER_START} phase the saga harness does not use.
      *
      * <p>The filter selects phases strictly before {@link dev.vertique.core.lifecycle.LifecyclePhase#BOOTSTRAP}
-     * (the first verticle phase). A {@code !isVerticlePhase()} filter would be too loose: it also
-     * admits {@code AFTER_START}, a non-verticle phase that runs <em>after</em> verticles — which
-     * this harness deliberately does not deploy.
+     * (the first verticle phase), and the definition registry step. A {@code !isVerticlePhase()} filter would be
+     * too loose: it also admits {@code AFTER_START}, a non-verticle phase that runs <em>after</em> verticles —
+     * which this harness deliberately does not deploy.
      *
      * @param component the fully-wired application component
      * @return a Future that completes once the pre-verticle startup steps have run
      */
     private static Future<Void> runNonVerticleStartupSteps(AppComponent component) {
         List<ApplicationStartupStep> steps = component.startupSteps().stream()
-                .filter(step -> step.phase().ordinal() < dev.vertique.core.lifecycle.LifecyclePhase.BOOTSTRAP.ordinal())
+                .filter(step -> step.phase().ordinal() < dev.vertique.core.lifecycle.LifecyclePhase.BOOTSTRAP.ordinal()
+                        || isDefinitionRegistryStep(step))
                 .sorted(LifecycleOrdered.comparator())
                 .toList();
         Future<Void> chain = Future.succeededFuture();
@@ -228,6 +235,14 @@ public abstract class SagaTestBase {
             chain = chain.compose(v -> step.start());
         }
         return chain;
+    }
+
+    /**
+     * Whether the step records the code definitions in the durable registry and activates them. A start without a
+     * version needs that record, so the harness runs this one step of the verticle phase as well.
+     */
+    private static boolean isDefinitionRegistryStep(ApplicationStartupStep step) {
+        return step.getClass().getSimpleName().equals("WorkflowDefinitionRegistryBootstrapStep");
     }
 
     /** Clears all workflow, outbox, inbox, and job tables between tests. */
@@ -293,7 +308,8 @@ public abstract class SagaTestBase {
                 new PlaceOrder(orderId, "cust-" + orderId, List.of(new PlaceOrder.OrderItem("SKU-1", 1, 500L)), 500L);
         return component
                 .workflowOperations()
-                .start(new StartCommand("order-fulfillment", cmd, cmd.idempotencyKey(), null, null));
+                .start(new StartCommand(
+                        "order-fulfillment", ORDER_CONTRACT, cmd, cmd.idempotencyKey(), null, null, null, null, null));
     }
 
     /**
@@ -307,7 +323,16 @@ public abstract class SagaTestBase {
                 new PlaceOrder(orderId, "cust-" + orderId, List.of(new PlaceOrder.OrderItem("SKU-1", 1, 500L)), 500L);
         return component
                 .workflowOperations()
-                .start(new StartCommand("order-fulfillment-fanout", cmd, cmd.idempotencyKey(), null, null));
+                .start(new StartCommand(
+                        "order-fulfillment-fanout",
+                        FAN_OUT_CONTRACT,
+                        cmd,
+                        cmd.idempotencyKey(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null));
     }
 
     /**
@@ -341,9 +366,9 @@ public abstract class SagaTestBase {
      * mode). Does NOT deploy any Vert.x verticles — all dispatch is in-process.
      *
      * <p>For all dispatches the workflow id is read from the {@code x-workflow-id} outbox header
-     * so routing is not affected by the branch-state propagation limitation (PRD-WF-002
-     * §NOT-IMPLEMENTED: branch payload factories see an empty state rather than the parent
-     * instance state, making state-derived fields like orderId unavailable at dispatch time).
+     * so routing is not affected by the branch-state propagation limitation (branch payload
+     * factories see an empty state rather than the parent instance state, making state-derived
+     * fields like orderId unavailable at dispatch time).
      * For fan-out branch dispatches, {@code x-workflow-fork-step-id} and
      * {@code x-workflow-branch-id} headers are additionally extracted and forwarded to the
      * branch-aware {@link dev.vertique.workflow.ops.TransactionalWorkflowOperations#signal} overload.
@@ -389,7 +414,7 @@ public abstract class SagaTestBase {
         String branchId = record.headers().get("x-workflow-branch-id");
 
         // Always use the workflow id from the outbox header: this avoids the branch-state
-        // propagation limitation (PRD-WF-002: branch payload factories see empty state so
+        // propagation limitation (branch payload factories see empty state so
         // orderId is null in the dispatch command). The x-workflow-id header is set by
         // OutboxSideEffectRecorder for every workflow service dispatch.
         WorkflowInstanceId instanceId = instanceIdFromHeader(record);

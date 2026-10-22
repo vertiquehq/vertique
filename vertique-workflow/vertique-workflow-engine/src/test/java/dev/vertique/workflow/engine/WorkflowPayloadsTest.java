@@ -11,13 +11,21 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.dsl.WorkflowBuilder;
+import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowType;
 import io.vertx.core.Future;
 import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.JsonObject;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -80,6 +88,122 @@ class WorkflowPayloadsTest {
 
         assertEquals(WorkflowDefinitionException.class, failure.getClass());
         assertTrue(failure.getMessage().contains("com.example.Missing"), "message must name the type");
+    }
+
+    @Test
+    @DisplayName("an unresolvable decision class echoes a bounded, printable name and no loader message")
+    void unresolvableDecisionClassEchoIsBoundedAndPrintable() {
+        // Given a declared type name with a line break, a forged log line and a long tail
+        String hostile = "evil.Type\nFORGED LOG LINE " + "x".repeat(300);
+
+        // When it is validated through the type-name index
+        WorkflowDefinitionException failure = assertThrows(
+                WorkflowDefinitionException.class,
+                () -> WorkflowPayloads.validateAndCoerceTaskPayload(
+                        new JsonObject(), hostile, new DefaultWorkflowTypeNames()));
+
+        // Then the message names the start of the type without control characters
+        assertTrue(failure.getMessage().contains("evil.Type"), "message must name the type");
+        assertTrue(failure.getMessage().chars().noneMatch(Character::isISOControl), failure.getMessage());
+
+        // And neither the long tail nor the loader's own repetition of the name is echoed
+        assertFalse(failure.getMessage().contains("x".repeat(100)), failure.getMessage());
+        assertTrue(failure.getMessage().length() < 250, failure.getMessage());
+    }
+
+    // --- Type-name resolution ---
+
+    /** Decision payload type that carries a logical name. */
+    @WorkflowType("approval")
+    record Approval(boolean approved, String note) {}
+
+    record ApprovalState(String id) {}
+
+    record ApprovalStart(String id) {}
+
+    @WorkflowContract
+    interface ApprovalContract {}
+
+    @Test
+    @DisplayName("a decision payload resolves through the type names by its logical and by its binary name")
+    void decisionPayloadResolvesThroughTypeNames() {
+        // Given: an index holding Approval under its logical name, and a context class loader that records requests
+        DefaultWorkflowTypeNames names = new DefaultWorkflowTypeNames();
+        new DefaultWorkflowRegistry(null, Set.of(), names).register(approvalDefinition());
+        RecordingLoader loader = new RecordingLoader(getClass().getClassLoader());
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(loader);
+        JsonObject payload = new JsonObject().put("approved", true).put("note", "looks fine");
+        try {
+            // When: the payload is validated against the logical name, then against the binary name of a row
+            // written before the annotation existed
+            Object byLogicalName = WorkflowPayloads.validateAndCoerceTaskPayload(payload, "approval", names);
+            Object byBinaryName =
+                    WorkflowPayloads.validateAndCoerceTaskPayload(payload, Approval.class.getName(), names);
+
+            // Then: both calls return an Approval with the payload's values
+            Approval expected = new Approval(true, "looks fine");
+            assertEquals(expected, assertInstanceOf(Approval.class, byLogicalName));
+            assertEquals(expected, assertInstanceOf(Approval.class, byBinaryName));
+
+            // And: the index was the only lookup path, so the context class loader never saw the logical name
+            assertFalse(loader.requested.contains("approval"), "requested: " + loader.requested);
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
+        }
+    }
+
+    private static WorkflowDefinition<ApprovalState, ApprovalContract> approvalDefinition() {
+        return new WorkflowDefinition<>() {
+            @Override
+            public Class<ApprovalContract> contract() {
+                return ApprovalContract.class;
+            }
+
+            @Override
+            public Class<ApprovalState> stateType() {
+                return ApprovalState.class;
+            }
+
+            @Override
+            public String definitionId() {
+                return "approval-saga";
+            }
+
+            @Override
+            public long definitionVersion() {
+                return 1L;
+            }
+
+            @Override
+            public void define(WorkflowBuilder<ApprovalState> wf) {
+                wf.init(ApprovalStart.class, start -> new ApprovalState(start.id()))
+                        .initialStep("review")
+                        .task("review")
+                        .assignToRole("reviewers")
+                        .decision("approve", Approval.class)
+                        .onDecision((state, decision) -> state)
+                        .toStep("done")
+                        .build()
+                        .complete("done");
+            }
+        };
+    }
+
+    /** A loader that delegates to its parent and records the class names it is asked for. */
+    private static final class RecordingLoader extends ClassLoader {
+
+        final List<String> requested = new ArrayList<>();
+
+        RecordingLoader(ClassLoader parent) {
+            super(parent);
+        }
+
+        @Override
+        public Class<?> loadClass(String name) throws ClassNotFoundException {
+            requested.add(name);
+            return super.loadClass(name);
+        }
     }
 
     private static void assertSingleDetail(WorkflowInvalidPayloadException rejection, String message, String type) {

@@ -178,6 +178,8 @@ final class BranchCompensationOrchestrator {
                             inst.id(),
                             seq,
                             inst.definitionId(),
+                            inst.definitionScopeKey(),
+                            inst.scopeKey(),
                             cn.stepId(),
                             branchToken.id(),
                             branchToken.forkStepId(),

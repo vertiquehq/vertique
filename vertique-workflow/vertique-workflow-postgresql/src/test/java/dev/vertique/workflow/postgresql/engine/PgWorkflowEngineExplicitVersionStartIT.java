@@ -75,18 +75,15 @@ public class PgWorkflowEngineExplicitVersionStartIT {
     record SimplePayload(String id) {}
 
     /** Contract interface for v1 of the pin-test definition. */
-    interface PinTestContractV1 {}
-
-    /** Contract interface for v2 of the pin-test definition — must be distinct from V1. */
-    interface PinTestContractV2 {}
+    interface PinTestContract {}
 
     static final String DEF_ID = "explicit-version-pin-test";
 
     /** v1 definition: init + complete immediately. */
-    static final WorkflowDefinition<SimplePayload, PinTestContractV1> DEF_V1 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<SimplePayload, PinTestContract> DEF_V1 = new WorkflowDefinition<>() {
         @Override
-        public Class<PinTestContractV1> contract() {
-            return PinTestContractV1.class;
+        public Class<PinTestContract> contract() {
+            return PinTestContract.class;
         }
 
         @Override
@@ -111,10 +108,10 @@ public class PgWorkflowEngineExplicitVersionStartIT {
     };
 
     /** v2 definition: init + complete immediately, distinct contract. */
-    static final WorkflowDefinition<SimplePayload, PinTestContractV2> DEF_V2 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<SimplePayload, PinTestContract> DEF_V2 = new WorkflowDefinition<>() {
         @Override
-        public Class<PinTestContractV2> contract() {
-            return PinTestContractV2.class;
+        public Class<PinTestContract> contract() {
+            return PinTestContract.class;
         }
 
         @Override
@@ -202,7 +199,8 @@ public class PgWorkflowEngineExplicitVersionStartIT {
     @DisplayName("requestedDefinitionVersion=1 pins instance to v1 even when v2 is registered")
     void startWithRequestedVersionOnePinsToV1(VertxTestContext ctx) {
         String ikey = "pin-v1-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand(DEF_ID, new SimplePayload("p"), ikey, null, null, 1L);
+        StartCommand cmd = new StartCommand(
+                DEF_ID, PinTestContract.class.getName(), new SimplePayload("p"), ikey, null, null, 1L, null, null);
 
         engine.start(cmd)
                 .compose(id -> engine.query(id))
@@ -222,7 +220,8 @@ public class PgWorkflowEngineExplicitVersionStartIT {
     @DisplayName("requestedDefinitionVersion=2 pins instance to v2")
     void startWithRequestedVersionTwoPinsToV2(VertxTestContext ctx) {
         String ikey = "pin-v2-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand(DEF_ID, new SimplePayload("p"), ikey, null, null, 2L);
+        StartCommand cmd = new StartCommand(
+                DEF_ID, PinTestContract.class.getName(), new SimplePayload("p"), ikey, null, null, 2L, null, null);
 
         engine.start(cmd)
                 .compose(id -> engine.query(id))
@@ -242,7 +241,8 @@ public class PgWorkflowEngineExplicitVersionStartIT {
     void startWithNoRequestedVersionUsesCurrentVersion(VertxTestContext ctx) {
         String ikey = "pin-current-" + UUID.randomUUID();
         // 5-arg backward-compat constructor: no requested version.
-        StartCommand cmd = new StartCommand(DEF_ID, new SimplePayload("p"), ikey, null, null);
+        StartCommand cmd = new StartCommand(
+                DEF_ID, PinTestContract.class.getName(), new SimplePayload("p"), ikey, null, null, null, null, null);
 
         engine.start(cmd)
                 .compose(id -> engine.query(id))
@@ -262,7 +262,8 @@ public class PgWorkflowEngineExplicitVersionStartIT {
     @DisplayName("requestedDefinitionVersion=99 (unregistered) → WorkflowVersionPinUnavailableException")
     void startWithUnregisteredVersionFails(VertxTestContext ctx) {
         String ikey = "pin-missing-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand(DEF_ID, new SimplePayload("p"), ikey, null, null, 99L);
+        StartCommand cmd = new StartCommand(
+                DEF_ID, PinTestContract.class.getName(), new SimplePayload("p"), ikey, null, null, 99L, null, null);
 
         engine.start(cmd)
                 .onComplete(ar -> ctx.verify(() -> {

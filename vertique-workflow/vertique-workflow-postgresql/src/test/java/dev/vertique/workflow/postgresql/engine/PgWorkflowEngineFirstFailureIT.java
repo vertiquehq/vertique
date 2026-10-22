@@ -182,7 +182,16 @@ public class PgWorkflowEngineFirstFailureIT {
     @DisplayName("AC #13 — FIRST_FAILURE takes the failure route on the first branch to terminate FAILED")
     void firstFailureAdvancesOnFirstFailingBranch(VertxTestContext ctx) {
         StartRace payload = new StartRace("rf1");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         engine.start(cmd)
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {

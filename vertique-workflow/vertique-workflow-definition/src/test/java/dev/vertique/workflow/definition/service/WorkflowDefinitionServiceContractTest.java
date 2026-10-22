@@ -28,10 +28,10 @@ class WorkflowDefinitionServiceContractTest {
         assertFutureMethod(
                 WorkflowDefinitionService.class,
                 "load",
-                new Class<?>[] {byte[].class, DocumentFormat.class, SourceMetadata.class, String.class},
+                new Class<?>[] {String.class, byte[].class, DocumentFormat.class, SourceMetadata.class},
                 CompiledDefinitionRef.class);
         assertFutureMethod(
-                WorkflowDefinitionService.class, "activate", new Class<?>[] {DefinitionKey.class}, Void.class);
+                WorkflowDefinitionService.class, "publish", new Class<?>[] {DefinitionKey.class}, Void.class);
         assertFutureMethod(
                 WorkflowDefinitionService.class, "list", new Class<?>[] {DefinitionFilter.class}, List.class);
         assertFutureMethod(
@@ -43,10 +43,10 @@ class WorkflowDefinitionServiceContractTest {
         assertFutureMethod(
                 DefaultWorkflowDefinitionService.class,
                 "load",
-                new Class<?>[] {byte[].class, DocumentFormat.class, SourceMetadata.class, String.class},
+                new Class<?>[] {String.class, byte[].class, DocumentFormat.class, SourceMetadata.class},
                 CompiledDefinitionRef.class);
         assertFutureMethod(
-                DefaultWorkflowDefinitionService.class, "activate", new Class<?>[] {DefinitionKey.class}, Void.class);
+                DefaultWorkflowDefinitionService.class, "publish", new Class<?>[] {DefinitionKey.class}, Void.class);
         assertFutureMethod(
                 DefaultWorkflowDefinitionService.class, "list", new Class<?>[] {DefinitionFilter.class}, List.class);
         assertFutureMethod(
@@ -57,6 +57,7 @@ class WorkflowDefinitionServiceContractTest {
 
         assertAbsent(WorkflowDefinitionService.class, "load", byte[].class, DocumentFormat.class, SourceMetadata.class);
         assertAbsent(WorkflowDefinitionService.class, "activate", String.class, long.class);
+        assertAbsent(WorkflowDefinitionService.class, "activate", DefinitionKey.class);
         assertAbsent(WorkflowDefinitionService.class, "list");
         assertAbsent(WorkflowDefinitionService.class, "sourceMetadata", String.class, long.class);
         assertAbsent(
@@ -66,6 +67,7 @@ class WorkflowDefinitionServiceContractTest {
                 DocumentFormat.class,
                 SourceMetadata.class);
         assertAbsent(DefaultWorkflowDefinitionService.class, "activate", String.class, long.class);
+        assertAbsent(DefaultWorkflowDefinitionService.class, "activate", DefinitionKey.class);
         assertAbsent(DefaultWorkflowDefinitionService.class, "list");
         assertAbsent(DefaultWorkflowDefinitionService.class, "sourceMetadata", String.class, long.class);
     }

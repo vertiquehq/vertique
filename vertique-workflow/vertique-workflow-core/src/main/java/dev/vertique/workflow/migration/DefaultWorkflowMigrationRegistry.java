@@ -9,6 +9,7 @@ import dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchExcepti
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Collection;
@@ -24,7 +25,7 @@ import java.util.Set;
  * performs state-type + version compatibility checks lazily at {@link #find} time.
  *
  * <h2>Deferred validation rationale</h2>
- * <p>Validating both source and target versions against {@link WorkflowRegistry#resolvePinned}
+ * <p>Validating both source and target versions against {@link WorkflowRegistry#resolve(DefinitionKey)}
  * inside the constructor would make it impossible to register a {@code v1 -> v2} migration handler
  * when only {@code v1} is statically contributed to the Dagger graph at startup time and {@code v2}
  * is loaded later via
@@ -35,20 +36,22 @@ import java.util.Set;
  * <h2>Validation rules at construction</h2>
  * <p>The following rules are enforced immediately, without consulting the registry:
  * <ol>
- *   <li>{@link WorkflowMigrationHandler#fromDefinitionVersion()} must be strictly less than
+ *   <li>When {@link WorkflowMigrationHandler#sourceScope()} equals
+ *       {@link WorkflowMigrationHandler#targetScope()},
+ *       {@link WorkflowMigrationHandler#fromDefinitionVersion()} must be strictly less than
  *       {@link WorkflowMigrationHandler#targetDefinitionVersion()} (downgrades are forbidden
- *       in v1).</li>
+ *       in v1). A handler between two scopes is not ordered by version.</li>
  *   <li>No two handlers may share the same
- *       {@code (definitionId, fromVersion, targetVersion)} triple.</li>
+ *       {@code (sourceScope, definitionId, fromVersion, targetScope, targetVersion)} key.</li>
  * </ol>
  *
  * <h2>Validation rules deferred to {@link #find}</h2>
  * <p>The following rules are checked lazily, on each call to
- * {@code find(definitionId, from, target)}:
+ * {@code find(sourceScope, definitionId, from, targetScope, target)}:
  * <ol>
  *   <li>Both {@link WorkflowMigrationHandler#fromDefinitionVersion()} and
  *       {@link WorkflowMigrationHandler#targetDefinitionVersion()} must be resolvable via
- *       {@link WorkflowRegistry#resolvePinned(String, long)}. If either is absent
+ *       {@link WorkflowRegistry#resolve(DefinitionKey)} in the handler's source and target scope. If either is absent
  *       ({@link WorkflowVersionPinUnavailableException} or
  *       {@link WorkflowDefinitionMissingException} is thrown), {@link Optional#empty()} is
  *       returned. Any other registry exception propagates immediately so it is not silently
@@ -67,13 +70,16 @@ import java.util.Set;
 public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegistry {
 
     /**
-     * Internal key for the {@code (definitionId, fromVersion, targetVersion)} triple.
+     * Internal key for the {@code (sourceScope, definitionId, fromVersion, targetScope, targetVersion)} tuple.
      *
+     * @param sourceScope the scope of the source definition version
      * @param definitionId the workflow definition id
      * @param fromVersion the source definition version
+     * @param targetScope the scope of the target definition version
      * @param targetVersion the target definition version
      */
-    private record MigrationKey(String definitionId, long fromVersion, long targetVersion) {}
+    private record MigrationKey(
+            String sourceScope, String definitionId, long fromVersion, String targetScope, long targetVersion) {}
 
     private final Map<MigrationKey, WorkflowMigrationHandler<?, ?>> handlers;
     private final WorkflowRegistry workflowRegistry;
@@ -81,13 +87,13 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
     /**
      * Creates the registry from the contributed handler set.
      *
-     * <p>Validates only the rules that do not require the registry (version direction, no duplicate
-     * triples). State-type and version-availability checks are deferred to {@link #find}.
+     * <p>Validates only the rules that do not require the registry (version direction within one scope, no
+     * duplicate keys). State-type and version-availability checks are deferred to {@link #find}.
      *
      * @param migrationHandlers the set of contributed migration handlers; may be empty
      * @param workflowRegistry the workflow registry used at {@link #find} time to resolve plans
      * @throws WorkflowDefinitionException if any handler violates the construction-time rules
-     *     (downgrade or duplicate triple)
+     *     (downgrade within one scope or duplicate key)
      */
     @Inject
     public DefaultWorkflowMigrationRegistry(
@@ -103,15 +109,15 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
     // --- WorkflowMigrationRegistry ---
 
     /**
-     * Looks up the handler for the given {@code (definitionId, sourceVersion, targetVersion)}
-     * triple, validates state-type compatibility and version availability at call time, and returns
+     * Looks up the handler for the given
+     * {@code (sourceScope, definitionId, sourceVersion, targetScope, targetVersion)} key, validates state-type compatibility and version availability at call time, and returns
      * the handler if everything is consistent.
      *
      * <p>Returns {@link Optional#empty()} if:
      * <ul>
-     *   <li>No handler is indexed for the triple.</li>
+     *   <li>No handler is indexed for the key.</li>
      *   <li>Either the source or target version is not yet registered in the
-     *       {@link WorkflowRegistry} — specifically when {@link WorkflowRegistry#resolvePinned}
+     *       {@link WorkflowRegistry} — specifically when {@link WorkflowRegistry#resolve(DefinitionKey)}
      *       throws {@link WorkflowVersionPinUnavailableException} or
      *       {@link WorkflowDefinitionMissingException} (version loaded dynamically after
      *       construction). Any other registry exception propagates as-is (C1 fix).</li>
@@ -122,8 +128,10 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
      * declared state type does not match the plan's state type. This is a configuration error
      * that must be fixed before the migration can proceed.
      *
+     * @param sourceScope the scope of the source definition version
      * @param definitionId the workflow definition id
      * @param sourceVersion the source definition version
+     * @param targetScope the scope of the target definition version
      * @param targetVersion the target definition version
      * @return the matching handler, or {@link Optional#empty()} if not found or either version
      *     is not yet registered
@@ -131,9 +139,10 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
      *     handler declares an incompatible source or target state type
      */
     @Override
-    public Optional<WorkflowMigrationHandler<?, ?>> find(String definitionId, long sourceVersion, long targetVersion) {
+    public Optional<WorkflowMigrationHandler<?, ?>> find(
+            String sourceScope, String definitionId, long sourceVersion, String targetScope, long targetVersion) {
         WorkflowMigrationHandler<?, ?> handler =
-                handlers.get(new MigrationKey(definitionId, sourceVersion, targetVersion));
+                handlers.get(new MigrationKey(sourceScope, definitionId, sourceVersion, targetScope, targetVersion));
         if (handler == null) {
             return Optional.empty();
         }
@@ -144,7 +153,7 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
         // propagate so it is not silently swallowed as a benign "not found" (C1 fix).
         RuntimeWorkflow sourcePlan;
         try {
-            sourcePlan = workflowRegistry.resolvePinned(definitionId, sourceVersion);
+            sourcePlan = workflowRegistry.resolve(new DefinitionKey(sourceScope, definitionId, sourceVersion));
         } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException ex) {
             return Optional.empty();
         }
@@ -152,7 +161,7 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
         // Resolve target plan — same: absent means not yet registered.
         RuntimeWorkflow targetPlan;
         try {
-            targetPlan = workflowRegistry.resolvePinned(definitionId, targetVersion);
+            targetPlan = workflowRegistry.resolve(new DefinitionKey(targetScope, definitionId, targetVersion));
         } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException ex) {
             return Optional.empty();
         }
@@ -200,8 +209,8 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
      *
      * <p>Only rules that do not require the registry are enforced here:
      * <ol>
-     *   <li>Version direction -- {@code fromVersion < targetVersion}.</li>
-     *   <li>No duplicate {@code (definitionId, fromVersion, targetVersion)} triple.</li>
+     *   <li>Version direction -- {@code fromVersion < targetVersion} when both scopes are equal.</li>
+     *   <li>No duplicate {@code (sourceScope, definitionId, fromVersion, targetScope, targetVersion)} key.</li>
      * </ol>
      *
      * @param handler the handler to index
@@ -211,25 +220,28 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
     private static void indexHandler(
             WorkflowMigrationHandler<?, ?> handler, Map<MigrationKey, WorkflowMigrationHandler<?, ?>> map) {
 
+        String sourceScope = handler.sourceScope();
+        String targetScope = handler.targetScope();
         String defId = handler.definitionId();
         long fromVersion = handler.fromDefinitionVersion();
         long targetVersion = handler.targetDefinitionVersion();
 
-        // Rule: fromVersion < targetVersion (downgrades forbidden in v1)
-        if (fromVersion >= targetVersion) {
+        // Rule: fromVersion < targetVersion within one scope (downgrades forbidden in v1)
+        if (sourceScope.equals(targetScope) && fromVersion >= targetVersion) {
             throw new WorkflowDefinitionException("Migration handler "
                     + handler.getClass().getName()
-                    + " for definition '" + defId + "' has fromVersion=" + fromVersion
+                    + " for definition '" + defId + "' in scope '" + sourceScope + "' has fromVersion=" + fromVersion
                     + " >= targetVersion=" + targetVersion
                     + "; downgrades and same-version migrations are forbidden");
         }
 
-        // Rule: no duplicate (definitionId, fromVersion, targetVersion) triple
-        MigrationKey key = new MigrationKey(defId, fromVersion, targetVersion);
+        // Rule: no duplicate (sourceScope, definitionId, fromVersion, targetScope, targetVersion) key
+        MigrationKey key = new MigrationKey(sourceScope, defId, fromVersion, targetScope, targetVersion);
         WorkflowMigrationHandler<?, ?> existing = map.putIfAbsent(key, handler);
         if (existing != null) {
             throw new WorkflowDefinitionException("Duplicate migration handler for definition '" + defId
-                    + "' from version " + fromVersion + " to version " + targetVersion
+                    + "' from scope '" + sourceScope + "' version " + fromVersion + " to scope '" + targetScope
+                    + "' version " + targetVersion
                     + ": " + existing.getClass().getName() + " and "
                     + handler.getClass().getName());
         }

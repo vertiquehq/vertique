@@ -233,7 +233,9 @@ public record HumanTaskNode(
      * callback that merges the payload into the workflow state, and the next step to advance to.
      *
      * @param name the decision name (e.g., {@code "approve"}, {@code "reject"}); must not be blank
-     * @param payloadTypeName fully-qualified class name of the expected payload; used by the engine
+     * @param payloadTypeName logical type name of the expected payload (the class's {@code @WorkflowType}
+     *     name, or its binary name when it has none), resolved through
+     *     {@link dev.vertique.workflow.types.WorkflowTypeNames}; used by the engine
      *     to coerce externally-ingested payloads; must not be blank
      * @param applicatorCallbackId callback id for the {@code BiFunction<S, P, S>} that merges the
      *     decision payload into the workflow state; must not be null

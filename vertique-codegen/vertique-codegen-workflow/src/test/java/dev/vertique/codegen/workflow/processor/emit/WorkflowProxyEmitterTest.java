@@ -3,6 +3,8 @@
 
 package dev.vertique.codegen.workflow.processor.emit;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
 import dev.vertique.codegen.workflow.processor.WorkflowContractProcessor;
@@ -52,7 +54,7 @@ class WorkflowProxyEmitterTest {
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import dev.vertique.workflow.ops.WorkflowView;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "orders", definitionVersion = 5L)
+                @WorkflowContract
                 public interface OrderWorkflow {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartOrder cmd);
@@ -78,14 +80,65 @@ class WorkflowProxyEmitterTest {
                 .assertGeneratedSourceContains(GENERATED_FQN, "implements OrderWorkflow")
                 .assertGeneratedSourceContains(GENERATED_FQN, "WorkflowOperations ops")
                 .assertGeneratedSourceContains(GENERATED_FQN, "this.ops = ops")
-                .assertGeneratedSourceContains(GENERATED_FQN, "this.ops.start(new StartCommand(\"orders\"")
-                .assertGeneratedSourceContains(GENERATED_FQN, "5L")
+                .assertGeneratedSourceContains(GENERATED_FQN, "WorkflowClientBinding binding")
+                .assertGeneratedSourceContains(GENERATED_FQN, "this.binding = binding")
+                .assertGeneratedSourceContains(GENERATED_FQN, "this.ops.start(this.binding.startCommand(cmd")
+                .assertGeneratedSourceDoesNotContain(GENERATED_FQN, "5L")
+                .assertGeneratedSourceDoesNotContain(GENERATED_FQN, "\"orders\"")
                 .assertGeneratedSourceContains(GENERATED_FQN, ".idempotencyKey()")
                 .assertGeneratedSourceContains(GENERATED_FQN, "this.ops.signal(id, \"cancel\"")
                 .assertGeneratedSourceContains(GENERATED_FQN, ".dedupKey()")
                 .assertGeneratedSourceContains(GENERATED_FQN, "this.ops.query(id)")
                 .assertGeneratedSourceContains(
                         GENERATED_FQN, "\"WorkflowProxy[\" + OrderWorkflow.class.getName() + \"]\"");
+    }
+
+    @Test
+    @DisplayName("no Dagger module of typed clients is generated")
+    void emitsNoClientsModule() {
+        ProcessorTestHarness.Result result = ProcessorTestHarness.run(
+                        new WorkflowContractProcessor(),
+                        startOrderPayload(),
+                        cancelOrderPayload(),
+                        orderWorkflowContract())
+                .assertSuccess();
+
+        // The proxy is still generated, so the absence below is not an empty compilation
+        assertTrue(result.compilation().generatedSourceFile(GENERATED_FQN).isPresent());
+        assertTrue(
+                result.compilation().generatedFiles().stream()
+                        .noneMatch(f -> f.getName().contains("GeneratedWorkflowClientsModule")),
+                "no GeneratedWorkflowClientsModule source or class may be generated");
+    }
+
+    @Test
+    @DisplayName("a payload parameter named 'binding' does not shadow the binding field in the start body")
+    void qualifiesBindingReceiverWhenParameterNamedBinding() {
+        JavaFileObject payload = SourceFiles.inline("com.example.StartOrder", """
+                package com.example;
+                import dev.vertique.workflow.contract.IdempotencyKeyed;
+                public record StartOrder(String id) implements IdempotencyKeyed {
+                    @Override public String idempotencyKey() { return id; }
+                }
+                """);
+        JavaFileObject contract = SourceFiles.inline("com.example.OrderWorkflow", """
+                package com.example;
+                import dev.vertique.workflow.contract.WorkflowContract;
+                import dev.vertique.workflow.contract.WorkflowStart;
+                import dev.vertique.workflow.ops.WorkflowInstanceId;
+                import io.vertx.core.Future;
+                @WorkflowContract
+                public interface OrderWorkflow {
+                    @WorkflowStart
+                    Future<WorkflowInstanceId> start(StartOrder binding);
+                }
+                """);
+
+        // assertSuccess proves the qualified 'this.binding' receiver compiles: a bare 'binding.startCommand(...)'
+        // would bind to the StartOrder parameter and fail.
+        ProcessorTestHarness.run(new WorkflowContractProcessor(), payload, contract)
+                .assertSuccess()
+                .assertGeneratedSourceContains(GENERATED_FQN, "this.binding.startCommand(");
     }
 
     @Test
@@ -102,7 +155,7 @@ class WorkflowProxyEmitterTest {
                 import dev.vertique.workflow.contract.IdempotencyKey;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "orders", definitionVersion = 3L)
+                @WorkflowContract
                 public interface OrderWorkflow {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(@IdempotencyKey String key, StartOrder cmd);
@@ -132,7 +185,7 @@ class WorkflowProxyEmitterTest {
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
                 public final class Outer {
-                    @WorkflowContract(definitionId = "nested", definitionVersion = 1L)
+                    @WorkflowContract
                     public interface Inner {
                         @WorkflowStart
                         Future<WorkflowInstanceId> start(StartOrder cmd);
@@ -164,7 +217,7 @@ class WorkflowProxyEmitterTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "orders", definitionVersion = 1L)
+                @WorkflowContract
                 public interface OrderWorkflow {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartOrder ops);
@@ -197,7 +250,7 @@ class WorkflowProxyEmitterTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "orders", definitionVersion = 1L)
+                @WorkflowContract
                 public interface OrderWorkflow {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartOrder cmd);

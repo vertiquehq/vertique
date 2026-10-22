@@ -29,7 +29,7 @@ Good fits:
 
 - A definition that names decision payload types by class name, such as a document-backed
   definition, where a typo or an unsuitable type would otherwise surface at the first decision.
-- Applications that activate definitions at runtime and want a bad definition refused before it
+- Applications that publish definitions at runtime and want a bad definition refused before it
   becomes resolvable.
 - Endpoints that want to reject a malformed decision or start payload with value-free, pointer-based
   violation details before submitting it to the engine.
@@ -50,7 +50,7 @@ modules it builds on:
 | Module | Required | Why |
 |---|---|---|
 | `WorkflowCoreModule` | yes | Owns the registry that collects definition validators |
-| `WorkflowSchemaModule` | yes | Contributes the payload validator to the registry and binds `WorkflowPayloadSchemas` |
+| `WorkflowSchemaModule` | yes | Contributes the payload validator to the registry and binds `WorkflowPayloadSchemas` and `WorkflowStateCompatibility` |
 | `JsonRuntimeModule` | yes | Binds `JsonMapperProfileRegistry` and `JsonConfig`, which the validator injects |
 | `ValidationModule` | optional | Binds a `jakarta.validation.Validator` so schemas reflect bean-validation constraints |
 
@@ -75,10 +75,29 @@ once whether the supplement is enabled.
 
 ---
 
+## State Type Comparison
+
+`WorkflowSchemaModule` also binds `WorkflowStateCompatibility`, which the workflow registry and the engine use to decide
+whether one state class extends another. It compares the canonical JSON Schemas of the two classes under the process JSON
+profile (the same generator as the payload check, without the bean-validation supplement): every property of the source
+class must exist in the target class with the same type, and the target may add properties. Nested objects compare
+property by property by the same rule, collection items and map values compare their item type, and an enum target must
+contain every constant of the source; a source property without constants (free text) is not compatible with an enum target. Required properties and `additionalProperties` narrowing are not compared. A refusal that cannot describe a state class names no class (the class name is logged at DEBUG level only). `firstIncompatibility(source, target)` answers the first incompatible schema path,
+such as `amount`, `address.city` or `items[].sku`, or an empty `Optional`; a path never carries a value.
+
+The registry applies it when a scope-owned definition and the default scope's definition of the same id and contract name
+different state classes, and the engine applies it before a migration to a definition whose state class differs. Without
+this module those cases are refused rather than accepted, so install it when a scope may define a state class that differs
+from the default scope's. A state class evolves by adding properties only; the comparison does not check that a property
+added to a class tolerates stored state JSON that lacks it, so give an added property a default (a nullable component or a
+default value).
+
+---
+
 ## What Registration Checks
 
 The validator is a `WorkflowDefinitionValidator` contributed to the workflow registry. It runs for
-every candidate definition, whether registered at bootstrap or activated at runtime. It reads the
+every candidate definition, whether registered at bootstrap or published at runtime. It reads the
 start payload type first, then the decision payload types of every human task in plan order,
 including tasks inside fork branches. For each distinct type name it does this once:
 
@@ -86,7 +105,9 @@ including tasks inside fork branches. For each distinct type name it does this o
    A primitive decision type other than `void`, such as `int`, is not skipped: it is rejected with
    the message "cannot be loaded", the same wording the engine's class lookup gives.
 2. **Reuse the cache.** A type already resolved under the same profile is not generated again.
-3. **Load the class.** The payload type name is loaded without initializing the class.
+3. **Find the class.** The payload type name is looked up in the `WorkflowTypeNames` index, where a class
+   named with `@WorkflowType` is found by its logical name. A name the index does not know is loaded as a
+   binary class name without initializing the class.
 4. **Generate the schema.** The canonical Draft 2020-12 document is produced with the input-profile
    schema generator under the process system profile (`JsonConfig.effectiveSystemProfile`).
 5. **Require an object.** The document must be object-shaped (see below).
@@ -123,7 +144,10 @@ Schemas are generated under one profile, the process system profile. The profile
 the validator is created; the profile itself is resolved at the first generation, so an unknown
 profile name fails there as a configuration error and is not wrapped.
 
-The cache is a process-wide singleton keyed by payload type name and profile id. A type is described
+The cache is a process-wide singleton keyed by the logical payload type name and profile id. The logical
+name is the `@WorkflowType` value, or the binary class name for a class without the annotation, so a start
+payload and a decision payload are both keyed the way the plan names them. `WorkflowPayloadSchemas` finds a
+schema through the same logical name. A type is described
 once per profile however many definitions or versions use it. The cache is populated even when a
 later step rejects the definition; that is harmless because nothing reads a cached schema as proof
 that a definition is registered.
@@ -144,8 +168,8 @@ linear-safe, or review them before they enter a payload type.
 
 ### Threading and class loading
 
-- Validators run synchronously on the registering thread. Call `activate` off the event loop.
-- Payload classes are loaded with this module's own class loader. Other workflow modules resolve
+- Validators run synchronously on the registering thread. Call `publish` off the event loop.
+- Payload classes the type-name index does not know are loaded with this module's own class loader. Other workflow modules resolve
   classes differently, so in an application with split class loaders the payload classes must be
   visible from the loader that loads `vertique-workflow-schema`.
 
@@ -161,7 +185,7 @@ without knowing the Java types.
 
 | Class | Role |
 |---|---|
-| `WorkflowPayloadSchemas` | `describe(definitionId, version)` for the whole definition; `decision(definitionId, version, stepId, decisionName)` for one decision; `validateDecision` and `validateStart` to validate a submitted payload |
+| `WorkflowPayloadSchemas` | `describe(key)` for the whole definition; `decision(key, stepId, decisionName)` for one decision; `validateDecision` and `validateStart` to validate a submitted payload. The key is the `DefinitionKey` of the pin: scope, definition id and version |
 | `WorkflowDefinitionDescriptor` | Definition id and version, the start payload schema (`null` for a `void` start) and the human task steps in plan order |
 | `HumanTaskStepDescriptor` | A step id and its decisions in declaration order |
 | `DecisionDescriptor` | Decision name, the step it leads to and the payload schema (`null` for a `void` decision) |
@@ -230,15 +254,18 @@ definition version:
 
 ```java
 PayloadValidationResult result =
-    schemas.validateDecision("order-review", 2, "review", "approve", payload);
+    schemas.validateDecision(key, "review", "approve", payload);
 if (!result.valid()) {
   List<ViolationDetail> violations = result.violations();
 }
-PayloadValidationResult start = schemas.validateStart("order-review", 2, startPayload);
+PayloadValidationResult start = schemas.validateStart(key, startPayload);
 ```
 
-`validateDecision(definitionId, version, stepId, decisionName, payload)` and
-`validateStart(definitionId, version, payload)` take the payload as a nullable `JsonObject`.
+`validateDecision(key, stepId, decisionName, payload)` and
+`validateStart(key, payload)` take the payload as a nullable `JsonObject`. The key names the scope, the definition id and
+the version, for example `new DefinitionKey(WorkflowScopes.DEFAULT, "order-review", 2)`, so two scopes that hold one id
+and version are described and validated by their own plans. A key that no registered definition holds describes as empty
+and validates as one `definition` violation.
 `PayloadValidationResult.valid()` is true when `violations()` is empty. A mistake by the caller, such
 as an unknown id or a payload that does not fit, is answered with a violation and never an exception.
 
@@ -369,7 +396,8 @@ profile override; the original exception is chained as the cause. The start payl
 ## Common Mistakes
 
 - **Not installing `WorkflowSchemaModule`.** Registration then succeeds without any payload check,
-  and an unsuitable type surfaces only when a decision is submitted.
+  and an unsuitable type surfaces only when a decision is submitted. A scope-owned definition whose state class
+  differs from the default scope's is refused, because no state comparison is available.
 - **Installing it without the JSON runtime module.** The validator needs `JsonMapperProfileRegistry`
   and `JsonConfig`; the component fails to build without them.
 - **Reading descriptors without the module in the registry's component.** `describe` and the
@@ -379,7 +407,7 @@ profile override; the original exception is chained as the cause. The start payl
   bean-validation constraints that the engine still enforces.
 - **Declaring a scalar or array payload type.** `String`, `int`, `List<X>` and single-value records
   are rejected at registration. Wrap the value in a record.
-- **Calling `activate` on the event loop.** Schema generation and pattern compilation block the
+- **Calling `publish` on the event loop.** Schema generation and pattern compilation block the
   calling thread.
 - **Expecting a pattern limit on the engine path.** A `@Pattern` constraint checked by the engine's
   bean-validation path runs on strings of any length; only keyed validation is bounded. Do not rely

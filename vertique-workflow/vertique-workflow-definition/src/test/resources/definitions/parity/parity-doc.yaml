@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+# Names its contract and types by logical name; the contract annotation says other things.
+definitionId: parity-doc
+definitionVersion: 1
+contract: parity-orders
+stateType: parity.state
+startPayloadType: parity.start
+initialStateMapper: parity.init
+initialStep: done
+steps:
+  - id: done
+    type: complete

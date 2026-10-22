@@ -140,6 +140,8 @@ public final class WorkflowEventSideEffectRecorder implements WorkflowSideEffect
                 .workflowId(eventIntent.workflowId().value())
                 .definitionId(eventIntent.definitionId())
                 .definitionVersion(eventIntent.definitionVersion())
+                .definitionScopeKey(eventIntent.definitionScopeKey())
+                .scopeKey(eventIntent.scopeKey())
                 .subjectRef(eventIntent.subjectRef())
                 .businessKey(eventIntent.businessKey())
                 .occurredAt(eventIntent.occurredAt())

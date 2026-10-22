@@ -11,6 +11,7 @@ import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -21,6 +22,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
@@ -29,6 +31,7 @@ import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -38,10 +41,10 @@ import java.util.function.Supplier;
  *
  * <p>Lazy registry resolution preserves contributor wiring. Runtime byte admission precedes the
  * ordinary pipeline. Durable loads then validate the complete source representation before any
- * candidate write. Without a store, the existing in-memory compilation and activation outcomes
+ * candidate write. Without a store, the existing in-memory compilation and publication outcomes
  * remain available through failed or successful Futures. Compilation invoked on a Vert.x context
  * uses that context's worker executor; standalone callers without a context use their caller thread.
- * JVM fatal Errors are not treated as ordinary recoverable load or activation failures.
+ * JVM fatal Errors are not treated as ordinary recoverable load or publication failures.
  */
 @Singleton
 public final class DefaultWorkflowDefinitionService implements WorkflowDefinitionService {
@@ -79,8 +82,10 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
 
     @Override
     public Future<CompiledDefinitionRef> load(
-            byte[] content, DocumentFormat format, SourceMetadata metadata, @Nullable String tenantKey) {
+            String scopeKey, byte[] content, DocumentFormat format, SourceMetadata metadata) {
         return attempt(() -> {
+            // The scope is checked before the document is read, so a bad scope costs no parsing work.
+            requireValidScope(scopeKey);
             Objects.requireNonNull(content, "content");
             Objects.requireNonNull(format, "format");
             Objects.requireNonNull(metadata, "metadata");
@@ -92,22 +97,22 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
             return work(() -> {
                         CompiledDefinition compiled = pipeline.load(resource);
                         DefinitionKey key = new DefinitionKey(
-                                tenantKey,
+                                scopeKey,
                                 compiled.definition().definitionId(),
                                 compiled.definition().definitionVersion());
-                        if (durable.isPresent()) requireTenantNamespace(key);
                         WorkflowDefinitionDocument text = durable.isPresent()
                                 ? DefinitionSourceText.decode(key, resource.content(), format, config)
                                 : null;
-                        return new Candidate(key, compiled, text, format.name());
+                        return new Candidate(
+                                key, compiled, text, format.name(), pipeline.nameBinding(compiled.definition()));
                     })
                     .compose(candidate -> {
                         if (durable.isEmpty()) {
                             store.candidate(candidate.key(), candidate.compiled(), candidate.format());
                             return Future.succeededFuture(reference(candidate.compiled()));
                         }
-                        WorkflowDefinitionRecord record =
-                                record(candidate.key(), candidate.compiled(), candidate.format());
+                        WorkflowDefinitionRecord record = record(
+                                candidate.key(), candidate.compiled(), candidate.format(), candidate.nameBinding());
                         return durable.orElseThrow()
                                 .insertCandidate(record, candidate.document())
                                 .map(ignored -> {
@@ -120,26 +125,16 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     }
 
     /**
-     * With a durable store, a tenant-scoped definition id is the tenant key, a colon and a name, so one tenant
-     * cannot hold an id that another owner needs. A tenant key therefore must not contain the colon itself. The
-     * values were already bounded and stripped of control characters by {@link DefinitionKey}, so the rejection
-     * message cannot carry unbounded or forged text.
+     * Applies the scope-key rules of {@link DefinitionKey} to the caller's scope argument. The key rejects a missing
+     * scope with {@link NullPointerException} and any other invalid value with {@link IllegalArgumentException}; its
+     * messages name the field and the limit, never the scope value or any document content.
      */
-    private static void requireTenantNamespace(DefinitionKey key) {
-        String tenantKey = key.tenantKey();
-        if (tenantKey == null) return;
-        String definitionId = key.definitionId();
-        String prefix = tenantKey + ":";
-        if (tenantKey.indexOf(':') >= 0
-                || !definitionId.startsWith(prefix)
-                || definitionId.substring(prefix.length()).isBlank())
-            throw new WorkflowDefinitionException("tenant '" + tenantKey + "' may only load definitions whose id is '"
-                    + tenantKey.replace(':', '_') + ":<name>' (a tenant key must not contain ':'); rejected id '"
-                    + definitionId + "'");
+    private static void requireValidScope(String scopeKey) {
+        new DefinitionKey(scopeKey, WorkflowScopes.DEFAULT, 1);
     }
 
     @Override
-    public Future<Void> activate(DefinitionKey key) {
+    public Future<Void> publish(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
             if (durable.isPresent()) {
@@ -148,18 +143,20 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                             WorkflowDefinitionLifecycleException.Reason.LOADER_MISSING,
                             key,
                             "No lifecycle implementation for " + key);
-                return lifecycle.orElseThrow().activate(key);
+                return lifecycle.orElseThrow().publish(key);
             }
             boolean claimed = store.tryClaimForActivation(key);
             if (!claimed) {
                 ActivationStatus status = store.currentStatus(key);
-                if (status == ActivationStatus.ACTIVE) return Future.succeededFuture();
-                throw new WorkflowDefinitionException("cannot activate " + key + ": status is " + status);
+                if (status == ActivationStatus.AVAILABLE) return Future.succeededFuture();
+                throw new WorkflowDefinitionException("cannot publish " + key + ": status is " + status);
             }
             try {
                 registryProvider
                         .get()
-                        .register(store.get(key).orElseThrow().compiled().definition());
+                        .register(
+                                key.scopeKey(),
+                                store.get(key).orElseThrow().compiled().definition());
                 store.markActive(key);
                 return Future.succeededFuture();
             } catch (RuntimeException e) {
@@ -242,6 +239,32 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     }
 
     @Override
+    public Future<Void> activate(String scopeKey, String definitionId, String targetScopeKey, long version) {
+        return attempt(() -> lifecycleOperation("activate").activate(scopeKey, definitionId, targetScopeKey, version));
+    }
+
+    @Override
+    public Future<Void> deactivateDefault(String definitionId) {
+        return attempt(() -> lifecycleOperation("deactivate the default").deactivateDefault(definitionId));
+    }
+
+    @Override
+    public Future<Void> follow(String scopeKey, String definitionId) {
+        return attempt(() -> lifecycleOperation("follow").follow(scopeKey, definitionId));
+    }
+
+    @Override
+    public Future<List<DefinitionActivation>> activations(@Nullable String scopeKey) {
+        return attempt(() -> lifecycleOperation("list activations").activations(scopeKey));
+    }
+
+    /** The lifecycle that carries the activation operations; the facade holds no activation state of its own. */
+    private WorkflowDefinitionLifecycle lifecycleOperation(String operation) {
+        return lifecycle.orElseThrow(
+                () -> new WorkflowDefinitionException("cannot " + operation + ": no lifecycle implementation"));
+    }
+
+    @Override
     public Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter) {
         return attempt(() -> {
             Objects.requireNonNull(filter, "filter");
@@ -266,17 +289,22 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
         return new SourceMetadata(p.sourceType(), p.uri(), p.revision(), p.author(), p.uploadId(), p.loadedAt());
     }
 
-    static WorkflowDefinitionRecord record(DefinitionKey key, CompiledDefinition compiled, String format) {
+    static WorkflowDefinitionRecord record(
+            DefinitionKey key, CompiledDefinition compiled, String format, Map<String, String> nameBinding) {
         Instant now = Instant.now();
         return new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
+                compiled.contractName(),
+                compiled.stateTypeName(),
                 compiled.planHash(),
                 DefinitionStatus.CANDIDATE,
                 provenance(compiled.source()),
                 format,
                 now,
-                now);
+                now,
+                nameBinding,
+                null);
     }
 
     private static CompiledDefinitionRef reference(CompiledDefinition compiled) {
@@ -307,5 +335,9 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     }
 
     private record Candidate(
-            DefinitionKey key, CompiledDefinition compiled, WorkflowDefinitionDocument document, String format) {}
+            DefinitionKey key,
+            CompiledDefinition compiled,
+            WorkflowDefinitionDocument document,
+            String format,
+            Map<String, String> nameBinding) {}
 }

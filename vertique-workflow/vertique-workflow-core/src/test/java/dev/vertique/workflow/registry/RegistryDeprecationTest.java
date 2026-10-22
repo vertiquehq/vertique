@@ -8,19 +8,19 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.workflow.contract.WorkflowContract;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
-import dev.vertique.workflow.exception.WorkflowProxyContractException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.util.Collection;
+import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
  * Verifies how {@link DefaultWorkflowRegistry} treats deprecated versions: current resolution skips
- * them, pinned resolution keeps serving them, unregistering clears both the contract mapping and the
+ * them, pinned resolution keeps serving them, unregistering clears both the registered definition and the
  * mark, and registries that do not implement the new members keep their documented defaults.
  */
 class RegistryDeprecationTest {
@@ -29,13 +29,10 @@ class RegistryDeprecationTest {
 
     record InvoiceStart(String id) {}
 
-    @WorkflowContract(definitionId = "deprecation-invoice", definitionVersion = 1)
-    interface InvoiceContractV1 {}
+    @WorkflowContract
+    interface InvoiceContract {}
 
-    @WorkflowContract(definitionId = "deprecation-invoice", definitionVersion = 2)
-    interface InvoiceContractV2 {}
-
-    @WorkflowContract(definitionId = "deprecation-refund", definitionVersion = 1)
+    @WorkflowContract
     interface RefundContractV1 {}
 
     private static <C> WorkflowDefinition<InvoiceState, C> definition(String id, long version, Class<C> contract) {
@@ -78,18 +75,28 @@ class RegistryDeprecationTest {
         }
 
         @Override
-        public RuntimeWorkflow resolveCurrent(String definitionId) {
+        public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+        public RuntimeWorkflow resolve(DefinitionKey key) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
-            throw new UnsupportedOperationException();
+        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
+            return Optional.empty();
+        }
+
+        @Override
+        public java.util.List<DefinitionKey> keysFor(String definitionId) {
+            return java.util.List.of();
+        }
+
+        @Override
+        public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
+            return Optional.empty();
         }
 
         @Override
@@ -99,81 +106,126 @@ class RegistryDeprecationTest {
     }
 
     @Test
-    @DisplayName("deprecated versions are skipped for current resolution but still served to pinned resolution")
+    @DisplayName("a deprecated version is marked and still served to pinned resolution")
     void skipsDeprecatedButKeepsPinnedResume() {
         String id = "deprecation-invoice";
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
 
-        // Given version 1 and version 2 registered with distinct contract classes
-        registry.register(definition(id, 1, InvoiceContractV1.class));
-        registry.register(definition(id, 2, InvoiceContractV2.class));
-        assertThat(registry.resolveCurrent(id).plan().definitionVersion())
-                .as("before any deprecation the highest version is current")
-                .isEqualTo(2);
-        assertThat(registry.isDeprecated(id, 2)).isFalse();
+        // Given version 1 and version 2 registered under one contract
+        registry.register(definition(id, 1, InvoiceContract.class));
+        registry.register(definition(id, 2, InvoiceContract.class));
+        assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
+                .isFalse();
 
         // When version 2 is deprecated
-        registry.markDeprecated(id, 2);
+        registry.markDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2));
 
-        // Then current resolution selects version 1, version 2 is marked, and pinned resolution still serves it
-        assertThat(registry.isDeprecated(id, 2)).isTrue();
-        assertThat(registry.isDeprecated(id, 1)).isFalse();
-        assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(1);
-        assertThat(registry.resolvePinned(id, 2).plan().definitionVersion()).isEqualTo(2);
-        assertThat(registry.resolvePinned(id, 1).plan().definitionVersion()).isEqualTo(1);
+        // Then version 2 is marked, and pinned resolution still serves it
+        assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
+                .isTrue();
+        assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .isFalse();
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2))
+                        .plan()
+                        .definitionVersion())
+                .isEqualTo(2);
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
+                        .plan()
+                        .definitionVersion())
+                .isEqualTo(1);
         assertThat(registry.allRegistered())
                 .extracting(runtime -> runtime.plan().definitionVersion())
                 .containsExactlyInAnyOrder(1L, 2L);
 
         // When version 1 is deprecated as well
-        registry.markDeprecated(id, 1);
+        registry.markDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
 
-        // Then current resolution fails typed naming the definition, while both versions stay pinned-resolvable
-        assertThatThrownBy(() -> registry.resolveCurrent(id))
-                .isInstanceOf(WorkflowDefinitionMissingException.class)
-                .hasMessageContaining(id);
-        assertThat(registry.resolvePinned(id, 1).plan().definitionVersion()).isEqualTo(1);
-        assertThat(registry.resolvePinned(id, 2).plan().definitionVersion()).isEqualTo(2);
-        assertThat(registry.isDeprecated(id, 1)).isTrue();
-        assertThat(registry.isDeprecated(id, 2)).isTrue();
+        // Then both versions stay pinned-resolvable
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
+                        .plan()
+                        .definitionVersion())
+                .isEqualTo(1);
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2))
+                        .plan()
+                        .definitionVersion())
+                .isEqualTo(2);
+        assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .isTrue();
+        assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("clearing the deprecation mark leaves the registration alone")
+    void unmarkDeprecatedMakesTheVersionCurrentAgain() {
+        String id = "unmark-invoice";
+        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
+        DefinitionKey versionTwo = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
+
+        // Given versions 1 and 2 registered and version 2 marked deprecated
+        registry.register(definition(id, 1, InvoiceContract.class));
+        registry.register(definition(id, 2, InvoiceContract.class));
+        registry.markDeprecated(versionTwo);
+        RuntimeWorkflow registered = registry.resolve(versionTwo);
+
+        // When the mark is cleared
+        registry.unmarkDeprecated(versionTwo);
+
+        // Then version 2 is no longer marked and is the same registration
+        assertThat(registry.isDeprecated(versionTwo)).isFalse();
+        assertThat(registry.resolve(versionTwo)).isSameAs(registered);
+
+        // And clearing it again, or for a version that is not registered, changes nothing
+        assertThatCode(() -> registry.unmarkDeprecated(versionTwo)).doesNotThrowAnyException();
+        assertThatCode(() -> registry.unmarkDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 9)))
+                .doesNotThrowAnyException();
+        assertThat(registry.isDeprecated(versionTwo)).isFalse();
     }
 
     @Test
     @DisplayName(
-            "unregistering a deprecated version clears its contract mapping and its mark so it can be registered again")
+            "unregistering a deprecated version clears its registered definition and its mark so it can be registered again")
     void unregisterClearsContractAndMark() {
         String id = "deprecation-refund";
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
 
         // Given a deprecated registered definition with contract RefundContractV1
         registry.register(definition(id, 1, RefundContractV1.class));
-        registry.markDeprecated(id, 1);
-        assertThat(registry.isDeprecated(id, 1)).isTrue();
-        assertThat(registry.contractMetadata(RefundContractV1.class).definitionId())
-                .isEqualTo(id);
-        assertThatThrownBy(() -> registry.resolveCurrent(id)).isInstanceOf(WorkflowDefinitionMissingException.class);
+        registry.markDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
+        assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .isTrue();
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .isPresent();
 
         // When it is unregistered
-        registry.unregister(id, 1);
+        registry.unregister(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
 
-        // Then the version, its contract mapping and its mark are all gone
+        // Then the version, its registered definition and its mark are all gone
         assertThat(registry.allRegistered()).isEmpty();
-        assertThatThrownBy(() -> registry.resolvePinned(id, 1))
+        assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-        assertThatThrownBy(() -> registry.contractMetadata(RefundContractV1.class))
-                .isInstanceOf(WorkflowProxyContractException.class);
-        assertThat(registry.isDeprecated(id, 1)).isFalse();
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .isEmpty();
+        assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .isFalse();
 
         // When the same definition is registered again
         assertThatCode(() -> registry.register(definition(id, 1, RefundContractV1.class)))
                 .doesNotThrowAnyException();
 
-        // Then the contract metadata resolves again and the old deprecation does not carry over
-        WorkflowContractMetadata metadata = registry.contractMetadata(RefundContractV1.class);
-        assertThat(metadata.definitionId()).isEqualTo(id);
-        assertThat(metadata.definitionVersion()).isEqualTo(1);
-        assertThat(registry.isDeprecated(id, 1)).isFalse();
-        assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(1);
+        // Then the definition is registered again and the old deprecation does not carry over
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .isPresent();
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
+                        .plan()
+                        .definitionId())
+                .isEqualTo(id);
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
+                        .plan()
+                        .definitionVersion())
+                .isEqualTo(1);
+        assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                .isFalse();
     }
 
     @Test
@@ -181,7 +233,8 @@ class RegistryDeprecationTest {
     void defaultMarkDeprecatedIsUnsupported() {
         WorkflowRegistry legacy = new LegacyRegistry();
 
-        assertThatThrownBy(() -> legacy.markDeprecated("deprecation-invoice", 1))
+        assertThatThrownBy(() ->
+                        legacy.markDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, "deprecation-invoice", 1)))
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
@@ -190,7 +243,9 @@ class RegistryDeprecationTest {
     void defaultIsDeprecatedReportsFalse() {
         WorkflowRegistry legacy = new LegacyRegistry();
 
-        assertThat(legacy.isDeprecated("deprecation-invoice", 1)).isFalse();
-        assertThat(legacy.isDeprecated("deprecation-invoice", 2)).isFalse();
+        assertThat(legacy.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, "deprecation-invoice", 1)))
+                .isFalse();
+        assertThat(legacy.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, "deprecation-invoice", 2)))
+                .isFalse();
     }
 }

@@ -10,12 +10,14 @@ import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,8 +38,7 @@ import org.junit.jupiter.api.Test;
  *   <li>Concurrent registrations of distinct definitionIds all succeed without data loss or
  *       exceptions (FR-WF-DEF-022).</li>
  *   <li>Concurrent register + resolve of the same id never exposes half-published state —
- *       readers either see a fully-registered workflow or get a clean
- *       {@link WorkflowDefinitionMissingException}; they NEVER see a
+ *       readers either see a fully-registered workflow or find nothing; they NEVER see a
  *       {@link NullPointerException} or {@link WorkflowVersionPinUnavailableException} from
  *       a partially-published-and-then-rolled-back entry (FR-WF-DEF-023).</li>
  *   <li>A failed {@code register()} rolls back atomically — no half-committed state is
@@ -53,22 +54,16 @@ class DefaultWorkflowRegistryConcurrencyTest {
 
     record StartTask(String id) {}
 
-    @WorkflowContract(definitionId = "task-alpha", definitionVersion = 1)
+    @WorkflowContract
     interface TaskAlphaContract {}
 
-    @WorkflowContract(definitionId = "task-foo", definitionVersion = 1)
-    interface TaskFooV1Contract {}
+    @WorkflowContract
+    interface TaskFooContract {}
 
-    @WorkflowContract(definitionId = "task-foo", definitionVersion = 2)
-    interface TaskFooV2Contract {}
-
-    @WorkflowContract(definitionId = "task-foo", definitionVersion = 3)
-    interface TaskFooV3Contract {}
-
-    // Collision: this contract is used for the "foo-v2 collision" scenario —
-    // the v2 definition below reuses this interface to exercise the rollback path.
-    @WorkflowContract(definitionId = "task-foo", definitionVersion = 1)
-    interface CollidingContractSameAsV1 {}
+    // Refusal: the "task-foo" v2 definition below names this contract instead of TaskFooContract,
+    // which the registry refuses, to exercise the rollback path.
+    @WorkflowContract
+    interface OtherTaskContract {}
 
     // --- Helpers ---
 
@@ -103,35 +98,42 @@ class DefaultWorkflowRegistryConcurrencyTest {
         };
     }
 
+    // Two contracts that race for one definition id
+    @WorkflowContract("race-a")
+    interface RaceAContract {}
+
+    @WorkflowContract("race-b")
+    interface RaceBContract {}
+
     // Contracts for the 10-definition concurrent-activation test
-    @WorkflowContract(definitionId = "id1", definitionVersion = 1)
+    @WorkflowContract
     interface C1 {}
 
-    @WorkflowContract(definitionId = "id2", definitionVersion = 1)
+    @WorkflowContract
     interface C2 {}
 
-    @WorkflowContract(definitionId = "id3", definitionVersion = 1)
+    @WorkflowContract
     interface C3 {}
 
-    @WorkflowContract(definitionId = "id4", definitionVersion = 1)
+    @WorkflowContract
     interface C4 {}
 
-    @WorkflowContract(definitionId = "id5", definitionVersion = 1)
+    @WorkflowContract
     interface C5 {}
 
-    @WorkflowContract(definitionId = "id6", definitionVersion = 1)
+    @WorkflowContract
     interface C6 {}
 
-    @WorkflowContract(definitionId = "id7", definitionVersion = 1)
+    @WorkflowContract
     interface C7 {}
 
-    @WorkflowContract(definitionId = "id8", definitionVersion = 1)
+    @WorkflowContract
     interface C8 {}
 
-    @WorkflowContract(definitionId = "id9", definitionVersion = 1)
+    @WorkflowContract
     interface C9 {}
 
-    @WorkflowContract(definitionId = "id10", definitionVersion = 1)
+    @WorkflowContract
     interface C10 {}
 
     private DefaultWorkflowRegistry registry;
@@ -208,7 +210,7 @@ class DefaultWorkflowRegistryConcurrencyTest {
         @Test
         @DisplayName("readers see either a clean miss or a complete hit; never NPE or unexpected exception")
         void resolveShouldNeverObserveHalfPublishedState() throws InterruptedException {
-            WorkflowDefinition<TaskState, ?> def = minimalDef("task-foo", 1, TaskFooV1Contract.class);
+            WorkflowDefinition<TaskState, ?> def = minimalDef("task-foo", 1, TaskFooContract.class);
 
             ExecutorService pool = Executors.newFixedThreadPool(4);
             CountDownLatch started = new CountDownLatch(1);
@@ -232,10 +234,8 @@ class DefaultWorkflowRegistryConcurrencyTest {
                     while (System.currentTimeMillis() < deadline && iterations < 1000) {
                         iterations++;
                         try {
-                            registry.resolveCurrent("task-foo");
-                            // Hit — valid: the write completed, we got a fully-registered workflow
-                        } catch (WorkflowDefinitionMissingException e) {
-                            // Clean miss — valid: registration not yet complete
+                            // Hit or clean miss — both valid: the write either completed or has not yet
+                            registry.find(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L));
                         } catch (NullPointerException | WorkflowVersionPinUnavailableException e) {
                             // Invalid — half-published state leaked through
                             if (unexpectedExceptions.getAndIncrement() == 0) {
@@ -276,60 +276,73 @@ class DefaultWorkflowRegistryConcurrencyTest {
         }
     }
 
-    // --- Test 3: Rollback atomicity ---
+    // --- Test 3: A refused contract ---
 
     @Nested
-    @DisplayName("rollback atomicity on contract collision")
-    class RollbackAtomicity {
+    @DisplayName("registrations refused for naming another contract")
+    class RefusedContract {
 
         @Test
-        @DisplayName("failed register due to contract collision leaves no half-committed state")
-        void contractCollisionRollsBackVersion() throws InterruptedException {
-            // Register "task-foo" v1 with TaskFooV1Contract first.
-            registry.register(minimalDef("task-foo", 1, TaskFooV1Contract.class));
+        @DisplayName("a refused contract leaves no half-committed state")
+        void refusedContractRollsBackVersion() throws InterruptedException {
+            // Register "task-foo" v1 with TaskFooContract first.
+            registry.register(minimalDef("task-foo", 1, TaskFooContract.class));
 
-            // Now attempt to register "task-bar" v1 using the SAME contract class as "task-foo" v1.
-            // This must fail (contract already bound to task-foo). The rollback must ensure
-            // task-bar does NOT appear in allRegistered().
-            WorkflowDefinition<TaskState, ?> collidingDef = minimalDef("task-bar", 1, TaskFooV1Contract.class);
+            // Now attempt to register "task-foo" v2 naming another contract than v1.
+            // This must fail (every version of a definition names one contract). The refusal must ensure
+            // v2 does NOT appear in allRegistered().
+            WorkflowDefinition<TaskState, ?> refusedDef = minimalDef("task-foo", 2, OtherTaskContract.class);
 
-            assertThatThrownBy(() -> registry.register(collidingDef)).isInstanceOf(WorkflowDefinitionException.class);
+            assertThatThrownBy(() -> registry.register(refusedDef)).isInstanceOf(WorkflowDefinitionException.class);
 
-            // After the rollback, allRegistered must contain only task-foo v1 — no task-bar
+            // After the refusal, allRegistered must contain only task-foo v1
             Collection<RuntimeWorkflow> registered = registry.allRegistered();
             assertThat(registered).hasSize(1);
             assertThat(registered.iterator().next().plan().definitionId()).isEqualTo("task-foo");
 
-            // task-foo v1 is still resolvable; "task-bar" must be missing
-            RuntimeWorkflow foo = registry.resolveCurrent("task-foo");
+            // task-foo v1 is still resolvable; v2 must be missing
+            RuntimeWorkflow foo = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L));
             assertThat(foo.plan().definitionVersion()).isEqualTo(1L);
 
-            assertThatThrownBy(() -> registry.resolveCurrent("task-bar"))
-                    .isInstanceOf(WorkflowDefinitionMissingException.class);
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 2L)))
+                    .isInstanceOf(WorkflowVersionPinUnavailableException.class);
+        }
+
+        @Test
+        @DisplayName("a second definition id on the same contract is accepted")
+        void secondDefinitionIdOnSameContractIsAccepted() {
+            registry.register(minimalDef("task-foo", 1, TaskFooContract.class));
+
+            registry.register(minimalDef("task-bar", 1, TaskFooContract.class));
+
+            assertThat(registry.allRegistered()).hasSize(2);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-bar", 1L))
+                            .plan()
+                            .definitionId())
+                    .isEqualTo("task-bar");
         }
 
         @Test
         @DisplayName("concurrent reader during a rolled-back registration sees only the prior committed state")
         void concurrentReaderSeesOnlyPriorStateAfterRollback() throws InterruptedException {
             // Register "task-foo" v1 first
-            registry.register(minimalDef("task-foo", 1, TaskFooV1Contract.class));
+            registry.register(minimalDef("task-foo", 1, TaskFooContract.class));
 
-            // Now attempt to register "task-foo" v2 with a contract that collides with TaskFooV1Contract
-            // (same class — cannot rebind)
-            WorkflowDefinition<TaskState, ?> collidingV2 = minimalDef("task-foo", 2, TaskFooV1Contract.class);
+            // Now attempt to register "task-foo" v2 with a contract other than TaskFooContract
+            WorkflowDefinition<TaskState, ?> collidingV2 = minimalDef("task-foo", 2, OtherTaskContract.class);
 
             ExecutorService pool = Executors.newFixedThreadPool(2);
             CountDownLatch started = new CountDownLatch(1);
             AtomicInteger unexpectedCount = new AtomicInteger(0);
             AtomicReference<Throwable> firstUnexpected = new AtomicReference<>();
 
-            // Thread A: attempts to register colliding v2 (will fail with contract collision)
+            // Thread A: attempts to register v2 under another contract (will be refused)
             Future<Void> writerFuture = pool.submit(() -> {
                 started.await();
                 try {
                     registry.register(collidingV2);
                 } catch (WorkflowDefinitionException e) {
-                    // Expected — contract collision
+                    // Expected — another contract than v1
                 }
                 return null;
             });
@@ -340,7 +353,8 @@ class DefaultWorkflowRegistryConcurrencyTest {
                 long deadline = System.currentTimeMillis() + 200;
                 while (System.currentTimeMillis() < deadline) {
                     try {
-                        RuntimeWorkflow rw = registry.resolveCurrent("task-foo");
+                        RuntimeWorkflow rw =
+                                registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L));
                         // Must be v1 only — v2 never committed successfully
                         if (rw.plan().definitionVersion() != 1L) {
                             if (unexpectedCount.getAndIncrement() == 0) {
@@ -348,7 +362,7 @@ class DefaultWorkflowRegistryConcurrencyTest {
                                         new AssertionError("saw v" + rw.plan().definitionVersion() + " instead of v1"));
                             }
                         }
-                    } catch (WorkflowDefinitionMissingException e) {
+                    } catch (WorkflowVersionPinUnavailableException e) {
                         // Unexpected: v1 was committed before the concurrent attempt started
                         if (unexpectedCount.getAndIncrement() == 0) {
                             firstUnexpected.set(e);
@@ -383,8 +397,80 @@ class DefaultWorkflowRegistryConcurrencyTest {
 
             // After rollback, allRegistered still has exactly 1 entry (task-foo v1 only)
             assertThat(registry.allRegistered()).hasSize(1);
-            assertThat(registry.resolveCurrent("task-foo").plan().definitionVersion())
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L))
+                            .plan()
+                            .definitionVersion())
                     .isEqualTo(1L);
+        }
+    }
+
+    // --- Test 3b: Two contracts race for one id ---
+
+    @Nested
+    @DisplayName("concurrent registrations of one definition id under different contracts")
+    class ContractRace {
+
+        private static final int ROUNDS = 300;
+
+        @Test
+        @DisplayName("exactly one wins; the other is refused and its contract name is released")
+        void exactlyOneContractWins() throws Exception {
+            ExecutorService pool = Executors.newFixedThreadPool(2);
+            try {
+                for (int round = 0; round < ROUNDS; round++) {
+                    // Given: an empty registry and two definitions of one id, each naming another contract
+                    DefaultWorkflowRegistry racing = new DefaultWorkflowRegistry();
+                    WorkflowDefinition<TaskState, ?> a = minimalDef("race-id", 1, RaceAContract.class);
+                    WorkflowDefinition<TaskState, ?> b = minimalDef("race-id", 2, RaceBContract.class);
+                    CyclicBarrier start = new CyclicBarrier(2);
+
+                    // When: both register at the same moment from two threads
+                    Future<Throwable> first = pool.submit(() -> registerAfter(start, racing, a));
+                    Future<Throwable> second = pool.submit(() -> registerAfter(start, racing, b));
+                    Throwable aOutcome = first.get(10, TimeUnit.SECONDS);
+                    Throwable bOutcome = second.get(10, TimeUnit.SECONDS);
+
+                    // Then: exactly one registration failed, with the registry's definition exception
+                    boolean aWins = aOutcome == null;
+                    Throwable refused = aWins ? bOutcome : aOutcome;
+                    assertThat(aWins ? aOutcome : bOutcome)
+                            .as("round %d: the winner", round)
+                            .isNull();
+                    assertThat(refused)
+                            .as("round %d: the loser", round)
+                            .isInstanceOf(WorkflowDefinitionException.class);
+
+                    // and: only the winner is registered, and only the winner's contract name is indexed
+                    String winnerContract = aWins ? "race-a" : "race-b";
+                    String loserContract = aWins ? "race-b" : "race-a";
+                    assertThat(racing.allRegistered())
+                            .as("round %d: registered", round)
+                            .hasSize(1);
+                    assertThat(racing.allRegistered().iterator().next().contractName())
+                            .as("round %d: registered contract", round)
+                            .isEqualTo(winnerContract);
+                    assertThat(racing.typeNames().findContract(winnerContract))
+                            .as("round %d: winner's contract name", round)
+                            .isPresent();
+                    assertThat(racing.typeNames().findContract(loserContract))
+                            .as("round %d: loser's contract name", round)
+                            .isEmpty();
+                }
+            } finally {
+                pool.shutdownNow();
+            }
+        }
+
+        private Throwable registerAfter(
+                CyclicBarrier start, DefaultWorkflowRegistry target, WorkflowDefinition<TaskState, ?> definition)
+                throws Exception {
+            start.await(10, TimeUnit.SECONDS);
+            try {
+                target.register(definition);
+                return null;
+            } catch (RuntimeException e) {
+                return e;
+            }
         }
     }
 
@@ -395,26 +481,26 @@ class DefaultWorkflowRegistryConcurrencyTest {
     class MultipleVersionsSequential {
 
         @Test
-        @DisplayName("resolveCurrent returns v3; resolvePinned returns v1, v2, v3 correctly")
+        @DisplayName("resolve returns v1, v2, v3 correctly")
         void shouldResolveCorrectVersions() {
-            registry.register(minimalDef("task-foo", 1, TaskFooV1Contract.class));
-            registry.register(minimalDef("task-foo", 2, TaskFooV2Contract.class));
-            registry.register(minimalDef("task-foo", 3, TaskFooV3Contract.class));
+            registry.register(minimalDef("task-foo", 1, TaskFooContract.class));
+            registry.register(minimalDef("task-foo", 2, TaskFooContract.class));
+            registry.register(minimalDef("task-foo", 3, TaskFooContract.class));
 
-            RuntimeWorkflow current = registry.resolveCurrent("task-foo");
+            RuntimeWorkflow current = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 3L));
             assertThat(current.plan().definitionVersion()).isEqualTo(3L);
 
-            RuntimeWorkflow v1 = registry.resolvePinned("task-foo", 1L);
+            RuntimeWorkflow v1 = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L));
             assertThat(v1.plan().definitionVersion()).isEqualTo(1L);
 
-            RuntimeWorkflow v2 = registry.resolvePinned("task-foo", 2L);
+            RuntimeWorkflow v2 = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 2L));
             assertThat(v2.plan().definitionVersion()).isEqualTo(2L);
 
-            RuntimeWorkflow v3 = registry.resolvePinned("task-foo", 3L);
+            RuntimeWorkflow v3 = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 3L));
             assertThat(v3.plan().definitionVersion()).isEqualTo(3L);
 
             // Missing version still throws correctly
-            assertThatThrownBy(() -> registry.resolvePinned("task-foo", 99L))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 99L)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
         }
     }

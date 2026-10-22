@@ -13,6 +13,8 @@ import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -33,6 +35,7 @@ import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -91,7 +94,10 @@ public class PgWorkflowEngineBranchVersionStabilityIT {
 
     record State(String id) {}
 
-    interface BranchVsaContract {}
+    interface BranchVsaContract {
+        @WorkflowSignal("my-signal")
+        Future<Void> mySignal(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Fork plan with a {@code requireVersionStability=true} branch task:
@@ -213,8 +219,16 @@ public class PgWorkflowEngineBranchVersionStabilityIT {
 
     private WorkflowInstanceId startWithSubjectVersion(String id, String subjectVersion) {
         WorkflowSubjectRef ref = subjectVersion == null ? null : new WorkflowSubjectRef("Order", id, subjectVersion);
-        StartCommand cmd =
-                new StartCommand(DEFINITION.definitionId(), new StartReview(id), "idem-vsa-" + id, null, ref);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                new StartReview(id),
+                "idem-vsa-" + id,
+                null,
+                ref,
+                null,
+                null,
+                null);
         return engine.start(cmd).toCompletionStage().toCompletableFuture().join();
     }
 

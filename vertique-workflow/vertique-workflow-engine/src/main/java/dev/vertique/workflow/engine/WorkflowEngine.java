@@ -18,13 +18,17 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
+import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowDefinitionFailingException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
+import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
@@ -40,7 +44,10 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionActivation;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -53,6 +60,8 @@ import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.EchoedNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
 import io.vertx.sqlclient.SqlClient;
@@ -62,6 +71,7 @@ import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -205,6 +215,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private final PayloadConstraintCheck payloadConstraintCheck;
 
+    /** This node's view of the activation records, which chooses the version of a start without one. */
+    private final DefinitionActivations activations;
+
+    /** This node's own evaluation of the scope rows that newly deployed code conflicts with. */
+    private final FailingDefinitions failing;
+
     @Inject
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -228,7 +244,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             MigrationExecutor migrationExecutor,
             DurableContextPropagator propagator,
             WorkflowContextBinder contextBinder,
-            PayloadConstraintCheck payloadConstraintCheck) {
+            PayloadConstraintCheck payloadConstraintCheck,
+            DefinitionActivations activations,
+            FailingDefinitions failing) {
+        this.activations = activations;
+        this.failing = failing;
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -251,6 +271,62 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.propagator = propagator;
         this.contextBinder = contextBinder;
         this.payloadConstraintCheck = payloadConstraintCheck;
+    }
+
+    /**
+     * Assembles the engine like the constructor that takes the type-name index, using the index of
+     * the registry when it is a {@code DefaultWorkflowRegistry} and an empty index otherwise.
+     */
+    WorkflowEngine(
+            WorkflowTransactionRunner<SqlClient> txRunner,
+            WorkflowRegistry registry,
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            WorkflowDedupRepository<SqlClient> dedup,
+            RecorderRouter recorders,
+            TimerStore<SqlClient> timerStore,
+            TaskStore<SqlClient> taskStore,
+            FingerprintCanonicalizer fingerprintCanonicalizer,
+            Clock clock,
+            BranchTokenRepository<SqlClient> branchTokens,
+            JoinStateRepository<SqlClient> joinStates,
+            BranchTransitionEngine branchEngine,
+            BranchCompensationOrchestrator branchCompensation,
+            @Nullable DurableContextPropagator propagator,
+            Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
+            WorkflowEventEmitter eventEmitter,
+            WorkflowHistoryRecorder historyRecorder,
+            ReminderScheduler reminderScheduler,
+            CompensationService compensationService,
+            @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
+            PayloadConstraintCheck payloadConstraintCheck) {
+        this(
+                txRunner,
+                registry,
+                instances,
+                history,
+                dedup,
+                recorders,
+                timerStore,
+                taskStore,
+                fingerprintCanonicalizer,
+                clock,
+                branchTokens,
+                joinStates,
+                branchEngine,
+                branchCompensation,
+                propagator,
+                migrationRegistryOpt,
+                eventEmitter,
+                historyRecorder,
+                reminderScheduler,
+                compensationService,
+                inboundExecScope,
+                payloadConstraintCheck,
+                WorkflowEngineFactory.registryTypeNames(registry),
+                new DefinitionActivations(),
+                Optional.empty(),
+                new FailingDefinitions());
     }
 
     /**
@@ -296,8 +372,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * payloads; the factory builds exactly one and passes that same instance here and into the
      * task-lifecycle service built below.
      *
-     * <p>Package-visible (not {@code private}) so the test-scope factory in the same package can
-     * invoke it; it is not part of any production API and is unused outside test code.
+     * <p>The {@code typeNames} parameter is the type-name index a decision payload's declared type
+     * name resolves through; the factory passes the one index the registry fills. The {@code activations}
+     * parameter is this engine's view of the activation records, which the factory builds empty. The
+     * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes.
+     *
+     * <p>Package-visible (not {@code private}) so the factory in the same package can invoke it; it
+     * is not part of any production API.
      */
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -321,8 +402,14 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             ReminderScheduler reminderScheduler,
             CompensationService compensationService,
             @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
-            PayloadConstraintCheck payloadConstraintCheck) {
+            PayloadConstraintCheck payloadConstraintCheck,
+            WorkflowTypeNames typeNames,
+            DefinitionActivations activations,
+            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
+            FailingDefinitions failing) {
         this.payloadConstraintCheck = payloadConstraintCheck;
+        this.activations = activations;
+        this.failing = failing;
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -403,7 +490,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 clock,
                 () -> timerLifecycleHolder[0],
                 builtContextBinder,
-                payloadConstraintCheck);
+                payloadConstraintCheck,
+                typeNames);
         taskLifecycleHolder[0] = this.taskLifecycle;
         // TimerLifecycleService needs the driver, coordinator, and task service eagerly; all three
         // are now built. The driver reaches resolveFireAt through the lazy Provider above
@@ -444,7 +532,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 branchTokens,
                 this.driver,
                 clock,
-                builtContextBinder);
+                builtContextBinder,
+                stateCompatibility,
+                failing);
     }
 
     // --- WorkflowOperations ---
@@ -483,6 +573,31 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
+     * <p>Opens a new database transaction and delivers the signal like
+     * {@link #signal(WorkflowInstanceId, String, Object, String)}, after comparing {@code contractName}
+     * with the contract of the definition version the instance is pinned to. A different contract fails
+     * the future with
+     * {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException}; the
+     * transaction rolls back, so the instance, its history and the signal's dedup row are unchanged.
+     *
+     * @param id the workflow instance id; must not be null
+     * @param contractName the contract name of the sending client; must not be null
+     * @param signalName the name of the signal to deliver; must not be null
+     * @param payload the signal payload; coerced to the declared payload type
+     * @param signalDedupKey caller-supplied dedup key; must not be null
+     * @return a {@link Future} that completes when the signal has been applied
+     */
+    @Override
+    public Future<Void> signal(
+            WorkflowInstanceId id, String contractName, String signalName, Object payload, String signalDedupKey) {
+        Objects.requireNonNull(contractName, "contractName");
+        return txRunner.inTransaction(
+                null, tx -> deliverSignal(id, contractName, signalName, payload, signalDedupKey, tx));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * <p>Opens a new database transaction and transitions the instance to {@code CANCELLED},
      * appending a history entry with the given reason.
      *
@@ -514,21 +629,75 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * <p>Loads the instance snapshot and full history rows from the database in a single
      * {@code REPEATABLE READ} transaction so the result is a consistent point-in-time snapshot.
-     * Concurrent transitions cannot interleave between the two reads. Does not require the
-     * definition version to still be registered.
+     * Concurrent transitions cannot interleave between the two reads. Reads the instance and its history
+     * from the database without the plan of its pinned definition version, so a finished instance of a
+     * retired version stays readable on a node that no longer holds the code.
      *
      * @param id the workflow instance id; must not be null
      * @return a {@link Future} resolving to a {@link WorkflowView} for the instance
      */
     @Override
     public Future<WorkflowView> query(WorkflowInstanceId id) {
+        return readView(id, null);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Reads like {@link #query(WorkflowInstanceId)}, after comparing {@code contractName} with the
+     * contract of the definition version the instance is pinned to. A node that holds no code for that
+     * version fails the future with
+     * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException}. A different contract
+     * fails the future with
+     * {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException} before the
+     * history is read.
+     *
+     * @param id the workflow instance id; must not be null
+     * @param contractName the contract name of the querying client; must not be null
+     * @return a {@link Future} resolving to a {@link WorkflowView} for the instance
+     */
+    @Override
+    public Future<WorkflowView> query(WorkflowInstanceId id, String contractName) {
+        Objects.requireNonNull(contractName, "contractName");
+        return readView(id, contractName);
+    }
+
+    private Future<WorkflowView> readView(WorkflowInstanceId id, @Nullable String callerContractName) {
         return txRunner.inTransaction(
                 IsolationLevel.REPEATABLE_READ, tx -> instances.findById(id, tx).compose(optInst -> {
                     if (optInst.isEmpty()) {
                         return Future.<WorkflowView>failedFuture(new WorkflowInstanceNotFoundException(id));
                     }
-                    return history.listByInstance(id, tx).map(entries -> new WorkflowView(optInst.get(), entries));
+                    WorkflowInstance inst = optInst.get();
+                    if (callerContractName != null) {
+                        // A contract can only be compared with the pinned plan; a node without the code
+                        // cannot vouch for the caller's contract and refuses.
+                        RuntimeWorkflow pinned;
+                        try {
+                            pinned = PinnedPlans.resolve(registry, inst);
+                        } catch (Exception e) {
+                            return Future.<WorkflowView>failedFuture(e);
+                        }
+                        WorkflowDefinitionContractMismatchException refusal =
+                                ContractMismatch.refusal(inst, pinned, callerContractName, "query");
+                        if (refusal != null) {
+                            return Future.<WorkflowView>failedFuture(refusal);
+                        }
+                    }
+                    return history.listByInstance(id, tx).map(entries -> new WorkflowView(inst, entries));
                 }));
+    }
+
+    /**
+     * The key of an explicit start version in a scope. An id, scope or version that no key can hold names no
+     * registered version.
+     */
+    private static DefinitionKey requestedKey(String scopeKey, String definitionId, long version) {
+        try {
+            return new DefinitionKey(scopeKey, definitionId, version);
+        } catch (IllegalArgumentException e) {
+            throw new WorkflowVersionPinUnavailableException(scopeKey, definitionId, version, null);
+        }
     }
 
     // --- TransactionalWorkflowOperations ---
@@ -536,10 +705,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
-     * <p>Atomically claims or resolves the start dedup slot. If a prior caller already committed a
-     * matching row, returns the winning instance id without creating a new instance. Otherwise,
-     * coerces the payload, derives the initial state, persists the instance and history, and drives
-     * initial transitions.
+     * <p>Looks for a start dedup row of the start scope, the definition id and the idempotency key first; a
+     * replay returns the existing instance before any version is resolved. A first start resolves the
+     * definition, compares the command's contract with the resolved definition's contract, atomically claims
+     * the start dedup slot and, when it wins, coerces the payload, derives the initial state, persists the
+     * instance and history, and drives initial transitions. A null start scope is the default scope.
      *
      * @param cmd the start command; must not be null
      * @param tx the active SQL transaction; must not be null
@@ -552,18 +722,109 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
 
+        String startScope = cmd.startScope() == null ? WorkflowScopes.DEFAULT : cmd.startScope();
+        return dedup.findStart(startScope, cmd.definitionId(), cmd.idempotencyKey(), tx)
+                .compose(existing -> existing.isPresent()
+                        ? replayedStart(cmd, existing.get(), tx)
+                        : firstStart(cmd, startScope, tx));
+    }
+
+    /**
+     * Answers a start whose dedup row already exists. A client of another contract than the one the existing
+     * instance's definition implements fails as an idempotency conflict, because business keys and idempotency
+     * keys are shared by the clients of one start scope and id. A start that names no version otherwise returns
+     * the existing instance. A start that names a version, and possibly a target scope, must name the definition
+     * the existing instance is pinned to; any other pin fails as an idempotency conflict. A replay never changes
+     * a pin. When this node has no plan for the pin, the contract the durable registry stores for the pinned
+     * definition stands in for it, read through the given transaction. With a durable registry and no stored row the
+     * start fails with {@link WorkflowVersionNotRunnableException}. An engine without a durable registry uses the
+     * contract of another registered version of the same id in the scope, and fails the same way when there is
+     * none, because it cannot compare the contracts.
+     */
+    private Future<WorkflowInstanceId> replayedStart(StartCommand cmd, WorkflowInstanceId existing, SqlClient tx) {
+        return instances.findById(existing, tx).compose(found -> {
+            if (found.isEmpty()) {
+                return cmd.requestedDefinitionVersion() == null
+                        ? Future.succeededFuture(existing)
+                        : Future.failedFuture(new WorkflowInstanceNotFoundException(existing));
+            }
+            WorkflowInstance pinned = found.get();
+            // The pinned version's own plan names the contract. On a node without that plan, the contract stored for
+            // the pinned definition does, read through the start transaction so that no second connection is taken;
+            // with a durable registry and no stored row the node refuses. Only an engine without a durable registry
+            // falls back to another registered version of the same id in the scope. A node that knows none of them
+            // cannot vouch for the caller's contract and refuses, like a contract-checked query does.
+            DefinitionKey pin =
+                    new DefinitionKey(pinned.definitionScopeKey(), pinned.definitionId(), pinned.definitionVersion());
+            Optional<String> local = registry.find(pin).map(RuntimeWorkflow::contractName);
+            Future<Optional<String>> contractOfPin = local.isPresent()
+                    ? Future.succeededFuture(local)
+                    : activations.hasDurableRegistry()
+                            ? instances.findDefinitionContract(pin, tx)
+                            : Future.succeededFuture(registry.contractOf(pin.scopeKey(), pin.definitionId()));
+            return contractOfPin.compose(pinnedContract -> checkReplay(cmd, existing, pinned, pin, pinnedContract));
+        });
+    }
+
+    /**
+     * Compares the contract and the pin of a replayed start with those of the existing instance, once the contract
+     * of the pinned definition is known or found unknown.
+     */
+    private Future<WorkflowInstanceId> checkReplay(
+            StartCommand cmd,
+            WorkflowInstanceId existing,
+            WorkflowInstance pinned,
+            DefinitionKey pin,
+            Optional<String> pinnedContract) {
+        if (pinnedContract.isEmpty()) {
+            return Future.failedFuture(new WorkflowVersionNotRunnableException(pin, existing));
+        }
+        if (!cmd.contractName().equals(pinnedContract.get())) {
+            return Future.failedFuture(new WorkflowIdempotencyConflictException(
+                    "start",
+                    cmd.idempotencyKey(),
+                    "contract=" + pinnedContract.get(),
+                    "contract=" + EchoedNames.bounded(cmd.contractName())));
+        }
+        if (cmd.requestedDefinitionVersion() == null) {
+            return Future.succeededFuture(existing);
+        }
+        long requestedVersion = cmd.requestedDefinitionVersion();
+        String requestedScope = cmd.requestedTargetScope();
+        boolean sameVersion = pinned.definitionVersion() == requestedVersion;
+        boolean sameScope = requestedScope == null || requestedScope.equals(pinned.definitionScopeKey());
+        if (sameVersion && sameScope) {
+            return Future.succeededFuture(existing);
+        }
+        // The fingerprints keep the stored "definitionVersion=N" format; the scope is named only when it differs.
+        return Future.failedFuture(new WorkflowIdempotencyConflictException(
+                "start",
+                cmd.idempotencyKey(),
+                pinFingerprint(sameScope ? null : pinned.definitionScopeKey(), pinned.definitionVersion()),
+                pinFingerprint(sameScope ? null : requestedScope, requestedVersion)));
+    }
+
+    private static String pinFingerprint(@Nullable String scopeKey, long version) {
+        return scopeKey == null
+                ? "definitionVersion=" + version
+                : "definitionVersion=" + version + ",definitionScope=" + scopeKey;
+    }
+
+    /** Resolves the definition for a start with no dedup row, claims the slot and creates the instance. */
+    private Future<WorkflowInstanceId> firstStart(StartCommand cmd, String startScope, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            if (cmd.requestedDefinitionVersion() != null) {
-                // Explicit version pin (FR-WF-DEF-069): resolve the requested version exactly.
-                rw = registry.resolvePinned(cmd.definitionId(), cmd.requestedDefinitionVersion());
-                // A deprecated version admits no new work; refuse before any dedup claim or write.
-                if (registry.isDeprecated(cmd.definitionId(), cmd.requestedDefinitionVersion())) {
-                    return Future.failedFuture(deprecatedRefusal(cmd.definitionId(), cmd.requestedDefinitionVersion()));
-                }
-            } else {
-                // Default: resolve the current (highest registered) version.
-                rw = registry.resolveCurrent(cmd.definitionId());
+            requireNotFailing(cmd, startScope);
+            rw = resolveForStart(cmd, startScope);
+            DefinitionKey resolved = new DefinitionKey(
+                    rw.definitionScopeKey(), rw.plan().definitionId(), rw.plan().definitionVersion());
+            // A deprecated version admits no new work, whether it was named or an activation record selected it;
+            // refuse before any dedup claim or write.
+            if (registry.isDeprecated(resolved)) {
+                return Future.failedFuture(deprecatedRefusal(resolved));
+            }
+            if (!cmd.contractName().equals(rw.contractName())) {
+                return Future.failedFuture(startContractRefusal(cmd, rw, resolved));
             }
         } catch (Exception e) {
             return Future.failedFuture(e);
@@ -575,42 +836,114 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         UUID newId = UUID.randomUUID();
         WorkflowInstanceId proposedId = new WorkflowInstanceId(newId);
 
-        return dedup.claimOrResolveStart(rw.plan().definitionId(), cmd.idempotencyKey(), proposedId, fingerprint, tx)
+        return dedup.claimOrResolveStart(
+                        startScope, rw.plan().definitionId(), cmd.idempotencyKey(), proposedId, fingerprint, tx)
                 .compose((StartDedupResult result) -> {
                     if (!result.didInsert()) {
-                        // Loser: an existing dedup row was found. Apply idempotency semantics.
-                        if (cmd.requestedDefinitionVersion() != null) {
-                            // Strict mode: the caller pinned an explicit version. If the stored
-                            // fingerprint differs from the incoming one, reject as a conflict
-                            // (FR-WF-DEF-070 / AC #14). A null existing fingerprint (legacy row)
-                            // is treated as "no version recorded" — lenient, no conflict.
-                            String existingFp = result.existingFingerprint();
-                            if (existingFp != null && !existingFp.equals(fingerprint)) {
-                                return Future.failedFuture(new WorkflowIdempotencyConflictException(
-                                        "start", cmd.idempotencyKey(), existingFp, fingerprint));
-                            }
-                        }
-                        // Lenient: no requested version, or fingerprints match — return existing.
-                        return Future.succeededFuture(result.workflowId());
+                        // Loser: a concurrent start claimed the slot first. Apply the replay rules to its instance.
+                        return replayedStart(cmd, result.workflowId(), tx);
                     }
                     // Winner: proceed with instance creation.
-                    return doCreateInstance(cmd, rw, proposedId, tx);
+                    return doCreateInstance(cmd, startScope, rw, proposedId, tx);
                 });
+    }
+
+    /**
+     * Refuses a start that selects a version this node evaluated as failing, for a version that was named and for one
+     * an activation record selects. It runs before the version is resolved from the registry, because a failing row
+     * whose name binding no longer resolves has no registered plan to resolve. Only the start scope's own versions can
+     * fail, and they apply to the client when they implement its contract. A named target scope that is neither the
+     * start scope nor the default scope is refused as missing, before any mark is read.
+     *
+     * @throws WorkflowDefinitionFailingException when the selected version is failing
+     */
+    private void requireNotFailing(StartCommand cmd, String startScope) {
+        if (failing.isEmpty() || WorkflowScopes.DEFAULT.equals(startScope)) return;
+        String id = cmd.definitionId();
+        boolean owns = ownsId(registry, startScope, id, cmd.contractName())
+                || failing.holds(startScope, id, cmd.contractName());
+        Long version = cmd.requestedDefinitionVersion();
+        DefinitionKey selected;
+        if (version != null) {
+            String targetScope = cmd.requestedTargetScope();
+            // A scope the client cannot see is answered as the later resolution answers it, so that the mark of
+            // another tenant's row is never observable.
+            if (targetScope != null && !targetScope.equals(startScope) && !targetScope.equals(WorkflowScopes.DEFAULT))
+                throw new WorkflowDefinitionMissingException(id, targetScope);
+            selected = new DefinitionKey(
+                    targetScope != null ? targetScope : owns ? startScope : WorkflowScopes.DEFAULT, id, version);
+        } else {
+            Optional<DefinitionActivation> own = owns ? activations.recordOf(startScope, id) : Optional.empty();
+            if (own.isEmpty()) return;
+            selected =
+                    new DefinitionKey(own.get().targetScopeKey(), id, own.get().version());
+        }
+        Optional<DefinitionFailure> failure = failing.find(selected);
+        if (failure.isPresent()) throw new WorkflowDefinitionFailingException(selected, failure.get());
+    }
+
+    /**
+     * Resolves the definition version a first start runs. An explicit version in a named scope resolves exactly
+     * that key, and only the start scope and the default scope can be named. An explicit version without a scope
+     * resolves from the start scope when it holds a version of the id that implements the client's contract, and
+     * from the default scope otherwise. A start without a version runs what the activation records select for the
+     * client's contract: the start scope's record, else the default scope's record, else the highest startable
+     * version of the default scope. It fails with
+     * {@link dev.vertique.workflow.exception.WorkflowNoCurrentVersionException} when none of them applies, and with
+     * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException} when the selected key has no plan
+     * in this node's registry, before any row is written.
+     */
+    private RuntimeWorkflow resolveForStart(StartCommand cmd, String startScope) {
+        Long version = cmd.requestedDefinitionVersion();
+        if (version == null) {
+            return activations.resolve(registry, startScope, cmd.definitionId(), cmd.contractName());
+        }
+        String targetScope = cmd.requestedTargetScope();
+        if (targetScope != null) {
+            if (!targetScope.equals(startScope) && !targetScope.equals(WorkflowScopes.DEFAULT)) {
+                throw new WorkflowDefinitionMissingException(cmd.definitionId(), targetScope);
+            }
+            return PinnedPlans.resolve(registry, requestedKey(targetScope, cmd.definitionId(), version));
+        }
+        String owner = ownsId(registry, startScope, cmd.definitionId(), cmd.contractName())
+                ? startScope
+                : WorkflowScopes.DEFAULT;
+        return PinnedPlans.resolve(registry, requestedKey(owner, cmd.definitionId(), version));
+    }
+
+    /**
+     * Whether the start scope's own definitions of the id apply to a client of the contract: a scope other than the
+     * default one holds a registered version of the id (available or deprecated) that implements that contract.
+     */
+    static boolean ownsId(WorkflowRegistry registry, String startScope, String definitionId, String contractName) {
+        return !WorkflowScopes.DEFAULT.equals(startScope)
+                && registry.contractOf(startScope, definitionId)
+                        .filter(contractName::equals)
+                        .isPresent();
+    }
+
+    /** The refusal for a start through a client of another contract than the resolved definition's. */
+    private static WorkflowDefinitionContractMismatchException startContractRefusal(
+            StartCommand cmd, RuntimeWorkflow rw, DefinitionKey resolved) {
+        return new WorkflowDefinitionContractMismatchException(
+                resolved,
+                "Definition '" + resolved.definitionId() + "' v" + resolved.definitionVersion()
+                        + " implements contract '" + rw.contractName() + "'; a client of contract '"
+                        + EchoedNames.bounded(cmd.contractName()) + "' cannot start it");
     }
 
     /**
      * Builds the typed refusal for admitting new work onto a deprecated definition version. Shared
      * by explicit-version starts and migration targets.
      *
-     * @param definitionId the deprecated definition's id
-     * @param version the deprecated version
+     * @param key the scope, id and version of the deprecated definition
      * @return the lifecycle exception to fail the caller's future with
      */
-    static WorkflowDefinitionLifecycleException deprecatedRefusal(String definitionId, long version) {
+    static WorkflowDefinitionLifecycleException deprecatedRefusal(DefinitionKey key) {
         return new WorkflowDefinitionLifecycleException(
                 WorkflowDefinitionLifecycleException.Reason.DEPRECATED,
-                new DefinitionKey(null, definitionId, version),
-                "Definition '" + definitionId + "' version " + version
+                key,
+                "Definition '" + key.definitionId() + "' version " + key.definitionVersion()
                         + " is deprecated and does not accept new starts or migrations");
     }
 
@@ -619,13 +952,14 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * transitions. Called only by the dedup winner in {@link #start(StartCommand, SqlClient)}.
      *
      * @param cmd the start command
+     * @param startScope the resolved start scope stamped on the instance
      * @param rw the resolved runtime workflow
      * @param id the instance id to use
      * @param tx the active transaction
      * @return a {@link Future} resolving to the new instance id after transitions complete
      */
     private Future<WorkflowInstanceId> doCreateInstance(
-            StartCommand cmd, RuntimeWorkflow rw, WorkflowInstanceId id, SqlClient tx) {
+            StartCommand cmd, String startScope, RuntimeWorkflow rw, WorkflowInstanceId id, SqlClient tx) {
         // Validate and coerce the payload to the declared start payload type.
         Object coercedPayload;
         try {
@@ -644,7 +978,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             initialState = rw.initialState().apply(coercedPayload);
         } catch (Exception e) {
             return Future.failedFuture(new WorkflowDefinitionException(
-                    "initialState function threw for definition '" + cmd.definitionId() + "'", e));
+                    "initialState function threw for definition '" + EchoedNames.bounded(cmd.definitionId()) + "'", e));
         }
         String stateJson = Json.encode(initialState);
 
@@ -685,7 +1019,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 null,
                 now,
                 now,
-                instanceMetadata);
+                instanceMetadata,
+                startScope,
+                rw.definitionScopeKey());
 
         return instances
                 .insert(fresh, tx)
@@ -786,6 +1122,20 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     @Override
     public Future<Void> signal(
             WorkflowInstanceId id, String signalName, Object payload, String signalDedupKey, SqlClient tx) {
+        return deliverSignal(id, null, signalName, payload, signalDedupKey, tx);
+    }
+
+    /**
+     * Delivers an instance-level signal inside {@code tx}. A non-null {@code callerContractName} makes the
+     * delivery refuse an instance pinned to a definition of another contract.
+     */
+    private Future<Void> deliverSignal(
+            WorkflowInstanceId id,
+            @Nullable String callerContractName,
+            String signalName,
+            Object payload,
+            String signalDedupKey,
+            SqlClient tx) {
         Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("signal", tx);
         if (invalidClient != null) {
             return invalidClient;
@@ -822,7 +1172,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         inst,
                         null,
                         () -> signalHandler.doApplySignal(
-                                inst, new SignalDeliveryContext(signalName, payload, signalDedupKey), tx));
+                                inst,
+                                new SignalDeliveryContext(signalName, payload, signalDedupKey, callerContractName),
+                                tx));
             });
         });
     }
@@ -874,7 +1226,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 WorkflowInstance inst = optInst.get();
                 RuntimeWorkflow rw;
                 try {
-                    rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+                    rw = PinnedPlans.resolve(registry, inst);
                     // Codex review fix H2: every other engine entry-point that resolves rw
                     // also asserts plan-hash drift. Branch signals must do the same so a
                     // redeployed-but-same-version plan doesn't silently run new callbacks
@@ -1100,7 +1452,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 WorkflowInstance inst = optInst.get();
                 RuntimeWorkflow rw;
                 try {
-                    rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+                    rw = PinnedPlans.resolve(registry, inst);
                     requirePlanHashMatches(inst, rw);
                 } catch (Exception e) {
                     return Future.<Void>failedFuture(e);
@@ -1343,10 +1695,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private Future<Void> doRetry(WorkflowInstanceId id, WorkflowInstance inst, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
-        } catch (WorkflowVersionPinUnavailableException e) {
-            return Future.failedFuture(
-                    new WorkflowVersionPinUnavailableException(e.definitionId(), e.version(), inst.id()));
+            rw = PinnedPlans.resolve(registry, inst);
         } catch (Exception e) {
             return Future.failedFuture(e);
         }
@@ -1395,6 +1744,22 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
+     * <p>Opens a new database transaction, then delegates to
+     * {@link #migrate(WorkflowInstanceId, String, long, SqlClient)}.
+     *
+     * @param id            the workflow instance id; must not be null
+     * @param targetScope   the scope of the definition to migrate to; must not be null
+     * @param targetVersion the definition version to migrate to
+     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     */
+    @Override
+    public Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion) {
+        return txRunner.inTransaction(null, tx -> migrate(id, targetScope, targetVersion, tx));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * <p>Delegates the migration algorithm to {@link MigrationExecutor#migrate}. The executor owns
      * the opt-in {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} and the
      * null-registry {@link UnsupportedOperationException} fail-fast guard: if no registry was
@@ -1414,6 +1779,27 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         }
 
         return migrationExecutor.migrate(id, targetVersion, tx);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Delegates to {@link MigrationExecutor#migrate}, which resolves the target in {@code targetScope}.
+     *
+     * @param id            the workflow instance id; must not be null
+     * @param targetScope   the scope of the definition to migrate to; must not be null
+     * @param targetVersion the definition version to migrate to
+     * @param tx            the active SQL transaction; must not be null
+     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     */
+    @Override
+    public Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion, SqlClient tx) {
+        Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("migrate", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+        Objects.requireNonNull(targetScope, "targetScope");
+        return migrationExecutor.migrate(id, targetScope, targetVersion, tx);
     }
 
     // --- State machine driver — extracted to WorkflowTransitionDriver (slice C5) ---

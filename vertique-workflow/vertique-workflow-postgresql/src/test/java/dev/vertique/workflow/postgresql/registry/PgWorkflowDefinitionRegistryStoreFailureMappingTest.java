@@ -10,6 +10,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.workflow.exception.WorkflowPersistenceException;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.VertxException;
 import io.vertx.sqlclient.Pool;
@@ -23,7 +24,7 @@ import org.junit.jupiter.api.Test;
 /** Verifies PostgreSQL workflow-definition transaction failure mapping at the public store boundary. */
 class PgWorkflowDefinitionRegistryStoreFailureMappingTest {
 
-    private static final DefinitionKey KEY = new DefinitionKey(null, "mapping-failure", 1);
+    private static final DefinitionKey KEY = new DefinitionKey(WorkflowScopes.DEFAULT, "mapping-failure", 1);
 
     @Test
     @DisplayName("Vert.x timeout maps to a retryable workflow persistence failure")

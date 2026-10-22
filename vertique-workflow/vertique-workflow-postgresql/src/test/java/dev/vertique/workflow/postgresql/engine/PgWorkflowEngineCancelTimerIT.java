@@ -13,10 +13,13 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
@@ -124,7 +127,10 @@ public class PgWorkflowEngineCancelTimerIT {
 
     interface StandaloneTimerContract {}
 
-    interface SignalTimeoutContract {}
+    interface SignalTimeoutContract {
+        @WorkflowSignal("ok")
+        Future<Void> ok(WorkflowInstanceId id, Signal payload, @SignalDedupKey String dedupKey);
+    }
 
     static final WorkflowDefinition<State, StandaloneTimerContract> STANDALONE_TIMER_DEF = new WorkflowDefinition<>() {
         @Override
@@ -307,8 +313,12 @@ public class PgWorkflowEngineCancelTimerIT {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "cancel-standalone-timer-test",
+                StandaloneTimerContract.class.getName(),
                 new Payload(id),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 
@@ -375,8 +385,12 @@ public class PgWorkflowEngineCancelTimerIT {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "cancel-signal-timeout-test",
+                SignalTimeoutContract.class.getName(),
                 new Payload(id),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 

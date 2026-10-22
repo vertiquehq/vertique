@@ -51,7 +51,7 @@ class DocumentBackedWorkflowDefinitionTest {
 
     record PlaceOrder(String id) {}
 
-    @WorkflowContract(definitionId = "order-v1", definitionVersion = 1)
+    @WorkflowContract
     interface OrderV1Contract {}
 
     // --- Shared infrastructure ---

@@ -5,13 +5,26 @@ package dev.vertique.workflow.events.recorder;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.Mockito.mock;
 
+import dev.vertique.inboxoutbox.DestinationType;
+import dev.vertique.inboxoutbox.OutboxEntry;
+import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.workflow.events.WorkflowEventEnvelope;
+import dev.vertique.workflow.events.WorkflowEventIntent;
 import dev.vertique.workflow.events.WorkflowEventType;
+import dev.vertique.workflow.events.binding.WorkflowEventOutboxBinding;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.sideeffect.IntentKind;
+import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
+import io.vertx.core.Future;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonObject;
+import io.vertx.sqlclient.SqlClient;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -113,6 +126,81 @@ class WorkflowEventEnvelopeMappingTest {
 
         assertThatCode(() -> Json.decodeValue(json, WorkflowEventEnvelope.class))
                 .doesNotThrowAnyException();
+    }
+
+    // --- Definition scope and start scope ---
+
+    @Test
+    @DisplayName("the envelope carries the definition scope and the start scope; old envelopes read both as null")
+    void envelopeCarriesTheDefinitionScopeAndStartScope() {
+        // Given: an event intent pinned to a definition in scope acme, for an instance started in scope tenant-1
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowEventIntent eventIntent = new WorkflowEventIntent(
+                WorkflowEventType.TASK_CREATED,
+                workflowId,
+                "purchase-approval",
+                3L,
+                "acme",
+                "tenant-1",
+                null,
+                null,
+                Instant.parse("2026-05-09T10:00:00Z"),
+                4L,
+                UUID.randomUUID(),
+                "review",
+                Map.of(),
+                null,
+                null);
+        WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
+                IntentKind.WORKFLOW_EVENT,
+                null,
+                eventIntent,
+                Map.of(),
+                WorkflowSideEffectIntent.Correlation.singlePath(
+                        workflowId, 4L, "purchase-approval", "acme", "tenant-1", "review"));
+        AtomicReference<OutboxEntry> published = new AtomicReference<>();
+        OutboxService outbox = (tx, entry) -> {
+            published.set(entry);
+            return Future.succeededFuture(1L);
+        };
+        WorkflowEventSideEffectRecorder recorder = new WorkflowEventSideEffectRecorder(
+                outbox, new WorkflowEventOutboxBinding(DestinationType.KAFKA, "workflow-events"), null);
+
+        // And: a stored envelope written before the scopes existed
+        String oldJson = """
+                {
+                  "schemaVersion": 1,
+                  "eventType": "TASK_CREATED",
+                  "workflowId": "00000000-0000-0000-0000-000000000001",
+                  "definitionId": "purchase-approval",
+                  "definitionVersion": 3,
+                  "sequence": 4
+                }
+                """;
+
+        // When: the intent is mapped to an envelope and serialized, and the old JSON is deserialized
+        Future<?> result = recorder.record(intent, mock(SqlClient.class));
+        WorkflowEventEnvelope envelope = (WorkflowEventEnvelope) published.get().payload();
+        JsonObject json = new JsonObject(Json.encode(envelope));
+        WorkflowEventEnvelope old = Json.decodeValue(oldJson, WorkflowEventEnvelope.class);
+
+        // Then: the envelope reports the definition scope and the start scope, each under its own name
+        assertThat(result.succeeded()).isTrue();
+        assertThat(envelope.definitionScopeKey()).isEqualTo("acme");
+        assertThat(envelope.scopeKey()).isEqualTo("tenant-1");
+        assertThat(json.getString("definitionScopeKey")).isEqualTo("acme");
+        assertThat(json.getString("scopeKey")).isEqualTo("tenant-1");
+        assertThat(json.getInteger("schemaVersion")).isEqualTo(1);
+
+        // And: the serialized envelope reads back with both scopes
+        WorkflowEventEnvelope decoded = Json.decodeValue(json.encode(), WorkflowEventEnvelope.class);
+        assertThat(decoded.definitionScopeKey()).isEqualTo("acme");
+        assertThat(decoded.scopeKey()).isEqualTo("tenant-1");
+
+        // And: the old envelope reads both scopes as null without error
+        assertThat(old.definitionScopeKey()).isNull();
+        assertThat(old.scopeKey()).isNull();
+        assertThat(old.definitionId()).isEqualTo("purchase-approval");
     }
 
     // --- Full field round-trip ---

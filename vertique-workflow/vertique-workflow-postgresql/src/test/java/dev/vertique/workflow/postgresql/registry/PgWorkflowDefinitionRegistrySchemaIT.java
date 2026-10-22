@@ -17,9 +17,7 @@ import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reas
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.registry.store.ActivationClaim;
-import dev.vertique.workflow.registry.store.ActivationOutcome;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
-import dev.vertique.workflow.registry.store.DefinitionFilter.TenantScope;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionProvenance;
@@ -28,6 +26,7 @@ import dev.vertique.workflow.registry.store.ReconcileOutcome;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
@@ -36,6 +35,7 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Pool;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -79,7 +79,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
     private static final String DEFINITION_ID = "schema-placement-order";
     private static final String PLAN_HASH = "a".repeat(64);
     private static final String OTHER_PLAN_HASH = "b".repeat(64);
-    private static final int REGISTRY_STATEMENT_KINDS = 13;
+    private static final int REGISTRY_STATEMENT_KINDS = 10;
 
     static final PostgresContainer db = new PostgresContainer().withDatabaseName("wf_definition_schema_it");
 
@@ -178,22 +178,21 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
                     observed, new PgDbExceptionMapper(), Optional.empty(), schemas);
             PgWorkflowInstanceRepository instances =
                     new PgWorkflowInstanceRepository(plain, new PgDbExceptionMapper(), schemas);
-            DefinitionKey key = new DefinitionKey(null, CODE_ID, 1);
+            DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, CODE_ID, 1);
 
             // When: a code row is reconciled, the instance pin is admitted and its status moves through the
             // live-update, terminal-update and resume paths
             assertEquals(
                     ReconcileOutcome.INSERTED,
-                    await(store.upsertCode(codeRecord(key, PLAN_HASH, DefinitionStatus.SUPERSEDED))));
+                    await(store.upsertCode(codeRecord(key, PLAN_HASH, DefinitionStatus.AVAILABLE))));
             assertEquals(
                     ReconcileOutcome.UNCHANGED,
-                    await(store.upsertCode(codeRecord(key, PLAN_HASH, DefinitionStatus.SUPERSEDED))));
+                    await(store.upsertCode(codeRecord(key, PLAN_HASH, DefinitionStatus.AVAILABLE))));
             assertEquals(
                     ReconcileOutcome.REHASHED,
-                    await(store.upsertCode(codeRecord(key, OTHER_PLAN_HASH, DefinitionStatus.SUPERSEDED))));
-            await(store.recomputeActive(null, CODE_ID));
+                    await(store.upsertCode(codeRecord(key, OTHER_PLAN_HASH, DefinitionStatus.AVAILABLE))));
             assertEquals(
-                    DefinitionStatus.ACTIVE,
+                    DefinitionStatus.AVAILABLE,
                     await(store.find(key)).orElseThrow().status());
 
             WorkflowInstance running = instance(OTHER_PLAN_HASH, WorkflowStatus.RUNNING, 0);
@@ -216,7 +215,7 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
             assertEquals("RUNNING", instanceStatus(running.id()));
 
             // When: the code version is deprecated, past cooling, and retirement is tried while the pin is live
-            await(store.transition(key, DefinitionStatus.ACTIVE, DefinitionStatus.DEPRECATED));
+            await(store.transition(key, DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
             backdateStatusChange();
             assertEquals(Reason.PINNED_INSTANCES, failureReason(store.retire(key)));
             assertEquals(Long.valueOf(1), await(instances.countNonTerminal(CODE_ID, 1)));
@@ -233,11 +232,11 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
             assertEquals(
                     DefinitionStatus.RETIRED,
                     await(store.find(key)).orElseThrow().status());
-            await(store.transition(key, DefinitionStatus.RETIRED, DefinitionStatus.SUPERSEDED));
+            await(store.transition(key, DefinitionStatus.RETIRED, DefinitionStatus.AVAILABLE));
             assertEquals(
-                    DefinitionStatus.ACTIVE,
+                    DefinitionStatus.AVAILABLE,
                     await(store.find(key)).orElseThrow().status());
-            await(store.resetStaleActivating(CODE_ID));
+            await(store.resetStalePublishing(CODE_ID));
 
             // Then: the decoys are exactly as before
             assertEquals(decoyBefore, decoyState(TABLE), "the definitions decoy keeps its shape and rows");
@@ -325,13 +324,217 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         }
     }
 
+    private record StatusRow(String label, String status, boolean withToken, String expectedSqlState) {}
+
+    @Test
+    @DisplayName("the status constraint allows only the publication statuses and a claim token only while publishing")
+    void statusConstraintAllowsOnlyPublicationStatuses() throws Exception {
+        // Given: a migrated database
+        Flyway.configure()
+                .dataSource(db.jdbcUrl(), db.username(), db.password())
+                .locations(WORKFLOW_LOCATION)
+                .load()
+                .migrate();
+        List<StatusRow> rows = List.of(
+                new StatusRow("candidate", "CANDIDATE", false, null),
+                new StatusRow("publishing with its claim token", "PUBLISHING", true, null),
+                new StatusRow("available", "AVAILABLE", false, null),
+                new StatusRow("deprecated", "DEPRECATED", false, null),
+                new StatusRow("retired", "RETIRED", false, null),
+                new StatusRow("the removed active status", "ACTIVE", false, "23514"),
+                new StatusRow("the removed superseded status", "SUPERSEDED", false, "23514"),
+                new StatusRow("the removed activating status with a token", "ACTIVATING", true, "23514"),
+                new StatusRow("publishing without a token", "PUBLISHING", false, "23514"),
+                new StatusRow("available with a token", "AVAILABLE", true, "23514"),
+                new StatusRow("candidate with a token", "CANDIDATE", true, "23514"));
+
+        try (Connection connection = connection()) {
+            // When: one raw document row is inserted per case
+            for (int index = 0; index < rows.size(); index++) {
+                StatusRow row = rows.get(index);
+                String id = "status-case-" + index;
+                if (row.expectedSqlState() == null) {
+                    insertStatusRow(connection, id, 1, row.status(), row.withToken());
+                } else {
+                    // Then: a row outside the status and claim rules is rejected by the check constraints
+                    DefinitionTableRows.assertSqlState(
+                            row.expectedSqlState(),
+                            () -> insertStatusRow(connection, id, 1, row.status(), row.withToken()));
+                }
+            }
+
+            // Then: exactly the five statuses were stored
+            assertEquals(
+                    List.of("AVAILABLE", "CANDIDATE", "DEPRECATED", "PUBLISHING", "RETIRED"),
+                    queryStrings(connection, "SELECT DISTINCT status FROM workflow_definitions ORDER BY status"));
+
+            // When: two versions of one scope and id are both available
+            insertStatusRow(connection, "available-pair", 1, "AVAILABLE", false);
+            insertStatusRow(connection, "available-pair", 2, "AVAILABLE", false);
+
+            // Then: both are stored, because no unique index restricts available rows
+            assertEquals(
+                    List.of("1:AVAILABLE", "2:AVAILABLE"),
+                    queryStrings(
+                            connection,
+                            "SELECT definition_version || ':' || status FROM workflow_definitions"
+                                    + " WHERE definition_id = 'available-pair' ORDER BY definition_version"));
+            assertEquals(
+                    List.of(),
+                    queryStrings(
+                            connection,
+                            "SELECT indexname FROM pg_indexes WHERE indexname = 'uq_workflow_definitions_one_active'"));
+
+            // Then: the claim column is named for publication
+            assertEquals(
+                    List.of("publish_token"),
+                    queryStrings(
+                            connection,
+                            "SELECT column_name FROM information_schema.columns WHERE table_name = 'workflow_definitions'"
+                                    + " AND column_name IN ('publish_token', 'activation_token')"));
+        }
+    }
+
+    @Test
+    @DisplayName("the failure reason column is a nullable varchar of 64 characters that is null unless set")
+    void failureReasonColumnIsNullable() throws Exception {
+        // Given: a migrated database
+        Flyway.configure()
+                .dataSource(db.jdbcUrl(), db.username(), db.password())
+                .locations(WORKFLOW_LOCATION)
+                .load()
+                .migrate();
+
+        try (Connection connection = connection()) {
+            // Then: the column is a varchar of 64 characters and nullable
+            assertEquals(
+                    List.of("character varying|64|YES"),
+                    queryStrings(
+                            connection,
+                            "SELECT data_type || '|' || character_maximum_length || '|' || is_nullable"
+                                    + " FROM information_schema.columns"
+                                    + " WHERE table_name = 'workflow_definitions' AND column_name = 'failure_reason'"));
+
+            // When: a row is inserted without it
+            insertStatusRow(connection, "failure-reason-case", 1, "AVAILABLE", false);
+
+            // Then: it reads back as null
+            assertEquals(
+                    List.of("null"),
+                    queryStrings(
+                            connection,
+                            "SELECT COALESCE(failure_reason, 'null') FROM workflow_definitions"
+                                    + " WHERE definition_id = 'failure-reason-case'"));
+        }
+    }
+
+    private record BindingInsert(String label, String bindingColumn, String bindingValue, String expectedSqlState) {}
+
+    @Test
+    @DisplayName("the name binding column is a not-null jsonb that defaults to an empty object")
+    void nameBindingColumnDefaultsToEmptyObject() throws Exception {
+        // Given: a migrated database
+        Flyway.configure()
+                .dataSource(db.jdbcUrl(), db.username(), db.password())
+                .locations(WORKFLOW_LOCATION)
+                .load()
+                .migrate();
+        List<BindingInsert> inserts = List.of(
+                new BindingInsert("omitted", "", "", null),
+                new BindingInsert("an explicit object", ", name_binding", ", '{\"a.B\":\"b\"}'::jsonb", null),
+                new BindingInsert("an explicit null", ", name_binding", ", NULL", "23502"));
+
+        try (Connection connection = connection()) {
+            // Then: the column is jsonb and not null
+            assertEquals(
+                    List.of("jsonb|NO"),
+                    queryStrings(
+                            connection,
+                            "SELECT data_type || '|' || is_nullable FROM information_schema.columns"
+                                    + " WHERE table_name = 'workflow_definitions' AND column_name = 'name_binding'"));
+
+            // When: one raw row is inserted per case
+            for (int index = 0; index < inserts.size(); index++) {
+                BindingInsert insert = inserts.get(index);
+                String id = "binding-case-" + index;
+                if (insert.expectedSqlState() == null) {
+                    insertBindingRow(connection, id, insert);
+                } else {
+                    // Then: a null binding is rejected by the not-null constraint
+                    DefinitionTableRows.assertSqlState(
+                            insert.expectedSqlState(), () -> insertBindingRow(connection, id, insert));
+                }
+            }
+
+            // Then: the omitted column reads back as an empty object and an explicit object is kept
+            assertEquals(
+                    List.of("{}"),
+                    queryStrings(
+                            connection,
+                            "SELECT name_binding::text FROM workflow_definitions WHERE definition_id = 'binding-case-0'"));
+            assertEquals(
+                    List.of("{\"a.B\": \"b\"}"),
+                    queryStrings(
+                            connection,
+                            "SELECT name_binding::text FROM workflow_definitions WHERE definition_id = 'binding-case-1'"));
+            assertEquals(
+                    List.of("0"),
+                    queryStrings(
+                            connection,
+                            "SELECT count(*) FROM workflow_definitions WHERE definition_id = 'binding-case-2'"));
+        }
+    }
+
+    private static void insertBindingRow(Connection connection, String definitionId, BindingInsert insert)
+            throws SQLException {
+        try (PreparedStatement statement =
+                connection.prepareStatement("""
+                INSERT INTO workflow_definitions
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
+                     source_type, loaded_at%s)
+                VALUES ('default', ?, 1, 'CODE', 'example.Contract', 'example.State', repeat('a', 64), 'AVAILABLE',
+                        'code', now()%s)
+                """.formatted(insert.bindingColumn(), insert.bindingValue()))) {
+            statement.setString(1, definitionId);
+            statement.executeUpdate();
+        }
+    }
+
+    private static void insertStatusRow(
+            Connection connection, String definitionId, long version, String status, boolean withToken)
+            throws SQLException {
+        try (PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO workflow_definitions
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
+                     document, document_format, document_digest, source_type, loaded_at, publish_token)
+                VALUES ('default', ?, ?, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), ?,
+                        '{}', 'YAML', encode(sha256(convert_to('{}', 'UTF8')), 'hex'), 'schema-test', now(),
+                        CASE WHEN ? THEN gen_random_uuid() ELSE NULL END)
+                """)) {
+            insert.setString(1, definitionId);
+            insert.setLong(2, version);
+            insert.setString(3, status);
+            insert.setBoolean(4, withToken);
+            insert.executeUpdate();
+        }
+    }
+
+    private static List<String> queryStrings(Connection connection, String sql) throws SQLException {
+        List<String> values = new ArrayList<>();
+        try (Statement statement = connection.createStatement();
+                ResultSet rows = statement.executeQuery(sql)) {
+            while (rows.next()) values.add(rows.getString(1));
+        }
+        return values;
+    }
+
     // --- Scenario ---
 
     private static Map<Long, String> expectedStatuses() {
-        return Map.of(1L, "DEPRECATED", 2L, "SUPERSEDED", 3L, "ACTIVE", 4L, "CANDIDATE");
+        return Map.of(1L, "DEPRECATED", 2L, "AVAILABLE", 3L, "AVAILABLE", 4L, "CANDIDATE");
     }
 
-    /** Exercises insert, find, document read, list, claim, complete, release, reconcile, transition and recompute. */
+    /** Exercises insert, find, document read, list, claim, complete, release, reconcile, transition and reinstatement. */
     private static void runLifecycle(WorkflowDefinitionRegistryStore store) throws Exception {
         await(store.insertCandidate(record(1, PLAN_HASH, DefinitionStatus.CANDIDATE), document(1)));
         assertEquals(
@@ -341,30 +544,28 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         await(store.insertCandidate(record(2, PLAN_HASH, DefinitionStatus.CANDIDATE), document(2)));
         activate(store, 2);
         assertEquals(
-                DefinitionStatus.SUPERSEDED,
+                DefinitionStatus.AVAILABLE,
                 await(store.find(key(1))).orElseThrow().status());
 
         assertEquals(
                 "{\"v\":2}", await(store.findDocument(key(2))).orElseThrow().document());
         assertEquals(
-                2,
-                await(store.list(new DefinitionFilter(TenantScope.ALL, null, null)))
-                        .size());
+                2, await(store.list(new DefinitionFilter(null, null, null))).size());
 
         assertEquals(
                 ReconcileOutcome.INSERTED,
-                await(store.upsertDocument(record(3, PLAN_HASH, DefinitionStatus.SUPERSEDED), document(3))));
+                await(store.upsertDocument(record(3, PLAN_HASH, DefinitionStatus.AVAILABLE), document(3))));
         assertEquals(
                 ReconcileOutcome.UNCHANGED,
-                await(store.upsertDocument(record(3, PLAN_HASH, DefinitionStatus.SUPERSEDED), document(3))));
+                await(store.upsertDocument(record(3, PLAN_HASH, DefinitionStatus.AVAILABLE), document(3))));
         assertEquals(
                 ReconcileOutcome.DRIFT,
-                await(store.upsertDocument(record(3, OTHER_PLAN_HASH, DefinitionStatus.SUPERSEDED), document(3))));
-        await(store.recomputeActive(null, DEFINITION_ID));
+                await(store.upsertDocument(record(3, OTHER_PLAN_HASH, DefinitionStatus.AVAILABLE), document(3))));
         assertEquals(
-                DefinitionStatus.ACTIVE, await(store.find(key(3))).orElseThrow().status());
+                DefinitionStatus.AVAILABLE,
+                await(store.find(key(3))).orElseThrow().status());
 
-        await(store.transition(key(1), DefinitionStatus.SUPERSEDED, DefinitionStatus.DEPRECATED));
+        await(store.transition(key(1), DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
 
         await(store.insertCandidate(record(4, PLAN_HASH, DefinitionStatus.CANDIDATE), document(4)));
         ActivationClaim claim = await(store.claim(key(4)));
@@ -379,12 +580,16 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         return new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.CODE,
+                "example.Contract",
+                "example.State",
                 planHash,
                 status,
                 new DefinitionProvenance("code", "memory://code", null, null, null, now),
                 null,
                 now,
-                now);
+                now,
+                Map.of(),
+                null);
     }
 
     private static WorkflowInstance instance(String planHash, WorkflowStatus status, long version) {
@@ -441,11 +646,11 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
 
     private static void activate(WorkflowDefinitionRegistryStore store, long version) throws Exception {
         ActivationClaim claim = await(store.claim(key(version)));
-        assertEquals(ActivationOutcome.ACTIVE, await(store.complete(claim)));
+        await(store.complete(claim));
     }
 
     private static DefinitionKey key(long version) {
-        return new DefinitionKey(null, DEFINITION_ID, version);
+        return new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, version);
     }
 
     private static WorkflowDefinitionRecord record(long version, String planHash, DefinitionStatus status) {
@@ -453,16 +658,109 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         return new WorkflowDefinitionRecord(
                 key(version),
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 planHash,
                 status,
                 new DefinitionProvenance("test", "memory://" + version, null, null, null, now),
                 "JSON",
                 now,
-                now);
+                now,
+                Map.of(),
+                null);
     }
 
     private static WorkflowDefinitionDocument document(long version) {
         return new WorkflowDefinitionDocument(key(version), "{\"v\":" + version + "}", "JSON");
+    }
+
+    @Test
+    @DisplayName("the activation table enforces its target rules and restricts deletes of referenced definitions")
+    void activationTableEnforcesTargetRulesAndRestrictsDeletes() throws Exception {
+        // Given a migrated database with an available default row and an available acme row of one id
+        Flyway.configure()
+                .dataSource(db.jdbcUrl(), db.username(), db.password())
+                .locations(WORKFLOW_LOCATION)
+                .load()
+                .migrate();
+        try (Connection connection = connection()) {
+            DefinitionTableRows.insertCode(connection, DEFINITION_ID, 1, "AVAILABLE");
+            insertAvailableDocument(connection, "acme", DEFINITION_ID, 1);
+
+            // When activations that name existing rows of their own scope or of the default are inserted
+            insertActivation(connection, "acme", "acme", 1);
+            insertActivation(connection, "qa", "default", 1);
+
+            // Then both are stored
+            assertEquals(2, activationCount(connection));
+
+            // When activations that name a third scope, or let the default name another scope, are inserted
+            // Then the target check rejects them
+            DefinitionTableRows.assertSqlState("23514", () -> insertActivation(connection, "acme", "globex", 1));
+            DefinitionTableRows.assertSqlState("23514", () -> insertActivation(connection, "default", "acme", 1));
+
+            // When an activation names a definition row that does not exist
+            // Then the foreign key rejects it
+            DefinitionTableRows.assertSqlState("23503", () -> insertActivation(connection, "delta", "delta", 1));
+
+            // When a definition row that an activation references is deleted
+            // Then the foreign key restricts the delete
+            DefinitionTableRows.assertSqlState("23503", () -> deleteDefinition(connection, "acme", 1));
+
+            // And nothing changed
+            assertEquals(2, activationCount(connection));
+        }
+    }
+
+    private static void insertAvailableDocument(Connection connection, String scopeKey, String id, long version)
+            throws Exception {
+        try (PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO workflow_definitions
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash,
+                     status, document, document_format, document_digest, source_type, loaded_at)
+                VALUES (?, ?, ?, 'DOCUMENT', 'example.Contract', 'example.State', repeat('a', 64), 'AVAILABLE',
+                        '{}', 'YAML', ?, 'schema-test', now())
+                """)) {
+            insert.setString(1, scopeKey);
+            insert.setString(2, id);
+            insert.setLong(3, version);
+            insert.setString(4, DefinitionTableRows.sha256Hex("{}"));
+            insert.executeUpdate();
+        }
+    }
+
+    private static void insertActivation(Connection connection, String scopeKey, String targetScopeKey, long version)
+            throws SQLException {
+        try (PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO workflow_definition_activations
+                    (scope_key, definition_id, target_scope_key, definition_version, activated_at)
+                VALUES (?, ?, ?, ?, now())
+                """)) {
+            insert.setString(1, scopeKey);
+            insert.setString(2, DEFINITION_ID);
+            insert.setString(3, targetScopeKey);
+            insert.setLong(4, version);
+            insert.executeUpdate();
+        }
+    }
+
+    private static void deleteDefinition(Connection connection, String scopeKey, long version) throws SQLException {
+        try (PreparedStatement delete = connection.prepareStatement("""
+                DELETE FROM workflow_definitions WHERE scope_key = ? AND definition_id = ? AND definition_version = ?
+                """)) {
+            delete.setString(1, scopeKey);
+            delete.setString(2, DEFINITION_ID);
+            delete.setLong(3, version);
+            delete.executeUpdate();
+        }
+    }
+
+    private static long activationCount(Connection connection) throws SQLException {
+        try (Statement statement = connection.createStatement();
+                ResultSet rows = statement.executeQuery("SELECT count(*) FROM workflow_definition_activations")) {
+            rows.next();
+            return rows.getLong(1);
+        }
     }
 
     // --- Observation ---

@@ -78,7 +78,7 @@ class WorkflowDefinitionCompilerTest {
 
     record ApprovePayload(String note) {}
 
-    @WorkflowContract(definitionId = "order-wf", definitionVersion = 1)
+    @WorkflowContract
     interface OrderContract {}
 
     // --- Infrastructure ---

@@ -185,7 +185,16 @@ public class PgWorkflowEngineRacePolicyGuardIT {
     @DisplayName("AC #11 — FIRST_SUCCESS advances on the first branch to reach COMPLETED; siblings become SUPERSEDED")
     void firstSuccessAdvancesOnFirstCompletion(VertxTestContext ctx) {
         StartRace payload = new StartRace("r1");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         engine.start(cmd)
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {

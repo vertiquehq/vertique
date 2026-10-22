@@ -4,10 +4,11 @@
 package dev.vertique.examples.workflow.order;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
+import dev.vertique.workflow.client.WorkflowClientBinding;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,8 +16,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Verifies that the {@code vertique-codegen-workflow} annotation processor has generated static
  * proxies for this example's {@link OrderFulfillmentWorkflow} and
- * {@link OrderFulfillmentFanOutWorkflow} contracts, and that the aggregate
- * {@code GeneratedWorkflowClientsModule} was emitted.
+ * {@link OrderFulfillmentFanOutWorkflow} contracts, and that no aggregate Dagger module of typed
+ * clients was emitted.
  *
  * <p>These are plain unit tests — no database, no Vert.x runtime, no TestContainers required.
  * The generated classes are compiled into the same package during APT and are therefore available
@@ -27,8 +28,9 @@ class WorkflowCodegenTest {
     @Test
     @DisplayName("OrderFulfillmentWorkflow_WorkflowClientProxy implements OrderFulfillmentWorkflow")
     void orderFulfillmentProxyImplementsContract() {
-        OrderFulfillmentWorkflow proxy =
-                new OrderFulfillmentWorkflow_WorkflowClientProxy(mock(WorkflowOperations.class));
+        OrderFulfillmentWorkflow proxy = new OrderFulfillmentWorkflow_WorkflowClientProxy(
+                mock(WorkflowOperations.class),
+                new WorkflowClientBinding("order-fulfillment", "order-fulfillment", null, null, null));
 
         assertInstanceOf(
                 OrderFulfillmentWorkflow.class, proxy, "generated proxy must implement the contract interface");
@@ -41,8 +43,9 @@ class WorkflowCodegenTest {
     @Test
     @DisplayName("OrderFulfillmentFanOutWorkflow_WorkflowClientProxy implements OrderFulfillmentFanOutWorkflow")
     void orderFulfillmentFanOutProxyImplementsContract() {
-        OrderFulfillmentFanOutWorkflow proxy =
-                new OrderFulfillmentFanOutWorkflow_WorkflowClientProxy(mock(WorkflowOperations.class));
+        OrderFulfillmentFanOutWorkflow proxy = new OrderFulfillmentFanOutWorkflow_WorkflowClientProxy(
+                mock(WorkflowOperations.class),
+                new WorkflowClientBinding("order-fulfillment-fanout", "order-fulfillment-fanout", null, null, null));
 
         assertInstanceOf(
                 OrderFulfillmentFanOutWorkflow.class,
@@ -55,10 +58,11 @@ class WorkflowCodegenTest {
     }
 
     @Test
-    @DisplayName("GeneratedWorkflowClientsModule is present on the classpath")
-    void generatedWorkflowClientsModuleExists() throws ClassNotFoundException {
-        Class<?> module = Class.forName("dev.vertique.examples.workflow.order.GeneratedWorkflowClientsModule");
-
-        assertNotNull(module, "GeneratedWorkflowClientsModule must be present on the classpath");
+    @DisplayName("no Dagger module of typed clients is generated")
+    void generatedWorkflowClientsModuleIsAbsent() {
+        assertThrows(
+                ClassNotFoundException.class,
+                () -> Class.forName("dev.vertique.examples.workflow.order.GeneratedWorkflowClientsModule"),
+                "typed clients are created through WorkflowClientFactory, not provided by a generated module");
     }
 }

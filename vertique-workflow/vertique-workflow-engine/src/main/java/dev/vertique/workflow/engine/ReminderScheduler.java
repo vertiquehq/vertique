@@ -161,7 +161,13 @@ final class ReminderScheduler {
                     htn.stepId(),
                     timerPayload,
                     Map.of(),
-                    WorkflowSideEffectIntent.Correlation.singlePath(inst.id(), seq, inst.definitionId(), htn.stepId()));
+                    WorkflowSideEffectIntent.Correlation.singlePath(
+                            inst.id(),
+                            seq,
+                            inst.definitionId(),
+                            inst.definitionScopeKey(),
+                            inst.scopeKey(),
+                            htn.stepId()));
             return recorders.route(intent, tx).compose(recorderResult -> {
                 if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
                     return Future.failedFuture(new WorkflowDefinitionException(
@@ -211,7 +217,15 @@ final class ReminderScheduler {
                     timerPayload,
                     Map.of(),
                     new WorkflowSideEffectIntent.Correlation(
-                            inst.id(), seq, inst.definitionId(), htn.stepId(), branchTokenId, forkStepId, branchId));
+                            inst.id(),
+                            seq,
+                            inst.definitionId(),
+                            inst.definitionScopeKey(),
+                            inst.scopeKey(),
+                            htn.stepId(),
+                            branchTokenId,
+                            forkStepId,
+                            branchId));
             return recorders.route(intent, tx).compose(recorderResult -> {
                 if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
                     return Future.failedFuture(new WorkflowDefinitionException(

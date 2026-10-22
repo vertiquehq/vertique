@@ -109,7 +109,8 @@ class RowMappers {
                     row.getJsonObject("metadata") != null
                             ? DurableMetadata.fromCarrier(row.getJsonObject("metadata"))
                             : null,
-                    row.getString("tenant_key"));
+                    row.getString("scope_key"),
+                    row.getString("definition_scope_key"));
         };
     }
 

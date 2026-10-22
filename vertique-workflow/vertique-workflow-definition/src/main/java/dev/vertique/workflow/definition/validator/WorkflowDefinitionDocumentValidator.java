@@ -19,6 +19,8 @@ import dev.vertique.workflow.definition.schema.StepNode;
 import dev.vertique.workflow.definition.schema.TimerStep;
 import dev.vertique.workflow.definition.schema.WaitSignalStep;
 import dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -28,7 +30,9 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -49,15 +53,11 @@ import java.util.function.Supplier;
  * <ol>
  *   <li>{@code DEFINITION_ID_BLANK} — {@code definitionId} null or blank.</li>
  *   <li>{@code DEFINITION_VERSION_INVALID} — {@code definitionVersion < 1}.</li>
- *   <li>{@code STATE_TYPE_UNRESOLVABLE} — {@code stateType} FQN not found on classpath.</li>
- *   <li>{@code CONTRACT_UNRESOLVABLE} — {@code contract} FQN not found on classpath.</li>
+ *   <li>{@code STATE_TYPE_UNRESOLVABLE} — {@code stateType} name not found.</li>
+ *   <li>{@code CONTRACT_UNRESOLVABLE} — {@code contract} name not found.</li>
  *   <li>{@code CONTRACT_NOT_ANNOTATED} — resolved contract class is not annotated with
  *       {@link WorkflowContract}.</li>
- *   <li>{@code CONTRACT_DEFINITION_ID_MISMATCH} — annotation {@code definitionId()} does not
- *       match the document's {@code definitionId}.</li>
- *   <li>{@code CONTRACT_DEFINITION_VERSION_MISMATCH} — annotation {@code definitionVersion()} does
- *       not match the document's {@code definitionVersion}.</li>
- *   <li>{@code START_PAYLOAD_TYPE_UNRESOLVABLE} — {@code startPayloadType} FQN not found.</li>
+ *   <li>{@code START_PAYLOAD_TYPE_UNRESOLVABLE} — {@code startPayloadType} name not found.</li>
  *   <li>{@code INITIAL_STATE_MAPPER_UNKNOWN} — {@code initialStateMapper} id not registered.</li>
  *   <li>{@code SUBJECT_RESOLVER_UNKNOWN} — {@code subjectResolver} present but not registered.</li>
  *   <li>{@code INITIAL_STEP_UNKNOWN} — {@code initialStep} does not match any step id.</li>
@@ -165,6 +165,12 @@ public final class WorkflowDefinitionDocumentValidator {
     @Nullable
     private final ExpressionProfile profile;
 
+    /** Resolves every type and contract name a document uses. */
+    private final WorkflowTypeNames typeNames;
+
+    /** Whether a name the index does not hold is looked up on the class loader; false when an index was given. */
+    private final boolean classLoaderFallback;
+
     // --- Construction ---
 
     /**
@@ -177,22 +183,54 @@ public final class WorkflowDefinitionDocumentValidator {
      * expression at emit time; the cost is paid twice, but CEL parsing is cheap and this ensures
      * structured diagnostics reach authors before the compile phase runs.
      *
+     * <p>For trusted documents only: a name is loaded as a class by name (without initialization). A
+     * validator that serves documents from an untrusted source must use the constructor that takes the
+     * type-name index, which never loads a class by name.
+     *
      * @param lookup facade over all 10 named callback registries; non-null
      * @param profile expression profile for pre-compiling {@code when} expressions; may be null
      *     (expression pre-compilation is then skipped)
      * @throws NullPointerException if {@code lookup} is null
      */
-    @Inject
     public WorkflowDefinitionDocumentValidator(RegisteredIdentifierLookup lookup, @Nullable ExpressionProfile profile) {
+        this(lookup, profile, new DefaultWorkflowTypeNames(), true);
+    }
+
+    /**
+     * Constructs the validator with the type-name index.
+     *
+     * <p>A state, payload or contract name in a document is looked up in {@code typeNames} only
+     * (types for state and payloads, contracts for the contract); a name the index does not know is
+     * reported as an unresolvable violation and no class is loaded by name.
+     *
+     * @param lookup facade over all 10 named callback registries; non-null
+     * @param profile expression profile for pre-compiling {@code when} expressions; may be null
+     * @param typeNames the type-name index that resolves the names; non-null
+     * @throws NullPointerException if {@code lookup} or {@code typeNames} is null
+     */
+    @Inject
+    public WorkflowDefinitionDocumentValidator(
+            RegisteredIdentifierLookup lookup, @Nullable ExpressionProfile profile, WorkflowTypeNames typeNames) {
+        this(lookup, profile, typeNames, false);
+    }
+
+    private WorkflowDefinitionDocumentValidator(
+            RegisteredIdentifierLookup lookup,
+            @Nullable ExpressionProfile profile,
+            WorkflowTypeNames typeNames,
+            boolean classLoaderFallback) {
         this.lookup = Objects.requireNonNull(lookup, "lookup");
         this.profile = profile;
+        this.typeNames = Objects.requireNonNull(typeNames, "typeNames");
+        this.classLoaderFallback = classLoaderFallback;
     }
 
     /**
      * Convenience constructor for tests and non-DI contexts that do not need expression
      * pre-compilation.
      *
-     * <p>Equivalent to {@code new WorkflowDefinitionDocumentValidator(lookup, null)}.
+     * <p>Equivalent to {@code new WorkflowDefinitionDocumentValidator(lookup, null)}, so it carries the
+     * same trusted-documents-only class-loader fallback.
      *
      * @param lookup facade over all 10 named callback registries; non-null
      * @throws NullPointerException if {@code lookup} is null
@@ -239,7 +277,9 @@ public final class WorkflowDefinitionDocumentValidator {
                 "`stateType`",
                 violations);
 
-        Class<?> contractClass = checkClassResolvable(
+        Class<?> contractClass = resolveClass(
+                typeNames::findContract,
+                classLoaderFallback,
                 definitionId,
                 definitionVersion,
                 null,
@@ -249,7 +289,7 @@ public final class WorkflowDefinitionDocumentValidator {
                 "`contract`",
                 violations);
         if (contractClass != null) {
-            checkContractAnnotation(definitionId, definitionVersion, contractClass, doc, violations);
+            checkContractAnnotation(definitionId, definitionVersion, contractClass, violations);
         }
 
         Class<?> resolvedStartPayloadType = checkClassResolvable(
@@ -384,14 +424,43 @@ public final class WorkflowDefinitionDocumentValidator {
     }
 
     /**
-     * Resolves a class by FQN using the context classloader (falling back to the validator's own
-     * classloader). Returns the resolved class, or {@code null} if resolution failed (in which
-     * case a violation is added).
+     * Resolves a state or payload type name through the type-name index and, for a validator built
+     * without an index, by FQN using the context classloader (falling back to the validator's own
+     * classloader). Returns the resolved class, or {@code null} if resolution failed (in which case a
+     * violation is added).
      *
-     * <p>This method uses class lookup only ({@code Class.forName(name, false, cl)}); it does
-     * NOT instantiate the class.
+     * <p>The class-loader fallback uses class lookup only ({@code Class.forName(name, false, cl)});
+     * it does NOT instantiate the class.
      */
-    private static Class<?> checkClassResolvable(
+    private Class<?> checkClassResolvable(
+            String definitionId,
+            long definitionVersion,
+            String stepId,
+            Integer routeIndex,
+            String fqn,
+            String code,
+            String fieldLabel,
+            List<Violation> violations) {
+        return resolveClass(
+                typeNames::find,
+                classLoaderFallback,
+                definitionId,
+                definitionVersion,
+                stepId,
+                routeIndex,
+                fqn,
+                code,
+                fieldLabel,
+                violations);
+    }
+
+    /**
+     * Resolves a name through {@code indexed} and, only when {@code classLoaderFallback} is set, by
+     * class lookup on the class loader.
+     */
+    private static Class<?> resolveClass(
+            Function<String, Optional<Class<?>>> indexed,
+            boolean classLoaderFallback,
             String definitionId,
             long definitionVersion,
             String stepId,
@@ -402,6 +471,20 @@ public final class WorkflowDefinitionDocumentValidator {
             List<Violation> violations) {
         if (fqn == null || fqn.isBlank()) {
             // A blank FQN is reported by the relevant blank-id rule, not here.
+            return null;
+        }
+        Optional<Class<?>> known = indexed.apply(fqn);
+        if (known.isPresent()) {
+            return known.get();
+        }
+        if (!classLoaderFallback) {
+            violations.add(new Violation(
+                    blankFallback(definitionId),
+                    definitionVersion,
+                    stepId,
+                    routeIndex,
+                    code,
+                    fieldLabel + " name is not in the workflow type index"));
             return null;
         }
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
@@ -423,17 +506,13 @@ public final class WorkflowDefinitionDocumentValidator {
     }
 
     /**
-     * Checks that the resolved contract class is annotated with {@link WorkflowContract} and that
-     * the annotation's {@code definitionId()} and {@code definitionVersion()} match the document.
+     * Checks that the resolved contract class is annotated with {@link WorkflowContract}. Nothing else
+     * of the annotation is compared with the document, because many definitions and versions may share
+     * one contract.
      */
     private static void checkContractAnnotation(
-            String definitionId,
-            long definitionVersion,
-            Class<?> contractClass,
-            WorkflowDefinitionDocument doc,
-            List<Violation> violations) {
-        WorkflowContract annotation = contractClass.getAnnotation(WorkflowContract.class);
-        if (annotation == null) {
+            String definitionId, long definitionVersion, Class<?> contractClass, List<Violation> violations) {
+        if (!contractClass.isAnnotationPresent(WorkflowContract.class)) {
             violations.add(new Violation(
                     blankFallback(definitionId),
                     definitionVersion,
@@ -441,31 +520,6 @@ public final class WorkflowDefinitionDocumentValidator {
                     null,
                     "CONTRACT_NOT_ANNOTATED",
                     "`contract` class '" + contractClass.getName() + "' is not annotated with @WorkflowContract"));
-            return;
-        }
-        if (!annotation.definitionId().equals(doc.definitionId())) {
-            violations.add(new Violation(
-                    blankFallback(definitionId),
-                    definitionVersion,
-                    null,
-                    null,
-                    "CONTRACT_DEFINITION_ID_MISMATCH",
-                    "`contract` annotation `@WorkflowContract.definitionId()` is '"
-                            + annotation.definitionId()
-                            + "' but the document's `definitionId` is '"
-                            + doc.definitionId() + "'"));
-        }
-        if (annotation.definitionVersion() != doc.definitionVersion()) {
-            violations.add(new Violation(
-                    blankFallback(definitionId),
-                    definitionVersion,
-                    null,
-                    null,
-                    "CONTRACT_DEFINITION_VERSION_MISMATCH",
-                    "`contract` annotation `@WorkflowContract.definitionVersion()` is "
-                            + annotation.definitionVersion()
-                            + " but the document's `definitionVersion` is "
-                            + doc.definitionVersion()));
         }
     }
 

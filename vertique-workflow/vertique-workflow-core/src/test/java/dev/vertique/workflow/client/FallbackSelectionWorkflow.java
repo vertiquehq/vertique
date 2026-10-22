@@ -18,7 +18,7 @@ import io.vertx.core.Future;
  *
  * <p>Targets the {@code selection-saga-fallback} definition (v1).
  */
-@WorkflowContract(definitionId = "selection-saga-fallback", definitionVersion = 1)
+@WorkflowContract
 interface FallbackSelectionWorkflow {
 
     /**

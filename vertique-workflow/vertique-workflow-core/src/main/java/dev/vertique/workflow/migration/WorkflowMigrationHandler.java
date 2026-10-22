@@ -3,6 +3,8 @@
 
 package dev.vertique.workflow.migration;
 
+import dev.vertique.workflow.registry.store.WorkflowScopes;
+
 /**
  * SPI for migrating a workflow instance's state from one definition version to another.
  *
@@ -13,10 +15,11 @@ package dev.vertique.workflow.migration;
  *
  * <h3>At construction (Dagger graph build time)</h3>
  * <ul>
- *   <li>{@link #fromDefinitionVersion()} must be strictly less than
- *       {@link #targetDefinitionVersion()} (downgrades are forbidden in v1).</li>
+ *   <li>When {@link #sourceScope()} equals {@link #targetScope()}, {@link #fromDefinitionVersion()} must be
+ *       strictly less than {@link #targetDefinitionVersion()} (downgrades are forbidden in v1). A handler
+ *       between two scopes is not ordered by version.</li>
  *   <li>No two handlers may share the same
- *       {@code (definitionId, fromVersion, targetVersion)} triple.</li>
+ *       {@code (sourceScope, definitionId, fromVersion, targetScope, targetVersion)} key.</li>
  * </ul>
  *
  * <h3>Deferred to {@code find()} time</h3>
@@ -44,6 +47,24 @@ package dev.vertique.workflow.migration;
 public interface WorkflowMigrationHandler<S, T> {
 
     /**
+     * Returns the scope of the definition version this handler migrates <em>from</em>.
+     *
+     * @return the source scope key; defaults to the default scope
+     */
+    default String sourceScope() {
+        return WorkflowScopes.DEFAULT;
+    }
+
+    /**
+     * Returns the scope of the definition version this handler migrates <em>to</em>.
+     *
+     * @return the target scope key; defaults to {@link #sourceScope()}
+     */
+    default String targetScope() {
+        return sourceScope();
+    }
+
+    /**
      * Returns the definition id this handler applies to.
      *
      * @return the workflow definition id; never {@code null}
@@ -53,7 +74,8 @@ public interface WorkflowMigrationHandler<S, T> {
     /**
      * Returns the definition version this handler migrates <em>from</em>.
      *
-     * <p>Must be strictly less than {@link #targetDefinitionVersion()}.
+     * <p>Must be strictly less than {@link #targetDefinitionVersion()} when {@link #sourceScope()} equals
+     * {@link #targetScope()}.
      *
      * @return the source definition version
      */

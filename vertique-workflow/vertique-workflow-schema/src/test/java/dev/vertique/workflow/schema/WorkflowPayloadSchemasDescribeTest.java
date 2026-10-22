@@ -8,10 +8,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.ExpensePayloads;
 import dev.vertique.workflow.schema.fixtures.Payloads;
 import io.vertx.core.json.JsonObject;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
@@ -21,6 +25,7 @@ import org.junit.jupiter.api.Test;
 class WorkflowPayloadSchemasDescribeTest {
 
     private static final String EXPENSE = "expense";
+    private static final String PURCHASE = "purchase-approval";
 
     private final PayloadSchemaCache cache = new PayloadSchemaCache();
 
@@ -33,7 +38,8 @@ class WorkflowPayloadSchemasDescribeTest {
         WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
 
         // When: the definition is described
-        Optional<WorkflowDefinitionDescriptor> described = schemas.describe(EXPENSE, 1L);
+        Optional<WorkflowDefinitionDescriptor> described =
+                schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L));
 
         // Then: the descriptor is present and names the definition
         assertThat(described).isPresent();
@@ -67,6 +73,55 @@ class WorkflowPayloadSchemasDescribeTest {
     }
 
     @Test
+    @DisplayName("describe and decision are keyed by the definition scope")
+    void describeIsKeyedByTheDefinitionScope() {
+        // Given: purchase-approval v1 in the default scope whose review offers approve, and purchase-approval v1
+        // in the acme scope whose review offers approve and escalate
+        DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
+        Map<String, Class<?>> defaultDecisions = Map.of("approve", ExpensePayloads.ApprovalComment.class);
+        Map<String, Class<?>> acmeDecisions = new LinkedHashMap<>();
+        acmeDecisions.put("approve", ExpensePayloads.ApprovalComment.class);
+        acmeDecisions.put("escalate", ExpensePayloads.AuditNote.class);
+        registry.register(Definitions.withDecisions(PURCHASE, 1L, defaultDecisions));
+        registry.register("acme", Definitions.withDecisions(PURCHASE, 1L, acmeDecisions));
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        DefinitionKey defaultKey = new DefinitionKey(WorkflowScopes.DEFAULT, PURCHASE, 1L);
+        DefinitionKey acmeKey = new DefinitionKey("acme", PURCHASE, 1L);
+        DefinitionKey globexKey = new DefinitionKey("globex", PURCHASE, 1L);
+
+        // When: each key is described and asked for the decision only the acme version declares
+        WorkflowDefinitionDescriptor defaultDescriptor =
+                schemas.describe(defaultKey).orElseThrow();
+        WorkflowDefinitionDescriptor acmeDescriptor = schemas.describe(acmeKey).orElseThrow();
+
+        // Then: the default descriptor lists one decision and the acme descriptor two
+        assertThat(defaultDescriptor.humanTasks().get(0).decisions())
+                .extracting(DecisionDescriptor::name)
+                .containsExactly("approve");
+        assertThat(acmeDescriptor.humanTasks().get(0).decisions())
+                .extracting(DecisionDescriptor::name)
+                .containsExactly("approve", "escalate");
+
+        // and: the escalate decision is found for the acme key only
+        assertThat(schemas.decision(acmeKey, "review", "escalate")).isPresent();
+        assertThat(schemas.decision(defaultKey, "review", "escalate")).isEmpty();
+
+        // and: validation follows the key too, so a payload for escalate is accepted in acme and unknown in default
+        JsonObject note = new JsonObject().put("auditor", "a").put("finding", "f");
+        assertThat(schemas.validateDecision(acmeKey, "review", "escalate", note).valid())
+                .isTrue();
+        assertThat(schemas.validateDecision(defaultKey, "review", "escalate", note)
+                        .violations())
+                .hasSize(1);
+
+        // and: a scope that holds nothing of the id describes as empty and validates as one violation
+        assertThat(schemas.describe(globexKey)).isEmpty();
+        assertThat(schemas.decision(globexKey, "review", "approve")).isEmpty();
+        assertThat(schemas.validateStart(globexKey, null).violations()).hasSize(1);
+        assertThat(schemas.validateStart(acmeKey, null).valid()).isTrue();
+    }
+
+    @Test
     @DisplayName("an unknown definition id, version, step or decision is empty and never throws")
     void unknownIdOrVersionReturnsEmpty() {
         // Given: the registry of the expense definition
@@ -76,14 +131,20 @@ class WorkflowPayloadSchemasDescribeTest {
 
         // When: an unknown id, an unknown version, an unknown step and an unknown decision are asked for
         // Then: every result is empty and nothing is thrown
-        assertThat(schemas.describe("nope", 1L)).isEmpty();
-        assertThat(schemas.describe(EXPENSE, 99L)).isEmpty();
-        assertThat(schemas.decision(EXPENSE, 1L, "nope", "approve")).isEmpty();
-        assertThat(schemas.decision(EXPENSE, 1L, "review", "nope")).isEmpty();
+        assertThat(schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, "nope", 1L)))
+                .isEmpty();
+        assertThat(schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 99L)))
+                .isEmpty();
+        assertThat(schemas.decision(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L), "nope", "approve"))
+                .isEmpty();
+        assertThat(schemas.decision(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L), "review", "nope"))
+                .isEmpty();
 
         // And: the known coordinates still resolve
-        assertThat(schemas.decision(EXPENSE, 1L, "review", "approve")).isPresent();
-        assertThat(schemas.decision(EXPENSE, 1L, "review", "reject")).isPresent();
+        assertThat(schemas.decision(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L), "review", "approve"))
+                .isPresent();
+        assertThat(schemas.decision(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L), "review", "reject"))
+                .isPresent();
     }
 
     @Test
@@ -103,12 +164,18 @@ class WorkflowPayloadSchemasDescribeTest {
         ClassLoader original = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(loader);
         try {
-            assertThat(schemas.describe(EXPENSE, 1L)).isPresent();
-            assertThat(schemas.decision(EXPENSE, 1L, "review", "approve")).isPresent();
-            assertThat(schemas.decision(EXPENSE, 1L, "review", "reject")).isPresent();
-            assertThat(schemas.describe("nope", 1L)).isEmpty();
-            assertThat(schemas.describe(EXPENSE, 99L)).isEmpty();
-            assertThat(schemas.decision(EXPENSE, 1L, "review", "nope")).isEmpty();
+            assertThat(schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L)))
+                    .isPresent();
+            assertThat(schemas.decision(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L), "review", "approve"))
+                    .isPresent();
+            assertThat(schemas.decision(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L), "review", "reject"))
+                    .isPresent();
+            assertThat(schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, "nope", 1L)))
+                    .isEmpty();
+            assertThat(schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 99L)))
+                    .isEmpty();
+            assertThat(schemas.decision(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L), "review", "nope"))
+                    .isEmpty();
         } finally {
             Thread.currentThread().setContextClassLoader(original);
         }
@@ -124,8 +191,11 @@ class WorkflowPayloadSchemasDescribeTest {
         DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.expense());
         WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
-        List<DecisionDescriptor> decisions =
-                schemas.describe(EXPENSE, 1L).orElseThrow().humanTasks().get(0).decisions();
+        List<DecisionDescriptor> decisions = schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L))
+                .orElseThrow()
+                .humanTasks()
+                .get(0)
+                .decisions();
         DecisionDescriptor approve = decisions.get(0);
         DecisionDescriptor reject = decisions.get(1);
         JsonObject original = approve.payload().document().copy();
@@ -139,7 +209,7 @@ class WorkflowPayloadSchemasDescribeTest {
 
         // And: neither the same descriptor nor a second describe shows the mutation
         assertThat(approve.payload().document()).isEqualTo(original);
-        DecisionDescriptor again = schemas.describe(EXPENSE, 1L)
+        DecisionDescriptor again = schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L))
                 .orElseThrow()
                 .humanTasks()
                 .get(0)
@@ -147,7 +217,7 @@ class WorkflowPayloadSchemasDescribeTest {
                 .get(0);
         assertThat(again.name()).isEqualTo("approve");
         assertThat(again.payload().document()).isEqualTo(original);
-        assertThat(schemas.decision(EXPENSE, 1L, "review", "approve")
+        assertThat(schemas.decision(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L), "review", "approve")
                         .orElseThrow()
                         .payload()
                         .document())
@@ -163,8 +233,9 @@ class WorkflowPayloadSchemasDescribeTest {
         WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
 
         // When: it is described
-        WorkflowDefinitionDescriptor descriptor =
-                schemas.describe("expense-audited", 1L).orElseThrow();
+        WorkflowDefinitionDescriptor descriptor = schemas.describe(
+                        new DefinitionKey(WorkflowScopes.DEFAULT, "expense-audited", 1L))
+                .orElseThrow();
 
         // Then: tasks come in plan order and each task's decisions in declaration order, with their next steps
         assertThat(descriptor.humanTasks())
@@ -182,7 +253,8 @@ class WorkflowPayloadSchemasDescribeTest {
                 .isEqualTo(Registries.generated(ExpensePayloads.AuditNote.class));
 
         // And: the keyed lookup finds a decision of the second task
-        assertThat(schemas.decision("expense-audited", 1L, "audit", "confirm"))
+        assertThat(schemas.decision(
+                        new DefinitionKey(WorkflowScopes.DEFAULT, "expense-audited", 1L), "audit", "confirm"))
                 .hasValueSatisfying(
                         decision -> assertThat(decision.nextStepId()).isEqualTo("done"));
     }
@@ -197,13 +269,16 @@ class WorkflowPayloadSchemasDescribeTest {
         WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
 
         // When / Then: the void start has no payload while its decision does
-        WorkflowDefinitionDescriptor voidStart =
-                schemas.describe("void-start", 1L).orElseThrow();
+        WorkflowDefinitionDescriptor voidStart = schemas.describe(
+                        new DefinitionKey(WorkflowScopes.DEFAULT, "void-start", 1L))
+                .orElseThrow();
         assertThat(voidStart.startPayload()).isNull();
         assertThat(voidStart.humanTasks().get(0).decisions().get(0).payload()).isNotNull();
 
         // And: the all-void definition has no payload anywhere
-        WorkflowDefinitionDescriptor voidOnly = schemas.describe("all-void", 1L).orElseThrow();
+        WorkflowDefinitionDescriptor voidOnly = schemas.describe(
+                        new DefinitionKey(WorkflowScopes.DEFAULT, "all-void", 1L))
+                .orElseThrow();
         assertThat(voidOnly.startPayload()).isNull();
         assertThat(voidOnly.humanTasks().get(0).decisions().get(0).payload()).isNull();
     }
@@ -218,8 +293,10 @@ class WorkflowPayloadSchemasDescribeTest {
         WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
 
         // When / Then: neither the definition nor its decision can be read
-        assertThat(schemas.describe("scalar", 1L)).isEmpty();
-        assertThat(schemas.decision("scalar", 1L, "review", "note")).isEmpty();
+        assertThat(schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, "scalar", 1L)))
+                .isEmpty();
+        assertThat(schemas.decision(new DefinitionKey(WorkflowScopes.DEFAULT, "scalar", 1L), "review", "note"))
+                .isEmpty();
     }
 
     @Test
@@ -233,19 +310,21 @@ class WorkflowPayloadSchemasDescribeTest {
                 + " install WorkflowSchemaModule in the component that provides WorkflowRegistry";
 
         // When / Then: describe fails with the remedy and the missing type name
-        assertThatThrownBy(() -> schemas.describe(EXPENSE, 1L))
+        assertThatThrownBy(() -> schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(remedy)
                 .hasMessageContaining(ExpensePayloads.ExpenseStart.class.getName());
 
         // And: so does the keyed decision lookup, naming the decision's type
-        assertThatThrownBy(() -> schemas.decision(EXPENSE, 1L, "review", "approve"))
+        assertThatThrownBy(() ->
+                        schemas.decision(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L), "review", "approve"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(remedy)
                 .hasMessageContaining(ExpensePayloads.ApprovalComment.class.getName());
 
         // And: unknown coordinates are still empty rather than a violation
-        assertThat(schemas.describe("nope", 1L)).isEmpty();
+        assertThat(schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, "nope", 1L)))
+                .isEmpty();
     }
 
     /** A class loader that delegates to its parent and counts every class it is asked to load. */

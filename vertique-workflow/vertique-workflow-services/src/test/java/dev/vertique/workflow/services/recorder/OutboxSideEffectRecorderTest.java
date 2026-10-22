@@ -79,6 +79,40 @@ class OutboxSideEffectRecorderTest {
         assertThat(recorder.kind()).isEqualTo(IntentKind.SERVICE);
     }
 
+    @Test
+    @DisplayName("headers carry the definition scope and the start scope, and the correlation wins over the intent")
+    void headersCarryTheDefinitionScopeAndStartScope() {
+        // Given: a correlation for an instance pinned to a definition in scope acme and started in scope tenant-1,
+        // and an intent header that tries to name another start scope
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowSideEffectIntent.Correlation correlation = WorkflowSideEffectIntent.Correlation.singlePath(
+                workflowId, 2L, "purchase-approval", "acme", "tenant-1", "notify");
+        WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
+                IntentKind.SERVICE, "svc.scope.op", "payload", Map.of("x-workflow-scope", "intruder"), correlation);
+        ServiceMethodMeta meta = mock(ServiceMethodMeta.class);
+        when(meta.oneWay()).thenReturn(false);
+        doReturn(Void.class).when(meta).returnType();
+        when(meta.params()).thenReturn(List.of(new ParamMeta("req", ParamSource.PAYLOAD, Object.class)));
+        ResolvedServiceTarget target = mock(ResolvedServiceTarget.class);
+        when(target.meta()).thenReturn(meta);
+        lenient().when(target.targetId()).thenReturn("svc.scope.op");
+        lenient().when(target.operation()).thenReturn("op");
+        when(targetResolver.resolve("svc.scope.op")).thenReturn(target);
+        when(outboxService.publish(eq(tx), any(OutboxEntry.class))).thenReturn(Future.succeededFuture(1L));
+
+        // When: the recorder records it
+        Future<RecorderResult> result = recorder.record(intent, tx);
+
+        // Then: the headers name the definition scope, the start scope and the definition id
+        assertThat(result.succeeded()).isTrue();
+        ArgumentCaptor<OutboxEntry> entryCaptor = ArgumentCaptor.forClass(OutboxEntry.class);
+        verify(outboxService).publish(eq(tx), entryCaptor.capture());
+        Map<String, String> headers = entryCaptor.getValue().headers();
+        assertThat(headers).containsEntry("x-workflow-definition-scope", "acme");
+        assertThat(headers).containsEntry("x-workflow-scope", "tenant-1");
+        assertThat(headers).containsEntry("x-workflow-definition-id", "purchase-approval");
+    }
+
     // --- Happy path ---
 
     @Nested
@@ -92,7 +126,7 @@ class OutboxSideEffectRecorderTest {
             UUID instanceId = UUID.randomUUID();
             WorkflowInstanceId workflowId = new WorkflowInstanceId(instanceId);
             WorkflowSideEffectIntent.Correlation correlation = WorkflowSideEffectIntent.Correlation.singlePath(
-                    workflowId, 3L, "order-fulfillment", "reserve-inventory");
+                    workflowId, 3L, "order-fulfillment", "acme", "tenant-1", "reserve-inventory");
             WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
                     IntentKind.SERVICE,
                     "integration.inventory.reserve",
@@ -295,6 +329,8 @@ class OutboxSideEffectRecorderTest {
                             "x-workflow-id",
                             "x-workflow-step-sequence",
                             "x-workflow-definition-id",
+                            "x-workflow-definition-scope",
+                            "x-workflow-scope",
                             "x-workflow-step-id");
         }
 
@@ -347,8 +383,8 @@ class OutboxSideEffectRecorderTest {
 
         private WorkflowSideEffectIntent intentWithHeaders(String targetId, Map<String, String> headers) {
             WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
-            WorkflowSideEffectIntent.Correlation correlation =
-                    WorkflowSideEffectIntent.Correlation.singlePath(workflowId, 1L, "test-def", "test-step");
+            WorkflowSideEffectIntent.Correlation correlation = WorkflowSideEffectIntent.Correlation.singlePath(
+                    workflowId, 1L, "test-def", "acme", "tenant-1", "test-step");
             return new WorkflowSideEffectIntent(IntentKind.SERVICE, targetId, "payload", headers, correlation);
         }
     }
@@ -358,8 +394,8 @@ class OutboxSideEffectRecorderTest {
     /** Creates a minimal intent for the given target id; correlation values are arbitrary. */
     private static WorkflowSideEffectIntent minimalIntent(String targetId) {
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
-        WorkflowSideEffectIntent.Correlation correlation =
-                WorkflowSideEffectIntent.Correlation.singlePath(workflowId, 1L, "test-def", "test-step");
+        WorkflowSideEffectIntent.Correlation correlation = WorkflowSideEffectIntent.Correlation.singlePath(
+                workflowId, 1L, "test-def", "acme", "tenant-1", "test-step");
         return new WorkflowSideEffectIntent(IntentKind.SERVICE, targetId, null, Map.of(), correlation);
     }
 }

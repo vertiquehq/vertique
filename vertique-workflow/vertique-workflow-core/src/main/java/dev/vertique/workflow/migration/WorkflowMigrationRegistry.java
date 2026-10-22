@@ -21,16 +21,19 @@ import java.util.Optional;
 public interface WorkflowMigrationRegistry {
 
     /**
-     * Finds the handler registered for the given {@code (definitionId, sourceVersion, targetVersion)}
-     * triple.
+     * Finds the handler registered for the given
+     * {@code (sourceScope, definitionId, sourceVersion, targetScope, targetVersion)} key.
      *
+     * @param sourceScope the scope of the definition version the instance is currently pinned to; non-null
      * @param definitionId workflow definition id; non-null
      * @param sourceVersion the version the instance is currently pinned to
+     * @param targetScope the scope of the definition version to migrate the instance to; non-null
      * @param targetVersion the version to migrate the instance to
      * @return an {@link Optional} containing the matching handler, or {@link Optional#empty()} if
-     *     no handler is registered for the triple
+     *     no handler is registered for the key
      */
-    Optional<WorkflowMigrationHandler<?, ?>> find(String definitionId, long sourceVersion, long targetVersion);
+    Optional<WorkflowMigrationHandler<?, ?>> find(
+            String sourceScope, String definitionId, long sourceVersion, String targetScope, long targetVersion);
 
     /**
      * Returns an unmodifiable view of all registered handlers across all definition ids and

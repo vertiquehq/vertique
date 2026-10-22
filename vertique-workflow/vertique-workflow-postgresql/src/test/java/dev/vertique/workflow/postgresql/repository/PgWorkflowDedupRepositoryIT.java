@@ -134,7 +134,7 @@ public class PgWorkflowDedupRepositoryIT {
 
         insertInstance(proposedId)
                 .compose(v -> pool.withTransaction(tx -> dedupRepository.claimOrResolveStart(
-                        "order-fulfillment", idempotencyKey, proposedId, "definitionVersion=1", tx)))
+                        "default", "order-fulfillment", idempotencyKey, proposedId, "definitionVersion=1", tx)))
                 .onSuccess(result -> ctx.verify(() -> {
                     assertNotNull(result);
                     assertEquals(proposedId, result.workflowId(), "winning id must equal the proposed id");
@@ -154,12 +154,12 @@ public class PgWorkflowDedupRepositoryIT {
         insertInstance(firstId)
                 .compose(v -> insertInstance(secondId))
                 .compose(v -> pool.withTransaction(tx -> dedupRepository.claimOrResolveStart(
-                        "order-fulfillment", idempotencyKey, firstId, "definitionVersion=1", tx)))
+                        "default", "order-fulfillment", idempotencyKey, firstId, "definitionVersion=1", tx)))
                 .compose(firstResult -> {
                     assertTrue(firstResult.didInsert(), "first claim must succeed");
                     // Now try again with a different proposed id — same idem key
                     return pool.withTransaction(tx -> dedupRepository.claimOrResolveStart(
-                            "order-fulfillment", idempotencyKey, secondId, "definitionVersion=1", tx));
+                            "default", "order-fulfillment", idempotencyKey, secondId, "definitionVersion=1", tx));
                 })
                 .onSuccess(secondResult -> ctx.verify(() -> {
                     assertNotNull(secondResult);
@@ -182,12 +182,12 @@ public class PgWorkflowDedupRepositoryIT {
 
         insertInstance(idA)
                 .compose(v -> insertInstance(idB))
-                .compose(v -> pool.withTransaction(tx ->
-                        dedupRepository.claimOrResolveStart("def-A", sharedIdemKey, idA, "definitionVersion=1", tx)))
+                .compose(v -> pool.withTransaction(tx -> dedupRepository.claimOrResolveStart(
+                        "default", "def-A", sharedIdemKey, idA, "definitionVersion=1", tx)))
                 .compose(resultA -> {
                     assertTrue(resultA.didInsert(), "claim for def-A must succeed");
                     return pool.withTransaction(tx -> dedupRepository.claimOrResolveStart(
-                            "def-B", sharedIdemKey, idB, "definitionVersion=1", tx));
+                            "default", "def-B", sharedIdemKey, idB, "definitionVersion=1", tx));
                 })
                 .onSuccess(resultB -> ctx.verify(() -> {
                     assertTrue(

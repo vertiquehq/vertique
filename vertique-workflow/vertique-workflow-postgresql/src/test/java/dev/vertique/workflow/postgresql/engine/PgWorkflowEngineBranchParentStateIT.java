@@ -218,7 +218,16 @@ public class PgWorkflowEngineBranchParentStateIT {
     @DisplayName("Branch payload factories see the parent instance state, not an empty default")
     void branchDispatchSeesParentState(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("order-42");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         engine.start(cmd)
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {

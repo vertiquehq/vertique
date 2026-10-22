@@ -8,7 +8,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.application.VertiqueApplicationBootstrap;
 import dev.vertique.application.VertiqueApplicationHandle;
 import dev.vertique.core.VertiqueRuntime;
-import dev.vertique.db.exception.DataIntegrityViolationException;
 import dev.vertique.db.exception.PessimisticLockingFailureException;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
@@ -28,6 +27,7 @@ import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -48,6 +48,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -65,11 +66,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 public class DefinitionRegistryBootstrapIT {
 
     private static final String DEFINITION_ID = "order-fulfillment-doc";
-    private static final String CODE_RECOMPUTE_ID = "recompute-code-matrix";
-    private static final String DOCUMENT_RECOMPUTE_ID = "recompute-document-matrix";
-    private static final String TENANT_RECOMPUTE_ID = "recompute-tenant-matrix";
-    private static final String OTHER_DEFINITION_ID = "recompute-unrelated-id";
-    private static final String ROLLBACK_RECOMPUTE_ID = "recompute-rollback-matrix";
     private static final SourceMetadata YAML_METADATA = new SourceMetadata(
             "bootstrap-yaml",
             "classpath:definitions/it/order-fulfillment.workflow.yaml",
@@ -100,8 +96,8 @@ public class DefinitionRegistryBootstrapIT {
         BootObservation observation = new BootObservation(
                 DEFINITION_ID,
                 List.of(
-                        new ExpectedDefinition(1, DefinitionStatus.SUPERSEDED, "YAML", YAML_METADATA),
-                        new ExpectedDefinition(2, DefinitionStatus.ACTIVE, "JSON", JSON_METADATA)));
+                        new ExpectedDefinition(1, DefinitionStatus.AVAILABLE, "YAML", YAML_METADATA),
+                        new ExpectedDefinition(2, DefinitionStatus.AVAILABLE, "JSON", JSON_METADATA)));
         AppComponent app =
                 ManagedDefinitionDatabase.app(vertx, pool, new JsonObject(), observation, staticDocuments(), false);
 
@@ -139,93 +135,6 @@ public class DefinitionRegistryBootstrapIT {
         finish(context, work, handles, pools);
     }
 
-    @Test
-    @DisplayName("recomputation promotes only the highest eligible row for its owner and rolls back atomically")
-    void recomputesOnlyEligibleOwnerRowsAtomically(Vertx vertx, VertxTestContext context) {
-        List<Pool> pools = new ArrayList<>();
-        Pool pool = ManagedDefinitionDatabase.openPool(vertx, db);
-        pools.add(pool);
-        AppComponent app = ManagedDefinitionDatabase.app(
-                vertx, pool, new JsonObject(), new BootObservation(CODE_RECOMPUTE_ID, 1, "unused", false), List::of);
-
-        List<DefinitionSeed> seeds = List.of(
-                definitionSeed(null, CODE_RECOMPUTE_ID, 1, DefinitionKind.CODE, DefinitionStatus.ACTIVE, null),
-                definitionSeed(null, CODE_RECOMPUTE_ID, 2, DefinitionKind.CODE, DefinitionStatus.SUPERSEDED, null),
-                definitionSeed(null, CODE_RECOMPUTE_ID, 3, DefinitionKind.CODE, DefinitionStatus.CANDIDATE, null),
-                definitionSeed(
-                        null,
-                        CODE_RECOMPUTE_ID,
-                        4,
-                        DefinitionKind.CODE,
-                        DefinitionStatus.ACTIVATING,
-                        UUID.fromString("10000000-0000-0000-0000-000000000004")),
-                definitionSeed(null, CODE_RECOMPUTE_ID, 5, DefinitionKind.CODE, DefinitionStatus.DEPRECATED, null),
-                definitionSeed(null, CODE_RECOMPUTE_ID, 6, DefinitionKind.CODE, DefinitionStatus.RETIRED, null),
-                definitionSeed(null, DOCUMENT_RECOMPUTE_ID, 1, DefinitionKind.DOCUMENT, DefinitionStatus.ACTIVE, null),
-                definitionSeed(
-                        null, DOCUMENT_RECOMPUTE_ID, 2, DefinitionKind.DOCUMENT, DefinitionStatus.SUPERSEDED, null),
-                definitionSeed(
-                        null, DOCUMENT_RECOMPUTE_ID, 3, DefinitionKind.DOCUMENT, DefinitionStatus.CANDIDATE, null),
-                definitionSeed(
-                        null,
-                        DOCUMENT_RECOMPUTE_ID,
-                        4,
-                        DefinitionKind.DOCUMENT,
-                        DefinitionStatus.ACTIVATING,
-                        UUID.fromString("20000000-0000-0000-0000-000000000004")),
-                definitionSeed(
-                        null, DOCUMENT_RECOMPUTE_ID, 5, DefinitionKind.DOCUMENT, DefinitionStatus.DEPRECATED, null),
-                definitionSeed(null, DOCUMENT_RECOMPUTE_ID, 6, DefinitionKind.DOCUMENT, DefinitionStatus.RETIRED, null),
-                definitionSeed(
-                        "tenant-target",
-                        TENANT_RECOMPUTE_ID,
-                        7,
-                        DefinitionKind.DOCUMENT,
-                        DefinitionStatus.CANDIDATE,
-                        null),
-                definitionSeed(null, TENANT_RECOMPUTE_ID, 1, DefinitionKind.DOCUMENT, DefinitionStatus.ACTIVE, null),
-                definitionSeed(
-                        null, TENANT_RECOMPUTE_ID, 2, DefinitionKind.DOCUMENT, DefinitionStatus.SUPERSEDED, null),
-                definitionSeed(null, OTHER_DEFINITION_ID, 1, DefinitionKind.CODE, DefinitionStatus.ACTIVE, null),
-                definitionSeed(null, ROLLBACK_RECOMPUTE_ID, 1, DefinitionKind.CODE, DefinitionStatus.ACTIVE, null),
-                definitionSeed(null, ROLLBACK_RECOMPUTE_ID, 2, DefinitionKind.CODE, DefinitionStatus.SUPERSEDED, null));
-
-        Future<Void> proof = deleteDefinitions(
-                        pool,
-                        CODE_RECOMPUTE_ID,
-                        DOCUMENT_RECOMPUTE_ID,
-                        TENANT_RECOMPUTE_ID,
-                        OTHER_DEFINITION_ID,
-                        ROLLBACK_RECOMPUTE_ID)
-                .compose(ignored -> insertDefinitionSeeds(pool, seeds))
-                .compose(ignored -> readSnapshots(pool, OTHER_DEFINITION_ID))
-                .compose(otherIdBefore -> assertRecomputedOwner(
-                                app.definitionRegistryStore(), pool, CODE_RECOMPUTE_ID, null)
-                        .compose(ignored ->
-                                assertRecomputedOwner(app.definitionRegistryStore(), pool, DOCUMENT_RECOMPUTE_ID, null))
-                        .compose(ignored -> readSnapshots(pool, OTHER_DEFINITION_ID))
-                        .map(otherIdAfter -> {
-                            assertThat(otherIdAfter)
-                                    .as(
-                                            "recompute leaves the other definition id unchanged from its original fixture state")
-                                    .isEqualTo(otherIdBefore);
-                            return (Void) null;
-                        }))
-                .compose(ignored -> assertNoEligibleTenantOwnerIsNoOp(app.definitionRegistryStore(), pool))
-                .compose(ignored -> assertPromotionFailureRollsBack(app.definitionRegistryStore(), pool));
-        Future<Void> work = withCleanup(
-                proof,
-                () -> deleteDefinitions(
-                        pool,
-                        CODE_RECOMPUTE_ID,
-                        DOCUMENT_RECOMPUTE_ID,
-                        TENANT_RECOMPUTE_ID,
-                        OTHER_DEFINITION_ID,
-                        ROLLBACK_RECOMPUTE_ID));
-
-        finish(context, work, List.of(), pools);
-    }
-
     @ParameterizedTest(name = "{0}")
     @MethodSource("lockWaitCases")
     @DisplayName("an existing registry claim waits are bounded at advisory and row locks")
@@ -243,7 +152,7 @@ public class DefinitionRegistryBootstrapIT {
             runMutationLockWait(lockCase, vertx, context, resources);
             return;
         }
-        DefinitionKey key = new DefinitionKey(null, definitionId, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
         WorkflowDefinitionSqlObserver sqlObserver = new WorkflowDefinitionSqlObserver();
 
         Pool mutationPool = ManagedDefinitionDatabase.openPool(vertx, db, 1);
@@ -265,8 +174,11 @@ public class DefinitionRegistryBootstrapIT {
                 List::of);
 
         Future<Void> work = mutationPool
-                .preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+                .preparedQuery("DELETE FROM workflow_definition_activations WHERE definition_id = $1")
                 .execute(Tuple.of(definitionId))
+                .compose(ignored -> mutationPool
+                        .preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+                        .execute(Tuple.of(definitionId)))
                 .compose(ignored ->
                         VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, new JsonObject()), r -> app))
                 .compose(handle -> {
@@ -279,7 +191,11 @@ public class DefinitionRegistryBootstrapIT {
                             null,
                             Instant.parse("2026-10-18T12:15:00.000001Z"));
                     return app.definitionService()
-                            .load(ManagedDefinitionDatabase.yamlFixture(), DocumentFormat.YAML, metadata, null)
+                            .load(
+                                    WorkflowScopes.DEFAULT,
+                                    ManagedDefinitionDatabase.yamlFixture(),
+                                    DocumentFormat.YAML,
+                                    metadata)
                             .map(loaded -> {
                                 assertThat(loaded.definitionId()).isEqualTo(definitionId);
                                 assertThat(loaded.definitionVersion()).isEqualTo(1L);
@@ -348,8 +264,7 @@ public class DefinitionRegistryBootstrapIT {
                 MutationKind.INSERT_CANDIDATE,
                 MutationKind.UPSERT_DOCUMENT,
                 MutationKind.COMPLETE,
-                MutationKind.RELEASE,
-                MutationKind.RECOMPUTE_ACTIVE)) {
+                MutationKind.RELEASE)) {
             for (WaitKind waitKind : WaitKind.values()) {
                 cases.add(new LockWaitCase(
                         mutation.displayName() + " behind " + waitKind.displayName(), waitKind, mutation));
@@ -365,7 +280,7 @@ public class DefinitionRegistryBootstrapIT {
     private static void runMutationLockWait(
             LockWaitCase lockCase, Vertx vertx, VertxTestContext context, LockWaitResources resources) {
         String definitionId = lockCase.definitionId();
-        DefinitionKey key = new DefinitionKey(null, definitionId, 1);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
         WorkflowDefinitionSqlObserver sqlObserver = new WorkflowDefinitionSqlObserver();
         Pool mutationPool = ManagedDefinitionDatabase.openPool(vertx, db, 1);
         Pool observedMutationPool = sqlObserver.observe(mutationPool);
@@ -462,7 +377,7 @@ public class DefinitionRegistryBootstrapIT {
         BootObservation observation = new BootObservation(definitionId, List.of());
         AppComponent app = ManagedDefinitionDatabase.app(
                 vertx, observedMutationPool, new JsonObject(), observation, staticDocuments());
-        DefinitionKey lockKey = new DefinitionKey(null, definitionId, 1);
+        DefinitionKey lockKey = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
         Future<Void> work = deleteDefinitions(mutationPool, definitionId)
                 .compose(ignored -> backendPid(observedMutationPool))
                 .compose(writerPid -> acquireLockHolder(lockCase, definitionId, holderPool, lockKey, resources)
@@ -523,26 +438,20 @@ public class DefinitionRegistryBootstrapIT {
                 switch (lockCase.mutation()) {
                     case INSERT_CANDIDATE, UPSERT_DOCUMENT ->
                         List.of(definitionSeed(
-                                null, definitionId, 1, DefinitionKind.DOCUMENT, DefinitionStatus.RETIRED, null));
-                    case COMPLETE, RELEASE ->
-                        List.of(definitionSeed(
-                                null,
+                                WorkflowScopes.DEFAULT,
                                 definitionId,
                                 1,
                                 DefinitionKind.DOCUMENT,
-                                DefinitionStatus.ACTIVATING,
+                                DefinitionStatus.RETIRED,
+                                null));
+                    case COMPLETE, RELEASE ->
+                        List.of(definitionSeed(
+                                WorkflowScopes.DEFAULT,
+                                definitionId,
+                                1,
+                                DefinitionKind.DOCUMENT,
+                                DefinitionStatus.PUBLISHING,
                                 UUID.fromString("30000000-0000-0000-0000-000000000001")));
-                    case RECOMPUTE_ACTIVE ->
-                        List.of(
-                                definitionSeed(
-                                        null, definitionId, 1, DefinitionKind.DOCUMENT, DefinitionStatus.ACTIVE, null),
-                                definitionSeed(
-                                        null,
-                                        definitionId,
-                                        2,
-                                        DefinitionKind.DOCUMENT,
-                                        DefinitionStatus.SUPERSEDED,
-                                        null));
                     case CLAIM, STARTUP ->
                         throw new IllegalArgumentException("the mutation state is not directly seeded");
                 };
@@ -555,18 +464,17 @@ public class DefinitionRegistryBootstrapIT {
                         || lockCase.mutation() == MutationKind.UPSERT_DOCUMENT
                 ? 2
                 : 1;
-        DefinitionKey key = new DefinitionKey(null, definitionId, mutationVersion);
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, mutationVersion);
         return switch (lockCase.mutation()) {
             case INSERT_CANDIDATE ->
                 store.insertCandidate(mutationRecord(key, DefinitionStatus.CANDIDATE), mutationDocument(key));
             case UPSERT_DOCUMENT ->
-                store.upsertDocument(mutationRecord(key, DefinitionStatus.SUPERSEDED), mutationDocument(key));
+                store.upsertDocument(mutationRecord(key, DefinitionStatus.AVAILABLE), mutationDocument(key));
             case CLAIM -> store.claim(key);
             case COMPLETE ->
                 store.complete(new ActivationClaim(key, UUID.fromString("30000000-0000-0000-0000-000000000001")));
             case RELEASE ->
                 store.release(new ActivationClaim(key, UUID.fromString("30000000-0000-0000-0000-000000000001")));
-            case RECOMPUTE_ACTIVE -> recomputeActive(store, null, definitionId);
             case STARTUP -> throw new IllegalArgumentException("startup is exercised through the managed application");
         };
     }
@@ -591,7 +499,7 @@ public class DefinitionRegistryBootstrapIT {
             return connection
                     .preparedQuery("""
                                     SELECT definition_id FROM workflow_definitions
-                                    WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = $2
+                                    WHERE scope_key = 'default' AND definition_id = $1 AND definition_version = $2
                                     FOR UPDATE
                                     """)
                     .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
@@ -693,141 +601,6 @@ public class DefinitionRegistryBootstrapIT {
         return observed.future();
     }
 
-    private static Future<Void> assertRecomputedOwner(
-            WorkflowDefinitionRegistryStore store, Pool pool, String definitionId, String tenantKey) {
-        return readSnapshots(pool, definitionId).compose(before -> recomputeActive(store, tenantKey, definitionId)
-                .compose(ignored -> readSnapshots(pool, definitionId))
-                .compose(after -> {
-                    List<DefinitionSnapshot> ownerBefore = before.stream()
-                            .filter(row -> java.util.Objects.equals(row.tenantKey(), tenantKey))
-                            .toList();
-                    List<DefinitionSnapshot> ownerAfter = after.stream()
-                            .filter(row -> java.util.Objects.equals(row.tenantKey(), tenantKey))
-                            .toList();
-                    assertThat(ownerBefore).hasSize(6);
-                    assertThat(ownerBefore)
-                            .extracting(DefinitionSnapshot::definitionVersion)
-                            .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
-                    assertThat(snapshot(ownerBefore, 1).status()).isEqualTo("ACTIVE");
-                    assertThat(snapshot(ownerBefore, 2).status()).isEqualTo("SUPERSEDED");
-                    assertThat(ownerAfter)
-                            .extracting(DefinitionSnapshot::definitionVersion)
-                            .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
-                    assertThat(snapshot(ownerAfter, 1).status()).isEqualTo("SUPERSEDED");
-                    assertThat(snapshot(ownerAfter, 2).status()).isEqualTo("ACTIVE");
-                    assertThat(ownerAfter.stream()
-                                    .filter(row -> List.of("CANDIDATE", "ACTIVATING", "DEPRECATED", "RETIRED")
-                                            .contains(row.status()))
-                                    .toList())
-                            .containsExactlyElementsOf(ownerBefore.stream()
-                                    .filter(row -> List.of("CANDIDATE", "ACTIVATING", "DEPRECATED", "RETIRED")
-                                            .contains(row.status()))
-                                    .toList());
-                    assertThat(after.stream()
-                                    .filter(row -> !java.util.Objects.equals(row.tenantKey(), tenantKey))
-                                    .toList())
-                            .containsExactlyElementsOf(before.stream()
-                                    .filter(row -> !java.util.Objects.equals(row.tenantKey(), tenantKey))
-                                    .toList());
-                    return recomputeActive(store, tenantKey, definitionId)
-                            .compose(ignoredAgain -> readSnapshots(pool, definitionId))
-                            .map(repeated -> {
-                                assertThat(repeated)
-                                        .as("repeating recompute leaves statuses and timestamps unchanged")
-                                        .isEqualTo(after);
-                                return (Void) null;
-                            });
-                }));
-    }
-
-    private static Future<Void> assertNoEligibleTenantOwnerIsNoOp(WorkflowDefinitionRegistryStore store, Pool pool) {
-        return readSnapshots(pool, TENANT_RECOMPUTE_ID)
-                .compose(before -> recomputeActive(store, "tenant-target", TENANT_RECOMPUTE_ID)
-                        .compose(ignored -> readSnapshots(pool, TENANT_RECOMPUTE_ID))
-                        .map(after -> {
-                            assertThat(before)
-                                    .filteredOn(row -> "tenant-target".equals(row.tenantKey()))
-                                    .extracting(DefinitionSnapshot::status)
-                                    .containsExactly("CANDIDATE");
-                            assertThat(after)
-                                    .as(
-                                            "no eligible target-owner rows are a no-op even when another owner has an eligible pair")
-                                    .isEqualTo(before);
-                            return (Void) null;
-                        }));
-    }
-
-    private static Future<Void> assertPromotionFailureRollsBack(WorkflowDefinitionRegistryStore store, Pool pool) {
-        Future<Void> proof = installRecomputePromotionFailure(pool)
-                .compose(ignored -> readSnapshots(pool, ROLLBACK_RECOMPUTE_ID))
-                .compose(before -> recomputeActive(store, null, ROLLBACK_RECOMPUTE_ID)
-                        .transform(operation -> {
-                            assertThat(operation.failed()).isTrue();
-                            assertThat(operation.cause()).isInstanceOf(WorkflowPersistenceException.class);
-                            WorkflowPersistenceException persistenceFailure =
-                                    (WorkflowPersistenceException) operation.cause();
-                            assertThat(persistenceFailure.getMessage()).contains(ROLLBACK_RECOMPUTE_ID);
-                            assertThat(persistenceFailure.retryable()).isFalse();
-                            assertThat(persistenceFailure.getCause())
-                                    .isInstanceOf(DataIntegrityViolationException.class);
-                            DataIntegrityViolationException databaseFailure =
-                                    (DataIntegrityViolationException) persistenceFailure.getCause();
-                            assertThat(databaseFailure.sqlState()).isEqualTo("23514");
-                            assertThat(causeContainsMessage(databaseFailure, "controlled recompute promotion failure"))
-                                    .as("the database raised the expected fault only after observing v1 demoted")
-                                    .isTrue();
-                            return readSnapshots(pool, ROLLBACK_RECOMPUTE_ID).map(after -> {
-                                assertThat(after)
-                                        .as(
-                                                "the promotion trigger fails after demotion, and the transaction restores both rows")
-                                        .isEqualTo(before);
-                                return (Void) null;
-                            });
-                        }));
-        return withCleanup(proof, () -> removeRecomputePromotionFailure(pool));
-    }
-
-    private static Future<Void> recomputeActive(
-            WorkflowDefinitionRegistryStore store, String tenantKey, String definitionId) {
-        return store.recomputeActive(tenantKey, definitionId);
-    }
-
-    private static Future<Void> installRecomputePromotionFailure(Pool pool) {
-        return removeRecomputePromotionFailure(pool)
-                .compose(ignored -> pool.query("""
-                                CREATE FUNCTION fail_test_recompute_promotion() RETURNS trigger AS $$
-                                BEGIN
-                                    IF OLD.definition_id = 'recompute-rollback-matrix'
-                                       AND OLD.status = 'SUPERSEDED' AND NEW.status = 'ACTIVE' THEN
-                                        IF (
-                                            SELECT status FROM workflow_definitions
-                                            WHERE tenant_key IS NOT DISTINCT FROM NEW.tenant_key
-                                              AND definition_id = NEW.definition_id AND definition_version = 1
-                                        ) = 'SUPERSEDED' THEN
-                                            RAISE EXCEPTION 'controlled recompute promotion failure' USING ERRCODE = '23514';
-                                        END IF;
-                                        RAISE EXCEPTION 'recompute promoted before demoting the previous active row' USING ERRCODE = '23514';
-                                    END IF;
-                                    RETURN NEW;
-                                END;
-                                $$ LANGUAGE plpgsql
-                                """).execute())
-                .compose(ignored -> pool.query("""
-                                CREATE TRIGGER fail_test_recompute_promotion
-                                BEFORE UPDATE ON workflow_definitions
-                                FOR EACH ROW EXECUTE FUNCTION fail_test_recompute_promotion()
-                                """).execute())
-                .mapEmpty();
-    }
-
-    private static Future<Void> removeRecomputePromotionFailure(Pool pool) {
-        return pool.query("DROP TRIGGER IF EXISTS fail_test_recompute_promotion ON workflow_definitions")
-                .execute()
-                .compose(ignored -> pool.query("DROP FUNCTION IF EXISTS fail_test_recompute_promotion()")
-                        .execute())
-                .mapEmpty();
-    }
-
     private static Future<Void> withCleanup(Future<Void> work, Supplier<Future<Void>> cleanup) {
         return work.transform(result -> cleanup.get().transform(cleaned -> {
             if (result.failed()) {
@@ -851,17 +624,17 @@ public class DefinitionRegistryBootstrapIT {
         for (DefinitionSeed seed : seeds) {
             inserted = inserted.compose(ignored -> pool.preparedQuery("""
                             INSERT INTO workflow_definitions (
-                                tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                                scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                                 document, document_format, document_digest, source_type, source_uri,
                                 source_revision, source_author, source_upload_id, loaded_at, created_at,
-                                status_changed_at, activation_token)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                                status_changed_at, publish_token)
+                            VALUES ($1, $2, $3, $4, 'example.Contract', 'example.State', $5, $6, $7, $8,
                                     CASE WHEN $4 = 'DOCUMENT'
                                          THEN encode(sha256(convert_to($7::text, 'UTF8')), 'hex') END,
                                     $9, $10, $11, $12, $13, $14, $15, $16, $17)
                             """)
                     .execute(Tuple.tuple()
-                            .addString(seed.tenantKey())
+                            .addString(seed.scopeKey())
                             .addString(seed.definitionId())
                             .addLong(seed.definitionVersion())
                             .addString(seed.kind().name())
@@ -877,22 +650,22 @@ public class DefinitionRegistryBootstrapIT {
                             .addValue(seed.loadedAt().atOffset(ZoneOffset.UTC))
                             .addValue(seed.createdAt().atOffset(ZoneOffset.UTC))
                             .addValue(seed.statusChangedAt().atOffset(ZoneOffset.UTC))
-                            .addUUID(seed.activationToken()))
+                            .addUUID(seed.publishToken()))
                     .mapEmpty());
         }
         return inserted;
     }
 
     private static DefinitionSeed definitionSeed(
-            String tenantKey,
+            String scopeKey,
             String definitionId,
             long version,
             DefinitionKind kind,
             DefinitionStatus status,
-            UUID activationToken) {
+            UUID publishToken) {
         Instant base = Instant.parse("2026-10-18T10:00:00Z").plusSeconds(version);
         return new DefinitionSeed(
-                tenantKey,
+                scopeKey,
                 definitionId,
                 version,
                 kind,
@@ -903,22 +676,22 @@ public class DefinitionRegistryBootstrapIT {
                 base,
                 base.plusSeconds(1),
                 base.plusSeconds(2),
-                activationToken);
+                publishToken);
     }
 
     private static Future<List<DefinitionSnapshot>> readSnapshots(Pool pool, String definitionId) {
         return pool.preparedQuery("""
-                        SELECT tenant_key, definition_id, definition_version, kind, plan_hash, status,
+                        SELECT scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
                             document, document_format, source_type, source_uri, source_revision, source_author,
-                            source_upload_id, loaded_at, created_at, status_changed_at, activation_token
+                            source_upload_id, loaded_at, created_at, status_changed_at, publish_token
                         FROM workflow_definitions
                         WHERE definition_id = $1
-                        ORDER BY tenant_key NULLS FIRST, definition_version
+                        ORDER BY scope_key NULLS FIRST, definition_version
                         """).execute(Tuple.of(definitionId)).map(rows -> {
             List<DefinitionSnapshot> snapshots = new ArrayList<>();
             for (Row row : rows) {
                 snapshots.add(new DefinitionSnapshot(
-                        row.getString("tenant_key"),
+                        row.getString("scope_key"),
                         row.getString("definition_id"),
                         row.getLong("definition_version"),
                         row.getString("kind"),
@@ -934,7 +707,7 @@ public class DefinitionRegistryBootstrapIT {
                         row.getOffsetDateTime("loaded_at"),
                         row.getOffsetDateTime("created_at"),
                         row.getOffsetDateTime("status_changed_at"),
-                        row.getUUID("activation_token")));
+                        row.getUUID("publish_token")));
             }
             return List.copyOf(snapshots);
         });
@@ -943,10 +716,12 @@ public class DefinitionRegistryBootstrapIT {
     private static Future<Void> deleteDefinitions(Pool pool, String... definitionIds) {
         Future<Void> deleted = Future.succeededFuture();
         for (String definitionId : definitionIds) {
-            deleted = deleted.compose(
-                    ignored -> pool.preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
-                            .execute(Tuple.of(definitionId))
-                            .mapEmpty());
+            deleted = deleted.compose(ignored -> pool.preparedQuery(
+                            "DELETE FROM workflow_definition_activations WHERE definition_id = $1")
+                    .execute(Tuple.of(definitionId))
+                    .compose(cleared -> pool.preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+                            .execute(Tuple.of(definitionId)))
+                    .mapEmpty());
         }
         return deleted;
     }
@@ -956,13 +731,17 @@ public class DefinitionRegistryBootstrapIT {
         return new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
+                "example.Contract",
+                "example.State",
                 "c".repeat(64),
                 status,
                 new DefinitionProvenance(
                         "author-test", "test://workflow-definition", "mutation-r1", "test-suite", null, now),
                 "YAML",
                 now,
-                now);
+                now,
+                Map.of(),
+                null);
     }
 
     private static WorkflowDefinitionDocument mutationDocument(DefinitionKey key) {
@@ -1009,14 +788,14 @@ public class DefinitionRegistryBootstrapIT {
 
     private static Future<Void> assertCandidateWasNotPartiallyClaimed(Pool pool, DefinitionKey key) {
         return pool.preparedQuery("""
-                        SELECT status, activation_token FROM workflow_definitions
-                        WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
+                        SELECT status, publish_token FROM workflow_definitions
+                        WHERE scope_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3
                         """)
-                .execute(Tuple.of(key.tenantKey(), key.definitionId(), key.definitionVersion()))
+                .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion()))
                 .map(rows -> {
                     Row row = rows.iterator().next();
                     assertThat(row.getString("status")).isEqualTo("CANDIDATE");
-                    assertThat(row.getValue("activation_token")).isNull();
+                    assertThat(row.getValue("publish_token")).isNull();
                     return (Void) null;
                 });
     }
@@ -1079,8 +858,12 @@ public class DefinitionRegistryBootstrapIT {
             if (resources.mutationPool != null) {
                 Future<Void> deleteOwnedRow = resources
                         .mutationPool
-                        .preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+                        .preparedQuery("DELETE FROM workflow_definition_activations WHERE definition_id = $1")
                         .execute(Tuple.of(resources.definitionId))
+                        .compose(ignored -> resources
+                                .mutationPool
+                                .preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+                                .execute(Tuple.of(resources.definitionId)))
                         .map(ignored -> (Void) null);
                 cleanup = cleanup.compose(ignored -> quietly(deleteOwnedRow, cleanupFailures));
             }
@@ -1138,7 +921,6 @@ public class DefinitionRegistryBootstrapIT {
         UPSERT_DOCUMENT("upsertDocument"),
         COMPLETE("complete"),
         RELEASE("release"),
-        RECOMPUTE_ACTIVE("recomputeActive"),
         STARTUP("startup reconciliation");
 
         private final String displayName;
@@ -1173,7 +955,7 @@ public class DefinitionRegistryBootstrapIT {
     private record MutationWaitSetup(List<DefinitionSnapshot> before, int writerPid) {}
 
     private record DefinitionSeed(
-            String tenantKey,
+            String scopeKey,
             String definitionId,
             long definitionVersion,
             DefinitionKind kind,
@@ -1184,10 +966,10 @@ public class DefinitionRegistryBootstrapIT {
             Instant loadedAt,
             Instant createdAt,
             Instant statusChangedAt,
-            UUID activationToken) {}
+            UUID publishToken) {}
 
     private record DefinitionSnapshot(
-            String tenantKey,
+            String scopeKey,
             String definitionId,
             long definitionVersion,
             String kind,
@@ -1203,7 +985,7 @@ public class DefinitionRegistryBootstrapIT {
             OffsetDateTime loadedAt,
             OffsetDateTime createdAt,
             OffsetDateTime statusChangedAt,
-            UUID activationToken) {}
+            UUID publishToken) {}
 
     private record ObservedLock(String lockType, String waitEventType, String waitEvent) {}
 

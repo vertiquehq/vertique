@@ -26,6 +26,8 @@ import java.util.UUID;
  * @param workflowId       the owning workflow instance id; never null
  * @param definitionId     the workflow definition id; never null
  * @param definitionVersion the version of the workflow definition
+ * @param definitionScopeKey the scope of the definition the instance is pinned to; never null
+ * @param scopeKey         the scope the instance was started in; never null
  * @param subjectRef       optional domain entity reference attached to the workflow instance
  * @param businessKey      optional application-supplied correlation key for the instance
  * @param occurredAt       the UTC instant at which the event occurred; never null
@@ -41,6 +43,8 @@ public record WorkflowEventIntent(
         WorkflowInstanceId workflowId,
         String definitionId,
         long definitionVersion,
+        String definitionScopeKey,
+        String scopeKey,
         @Nullable WorkflowSubjectRef subjectRef,
         @Nullable String businessKey,
         Instant occurredAt,
@@ -55,12 +59,14 @@ public record WorkflowEventIntent(
      * Validates non-null fields and defensively copies {@code attributes}.
      *
      * @throws NullPointerException if {@code eventType}, {@code workflowId}, {@code definitionId},
-     *     or {@code occurredAt} is null
+     *     {@code definitionScopeKey}, {@code scopeKey}, or {@code occurredAt} is null
      */
     public WorkflowEventIntent {
         Objects.requireNonNull(eventType, "eventType");
         Objects.requireNonNull(workflowId, "workflowId");
         Objects.requireNonNull(definitionId, "definitionId");
+        Objects.requireNonNull(definitionScopeKey, "definitionScopeKey");
+        Objects.requireNonNull(scopeKey, "scopeKey");
         Objects.requireNonNull(occurredAt, "occurredAt");
         attributes = attributes == null ? Map.of() : Map.copyOf(attributes);
     }

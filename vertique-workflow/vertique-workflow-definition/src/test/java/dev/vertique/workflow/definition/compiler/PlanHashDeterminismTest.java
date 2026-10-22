@@ -72,7 +72,7 @@ class PlanHashDeterminismTest {
 
     record TestStartPayload(String id) {}
 
-    @WorkflowContract(definitionId = "order-fulfillment", definitionVersion = 1)
+    @WorkflowContract
     interface TestContract {}
 
     // --- Infrastructure ---

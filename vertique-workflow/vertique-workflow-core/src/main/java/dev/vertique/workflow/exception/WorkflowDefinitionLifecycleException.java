@@ -10,7 +10,6 @@ import java.util.Objects;
 public class WorkflowDefinitionLifecycleException extends WorkflowDefinitionException {
     public enum Reason {
         INVALID_TRANSITION,
-        OWNER_CONFLICT,
         STALE_CLAIM,
         PINNED_INSTANCES,
         COOLING,

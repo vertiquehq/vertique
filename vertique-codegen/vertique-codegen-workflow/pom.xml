@@ -18,7 +18,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <artifactId>vertique-codegen-workflow</artifactId>
     <name>Vertique Codegen Workflow</name>
-    <description>Annotation processor that generates static {Contract}_WorkflowClientProxy classes and a GeneratedWorkflowClientsModule for @WorkflowContract interfaces, replacing the per-call JDK dynamic proxy, plus compile-time contract-shape validation</description>
+    <description>Annotation processor that generates static {Contract}_WorkflowClientProxy classes for @WorkflowContract interfaces, replacing the per-call JDK dynamic proxy, plus compile-time contract-shape validation</description>
 
     <dependencies>
         <!-- APT helpers from CG-001 -->

@@ -16,14 +16,9 @@ import dev.vertique.workflow.contract.WorkflowQuery;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.contract.WorkflowStart;
 import dev.vertique.workflow.exception.WorkflowProxyContractException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
-import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowView;
-import dev.vertique.workflow.plan.WaitSignalNode;
-import dev.vertique.workflow.registry.RuntimeWorkflow;
-import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import io.vertx.core.Future;
 import java.lang.annotation.Annotation;
@@ -39,16 +34,18 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Validates a workflow contract interface against the rules in §8.3 of the implementation plan.
+ * INTERNAL framework seam: the client factory calls this class; it has no public members, is not an application contract and sits outside the maturity promise.
  *
- * <p>This class is called by {@link WorkflowClientFactory#create(Class)} before creating a proxy.
- * All validation is performed eagerly at proxy-creation time so contract violations are surfaced
- * at application startup rather than at the first invocation.
+ * <p>Validates a workflow contract interface against the rules in §8.3 of the implementation plan.
+ *
+ * <p>This class is called by {@link WorkflowClientFactory} before creating a proxy. All validation is
+ * performed eagerly at proxy-creation time so contract violations are surfaced at application startup
+ * rather than at the first invocation. It checks the contract interface only; it does not resolve a
+ * definition or compare payload types with a plan.
  *
  * <p>Validation rules (each violation throws {@link WorkflowProxyContractException}):
  * <ul>
  *   <li>Interface must be annotated with {@code @WorkflowContract}</li>
- *   <li>{@code definitionId} and {@code definitionVersion} must resolve in the registry</li>
  *   <li>Default methods are not supported on workflow contract interfaces (cycle-1 constraint);
  *       every non-{@link Object} method must carry exactly one role annotation</li>
  *   <li>Every non-default, non-{@link Object} method must carry exactly one of
@@ -58,8 +55,7 @@ import java.util.Set;
  *   <li>{@code @WorkflowStart}: exactly one payload parameter required; idempotency key source
  *       required ({@code @IdempotencyKey} param or payload implements {@code IdempotencyKeyed})</li>
  *   <li>{@code @WorkflowSignal}: return type must be {@code Future<Void>}; exactly one payload
- *       parameter required; dedup key source required; signal name must be in the plan; no two
- *       methods with the same signal name</li>
+ *       parameter required; dedup key source required; no two methods with the same signal name</li>
  *   <li>{@code @WorkflowQuery}: return type must be exactly {@code Future<WorkflowView>} (no supertype
  *       or wildcard); single parameter of type {@code WorkflowInstanceId}</li>
  *   <li>No method may carry two of {@code @WorkflowStart}, {@code @WorkflowSignal},
@@ -78,13 +74,11 @@ public final class WorkflowProxyValidator {
      * first violation found.
      *
      * @param contractInterface the interface to validate
-     * @param registry the workflow registry used to resolve the definition and plan
      * @throws WorkflowProxyContractException if any validation rule is violated
      */
-    public static void validate(Class<?> contractInterface, WorkflowRegistry registry) {
+    static void validate(Class<?> contractInterface) {
         // 1. Require @WorkflowContract
-        WorkflowContract wca = contractInterface.getAnnotation(WorkflowContract.class);
-        if (wca == null) {
+        if (!contractInterface.isAnnotationPresent(WorkflowContract.class)) {
             throw new WorkflowProxyContractException(
                     "Contract interface " + contractInterface.getName() + " is missing @WorkflowContract annotation");
         }
@@ -98,28 +92,10 @@ public final class WorkflowProxyValidator {
                     "@WorkflowContract " + contractInterface.getName() + " must be an interface");
         }
 
-        // 2. Resolve the definition in the registry
-        String definitionId = wca.definitionId();
-        long definitionVersion = wca.definitionVersion();
-        RuntimeWorkflow rw;
-        try {
-            rw = registry.resolvePinned(definitionId, definitionVersion);
-        } catch (WorkflowVersionPinUnavailableException e) {
-            throw new WorkflowProxyContractException(
-                    "Contract " + contractInterface.getName() + " references definition '" + definitionId + "' v"
-                            + definitionVersion + " which is not registered: " + e.getMessage(),
-                    e);
-        } catch (dev.vertique.workflow.exception.WorkflowDefinitionMissingException e) {
-            throw new WorkflowProxyContractException(
-                    "Contract " + contractInterface.getName() + " references definition '" + definitionId
-                            + "' which is not registered",
-                    e);
-        }
-
-        // 3. Collect all non-Object methods and validate role annotations
+        // 2. Collect all non-Object methods and validate role annotations
         List<Method> methods = getContractMethods(contractInterface);
 
-        // 3a. Reject sibling-inherited duplicate signatures: two methods with the same name + erased
+        // 2a. Reject sibling-inherited duplicate signatures: two methods with the same name + erased
         // parameter types declared by unrelated super-interfaces. Class#getMethods() returns both (the
         // codegen scanner likewise preserves both via MethodOverrides), and a generated concrete proxy
         // cannot implement two methods with the same signature — both paths reject the ambiguous shape
@@ -140,7 +116,6 @@ public final class WorkflowProxyValidator {
 
         List<Method> startMethods = new ArrayList<>();
         Set<String> signalNames = new HashSet<>();
-        Set<String> planSignalNames = collectPlanSignalNames(rw);
 
         for (Method method : methods) {
             // Default methods are not supported in cycle 1 — the proxy cannot forward invocations
@@ -175,7 +150,7 @@ public final class WorkflowProxyValidator {
 
             if (ws != null) {
                 startMethods.add(method);
-                validateStartMethod(method, contractInterface, rw);
+                validateStartMethod(method, contractInterface);
             } else if (wsg != null) {
                 String signalName = wsg.value();
                 if (!signalNames.add(signalName)) {
@@ -184,20 +159,13 @@ public final class WorkflowProxyValidator {
                                     + contractInterface.getName()
                                     + "; signal names must be unique within a contract");
                 }
-                if (!planSignalNames.contains(signalName)) {
-                    throw new WorkflowProxyContractException(
-                            "Signal name \"" + signalName + "\" on method " + method.getName() + " in "
-                                    + contractInterface.getName()
-                                    + " does not match any WaitSignalNode in the resolved plan for '"
-                                    + definitionId + "' v" + definitionVersion);
-                }
-                validateSignalMethod(method, contractInterface, rw, signalName);
+                validateSignalMethod(method, contractInterface);
             } else if (wq != null) {
                 validateQueryMethod(method, contractInterface);
             }
         }
 
-        // 4. Exactly one @WorkflowStart
+        // 3. Exactly one @WorkflowStart
         if (startMethods.size() != 1) {
             throw new WorkflowProxyContractException("Contract " + contractInterface.getName()
                     + " must have exactly one @WorkflowStart method; found " + startMethods.size());
@@ -210,20 +178,16 @@ public final class WorkflowProxyValidator {
      * Pre-compiles per-method operation handlers for the given contract, for use by the proxy
      * invocation handler.
      *
-     * <p>Callers must invoke {@link #validate(Class, WorkflowRegistry)} first. This method
-     * assumes the contract is valid and does not re-validate.
+     * <p>Callers must invoke {@link #validate(Class)} first. This method assumes the contract is
+     * valid and does not re-validate.
      *
      * @param contractInterface the validated contract interface
      * @param ops the {@code WorkflowOperations} instance the proxy will delegate to
-     * @param registry the workflow registry used to look up runtime metadata
+     * @param binding the binding the start handler builds its commands from
      * @return a map from {@link Method} to the corresponding {@link OperationHandler}; never null
      */
-    public static Map<Method, OperationHandler> precompileHandlers(
-            Class<?> contractInterface, WorkflowOperations ops, WorkflowRegistry registry) {
-        WorkflowContract wca = contractInterface.getAnnotation(WorkflowContract.class);
-        String definitionId = wca.definitionId();
-        long definitionVersion = wca.definitionVersion();
-
+    static Map<Method, OperationHandler> precompileHandlers(
+            Class<?> contractInterface, WorkflowOperations ops, WorkflowClientBinding binding) {
         Map<Method, OperationHandler> handlers = new HashMap<>();
         List<Method> methods = getContractMethods(contractInterface);
 
@@ -233,7 +197,7 @@ public final class WorkflowProxyValidator {
             WorkflowQuery wq = method.getAnnotation(WorkflowQuery.class);
 
             if (ws != null) {
-                handlers.put(method, buildStartHandler(method, definitionId, definitionVersion, ops));
+                handlers.put(method, buildStartHandler(method, binding, ops));
             } else if (wsg != null) {
                 handlers.put(method, buildSignalHandler(method, wsg.value(), ops));
             } else if (wq != null) {
@@ -256,16 +220,13 @@ public final class WorkflowProxyValidator {
      *   <li>No duplicate {@code @IdempotencyKey}, {@code @BusinessKey}, or {@code @SubjectRef}
      *       parameters.</li>
      *   <li>Idempotency key source is required.</li>
-     *   <li>The payload type must exactly match {@link RuntimeWorkflow#startPayloadType()} declared
-     *       in the registered plan.</li>
      * </ul>
      *
      * @param method the method to validate
      * @param contractInterface the declaring interface (for error messages)
-     * @param rw the resolved runtime workflow whose plan declares the expected start payload type
      * @throws WorkflowProxyContractException if any rule is violated
      */
-    private static void validateStartMethod(Method method, Class<?> contractInterface, RuntimeWorkflow rw) {
+    private static void validateStartMethod(Method method, Class<?> contractInterface) {
         // Return type must be Future<WorkflowInstanceId>
         if (!isFutureOf(method.getGenericReturnType(), WorkflowInstanceId.class)) {
             throw new WorkflowProxyContractException("Method " + method.getName() + " in " + contractInterface.getName()
@@ -351,15 +312,6 @@ public final class WorkflowProxyValidator {
                     + " @IdempotencyKey String parameter or have the payload implement"
                     + " IdempotencyKeyed");
         }
-
-        // Payload type must exactly match the plan's declared startPayloadType
-        if (!payloadType.equals(rw.startPayloadType())) {
-            throw new WorkflowProxyContractException("Method " + method.getName() + " in " + contractInterface.getName()
-                    + " is @WorkflowStart with payload type " + payloadType.getName()
-                    + ", but the registered plan declares startPayloadType="
-                    + rw.startPayloadType().getName()
-                    + ". Adjust the contract method or the plan's wf.init(...) declaration.");
-        }
     }
 
     /**
@@ -372,18 +324,13 @@ public final class WorkflowProxyValidator {
      *   <li>Exactly one non-annotated, non-instance-id parameter (the payload) is required.</li>
      *   <li>No duplicate {@code @SignalDedupKey} parameters.</li>
      *   <li>Dedup key source is required.</li>
-     *   <li>The payload type must exactly match the type declared in
-     *       {@link RuntimeWorkflow#signalPayloadTypes()} for {@code signalName}, when present.</li>
      * </ul>
      *
      * @param method the method to validate
      * @param contractInterface the declaring interface (for error messages)
-     * @param rw the resolved runtime workflow whose plan declares the expected signal payload types
-     * @param signalName the signal name from the {@link WorkflowSignal} annotation
      * @throws WorkflowProxyContractException if any rule is violated
      */
-    private static void validateSignalMethod(
-            Method method, Class<?> contractInterface, RuntimeWorkflow rw, String signalName) {
+    private static void validateSignalMethod(Method method, Class<?> contractInterface) {
         // Return type must be Future<Void>
         if (!isFutureOf(method.getGenericReturnType(), Void.class)) {
             throw new WorkflowProxyContractException("Method " + method.getName() + " in " + contractInterface.getName()
@@ -465,15 +412,6 @@ public final class WorkflowProxyValidator {
                     + " @SignalDedupKey String parameter or have the payload implement"
                     + " SignalDedupKeyed");
         }
-
-        // Payload type must exactly match the plan's declared signal payload type for this signal
-        Class<?> declared = rw.signalPayloadTypes().get(signalName);
-        if (declared != null && !declared.equals(payloadType)) {
-            throw new WorkflowProxyContractException("Method " + method.getName() + " in " + contractInterface.getName()
-                    + " is @WorkflowSignal(\"" + signalName + "\") with payload type " + payloadType.getName()
-                    + ", but the registered plan declares payloadType=" + declared.getName()
-                    + " for that signal. Adjust the contract method or the plan's waitFor(...) declaration.");
-        }
     }
 
     /**
@@ -509,15 +447,12 @@ public final class WorkflowProxyValidator {
      * Builds an {@link OperationHandler} for a {@link WorkflowStart}-annotated method.
      *
      * @param method the start method
-     * @param definitionId the workflow definition id
-     * @param definitionVersion the definition version from {@link WorkflowContract#definitionVersion()};
-     *     threaded into {@link StartCommand#requestedDefinitionVersion()} so that contract-bound
-     *     proxies are version-pinned even after a newer version is deployed
+     * @param binding the client binding the start command is built from
      * @param ops the workflow operations to delegate to
      * @return the compiled handler
      */
     private static OperationHandler buildStartHandler(
-            Method method, String definitionId, long definitionVersion, WorkflowOperations ops) {
+            Method method, WorkflowClientBinding binding, WorkflowOperations ops) {
         Class<?>[] paramTypes = method.getParameterTypes();
         Annotation[][] paramAnnotations = method.getParameterAnnotations();
 
@@ -569,9 +504,7 @@ public final class WorkflowProxyValidator {
             } else {
                 subjectRef = null;
             }
-            StartCommand cmd =
-                    new StartCommand(definitionId, payload, idempotencyKey, businessKey, subjectRef, definitionVersion);
-            return ops.start(cmd);
+            return ops.start(binding.startCommand(payload, idempotencyKey, businessKey, subjectRef));
         };
     }
 
@@ -677,22 +610,6 @@ public final class WorkflowProxyValidator {
             sb.append(canonical != null ? canonical : params[i].getName());
         }
         return sb.append(')').toString();
-    }
-
-    /**
-     * Collects all signal names declared by {@link WaitSignalNode}s in the given plan.
-     *
-     * @param rw the resolved runtime workflow
-     * @return set of signal names present in the plan
-     */
-    private static Set<String> collectPlanSignalNames(RuntimeWorkflow rw) {
-        Set<String> names = new HashSet<>();
-        for (var node : rw.plan().nodes()) {
-            if (node instanceof WaitSignalNode w) {
-                names.add(w.signalName());
-            }
-        }
-        return names;
     }
 
     /**

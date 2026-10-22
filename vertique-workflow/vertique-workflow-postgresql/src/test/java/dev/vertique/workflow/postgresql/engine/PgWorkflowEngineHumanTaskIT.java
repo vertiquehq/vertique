@@ -472,8 +472,34 @@ public class PgWorkflowEngineHumanTaskIT {
      * @return a {@link Future} of the new workflow instance id
      */
     private Future<WorkflowInstanceId> startWorkflow(String definitionId, TaskState state) {
-        StartCommand cmd = new StartCommand(definitionId, state, state.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                definitionId,
+                contractNameOf(definitionId),
+                state,
+                state.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         return engine.start(cmd);
+    }
+
+    /**
+     * Returns the contract name of a fixture definition.
+     *
+     * @param definitionId the id of one of this test's fixture definitions
+     * @return the name of the definition's contract
+     */
+    private static String contractNameOf(String definitionId) {
+        return switch (definitionId) {
+            case "human-task-review-test" -> ReviewContract.class.getName();
+            case "human-task-due-date-test" -> ReviewDueDateContract.class.getName();
+            case "human-task-resolver-test" -> ResolverContract.class.getName();
+            case "human-task-void-decision-test" -> VoidDecisionContract.class.getName();
+            case "human-task-string-decision-test" -> StringDecisionContract.class.getName();
+            default -> throw new IllegalArgumentException("unknown fixture definition: " + definitionId);
+        };
     }
 
     /**

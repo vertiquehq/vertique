@@ -187,7 +187,16 @@ public class WorkflowEventOptionalKindIT {
     @DisplayName("No WORKFLOW_EVENT recorder: workflow completes successfully; no outbox writes attempted")
     void workflowCompletesWithoutEventRecorder(VertxTestContext ctx) {
         State state = new State("opt-" + UUID.randomUUID());
-        StartCommand cmd = new StartCommand("optional-kind-complete", state, state.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "optional-kind-complete",
+                CompleteContract.class.getName(),
+                state,
+                state.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(workflowId -> pool.withTransaction(tx -> instanceRepo.findById(workflowId, tx))
@@ -217,8 +226,26 @@ public class WorkflowEventOptionalKindIT {
         State stateA = new State("opt-a-" + UUID.randomUUID());
         State stateB = new State("opt-b-" + UUID.randomUUID());
 
-        StartCommand cmdA = new StartCommand("optional-kind-complete", stateA, stateA.idempotencyKey(), null, null);
-        StartCommand cmdB = new StartCommand("optional-kind-complete", stateB, stateB.idempotencyKey(), null, null);
+        StartCommand cmdA = new StartCommand(
+                "optional-kind-complete",
+                CompleteContract.class.getName(),
+                stateA,
+                stateA.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
+        StartCommand cmdB = new StartCommand(
+                "optional-kind-complete",
+                CompleteContract.class.getName(),
+                stateB,
+                stateB.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmdA)
                 .compose(wfA -> engine.start(cmdB)

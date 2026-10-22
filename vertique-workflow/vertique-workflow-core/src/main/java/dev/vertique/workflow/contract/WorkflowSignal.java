@@ -20,8 +20,12 @@ import java.lang.annotation.Target;
  * parameter or a payload type that implements {@link SignalDedupKeyed}. Proxy creation fails if
  * neither is present.
  *
- * <p>The signal name must match a {@code WaitSignalNode.signalName()} in the resolved plan. Two
- * methods with the same signal name on the same contract are rejected.
+ * <p>A contract declares the signals its definitions may wait for: every signal a registered
+ * definition waits for must be declared by a method of that definition's contract, and the
+ * registry refuses a definition that waits for an undeclared signal. A contract may declare signals
+ * that some of its definitions do not wait for; a signal sent to an instance whose pinned version
+ * does not wait for it is refused. Two methods with the same signal name on the same contract are
+ * rejected.
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
@@ -29,8 +33,8 @@ import java.lang.annotation.Target;
 public @interface WorkflowSignal {
 
     /**
-     * The name of the signal this method delivers; must match a {@code WaitSignalNode.signalName()}
-     * in the resolved workflow plan.
+     * The name of the signal this method delivers; it is delivered to instances whose pinned
+     * workflow plan has a {@code WaitSignalNode.signalName()} equal to it.
      *
      * @return the signal name
      */

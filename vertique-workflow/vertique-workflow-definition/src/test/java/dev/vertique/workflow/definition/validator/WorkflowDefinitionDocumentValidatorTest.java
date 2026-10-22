@@ -47,6 +47,10 @@ import dev.vertique.workflow.definition.schema.WaitSignalStep;
 import dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import dev.vertique.workflow.tasks.TaskAssignment;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -88,16 +92,20 @@ class WorkflowDefinitionDocumentValidatorTest {
     record TestPayload(String raw) {}
 
     /** Valid contract annotation that matches the test document id/version. */
-    @WorkflowContract(definitionId = "test-wf", definitionVersion = 1)
+    @WorkflowContract
     interface TestWorkflowContract {}
 
     /** Contract with a WRONG definitionId — used for mismatch tests. */
-    @WorkflowContract(definitionId = "wrong-id", definitionVersion = 1)
+    @WorkflowContract
     interface WrongIdContract {}
 
     /** Contract with a WRONG definitionVersion. */
-    @WorkflowContract(definitionId = "test-wf", definitionVersion = 99)
+    @WorkflowContract
     interface WrongVersionContract {}
+
+    /** Contract named by the index; its annotation attributes differ from the header of the documents using it. */
+    @WorkflowContract("parity-orders")
+    interface ParityOrdersContract {}
 
     /** Contract interface with no @WorkflowContract annotation. */
     interface UnannotatedContract {}
@@ -390,11 +398,11 @@ class WorkflowDefinitionDocumentValidatorTest {
         assertViolationCode(result, "CONTRACT_NOT_ANNOTATED");
     }
 
-    // --- Rule 6: CONTRACT_DEFINITION_ID_MISMATCH ---
+    // --- Rule 6: the contract annotation's definitionId is not compared ---
 
     @Test
-    @DisplayName("CONTRACT_DEFINITION_ID_MISMATCH — annotation definitionId != document definitionId")
-    void rule06_contractDefinitionIdMismatch() {
+    @DisplayName("a contract annotation naming another definitionId than the document is accepted")
+    void rule06_contractAnnotationDefinitionIdIsNotCompared() {
         WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
                 DEF_ID,
                 DEF_VER,
@@ -408,15 +416,15 @@ class WorkflowDefinitionDocumentValidatorTest {
 
         WorkflowDefinitionViolations result = new WorkflowDefinitionDocumentValidator(emptyLookup).validate(doc);
 
-        Violation v = findFirstByCode(result, "CONTRACT_DEFINITION_ID_MISMATCH");
-        assertThat(v.message()).contains("wrong-id").contains(DEF_ID);
+        assertThat(result.toList().stream().map(Violation::code).toList())
+                .doesNotContain("CONTRACT_DEFINITION_ID_MISMATCH", "CONTRACT_NOT_ANNOTATED");
     }
 
-    // --- Rule 7: CONTRACT_DEFINITION_VERSION_MISMATCH ---
+    // --- Rule 7: the contract annotation's definitionVersion is not compared ---
 
     @Test
-    @DisplayName("CONTRACT_DEFINITION_VERSION_MISMATCH — annotation definitionVersion != document version")
-    void rule07_contractDefinitionVersionMismatch() {
+    @DisplayName("a contract annotation naming another definitionVersion than the document is accepted")
+    void rule07_contractAnnotationDefinitionVersionIsNotCompared() {
         WorkflowDefinitionDocument doc = new WorkflowDefinitionDocument(
                 DEF_ID,
                 DEF_VER,
@@ -430,8 +438,56 @@ class WorkflowDefinitionDocumentValidatorTest {
 
         WorkflowDefinitionViolations result = new WorkflowDefinitionDocumentValidator(emptyLookup).validate(doc);
 
-        Violation v = findFirstByCode(result, "CONTRACT_DEFINITION_VERSION_MISMATCH");
-        assertThat(v.message()).contains("99").contains("1");
+        assertThat(result.toList().stream().map(Violation::code).toList())
+                .doesNotContain("CONTRACT_DEFINITION_VERSION_MISMATCH", "CONTRACT_NOT_ANNOTATED");
+    }
+
+    // --- Rule 6/7 over a type-name index: the contract is resolved by name ---
+
+    @Test
+    @DisplayName("a contract resolves by logical name without comparing the header, and must be annotated")
+    void contractResolvesByLogicalNameWithoutHeaderComparison() {
+        // Given: a validator over an index (no class-loader lookup) holding the annotated contract
+        // under its logical name and an unannotated interface under its binary name
+        WorkflowTypeNames index = new DefaultWorkflowTypeNames(List.of(() -> List.of(
+                new WorkflowTypeCatalogEntry(Kind.CONTRACT, "parity-orders", ParityOrdersContract.class),
+                new WorkflowTypeCatalogEntry(
+                        Kind.CONTRACT, UnannotatedContract.class.getName(), UnannotatedContract.class),
+                new WorkflowTypeCatalogEntry(Kind.TYPE, STATE_FQN, TestState.class),
+                new WorkflowTypeCatalogEntry(Kind.TYPE, PAYLOAD_FQN, TestPayload.class))));
+        WorkflowDefinitionDocumentValidator validator =
+                new WorkflowDefinitionDocumentValidator(fullLookup, null, index);
+        List<StepNode> steps = List.of(
+                new ServiceStep("svc", "inventory.reserve", PAYLOAD_MAPPER_ID, null, "done"), new CompleteStep("done"));
+        // And: a document whose header (parity-doc v3) differs from the annotation (unused v9)
+        WorkflowDefinitionDocument named = new WorkflowDefinitionDocument(
+                "parity-doc", 3L, STATE_FQN, "parity-orders", PAYLOAD_FQN, INIT_MAPPER_ID, null, "svc", steps);
+        // And: a document naming an interface that carries no contract annotation
+        WorkflowDefinitionDocument unannotated = new WorkflowDefinitionDocument(
+                "parity-doc",
+                3L,
+                STATE_FQN,
+                UnannotatedContract.class.getName(),
+                PAYLOAD_FQN,
+                INIT_MAPPER_ID,
+                null,
+                "svc",
+                steps);
+
+        // When: each document is validated
+        WorkflowDefinitionViolations namedResult = validator.validate(named);
+        WorkflowDefinitionViolations unannotatedResult = validator.validate(unannotated);
+
+        // Then: the header need not match the annotation
+        assertThat(namedResult.isEmpty())
+                .as("violations: %s", namedResult.toList())
+                .isTrue();
+        // And: the unannotated interface is the one violation, naming only the offending class
+        assertThat(unannotatedResult.toList()).extracting(Violation::code).containsExactly("CONTRACT_NOT_ANNOTATED");
+        assertThat(unannotatedResult.toList().get(0).message())
+                .contains(UnannotatedContract.class.getName())
+                .doesNotContain("parity-doc")
+                .doesNotContain("svc");
     }
 
     // --- Rule 8: START_PAYLOAD_TYPE_UNRESOLVABLE ---
@@ -1287,6 +1343,62 @@ class WorkflowDefinitionDocumentValidatorTest {
         Violation v = findFirstByCode(result, "STATE_REDUCER_STATE_TYPE_MISMATCH");
         assertThat(v.stepId()).isEqualTo("wait");
         assertThat(v.message()).contains(STATE_FQN).contains(WrongState.class.getName());
+    }
+
+    /** A state type that schema-extends {@link BaseState} by adding a property. */
+    record AddedState(String id, int amount, String note) {}
+
+    /** The state type {@link AddedState} extends. */
+    record BaseState(String id, int amount) {}
+
+    @Test
+    @DisplayName("a callback registered for the base state type is refused for an extending state type")
+    void callbackRegisteredForBaseStateIsRefusedForExtendingStateType() {
+        // Given: reducer r-base registered for BaseState, r-added for AddedState, and a document whose state type
+        // names AddedState
+        RegisteredIdentifierLookup lookup = new RegisteredIdentifierLookup(
+                new DefaultPayloadMapperRegistry(Set.of()),
+                new DefaultStartStateMapperRegistry(Set.of(b -> b.register(new NamedStartStateMapper<>(
+                        INIT_MAPPER_ID, TestPayload.class, AddedState.class, p -> new AddedState(p.raw(), 0, null))))),
+                new DefaultStateReducerRegistry(Set.of(b -> {
+                    b.register(new NamedStateReducer<>("r-base", BaseState.class, (s, e) -> s));
+                    b.register(new NamedStateReducer<>("r-added", AddedState.class, (s, e) -> s));
+                })),
+                new DefaultStateMutatorRegistry(Set.of()),
+                new DefaultTimerResolverRegistry(Set.of()),
+                new DefaultFailMessageFactoryRegistry(Set.of()),
+                new DefaultSubjectResolverRegistry(Set.of()),
+                new DefaultTaskAssignmentResolverRegistry(Set.of()),
+                new DefaultBranchResultReducerRegistry(Set.of()),
+                new DefaultNamedConditionRegistry(Set.of()));
+        String addedFqn = AddedState.class.getName();
+        java.util.function.Function<String, WorkflowDefinitionDocument> documentReferencing =
+                reducerId -> new WorkflowDefinitionDocument(
+                        DEF_ID,
+                        DEF_VER,
+                        addedFqn,
+                        CONTRACT_FQN,
+                        PAYLOAD_FQN,
+                        INIT_MAPPER_ID,
+                        null,
+                        "wait",
+                        List.of(
+                                new WaitSignalStep("wait", "sig", PAYLOAD_FQN, reducerId, "done", null),
+                                new CompleteStep("done")));
+
+        // When: the document references r-base, then r-added
+        WorkflowDefinitionViolations withBase =
+                new WorkflowDefinitionDocumentValidator(lookup).validate(documentReferencing.apply("r-base"));
+        WorkflowDefinitionViolations withAdded =
+                new WorkflowDefinitionDocumentValidator(lookup).validate(documentReferencing.apply("r-added"));
+
+        // Then: r-base is refused naming both state types
+        Violation mismatch = findFirstByCode(withBase, "STATE_REDUCER_STATE_TYPE_MISMATCH");
+        assertThat(mismatch.stepId()).isEqualTo("wait");
+        assertThat(mismatch.message()).contains(addedFqn).contains(BaseState.class.getName());
+
+        // and: r-added draws no such violation
+        assertThat(withAdded.toList()).extracting(Violation::code).doesNotContain("STATE_REDUCER_STATE_TYPE_MISMATCH");
     }
 
     @Test

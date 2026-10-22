@@ -274,7 +274,16 @@ public class PgWorkflowEngineBranchCompensationIT {
     @DisplayName("AC #2 — failed ALL_REQUIRED fork compensates committed branch dispatches in reverse order")
     void allRequiredFailedBranch_compensatesCommittedDispatches(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("o-comp");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         engine.start(cmd)
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {

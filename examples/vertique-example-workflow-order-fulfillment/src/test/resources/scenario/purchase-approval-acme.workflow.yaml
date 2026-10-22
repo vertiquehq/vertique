@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+# Acme's purchase approval: the default scope's contract and state, with a finance approval before the audit signal.
+definitionId: purchase-approval
+definitionVersion: 1
+stateType: purchase
+contract: purchase-approval
+startPayloadType: purchase-start
+initialStateMapper: scenario.purchase.fromStart
+initialStep: finance-approval
+steps:
+  - id: finance-approval
+    type: human-task
+    taskType: finance
+    assignment:
+      mode: role
+      value: finance
+    decisions:
+      - name: approve
+        payloadType: finance-decision
+        applicator: scenario.purchase.keepState
+        next: await-audit
+  - id: await-audit
+    type: wait-signal
+    signal: po.audited
+    payloadType: po-audited
+    stateReducer: scenario.purchase.applyAudit
+    next: done
+  - id: done
+    type: complete

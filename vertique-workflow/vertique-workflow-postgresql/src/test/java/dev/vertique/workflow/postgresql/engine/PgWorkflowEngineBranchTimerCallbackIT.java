@@ -12,6 +12,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -26,6 +28,8 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
@@ -98,9 +102,18 @@ public class PgWorkflowEngineBranchTimerCallbackIT {
 
     record State(String id) {}
 
-    interface StandaloneTimerContract {}
+    interface StandaloneTimerContract {
+        @WorkflowSignal("other-signal")
+        Future<Void> otherSignal(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
-    interface SignalTimeoutContract {}
+    interface SignalTimeoutContract {
+        @WorkflowSignal("my-signal")
+        Future<Void> mySignal(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("other-signal")
+        Future<Void> otherSignal(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Standalone-timer fork: branch-a waits on a TimerNode at "timer-step", branch-b waits on a
@@ -274,7 +287,8 @@ public class PgWorkflowEngineBranchTimerCallbackIT {
 
     private WorkflowInstanceId seedInstance(WorkflowDefinition<?, ?> def) {
         UUID id = UUID.randomUUID();
-        String planHash = registry.resolvePinned(def.definitionId(), def.definitionVersion())
+        String planHash = registry.resolve(
+                        new DefinitionKey(WorkflowScopes.DEFAULT, def.definitionId(), def.definitionVersion()))
                 .plan()
                 .planHash();
         // INSERT workflow_instances row whose plan_hash matches the registered definition's

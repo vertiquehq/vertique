@@ -11,10 +11,13 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
@@ -115,7 +118,13 @@ public class CompensationLifoIT {
     record SigB(String id) {}
 
     /** Marker contract for the 3-step definition. */
-    interface ThreeStepContract {}
+    interface ThreeStepContract {
+        @WorkflowSignal("sig-a")
+        Future<Void> sigA(WorkflowInstanceId id, SigA payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("sig-b")
+        Future<Void> sigB(WorkflowInstanceId id, SigB payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Three-step saga definition:
@@ -245,7 +254,16 @@ public class CompensationLifoIT {
     @DisplayName("LIFO compensation: step-B compensated before step-A when both completed before failure")
     void lifoCompensationOrder(VertxTestContext ctx) {
         ThreeStepStart start = new ThreeStepStart("lifo-test-1");
-        StartCommand cmd = new StartCommand("three-step-lifo", start, start.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "three-step-lifo",
+                ThreeStepContract.class.getName(),
+                start,
+                start.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(id -> {
@@ -337,7 +355,16 @@ public class CompensationLifoIT {
     @DisplayName("partial completion: only completed step-A is compensated when step-B never completes")
     void partialCompensation(VertxTestContext ctx) {
         ThreeStepStart start = new ThreeStepStart("lifo-test-2");
-        StartCommand cmd = new StartCommand("three-step-lifo", start, start.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "three-step-lifo",
+                ThreeStepContract.class.getName(),
+                start,
+                start.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         // Only advance through sig-a (step-A completes), do NOT send sig-b.
         // Then manually signal with a fail trigger — but wait, the FailNode is after wait-b.

@@ -25,6 +25,8 @@ import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.validation.ValidationModule;
 import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -157,7 +159,10 @@ public class PgWorkflowEnginePayloadConstraintIT {
 
     interface InstanceContract {}
 
-    interface BranchContract {}
+    interface BranchContract {
+        @WorkflowSignal("my-signal")
+        Future<Void> mySignal(WorkflowInstanceId id, Object payload, @SignalDedupKey String dedupKey);
+    }
 
     interface StartContract {}
 
@@ -667,10 +672,26 @@ public class PgWorkflowEnginePayloadConstraintIT {
      */
     private static WorkflowInstanceId start(String definitionId, Object payload, String key) {
         return validatingEngine
-                .start(new StartCommand(definitionId, payload, key, null, null))
+                .start(new StartCommand(
+                        definitionId, contractNameOf(definitionId), payload, key, null, null, null, null, null))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
+    }
+
+    /**
+     * Returns the contract name of a fixture definition.
+     *
+     * @param definitionId the id of one of this test's fixture definitions
+     * @return the name of the definition's contract
+     */
+    private static String contractNameOf(String definitionId) {
+        return switch (definitionId) {
+            case INSTANCE_DEFINITION_ID -> InstanceContract.class.getName();
+            case BRANCH_DEFINITION_ID -> BranchContract.class.getName();
+            case START_DEFINITION_ID -> StartContract.class.getName();
+            default -> throw new IllegalArgumentException("unknown fixture definition: " + definitionId);
+        };
     }
 
     private static WorkflowInvalidPayloadException assertInvalidStart(Object payload, String key) {
@@ -739,7 +760,7 @@ public class PgWorkflowEnginePayloadConstraintIT {
 
     private static long startDedupRows(String key) {
         return count(
-                "SELECT count(*) FROM workflow_dedup WHERE kind = 'start' AND scope = $1 AND key = $2",
+                "SELECT count(*) FROM workflow_dedup WHERE kind = 'start' AND dedup_namespace = $1 AND key = $2",
                 Tuple.of(START_DEFINITION_ID, key));
     }
 

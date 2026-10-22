@@ -10,14 +10,21 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.job.JobContext;
+import dev.vertique.job.delayed.DelayedJobOptions;
 import dev.vertique.workflow.exception.WorkflowConflictException;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.timer.TimerPurpose;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStatus;
@@ -28,8 +35,11 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.SqlConnection;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,9 +47,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link WorkflowTimerFireExecutor}.
@@ -86,6 +99,9 @@ class WorkflowTimerFireExecutorTest {
     private TransactionalTaskCallbacks<SqlClient> taskCallbacks;
 
     @Mock
+    private WorkflowTimerFireJob fireJob;
+
+    @Mock
     private SqlConnection tx;
 
     @Mock
@@ -98,8 +114,7 @@ class WorkflowTimerFireExecutorTest {
 
     @BeforeEach
     void setUp() {
-        executor =
-                new WorkflowTimerFireExecutor(pool, timerStore, () -> timerCallbacks, () -> taskCallbacks, FIXED_CLOCK);
+        executor = executorWith(FIXED_CLOCK);
         // Make pool.withTransaction delegate directly to the lambda using the test connection.
         when(pool.withTransaction(any())).thenAnswer(inv -> {
             var fn = inv.<java.util.function.Function<SqlConnection, Future<Object>>>getArgument(0);
@@ -546,7 +561,292 @@ class WorkflowTimerFireExecutorTest {
         }
     }
 
+    // --- A pin this node cannot run: the timer is re-queued, never failed ---
+
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(TimerPurpose.class)
+    @DisplayName("a pin this node cannot run re-queues a fresh job for every purpose and marks nothing")
+    void notRunnablePinRequeuesFreshJobForEveryPurpose(TimerPurpose purpose) {
+        // Given a scheduled timer, due now, whose callback fails because this node lacks the pinned code
+        DefinitionKey key = new DefinitionKey("default", "requeue-" + purpose, 3);
+        UUID taskId =
+                purpose == TimerPurpose.TASK_DUE || purpose == TimerPurpose.TASK_REMINDER ? UUID.randomUUID() : null;
+        Scheduled timer = scheduled(purpose, taskId, FIXED_NOW);
+        failCallbackNotRunnable(timer, key);
+        UUID newExecutionId = UUID.randomUUID();
+        when(fireJob.enqueue(any(TimerFirePayload.class), any(DelayedJobOptions.class), eq(tx)))
+                .thenReturn(Future.succeededFuture(newExecutionId));
+        when(timerStore.updateExecutionId(timer.timerId(), newExecutionId, tx)).thenReturn(Future.succeededFuture());
+
+        try (RequeueLog log = new RequeueLog()) {
+            // When the executor runs the timer
+            Future<Void> result = executor.execute(timer.payload(), ctx);
+
+            // Then the run succeeds, so the attempt is not spent
+            assertThat(result.succeeded()).as("run outcome: %s", result.cause()).isTrue();
+
+            // And a fresh job for the same timer is enqueued at the minimum delay
+            ArgumentCaptor<TimerFirePayload> payload = ArgumentCaptor.forClass(TimerFirePayload.class);
+            ArgumentCaptor<DelayedJobOptions> options = ArgumentCaptor.forClass(DelayedJobOptions.class);
+            verify(fireJob).enqueue(payload.capture(), options.capture(), eq(tx));
+            assertThat(payload.getValue()).isEqualTo(timer.payload());
+            assertThat(options.getValue().runAt()).isEqualTo(FIXED_NOW.plusSeconds(5));
+
+            // And the timer row points at the new execution and is neither fired nor failed
+            verify(timerStore).updateExecutionId(timer.timerId(), newExecutionId, tx);
+            verify(timerStore, never()).markFired(any(), any(), any());
+            verify(timerStore, never()).markFailed(any(), any(), any(), any());
+
+            // And one warning names the timer, the purpose and the definition key
+            assertThat(log.warnings()).singleElement().satisfies(text -> assertThat(text)
+                    .contains(timer.timerId().toString(), purpose.name(), key.definitionId()));
+        }
+    }
+
+    @Test
+    @DisplayName("a pin that is only unavailable, not a node-local gap, still fails the attempt")
+    void unavailablePinOfAnotherKindStillFailsTheAttempt() {
+        // Given a scheduled timer whose callback fails with the base pin-unavailable error
+        Scheduled timer = scheduled(TimerPurpose.STANDALONE, null, FIXED_NOW);
+        when(timerCallbacks.timerFired(timer.workflowId(), timer.timerId(), tx))
+                .thenReturn(Future.failedFuture(
+                        new WorkflowVersionPinUnavailableException("default", "pin-gone", 2, timer.workflowId())));
+
+        // When the executor runs the timer
+        Future<Void> result = executor.execute(timer.payload(), ctx);
+
+        // Then the failure propagates and nothing is enqueued or marked
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isInstanceOf(WorkflowVersionPinUnavailableException.class);
+        verify(fireJob, never()).enqueue(any(TimerFirePayload.class), any(DelayedJobOptions.class), any());
+        verify(timerStore, never()).markFired(any(), any(), any());
+        verify(timerStore, never()).markFailed(any(), any(), any(), any());
+    }
+
+    /** One run of the backoff table: how long the timer has been due, and the delay the re-queue must use. */
+    private record BackoffRow(Duration elapsedSinceDue, Duration expectedDelay) {}
+
+    @Test
+    @DisplayName("the re-queue delay is capped exponential backoff and the warning is limited per definition key")
+    void requeueDelayIsCappedBackoffAndWarningIsRateLimitedPerDefinitionKey() {
+        DefinitionKey k1 = new DefinitionKey("default", "requeue-limit-k1", 2);
+        DefinitionKey k2 = new DefinitionKey("default", "requeue-limit-k2", 2);
+        MutableClock clock = new MutableClock(FIXED_NOW);
+        WorkflowTimerFireExecutor timed = executorWith(clock);
+        when(fireJob.enqueue(any(TimerFirePayload.class), any(DelayedJobOptions.class), eq(tx)))
+                .thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+        when(timerStore.updateExecutionId(any(), any(), eq(tx))).thenReturn(Future.succeededFuture());
+        List<BackoffRow> table = List.of(
+                new BackoffRow(Duration.ZERO, Duration.ofSeconds(5)),
+                new BackoffRow(Duration.ofSeconds(3), Duration.ofSeconds(5)),
+                new BackoffRow(Duration.ofSeconds(10), Duration.ofSeconds(10)),
+                new BackoffRow(Duration.ofSeconds(100), Duration.ofSeconds(100)),
+                new BackoffRow(Duration.ofMinutes(20), Duration.ofMinutes(5)));
+
+        try (RequeueLog log = new RequeueLog()) {
+            // Given timers of one definition key that have been due for 0 s, 3 s, 10 s, 100 s and 20 minutes
+            // When each is run at the same instant
+            List<Instant> runAt = new java.util.ArrayList<>();
+            for (BackoffRow row : table) {
+                Scheduled timer =
+                        scheduled(TimerPurpose.STANDALONE, null, clock.instant().minus(row.elapsedSinceDue()));
+                failCallbackNotRunnable(timer, k1);
+                assertThat(timed.execute(timer.payload(), ctx).succeeded()).isTrue();
+                runAt.add(lastEnqueuedRunAt());
+            }
+
+            // Then the delays are the elapsed time, at least 5 s and at most 5 minutes
+            assertThat(runAt)
+                    .containsExactly(table.stream()
+                            .map(row -> clock.instant().plus(row.expectedDelay()))
+                            .toArray(Instant[]::new));
+            verify(timerStore, never()).markFired(any(), any(), any());
+            verify(timerStore, never()).markFailed(any(), any(), any(), any());
+
+            // And only the first of those runs warned about the key, the others being logged below warning level
+            assertThat(log.warningsMentioning(k1)).hasSize(1);
+            assertThat(log.eventsMentioning(k1)).hasSizeGreaterThanOrEqualTo(table.size());
+
+            // When another key is re-queued in the same minute
+            runNotRunnable(timed, clock, k2);
+
+            // Then it has a warning of its own
+            assertThat(log.warningsMentioning(k2)).hasSize(1);
+            assertThat(log.warningsMentioning(k1)).hasSize(1);
+
+            // When the first key is re-queued 30 s after its warning
+            clock.advance(Duration.ofSeconds(30));
+            runNotRunnable(timed, clock, k1);
+
+            // Then no further warning is logged for it
+            assertThat(log.warningsMentioning(k1)).hasSize(1);
+
+            // When it is re-queued 61 s after its warning
+            clock.advance(Duration.ofSeconds(31));
+            runNotRunnable(timed, clock, k1);
+
+            // Then a second warning is logged for it
+            assertThat(log.warningsMentioning(k1)).hasSize(2);
+            assertThat(log.warningsMentioning(k2)).hasSize(1);
+        }
+    }
+
+    @Test
+    @DisplayName("the re-queue lines repeat a long scope key and definition id only in bounded form")
+    void requeueLogsBoundTheEchoedScopeKeyAndDefinitionId() {
+        // Given: a timer, due now, pinned to a definition whose scope key and id are at the length limit, and
+        // the same timer logged once more below warning level
+        String scope = "q".repeat(255);
+        String id = "w".repeat(255);
+        DefinitionKey key = new DefinitionKey(scope, id, 4);
+        MutableClock clock = new MutableClock(FIXED_NOW);
+        WorkflowTimerFireExecutor timed = executorWith(clock);
+        when(fireJob.enqueue(any(TimerFirePayload.class), any(DelayedJobOptions.class), eq(tx)))
+                .thenAnswer(inv -> Future.succeededFuture(UUID.randomUUID()));
+        when(timerStore.updateExecutionId(any(), any(), eq(tx))).thenReturn(Future.succeededFuture());
+
+        try (RequeueLog log = new RequeueLog()) {
+            // When: the timer is re-queued twice in the same minute
+            runNotRunnable(timed, clock, key);
+            runNotRunnable(timed, clock, key);
+
+            // Then: a warning and a debug line were logged, naming the key in bounded form only
+            assertThat(log.everything()).hasSize(2);
+            assertThat(log.everything()).allSatisfy(line -> assertThat(line)
+                    .doesNotContain(scope, id, "q".repeat(100), "w".repeat(100))
+                    .contains("q".repeat(10), "w".repeat(10)));
+        }
+    }
+
     // --- Helpers ---
+
+    private WorkflowTimerFireExecutor executorWith(Clock clock) {
+        return new WorkflowTimerFireExecutor(
+                pool, timerStore, () -> timerCallbacks, () -> taskCallbacks, () -> fireJob, clock);
+    }
+
+    /** A scheduled timer row that the store hands out under lock, with the payload that delivers it. */
+    private record Scheduled(
+            UUID timerId, WorkflowInstanceId workflowId, TimerRecord record, TimerFirePayload payload) {}
+
+    private Scheduled scheduled(TimerPurpose purpose, UUID taskId, Instant dueAt) {
+        UUID timerId = UUID.randomUUID();
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        TimerRecord record = buildRecord(timerId, workflowId, TimerStatus.SCHEDULED, purpose, taskId, dueAt);
+        when(timerStore.lockForFiring(eq(timerId), eq(tx))).thenReturn(Future.succeededFuture(Optional.of(record)));
+        return new Scheduled(timerId, workflowId, record, new TimerFirePayload(timerId, workflowId, null));
+    }
+
+    private void failCallbackNotRunnable(Scheduled timer, DefinitionKey key) {
+        TimerRecord record = timer.record();
+        Future<TimerFiringResult> timerFailure = Future.failedFuture(new WorkflowVersionNotRunnableException(key));
+        Future<TaskMutationResult> taskFailure = Future.failedFuture(new WorkflowVersionNotRunnableException(key));
+        Future<Void> reminderFailure = Future.failedFuture(new WorkflowVersionNotRunnableException(key));
+        switch (record.purpose()) {
+            case STANDALONE, SIGNAL_TIMEOUT ->
+                when(timerCallbacks.timerFired(timer.workflowId(), timer.timerId(), tx))
+                        .thenReturn(timerFailure);
+            case TASK_DUE ->
+                when(taskCallbacks.taskDueFired(timer.workflowId(), record.taskId(), tx))
+                        .thenReturn(taskFailure);
+            case TASK_REMINDER ->
+                when(taskCallbacks.taskReminderFired(
+                                timer.workflowId(), record.taskId(), timer.timerId(), record.fireAt(), tx))
+                        .thenReturn(reminderFailure);
+        }
+    }
+
+    private void runNotRunnable(WorkflowTimerFireExecutor timed, MutableClock clock, DefinitionKey key) {
+        Scheduled timer = scheduled(TimerPurpose.STANDALONE, null, clock.instant());
+        failCallbackNotRunnable(timer, key);
+        assertThat(timed.execute(timer.payload(), ctx).succeeded()).isTrue();
+    }
+
+    /** The run time of the most recently enqueued job. */
+    private Instant lastEnqueuedRunAt() {
+        ArgumentCaptor<DelayedJobOptions> options = ArgumentCaptor.forClass(DelayedJobOptions.class);
+        verify(fireJob, org.mockito.Mockito.atLeastOnce())
+                .enqueue(any(TimerFirePayload.class), options.capture(), eq(tx));
+        List<DelayedJobOptions> all = options.getAllValues();
+        return all.get(all.size() - 1).runAt();
+    }
+
+    /** A clock the test moves by hand. */
+    private static final class MutableClock extends Clock {
+
+        private Instant now;
+
+        private MutableClock(Instant start) {
+            this.now = start;
+        }
+
+        void advance(Duration by) {
+            now = now.plus(by);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
+    }
+
+    /** Collects what the executor logs while it is open, at every level. */
+    private static final class RequeueLog implements AutoCloseable {
+
+        private final ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(WorkflowTimerFireExecutor.class.getName());
+        private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        private final Level previousLevel = logger.getLevel();
+
+        private RequeueLog() {
+            appender.start();
+            logger.setLevel(Level.DEBUG);
+            logger.addAppender(appender);
+        }
+
+        List<String> warnings() {
+            return appender.list.stream()
+                    .filter(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .toList();
+        }
+
+        List<String> everything() {
+            return appender.list.stream()
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .toList();
+        }
+
+        List<String> warningsMentioning(DefinitionKey key) {
+            return warnings().stream()
+                    .filter(text -> text.contains(key.definitionId()))
+                    .toList();
+        }
+
+        List<String> eventsMentioning(DefinitionKey key) {
+            return appender.list.stream()
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .filter(text -> text.contains(key.definitionId()))
+                    .toList();
+        }
+
+        @Override
+        public void close() {
+            logger.detachAppender(appender);
+            logger.setLevel(previousLevel);
+            appender.stop();
+        }
+    }
 
     /**
      * Builds a minimal {@link TimerRecord} for the given timer, workflow, status, purpose, and
@@ -563,11 +863,21 @@ class WorkflowTimerFireExecutorTest {
      */
     private static TimerRecord buildRecord(
             UUID timerId, WorkflowInstanceId workflowId, TimerStatus status, TimerPurpose purpose, UUID taskId) {
+        return buildRecord(timerId, workflowId, status, purpose, taskId, Instant.parse("2026-05-08T11:00:00Z"));
+    }
+
+    private static TimerRecord buildRecord(
+            UUID timerId,
+            WorkflowInstanceId workflowId,
+            TimerStatus status,
+            TimerPurpose purpose,
+            UUID taskId,
+            Instant fireAt) {
         return new TimerRecord(
                 timerId,
                 workflowId,
                 "step-1",
-                Instant.parse("2026-05-08T11:00:00Z"),
+                fireAt,
                 status,
                 UUID.randomUUID(),
                 FIXED_NOW,

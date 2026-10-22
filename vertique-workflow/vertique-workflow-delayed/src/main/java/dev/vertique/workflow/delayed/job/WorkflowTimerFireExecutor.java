@@ -5,13 +5,17 @@ package dev.vertique.workflow.delayed.job;
 
 import dev.vertique.job.JobContext;
 import dev.vertique.job.delayed.DelayedJobExecutor;
+import dev.vertique.job.delayed.DelayedJobOptions;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStatus;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
@@ -19,7 +23,13 @@ import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Server-side executor for {@link WorkflowTimerFireJob} delayed jobs.
@@ -51,6 +61,16 @@ import java.util.UUID;
  *   </li>
  * </ol>
  *
+ * <p><strong>Work this node cannot run:</strong> when a callback fails with
+ * {@link WorkflowVersionNotRunnableException} (this node's deployed code lacks the pinned definition version), the
+ * failure is recovered inside the same transaction: a fresh {@link WorkflowTimerFireJob} is enqueued for the same timer,
+ * {@code workflow_timers.delayed_job_execution_id} points at it, and this job succeeds. The timer row stays
+ * {@code SCHEDULED}, {@code markFired} and {@code markFailed} are not called, and the job's attempt limit is not
+ * consumed, so a node that has the code picks the timer up later. The new job runs after the time the timer has been
+ * due, within {@value #REQUEUE_MIN_DELAY_SECONDS} seconds and 5 minutes, so the interval doubles on every re-queue
+ * until it reaches the cap. A re-queue logs a warning at most once per definition key per minute on this node; the
+ * other re-queues log at debug. Any other failure still propagates and retries the job.
+ *
  * <p>All work is done inside a single database transaction. If the transaction fails, the
  * delayed-job infrastructure will retry the job according to
  * {@link WorkflowTimerFireJob}'s {@code maxAttempts} setting.
@@ -68,11 +88,26 @@ import java.util.UUID;
 @Singleton
 public final class WorkflowTimerFireExecutor implements DelayedJobExecutor<TimerFirePayload, WorkflowTimerFireJob> {
 
+    private static final Logger log = LoggerFactory.getLogger(WorkflowTimerFireExecutor.class);
+
+    /** The shortest delay of a re-queued job, in seconds. */
+    static final long REQUEUE_MIN_DELAY_SECONDS = 5;
+
+    private static final Duration NOT_RUNNABLE_REQUEUE_MIN_DELAY = Duration.ofSeconds(REQUEUE_MIN_DELAY_SECONDS);
+
+    /** The longest delay of a re-queued job. */
+    private static final Duration NOT_RUNNABLE_REQUEUE_MAX_DELAY = Duration.ofMinutes(5);
+
+    /** The shortest interval between two warnings about one definition key. */
+    private static final Duration WARNING_INTERVAL = Duration.ofSeconds(60);
+
     private final Pool pool;
     private final TimerStore<SqlClient> timerStore;
     private final Provider<TransactionalTimerCallbacks<SqlClient>> timerCallbacksProvider;
     private final Provider<TransactionalTaskCallbacks<SqlClient>> taskCallbacksProvider;
+    private final Provider<WorkflowTimerFireJob> fireJobProvider;
     private final Clock clock;
+    private final RequeueWarnings warnings = new RequeueWarnings();
 
     /**
      * Creates a new timer-fire executor.
@@ -101,8 +136,11 @@ public final class WorkflowTimerFireExecutor implements DelayedJobExecutor<Timer
      * @param taskCallbacksProvider    lazy provider for the task-callbacks SPI; handles
      *                                 {@code TASK_DUE} and {@code TASK_REMINDER} timer
      *                                 purposes; resolved at job-execution time
+     * @param fireJobProvider          lazy provider of the timer-fire job client, used to queue a timer
+     *                                 again when this node cannot run it; deferred for the same reason
+     *                                 as the callback providers
      * @param clock                    source of current time for {@code firedAt}/{@code failedAt}
-     *                                 timestamps
+     *                                 timestamps and for the re-queue delay
      */
     @Inject
     public WorkflowTimerFireExecutor(
@@ -110,11 +148,13 @@ public final class WorkflowTimerFireExecutor implements DelayedJobExecutor<Timer
             TimerStore<SqlClient> timerStore,
             Provider<TransactionalTimerCallbacks<SqlClient>> timerCallbacksProvider,
             Provider<TransactionalTaskCallbacks<SqlClient>> taskCallbacksProvider,
+            Provider<WorkflowTimerFireJob> fireJobProvider,
             Clock clock) {
         this.pool = pool;
         this.timerStore = timerStore;
         this.timerCallbacksProvider = timerCallbacksProvider;
         this.taskCallbacksProvider = taskCallbacksProvider;
+        this.fireJobProvider = fireJobProvider;
         this.clock = clock;
     }
 
@@ -178,21 +218,26 @@ public final class WorkflowTimerFireExecutor implements DelayedJobExecutor<Timer
      * @return a {@link Future} completing when the callback and status update are done
      */
     private Future<Void> dispatchTimerFired(TimerRecord record, UUID timerId, SqlClient tx) {
-        return timerCallbacksProvider
-                .get()
-                .timerFired(record.workflowId(), timerId, tx)
-                .compose(result -> switch (result) {
-                    case APPLIED ->
-                        timerStore.markFired(timerId, clock.instant(), tx).<Void>mapEmpty();
-                    case STALE_NOOP ->
-                        timerStore
-                                .markFailed(
-                                        timerId,
-                                        clock.instant(),
-                                        "TIMER_INCONSISTENCY: workflow not waiting for this timer",
-                                        tx)
-                                .<Void>mapEmpty();
-                });
+        return requeueIfNotRunnable(
+                record,
+                tx,
+                timerCallbacksProvider
+                        .get()
+                        .timerFired(record.workflowId(), timerId, tx)
+                        .compose(result -> switch (result) {
+                            case APPLIED ->
+                                timerStore
+                                        .markFired(timerId, clock.instant(), tx)
+                                        .<Void>mapEmpty();
+                            case STALE_NOOP ->
+                                timerStore
+                                        .markFailed(
+                                                timerId,
+                                                clock.instant(),
+                                                "TIMER_INCONSISTENCY: workflow not waiting for this timer",
+                                                tx)
+                                        .<Void>mapEmpty();
+                        }));
     }
 
     /**
@@ -220,21 +265,26 @@ public final class WorkflowTimerFireExecutor implements DelayedJobExecutor<Timer
             return Future.failedFuture(new IllegalStateException(
                     "TASK_DUE timer " + timerId + " has null task_id; CHECK constraint violated"));
         }
-        return taskCallbacksProvider
-                .get()
-                .taskDueFired(record.workflowId(), taskId, tx)
-                .compose(result -> switch (result) {
-                    case APPLIED, LOST_TO_RACE ->
-                        timerStore.markFired(timerId, clock.instant(), tx).<Void>mapEmpty();
-                    case STALE_NOOP ->
-                        timerStore
-                                .markFailed(
-                                        timerId,
-                                        clock.instant(),
-                                        "TIMER_INCONSISTENCY: task no longer expecting due-date timer",
-                                        tx)
-                                .<Void>mapEmpty();
-                });
+        return requeueIfNotRunnable(
+                record,
+                tx,
+                taskCallbacksProvider
+                        .get()
+                        .taskDueFired(record.workflowId(), taskId, tx)
+                        .compose(result -> switch (result) {
+                            case APPLIED, LOST_TO_RACE ->
+                                timerStore
+                                        .markFired(timerId, clock.instant(), tx)
+                                        .<Void>mapEmpty();
+                            case STALE_NOOP ->
+                                timerStore
+                                        .markFailed(
+                                                timerId,
+                                                clock.instant(),
+                                                "TIMER_INCONSISTENCY: task no longer expecting due-date timer",
+                                                tx)
+                                        .<Void>mapEmpty();
+                        }));
     }
 
     /**
@@ -258,13 +308,93 @@ public final class WorkflowTimerFireExecutor implements DelayedJobExecutor<Timer
             return Future.failedFuture(new IllegalStateException(
                     "TASK_REMINDER timer " + timerId + " has null task_id; CHECK constraint violated"));
         }
-        return taskCallbacksProvider
+        return requeueIfNotRunnable(
+                record,
+                tx,
+                taskCallbacksProvider
+                        .get()
+                        // Pass the firing timer's persisted fire_at as the anchor for the next recurring
+                        // reminder so RecurringInterval reminders maintain a steady cadence across
+                        // executor delays (next fire = scheduledFireAt + interval, not now + interval).
+                        .taskReminderFired(record.workflowId(), taskId, timerId, record.fireAt(), tx)
+                        .compose(__ -> timerStore
+                                .markFired(timerId, clock.instant(), tx)
+                                .<Void>mapEmpty()));
+    }
+
+    /**
+     * Recovers a dispatch whose callback failed because this node cannot run the pinned definition version, and
+     * passes every other outcome through. The recovery runs in the caller's transaction: it enqueues a fresh job for
+     * the timer, points the timer row at it and succeeds, so the timer stays {@code SCHEDULED} and the attempt is not
+     * spent. Only a failure whose cause is the not-runnable exception itself is recovered.
+     *
+     * @param record the locked timer record
+     * @param tx the active transaction context
+     * @param dispatch the callback and status update of one purpose
+     * @return the dispatch outcome, or a succeeded future after the timer was queued again
+     */
+    private Future<Void> requeueIfNotRunnable(TimerRecord record, SqlClient tx, Future<Void> dispatch) {
+        return dispatch.recover(failure -> failure instanceof WorkflowVersionNotRunnableException notRunnable
+                ? requeue(record, notRunnable.definitionKey(), tx)
+                : Future.failedFuture(failure));
+    }
+
+    private Future<Void> requeue(TimerRecord record, DefinitionKey definitionKey, SqlClient tx) {
+        Instant now = clock.instant();
+        Duration overdue = Duration.between(record.fireAt(), now);
+        Duration delay = overdue.compareTo(NOT_RUNNABLE_REQUEUE_MIN_DELAY) < 0
+                ? NOT_RUNNABLE_REQUEUE_MIN_DELAY
+                : overdue.compareTo(NOT_RUNNABLE_REQUEUE_MAX_DELAY) > 0 ? NOT_RUNNABLE_REQUEUE_MAX_DELAY : overdue;
+        if (warnings.shouldWarn(definitionKey, now)) {
+            log.warn(
+                    "Timer {} ({}) of definition {} could not run on this node because its code is not deployed here;"
+                            + " queued again in {}",
+                    record.timerId(),
+                    record.purpose(),
+                    describe(definitionKey),
+                    delay);
+        } else {
+            log.debug(
+                    "Timer {} ({}) of definition {} could not run on this node because its code is not deployed here;"
+                            + " queued again in {}",
+                    record.timerId(),
+                    record.purpose(),
+                    describe(definitionKey),
+                    delay);
+        }
+        return fireJobProvider
                 .get()
-                // Pass the firing timer's persisted fire_at as the anchor for the next recurring
-                // reminder so RecurringInterval reminders maintain a steady cadence across
-                // executor delays (next fire = scheduledFireAt + interval, not now + interval).
-                .taskReminderFired(record.workflowId(), taskId, timerId, record.fireAt(), tx)
-                .compose(
-                        __ -> timerStore.markFired(timerId, clock.instant(), tx).<Void>mapEmpty());
+                .enqueue(
+                        new TimerFirePayload(record.timerId(), record.workflowId(), null),
+                        DelayedJobOptions.builder().runAt(now.plus(delay)).build(),
+                        tx)
+                .compose(newExecutionId -> timerStore.updateExecutionId(record.timerId(), newExecutionId, tx));
+    }
+
+    private static String describe(DefinitionKey key) {
+        return EchoedNames.bounded(key.scopeKey()) + "/" + EchoedNames.bounded(key.definitionId()) + "@v"
+                + key.definitionVersion();
+    }
+
+    /**
+     * Remembers on this node which definition keys were warned about in the last minute, so that a timer no node can
+     * run does not flood the log. Entries older than the interval are dropped whenever the limiter is used, which
+     * bounds its size by the keys that are currently stuck.
+     */
+    private static final class RequeueWarnings {
+
+        private final Map<DefinitionKey, Instant> warnedAt = new HashMap<>();
+
+        /**
+         * Whether a warning for the key is due at {@code now}; when it is, the key is remembered as warned.
+         *
+         * @param key the definition key of the timer queued again
+         * @param now the current time of the executor's clock
+         * @return {@code true} when no warning for the key was logged within the last minute
+         */
+        synchronized boolean shouldWarn(DefinitionKey key, Instant now) {
+            warnedAt.values().removeIf(at -> Duration.between(at, now).compareTo(WARNING_INTERVAL) > 0);
+            return warnedAt.putIfAbsent(key, now) == null;
+        }
     }
 }

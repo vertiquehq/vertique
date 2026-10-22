@@ -3,6 +3,8 @@
 
 package dev.vertique.workflow.exception;
 
+import dev.vertique.workflow.types.EchoedNames;
+
 /**
  * Thrown when a workflow definition id is not registered in the {@code WorkflowRegistry}.
  *
@@ -18,6 +20,18 @@ public class WorkflowDefinitionMissingException extends WorkflowNotFoundExceptio
      * @param definitionId the id of the definition that was not found
      */
     public WorkflowDefinitionMissingException(String definitionId) {
-        super("Workflow definition '" + definitionId + "' is not registered.");
+        super("Workflow definition '" + EchoedNames.bounded(definitionId) + "' is not registered.");
+    }
+
+    /**
+     * Creates a new {@code WorkflowDefinitionMissingException} for a definition id that a named scope cannot
+     * supply to the caller.
+     *
+     * @param definitionId the id of the definition that was not found
+     * @param scopeKey the scope that was named
+     */
+    public WorkflowDefinitionMissingException(String definitionId, String scopeKey) {
+        super("Workflow definition '" + EchoedNames.bounded(definitionId) + "' is not available from scope '"
+                + EchoedNames.bounded(scopeKey) + "'.");
     }
 }

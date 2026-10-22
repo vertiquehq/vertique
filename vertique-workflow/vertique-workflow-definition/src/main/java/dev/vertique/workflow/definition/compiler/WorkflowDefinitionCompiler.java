@@ -31,12 +31,15 @@ import dev.vertique.workflow.dsl.ForkScope;
 import dev.vertique.workflow.dsl.JoinScope;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.plan.BranchResult;
 import dev.vertique.workflow.plan.BranchRetryPolicy;
 import dev.vertique.workflow.plan.BranchRetryPolicy.BackoffStrategy;
 import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import dev.vertique.workflow.tasks.TaskAssignment;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Duration;
@@ -45,6 +48,7 @@ import java.time.format.DateTimeParseException;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -81,23 +85,62 @@ public final class WorkflowDefinitionCompiler {
     private final RegisteredIdentifierLookup lookup;
     private final ExpressionProfile profile;
     private final DecisionRouteCompiler decisionRouteCompiler;
+    private final WorkflowTypeNames typeNames;
+    private final boolean classLoaderFallback;
 
     // --- Construction ---
 
     /**
-     * Constructs the compiler with all required collaborators.
+     * Constructs the compiler with all required collaborators. Payload type names are resolved by
+     * class-loader lookup only.
+     *
+     * <p>For trusted documents only: a name is loaded as a class by name (without initialization). A
+     * compiler that serves documents from an untrusted source must use the constructor that takes the
+     * type-name index, which never loads a class by name.
      *
      * @param lookup the facade over all 10 named callback registries; non-null
      * @param profile the expression profile used to build the expression environment for decision
      *     steps; non-null
      * @param decisionRouteCompiler the compiler for decision route tables; non-null
      */
-    @Inject
     public WorkflowDefinitionCompiler(
             RegisteredIdentifierLookup lookup, ExpressionProfile profile, DecisionRouteCompiler decisionRouteCompiler) {
+        this(lookup, profile, decisionRouteCompiler, new DefaultWorkflowTypeNames(), true);
+    }
+
+    /**
+     * Constructs the compiler with all required collaborators and the type-name index.
+     *
+     * <p>A payload type name in a document is looked up in {@code typeNames} only; a name the index
+     * does not know fails with {@code WorkflowUnknownTypeNameException} and no class is loaded by
+     * name.
+     *
+     * @param lookup the facade over all 10 named callback registries; non-null
+     * @param profile the expression profile used to build the expression environment for decision
+     *     steps; non-null
+     * @param decisionRouteCompiler the compiler for decision route tables; non-null
+     * @param typeNames the type-name index every payload type name is resolved through; non-null
+     */
+    @Inject
+    public WorkflowDefinitionCompiler(
+            RegisteredIdentifierLookup lookup,
+            ExpressionProfile profile,
+            DecisionRouteCompiler decisionRouteCompiler,
+            WorkflowTypeNames typeNames) {
+        this(lookup, profile, decisionRouteCompiler, typeNames, false);
+    }
+
+    private WorkflowDefinitionCompiler(
+            RegisteredIdentifierLookup lookup,
+            ExpressionProfile profile,
+            DecisionRouteCompiler decisionRouteCompiler,
+            WorkflowTypeNames typeNames,
+            boolean classLoaderFallback) {
         this.lookup = Objects.requireNonNull(lookup, "lookup");
         this.profile = Objects.requireNonNull(profile, "profile");
         this.decisionRouteCompiler = Objects.requireNonNull(decisionRouteCompiler, "decisionRouteCompiler");
+        this.typeNames = Objects.requireNonNull(typeNames, "typeNames");
+        this.classLoaderFallback = classLoaderFallback;
     }
 
     // --- Public API ---
@@ -538,15 +581,26 @@ public final class WorkflowDefinitionCompiler {
     }
 
     /**
-     * Loads a class by name using the current thread's context class loader, wrapping any
-     * {@link ClassNotFoundException} in a {@link WorkflowDefinitionException}.
+     * Resolves a payload type name through the type-name index. A compiler built without an index
+     * falls back to the current thread's context class loader for a name the index does not hold,
+     * wrapping any {@link ClassNotFoundException} in a {@link WorkflowDefinitionException}; a compiler
+     * built with an index never loads a class by name.
      *
-     * @param className the fully-qualified class name; non-null
+     * @param className the logical name or fully-qualified class name; non-null
      * @param context a description of the loading context for error messages
      * @return the resolved class; never null
-     * @throws WorkflowDefinitionException if the class cannot be found
+     * @throws WorkflowUnknownTypeNameException if the index does not know the name and no fallback
+     *     applies
+     * @throws WorkflowDefinitionException if the fallback cannot find the class
      */
-    private static Class<?> loadClass(String className, String context) {
+    private Class<?> loadClass(String className, String context) {
+        Optional<Class<?>> indexed = typeNames.find(className);
+        if (indexed.isPresent()) {
+            return indexed.get();
+        }
+        if (!classLoaderFallback) {
+            throw DefaultWorkflowTypeNames.unknownName("payloadType", className);
+        }
         try {
             return Class.forName(className, false, Thread.currentThread().getContextClassLoader());
         } catch (ClassNotFoundException e) {

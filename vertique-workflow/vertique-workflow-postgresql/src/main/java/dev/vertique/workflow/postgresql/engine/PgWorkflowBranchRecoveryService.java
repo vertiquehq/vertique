@@ -12,8 +12,11 @@ import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -429,7 +432,18 @@ public final class PgWorkflowBranchRecoveryService {
         return instances.findById(token.workflowId(), tx).compose(opt -> {
             if (opt.isEmpty()) return Future.succeededFuture(Optional.empty());
             WorkflowInstance inst = opt.get();
-            RuntimeWorkflow rw = registry.resolvePinned(inst.definitionId(), inst.definitionVersion());
+            DefinitionKey pin =
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion());
+            RuntimeWorkflow rw;
+            try {
+                rw = registry.resolve(pin);
+            } catch (WorkflowVersionNotRunnableException e) {
+                return Future.failedFuture(e);
+            } catch (WorkflowVersionPinUnavailableException e) {
+                // This node holds no code for the pin: the transaction rolls back and the token stays scheduled
+                // for a node that has it. The instance is never failed.
+                return Future.failedFuture(new WorkflowVersionNotRunnableException(pin, inst.id()));
+            }
             try {
                 recoveryBridge.validateRecoveryPlan(inst, rw);
             } catch (Exception e) {

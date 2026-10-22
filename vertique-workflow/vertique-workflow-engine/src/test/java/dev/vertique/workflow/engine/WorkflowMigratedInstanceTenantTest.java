@@ -25,6 +25,8 @@ import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
@@ -45,7 +47,7 @@ import org.mockito.ArgumentCaptor;
 
 /**
  * Verifies that the instance snapshot a migration hands to the transition driver keeps the
- * instance's tenant.
+ * instance's start scope and definition scope.
  *
  * <p>The {@link MigrationExecutor} is built over mocked repositories with a registered migration
  * handler and a mocked {@link WorkflowTransitionDriver} whose argument is captured after the
@@ -55,7 +57,7 @@ import org.mockito.ArgumentCaptor;
 class WorkflowMigratedInstanceTenantTest {
 
     private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-05-08T10:00:00Z"), ZoneOffset.UTC);
-    private static final String DEFINITION_ID = "wf-migrated-tenant-test";
+    private static final String DEFINITION_ID = "wf-migrated-scope-test";
     private static final String SOURCE_HASH = "plan-hash-v1";
     private static final String TARGET_HASH = "plan-hash-v2";
 
@@ -73,10 +75,11 @@ class WorkflowMigratedInstanceTenantTest {
                 List.of(new CompleteNode(stepId)),
                 null);
         WorkflowCallbackRegistry callbacks = mock();
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
-    private static WorkflowInstance waitingInstance(String tenantKey) {
+    private static WorkflowInstance waitingInstance(String scopeKey, String definitionScopeKey) {
         Instant created = Instant.parse("2026-05-08T09:00:00Z");
         return new WorkflowInstance(
                 new WorkflowInstanceId(UUID.randomUUID()),
@@ -97,7 +100,8 @@ class WorkflowMigratedInstanceTenantTest {
                 created,
                 created,
                 null,
-                tenantKey);
+                scopeKey,
+                definitionScopeKey);
     }
 
     private static final WorkflowMigrationHandler<SourceState, TargetState> HANDLER = new WorkflowMigrationHandler<>() {
@@ -138,11 +142,14 @@ class WorkflowMigratedInstanceTenantTest {
     /** Migrates the instance from version 1 to version 2 through a {@link MigrationExecutor}. */
     private static Migrated migrate(WorkflowInstance source) {
         WorkflowMigrationRegistry migrations = mock();
-        when(migrations.find(DEFINITION_ID, 1L, 2L)).thenReturn(Optional.<WorkflowMigrationHandler<?, ?>>of(HANDLER));
+        when(migrations.find(source.definitionScopeKey(), DEFINITION_ID, 1L, source.definitionScopeKey(), 2L))
+                .thenReturn(Optional.<WorkflowMigrationHandler<?, ?>>of(HANDLER));
         WorkflowRegistry registry = mock();
-        when(registry.resolvePinned(DEFINITION_ID, 1L)).thenReturn(runtimeWorkflow(1L, SOURCE_HASH, "source-step"));
+        when(registry.resolve(new DefinitionKey(source.definitionScopeKey(), DEFINITION_ID, 1L)))
+                .thenReturn(runtimeWorkflow(1L, SOURCE_HASH, "source-step"));
         RuntimeWorkflow target = runtimeWorkflow(2L, TARGET_HASH, "target-step");
-        when(registry.resolvePinned(DEFINITION_ID, 2L)).thenReturn(target);
+        when(registry.resolve(new DefinitionKey(source.definitionScopeKey(), DEFINITION_ID, 2L)))
+                .thenReturn(target);
         WorkflowInstanceRepository<SqlClient> instances = mock();
         when(instances.findById(eq(source.id()), any())).thenReturn(Future.succeededFuture(Optional.of(source)));
         when(instances.migratePinAndState(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
@@ -177,10 +184,11 @@ class WorkflowMigratedInstanceTenantTest {
     }
 
     @Test
-    @DisplayName("the snapshot driven after a migration keeps the instance tenant")
-    void migratedSnapshotDrivenAfterMigrationKeepsTheInstanceTenant() {
-        // Given a waiting instance stamped t1 and a registered migration from version 1 to 2
-        WorkflowInstance stamped = waitingInstance("t1");
+    @DisplayName("the snapshot driven after a migration keeps the instance scopes")
+    void migratedSnapshotDrivenAfterMigrationKeepsTheInstanceScopes() {
+        // Given a waiting instance started in t1 on a definition of scope t2, and a registered migration from
+        // version 1 to 2
+        WorkflowInstance stamped = waitingInstance("t1", "t2");
 
         // When the instance is migrated
         Migrated migrated = migrate(stamped);
@@ -188,7 +196,8 @@ class WorkflowMigratedInstanceTenantTest {
         // Then the snapshot handed to the transition driver carries t1 with the re-pinned version, step and state
         assertThat(migrated.succeeded()).isTrue();
         WorkflowInstance driven = migrated.driven();
-        assertThat(driven.tenantKey()).isEqualTo("t1");
+        assertThat(driven.scopeKey()).isEqualTo("t1");
+        assertThat(driven.definitionScopeKey()).isEqualTo("t2");
         assertThat(driven.definitionVersion()).isEqualTo(2L);
         assertThat(driven.planHash()).isEqualTo(TARGET_HASH);
         assertThat(driven.currentStepId()).isEqualTo("target-step");
@@ -196,17 +205,19 @@ class WorkflowMigratedInstanceTenantTest {
         assertThat(driven.status()).isEqualTo(WorkflowStatus.RUNNING);
         assertThat(driven.stateJson()).isEqualTo("{\"name\":\"alice\",\"migrated\":true}");
         // And the snapshot written to the row is the same re-pinned snapshot
-        assertThat(migrated.persisted().tenantKey()).isEqualTo("t1");
+        assertThat(migrated.persisted().scopeKey()).isEqualTo("t1");
+        assertThat(migrated.persisted().definitionScopeKey()).isEqualTo("t2");
 
-        // Given a waiting instance with no tenant
-        WorkflowInstance unscoped = waitingInstance(null);
+        // Given a waiting instance in the default scope
+        WorkflowInstance unscoped = waitingInstance(WorkflowScopes.DEFAULT, WorkflowScopes.DEFAULT);
 
         // When the instance is migrated
         Migrated migratedUnscoped = migrate(unscoped);
 
-        // Then the driven snapshot carries no tenant
+        // Then the driven snapshot stays in the default scope
         assertThat(migratedUnscoped.succeeded()).isTrue();
-        assertThat(migratedUnscoped.driven().tenantKey()).isNull();
+        assertThat(migratedUnscoped.driven().scopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
+        assertThat(migratedUnscoped.driven().definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
         assertThat(migratedUnscoped.driven().definitionVersion()).isEqualTo(2L);
     }
 }

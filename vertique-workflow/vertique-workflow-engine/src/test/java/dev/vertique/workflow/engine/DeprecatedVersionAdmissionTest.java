@@ -38,6 +38,8 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -105,7 +107,8 @@ class DeprecatedVersionAdmissionTest {
                 DEFINITION_ID, version, planHash, Object.class.getName(), waitSignal.stepId(), nodes, null);
         WorkflowCallbackRegistry callbacks = mock(WorkflowCallbackRegistry.class);
         when(callbacks.stateUpdater(new CallbackId("state-updater"))).thenReturn((state, payload) -> Map.of());
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /** Builds an instance pinned to the given version and waiting for {@code approve}. */
@@ -199,13 +202,21 @@ class DeprecatedVersionAdmissionTest {
         RuntimeWorkflow version1 = runtimeWorkflow(1, PLAN_HASH_V1);
         RuntimeWorkflow version2 = runtimeWorkflow(2, PLAN_HASH_V2);
         RuntimeWorkflow version3 = runtimeWorkflow(3, PLAN_HASH_V3);
-        when(registry.resolveCurrent(DEFINITION_ID)).thenReturn(version1);
-        when(registry.resolvePinned(DEFINITION_ID, 1)).thenReturn(version1);
-        when(registry.resolvePinned(DEFINITION_ID, 2)).thenReturn(version2);
-        when(registry.resolvePinned(DEFINITION_ID, 3)).thenReturn(version3);
-        when(registry.isDeprecated(DEFINITION_ID, 2)).thenReturn(true);
-        when(registry.isDeprecated(DEFINITION_ID, 1)).thenReturn(false);
-        when(registry.isDeprecated(DEFINITION_ID, 3)).thenReturn(false);
+        DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
+        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
+        when(registry.isDeployed(currentKey)).thenReturn(true);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1)))
+                .thenReturn(version1);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2)))
+                .thenReturn(version2);
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 3)))
+                .thenReturn(version3);
+        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2)))
+                .thenReturn(true);
+        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1)))
+                .thenReturn(false);
+        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 3)))
+                .thenReturn(false);
 
         WorkflowInstance pinnedToDeprecated = waitingInstance(2, PLAN_HASH_V2);
         WorkflowInstance onVersion1 = waitingInstance(1, PLAN_HASH_V1);
@@ -213,7 +224,10 @@ class DeprecatedVersionAdmissionTest {
                 .thenReturn(Future.succeededFuture(Optional.of(pinnedToDeprecated)));
         when(instances.findById(onVersion1.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(onVersion1)));
 
-        when(dedup.claimOrResolveStart(eq(DEFINITION_ID), any(), any(), any(), any()))
+        when(dedup.findStart(any(), eq(DEFINITION_ID), any(), any()))
+                .thenReturn(Future.succeededFuture(Optional.empty()));
+
+        when(dedup.claimOrResolveStart(any(), eq(DEFINITION_ID), any(), any(), any(), any()))
                 .thenAnswer(invocation -> Future.succeededFuture(new StartDedupResult(
                         new WorkflowInstanceId(UUID.randomUUID()), true, "definitionVersion=unused")));
         when(dedup.claimOrResolveSignal(any(), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
@@ -232,7 +246,11 @@ class DeprecatedVersionAdmissionTest {
         WorkflowMigrationRegistry migrations = new WorkflowMigrationRegistry() {
             @Override
             public Optional<WorkflowMigrationHandler<?, ?>> find(
-                    String definitionId, long sourceVersion, long targetVersion) {
+                    String sourceScope,
+                    String definitionId,
+                    long sourceVersion,
+                    String targetScope,
+                    long targetVersion) {
                 if (!definitionId.equals(DEFINITION_ID) || sourceVersion != 1) return Optional.empty();
                 if (targetVersion == 2) return Optional.of(handlerToVersion2);
                 if (targetVersion == 3) return Optional.of(handlerToVersion3);
@@ -282,10 +300,10 @@ class DeprecatedVersionAdmissionTest {
         WorkflowInstance pinnedToDeprecated = harness.pinnedToDeprecated();
         WorkflowInstance onVersion1 = harness.onVersion1();
 
-        StartCommand explicitStartOfDeprecated =
-                new StartCommand(DEFINITION_ID, Map.of(), "start-" + UUID.randomUUID(), null, null, 2L);
-        StartCommand startWithoutVersion =
-                new StartCommand(DEFINITION_ID, Map.of(), "start-" + UUID.randomUUID(), null, null);
+        StartCommand explicitStartOfDeprecated = new StartCommand(
+                DEFINITION_ID, "test-contract", Map.of(), "start-" + UUID.randomUUID(), null, null, 2L, null, null);
+        StartCommand startWithoutVersion = new StartCommand(
+                DEFINITION_ID, "test-contract", Map.of(), "start-" + UUID.randomUUID(), null, null, null, null, null);
 
         runOnDuplicated(vertx, v -> {
             // When the deprecated version is started explicitly
@@ -302,7 +320,7 @@ class DeprecatedVersionAdmissionTest {
                                     assertThat(failure.getMessage()).contains(DEFINITION_ID);
                                 });
                         verify(instances, never()).insert(any(), any());
-                        verify(dedup, never()).claimOrResolveStart(any(), any(), any(), any(), any());
+                        verify(dedup, never()).claimOrResolveStart(any(), any(), any(), any(), any(), any());
                         verify(history, never()).append(any(), any());
 
                         // When another instance is migrated onto the deprecated version
@@ -371,8 +389,8 @@ class DeprecatedVersionAdmissionTest {
         // Given version 1 is current, version 3 is registered and neither is deprecated
         Harness harness = harness();
         WorkflowEngineHandle engine = harness.engine();
-        StartCommand explicitStartOfVersion1 =
-                new StartCommand(DEFINITION_ID, Map.of(), "start-" + UUID.randomUUID(), null, null, 1L);
+        StartCommand explicitStartOfVersion1 = new StartCommand(
+                DEFINITION_ID, "test-contract", Map.of(), "start-" + UUID.randomUUID(), null, null, 1L, null, null);
 
         runOnDuplicated(vertx, v -> {
             // When version 1 is started explicitly
@@ -382,7 +400,7 @@ class DeprecatedVersionAdmissionTest {
                         assertThat(startFailure)
                                 .as("an explicit start of a version that is not deprecated must succeed")
                                 .isNull();
-                        verify(harness.dedup(), times(1)).claimOrResolveStart(any(), any(), any(), any(), any());
+                        verify(harness.dedup(), times(1)).claimOrResolveStart(any(), any(), any(), any(), any(), any());
                         ArgumentCaptor<WorkflowInstance> inserted = ArgumentCaptor.forClass(WorkflowInstance.class);
                         verify(harness.instances()).insert(inserted.capture(), any());
                         assertThat(inserted.getValue().definitionVersion()).isEqualTo(1);

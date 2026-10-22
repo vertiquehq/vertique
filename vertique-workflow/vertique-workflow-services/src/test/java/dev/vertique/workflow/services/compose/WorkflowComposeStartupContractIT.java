@@ -17,13 +17,15 @@ import dev.vertique.inboxoutbox.OutboxEnvelope;
 import dev.vertique.inboxoutbox.OutboxPublishResult;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceTargetResolver;
-import dev.vertique.workflow.contract.WorkflowContractMetadata;
+import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import io.vertx.core.Future;
 import jakarta.inject.Singleton;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -229,18 +231,28 @@ public class WorkflowComposeStartupContractIT {
         }
 
         @Override
-        public RuntimeWorkflow resolveCurrent(String definitionId) {
+        public void register(String scopeKey, dev.vertique.workflow.dsl.WorkflowDefinition<?, ?> def) {
             throw new UnsupportedOperationException("not used in startup-contract test");
         }
 
         @Override
-        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+        public RuntimeWorkflow resolve(DefinitionKey key) {
             throw new UnsupportedOperationException("not used in startup-contract test");
         }
 
         @Override
-        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
-            throw new UnsupportedOperationException("not used in startup-contract test");
+        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
+            return Optional.empty();
+        }
+
+        @Override
+        public List<DefinitionKey> keysFor(String definitionId) {
+            return List.of();
+        }
+
+        @Override
+        public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
+            return Optional.empty();
         }
 
         @Override

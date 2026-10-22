@@ -11,10 +11,13 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
@@ -120,7 +123,10 @@ public class CompensationOverApproximationIT {
     record SigA(String data) {}
 
     /** Marker contract. */
-    interface TwoStepContract {}
+    interface TwoStepContract {
+        @WorkflowSignal("sig-a")
+        Future<Void> sigA(WorkflowInstanceId id, SigA payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Plan: dispatch-a → wait-a (signal "sig-a") → dispatch-b → fail.
@@ -254,7 +260,16 @@ public class CompensationOverApproximationIT {
     @DisplayName("only step-A (with completed signal) is compensated; step-B (no signal) is excluded")
     void onlyCompletedStepIsCompensated(VertxTestContext ctx) {
         TwoStepStart start = new TwoStepStart("oa-test-1");
-        StartCommand cmd = new StartCommand("over-approx-saga", start, start.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "over-approx-saga",
+                TwoStepContract.class.getName(),
+                start,
+                start.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(id ->

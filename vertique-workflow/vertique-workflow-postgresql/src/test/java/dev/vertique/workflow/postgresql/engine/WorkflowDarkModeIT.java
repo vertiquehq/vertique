@@ -16,6 +16,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
@@ -23,6 +25,7 @@ import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
@@ -30,6 +33,7 @@ import dev.vertique.workflow.postgresql.recovery.PgWorkflowBranchRecoveryCron;
 import dev.vertique.workflow.postgresql.recovery.WorkflowBranchRecoveryConfig;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.state.WorkflowStatus;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -92,7 +96,13 @@ public class WorkflowDarkModeIT {
     record State(String orderId) {}
 
     /** Contract marker for the dark-mode fanout definition. */
-    interface DarkModeContract {}
+    interface DarkModeContract {
+        @WorkflowSignal("signal-a")
+        Future<Void> signalA(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("signal-start")
+        Future<Void> signalStart(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Fork with a single {@code ALL_REQUIRED} branch waiting on a signal. After {@code start}, the
@@ -168,6 +178,10 @@ public class WorkflowDarkModeIT {
         // absence IS the dark-mode fixture (zero registered durable namespaces).
         DarkModeTestComponent component =
                 DaggerWorkflowDarkModeIT_DarkModeTestComponent.factory().create(pool, Clock.systemUTC());
+        DefaultVersionSeed.recordAndActivate(
+                component.pgWorkflowDefinitionRegistryStore(),
+                component.definitionLifecycle(),
+                component.workflowRegistry());
 
         engine = component.workflowOperations();
         recovery = new PgWorkflowBranchRecoveryService(
@@ -237,6 +251,10 @@ public class WorkflowDarkModeIT {
 
         dev.vertique.workflow.registry.WorkflowRegistry workflowRegistry();
 
+        dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
+
+        dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle();
+
         @Component.Factory
         interface Factory {
             DarkModeTestComponent create(@BindsInstance Pool pool, @BindsInstance Clock clock);
@@ -276,7 +294,16 @@ public class WorkflowDarkModeIT {
             + " with no bind-related failure")
     void darkMode_startSignalRecovery_metadataAlwaysNullAndBehaviorByteIdenticalToToday(VertxTestContext ctx) {
         Start payload = new Start("dm-1");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         runOnDuplicatedContext(() -> engine.start(cmd)
                 // Post-start: metadata must be NULL (empty ambient capture per FR-WF-CTX-010).
@@ -327,7 +354,16 @@ public class WorkflowDarkModeIT {
                 () -> recovery, new WorkflowBranchRecoveryConfig(10, java.time.Duration.ofSeconds(1)));
 
         Start payload = new Start("dm-2");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         runOnDuplicatedContext(() -> engine.start(cmd)
                 .compose(id -> engine.signal(id, "signal-start", "go", "dark-mode-dedup-adapter")

@@ -15,6 +15,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
+import dev.vertique.workflow.contract.SignalDedupKey;
+import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
@@ -120,7 +122,10 @@ public class WorkflowBranchTargetedSignalCarrierIT {
 
     record State(String orderId) {}
 
-    interface FanoutContract {}
+    interface FanoutContract {
+        @WorkflowSignal("signal-a")
+        Future<Void> signalA(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
 
     /**
      * Single-branch {@code ALL_REQUIRED} fork: {@code wait-a} (signal wait, branch-targeted) →
@@ -347,7 +352,16 @@ public class WorkflowBranchTargetedSignalCarrierIT {
             + " token metadata (AC-4 headline branch case)")
     void branchTargetedSignal_explicitCarrier_drivesBranchAndCarrierWinsOverTokenMetadata(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("headline");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         DurableMetadata tokenMetadataCarrier = DurableMetadata.of(TenantCtxCodec.NAMESPACE, jsonTenant("TOKEN"));
         DurableMetadata explicitCarrier = DurableMetadata.of(TenantCtxCodec.NAMESPACE, jsonTenant("CARRIER"));
@@ -384,7 +398,16 @@ public class WorkflowBranchTargetedSignalCarrierIT {
             + " fills a namespace absent from both carrier and token metadata")
     void branchTargetedSignal_explicitCarrierAndInstanceFill_carrierWinsInstanceFillsAbsent(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("instance-fill");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         DurableMetadata explicitCarrier = DurableMetadata.of(TenantCtxCodec.NAMESPACE, jsonTenant("CARRIER"));
         io.vertx.core.json.JsonObject regionCarrier = new io.vertx.core.json.JsonObject()
@@ -432,7 +455,16 @@ public class WorkflowBranchTargetedSignalCarrierIT {
     void branchTargetedSignal_nullInstanceMetadataExplicitCarrier_carrierNamespacesOnlyNoTokenFallback(
             VertxTestContext ctx) {
         StartFanout payload = new StartFanout("null-instance");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         DurableMetadata tokenMetadataCarrier = DurableMetadata.of(TenantCtxCodec.NAMESPACE, jsonTenant("TOKEN"));
         DurableMetadata explicitCarrier = DurableMetadata.of(TenantCtxCodec.NAMESPACE, jsonTenant("CARRIER"));
