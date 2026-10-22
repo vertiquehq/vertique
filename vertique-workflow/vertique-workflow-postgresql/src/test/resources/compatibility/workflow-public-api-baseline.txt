@@ -3,6 +3,7 @@ CONSTRUCTOR|dev.vertique.workflow.actor.WorkflowActor$Service|public|[]|[java.la
 CONSTRUCTOR|dev.vertique.workflow.actor.WorkflowActor$System|public|[]|[java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.actor.WorkflowActor$User|public|[]|[java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.client.WorkflowClientFactory|public|[]|[dev.vertique.workflow.ops.WorkflowOperations,dev.vertique.workflow.registry.WorkflowRegistry]|[]|false
+CONSTRUCTOR|dev.vertique.workflow.contract.WorkflowContractMetadata|public|[]|[java.lang.Class<?>,java.lang.String,long]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.definition.callbacks.DefaultBranchResultReducerRegistry|public|[]|[java.util.Set<dev.vertique.workflow.definition.callbacks.BranchResultReducerContributor>]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.definition.callbacks.DefaultFailMessageFactoryRegistry|public|[]|[java.util.Set<dev.vertique.workflow.definition.callbacks.FailMessageFactoryContributor>]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.definition.callbacks.DefaultNamedConditionRegistry|public|[]|[java.util.Set<dev.vertique.workflow.definition.callbacks.NamedConditionContributor>]|[]|false
@@ -75,6 +76,7 @@ CONSTRUCTOR|dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload|public|[
 CONSTRUCTOR|dev.vertique.workflow.engine.WorkflowReminderComposeValidator|public|[]|[dev.vertique.workflow.registry.WorkflowRegistry,java.util.Set<dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient>>]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.engine.spi.DedupClaim|public|[]|[boolean,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.engine.spi.StartDedupResult|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,boolean,java.lang.String]|[]|false
+CONSTRUCTOR|dev.vertique.workflow.events.WorkflowEventIntent|public|[]|[dev.vertique.workflow.events.WorkflowEventType,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,long,dev.vertique.workflow.subject.WorkflowSubjectRef,java.lang.String,java.time.Instant,long,java.util.UUID,java.lang.String,java.util.Map<java.lang.String, java.lang.Object>,java.lang.String,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowClientProxyLinkageException|public|[]|[java.lang.String,java.lang.Throwable]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowClientProxyLinkageException|public|[]|[java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowConfigurationException|public|[]|[java.lang.String,java.lang.Throwable]|[]|false
@@ -107,11 +109,14 @@ CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowUnavailableException|public|
 CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowUnavailableException|public|[]|[java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException|public|[]|[java.lang.String,long,dev.vertique.workflow.ops.WorkflowInstanceId]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry|public|[]|[java.util.Set<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>>,dev.vertique.workflow.registry.WorkflowRegistry]|[]|false
+CONSTRUCTOR|dev.vertique.workflow.migration.MigrationContext|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,long,long,java.lang.String,java.lang.String,java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntrySummary>]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.MigrationResult$AnchorAtInitial|public|[]|[T]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.MigrationResult$ContinueAt|public|[]|[T,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,long,long]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.WorkflowMigrationModule|public|[]|[]|[]|false
+CONSTRUCTOR|dev.vertique.workflow.ops.StartCommand|public|[]|[java.lang.String,java.lang.Object,java.lang.String,java.lang.String,dev.vertique.workflow.subject.WorkflowSubjectRef,java.lang.Long]|[]|false
+CONSTRUCTOR|dev.vertique.workflow.ops.StartCommand|public|[]|[java.lang.String,java.lang.Object,java.lang.String,java.lang.String,dev.vertique.workflow.subject.WorkflowSubjectRef]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.ops.TaskCompletionCommand|public|[]|[java.util.UUID,java.lang.String,java.lang.Object,java.lang.String,dev.vertique.workflow.actor.WorkflowActor,java.lang.String,dev.vertique.workflow.tasks.TaskAssignment]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.ops.TaskCompletionCommand|public|[]|[java.util.UUID,java.lang.String,java.lang.Object,java.lang.String,dev.vertique.workflow.actor.WorkflowActor,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.ops.TaskReassignmentCommand|public|[]|[java.util.UUID,dev.vertique.workflow.tasks.TaskAssignment,dev.vertique.workflow.actor.WorkflowActor,java.lang.String,java.lang.String,dev.vertique.workflow.tasks.TaskAssignment]|[]|false
@@ -172,10 +177,12 @@ CONSTRUCTOR|dev.vertique.workflow.query.WorkflowInstanceQuery|public|[]|[dev.ver
 CONSTRUCTOR|dev.vertique.workflow.registry.CallbackId|public|[]|[java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.registry.DefaultWorkflowRegistry|public|[]|[]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.registry.DefaultWorkflowRegistry|public|[]|[dev.vertique.workflow.plan.WorkflowPlanValidator]|[]|false
+CONSTRUCTOR|dev.vertique.workflow.registry.RuntimeWorkflow|public|[]|[dev.vertique.workflow.plan.WorkflowPlan,java.lang.Class<?>,java.lang.Class<?>,java.util.function.Function<java.lang.Object, java.lang.Object>,java.util.Map<java.lang.String, java.lang.Class<?>>,dev.vertique.workflow.registry.WorkflowCallbackRegistry,java.util.Map<java.lang.String, dev.vertique.workflow.plan.WorkflowNode>,java.util.Map<java.lang.String, dev.vertique.workflow.plan.CompensationNode>]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult|public|[]|[int,boolean]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult|public|[]|[int,boolean]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.sideeffect.RecorderResult$Empty|public|[]|[]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.sideeffect.RecorderResult$Timer|public|[]|[java.util.UUID]|[]|false
+CONSTRUCTOR|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,long,java.lang.String,java.lang.String,java.util.UUID,java.lang.String,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent|public|[]|[dev.vertique.workflow.sideeffect.IntentKind,java.lang.String,java.lang.Object,java.util.Map<java.lang.String, java.lang.String>,dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.state.BranchTokenFilter|public|[]|[dev.vertique.workflow.state.BranchStatus,dev.vertique.workflow.state.WaitType,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.state.BranchToken|public|[]|[java.util.UUID,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,java.lang.String,dev.vertique.workflow.state.BranchStatus,dev.vertique.workflow.state.WaitType,java.lang.String,java.util.UUID,java.lang.String,java.lang.String,java.lang.String,int,int,java.time.Instant,java.lang.String,java.lang.String,java.time.Instant,long,java.time.Instant,java.time.Instant,dev.vertique.core.context.DurableMetadata]|[]|false
@@ -209,7 +216,10 @@ ENUM_CONSTANT|dev.vertique.workflow.definition.expression.ExpressionType|NUMBER|
 ENUM_CONSTANT|dev.vertique.workflow.definition.expression.ExpressionType|STRING|public static final|dev.vertique.workflow.definition.expression.ExpressionType
 ENUM_CONSTANT|dev.vertique.workflow.definition.parser.DocumentFormat|JSON|public static final|dev.vertique.workflow.definition.parser.DocumentFormat
 ENUM_CONSTANT|dev.vertique.workflow.definition.parser.DocumentFormat|YAML|public static final|dev.vertique.workflow.definition.parser.DocumentFormat
+ENUM_CONSTANT|dev.vertique.workflow.definition.service.ActivationStatus|ACTIVATING|public static final|dev.vertique.workflow.definition.service.ActivationStatus
+ENUM_CONSTANT|dev.vertique.workflow.definition.service.ActivationStatus|ACTIVE|public static final|dev.vertique.workflow.definition.service.ActivationStatus
 ENUM_CONSTANT|dev.vertique.workflow.definition.service.ActivationStatus|CANDIDATE|public static final|dev.vertique.workflow.definition.service.ActivationStatus
+ENUM_CONSTANT|dev.vertique.workflow.definition.service.ActivationStatus|SUPERSEDED|public static final|dev.vertique.workflow.definition.service.ActivationStatus
 ENUM_CONSTANT|dev.vertique.workflow.events.WorkflowEventType|TASK_CANCELLED|public static final|dev.vertique.workflow.events.WorkflowEventType
 ENUM_CONSTANT|dev.vertique.workflow.events.WorkflowEventType|TASK_COMPLETED|public static final|dev.vertique.workflow.events.WorkflowEventType
 ENUM_CONSTANT|dev.vertique.workflow.events.WorkflowEventType|TASK_CREATED|public static final|dev.vertique.workflow.events.WorkflowEventType
@@ -358,10 +368,21 @@ METHOD|dev.vertique.workflow.actor.WorkflowActor$User|userId|public|[]|[]|java.l
 METHOD|dev.vertique.workflow.actor.WorkflowActorMapper|toWorkflowActor|public abstract|[]|[dev.vertique.security.SecurityIdentity]|dev.vertique.workflow.actor.WorkflowActor|[]|false
 METHOD|dev.vertique.workflow.actor.WorkflowActorMaps|toMap|public static|[]|[dev.vertique.workflow.actor.WorkflowActor]|java.util.Map<java.lang.String, java.lang.String>|[]|false
 METHOD|dev.vertique.workflow.actor.WorkflowActorMaps|toMap|public static|[]|[dev.vertique.workflow.tasks.TaskAssignment]|java.util.Map<java.lang.String, java.lang.String>|[]|false
+METHOD|dev.vertique.workflow.client.WorkflowClientFactory|create|public|[C extends java.lang.Object]|[java.lang.Class<C>]|C|[]|false
+METHOD|dev.vertique.workflow.client.WorkflowProxyValidator|precompileHandlers|public static|[]|[java.lang.Class<?>,dev.vertique.workflow.ops.WorkflowOperations,dev.vertique.workflow.registry.WorkflowRegistry]|java.util.Map<java.lang.reflect.Method, dev.vertique.workflow.client.OperationHandler>|[]|false
+METHOD|dev.vertique.workflow.client.WorkflowProxyValidator|validate|public static|[]|[java.lang.Class<?>,dev.vertique.workflow.registry.WorkflowRegistry]|void|[]|false
 METHOD|dev.vertique.workflow.contract.BusinessKeyed|businessKey|public abstract|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.contract.IdempotencyKeyed|idempotencyKey|public abstract|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.contract.SignalDedupKeyed|dedupKey|public abstract|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.contract.SubjectReferenced|subjectRef|public abstract|[]|[]|dev.vertique.workflow.subject.WorkflowSubjectRef|[]|false
+METHOD|dev.vertique.workflow.contract.WorkflowContractMetadata|contractType|public|[]|[]|java.lang.Class<?>|[]|false
+METHOD|dev.vertique.workflow.contract.WorkflowContractMetadata|definitionId|public|[]|[]|java.lang.String|[]|false
+METHOD|dev.vertique.workflow.contract.WorkflowContractMetadata|definitionVersion|public|[]|[]|long|[]|false
+METHOD|dev.vertique.workflow.contract.WorkflowContractMetadata|equals|public final|[]|[java.lang.Object]|boolean|[]|false
+METHOD|dev.vertique.workflow.contract.WorkflowContractMetadata|hashCode|public final|[]|[]|int|[]|false
+METHOD|dev.vertique.workflow.contract.WorkflowContractMetadata|toString|public final|[]|[]|java.lang.String|[]|false
+METHOD|dev.vertique.workflow.contract.WorkflowContract|definitionId|public abstract|[]|[]|java.lang.String|[]|false
+METHOD|dev.vertique.workflow.contract.WorkflowContract|definitionVersion|public abstract|[]|[]|long|[]|false
 METHOD|dev.vertique.workflow.contract.WorkflowQuery|value|public abstract|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.contract.WorkflowSignal|value|public abstract|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.dedup.WorkflowDedupScopes|dispatchKey|public static|[]|[java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String]|java.lang.String|[]|false
@@ -564,11 +585,13 @@ METHOD|dev.vertique.workflow.definition.parser.DocumentFormat|values|public stat
 METHOD|dev.vertique.workflow.definition.parser.WorkflowDefinitionMapperFactory|jsonMapper|public|[]|[]|com.fasterxml.jackson.databind.ObjectMapper|[]|false
 METHOD|dev.vertique.workflow.definition.parser.WorkflowDefinitionMapperFactory|yamlMapper|public|[]|[]|com.fasterxml.jackson.databind.ObjectMapper|[]|false
 METHOD|dev.vertique.workflow.definition.parser.WorkflowDefinitionParser|parse|public|[]|[byte[],dev.vertique.workflow.definition.parser.DocumentFormat]|dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument|[]|false
+METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|contractFqn|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|definition|public|[]|[]|dev.vertique.workflow.dsl.WorkflowDefinition<?, ?>|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|equals|public final|[]|[java.lang.Object]|boolean|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|hashCode|public final|[]|[]|int|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|planHash|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|source|public|[]|[]|dev.vertique.workflow.definition.source.SourceMetadata|[]|false
+METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|stateTypeFqn|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|toString|public final|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline|load|public|[]|[dev.vertique.workflow.definition.source.DefinitionResource]|dev.vertique.workflow.definition.pipeline.CompiledDefinition|[]|false
 METHOD|dev.vertique.workflow.definition.schema.CompensationStep|equals|public final|[]|[java.lang.Object]|boolean|[]|false
@@ -892,6 +915,7 @@ METHOD|dev.vertique.workflow.engine.spi.StartDedupResult|workflowId|public|[]|[]
 METHOD|dev.vertique.workflow.engine.spi.WorkflowDedupRepository|claimOrResolveDispatch|public abstract|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,TX]|io.vertx.core.Future<java.lang.Boolean>|[]|false
 METHOD|dev.vertique.workflow.engine.spi.WorkflowDedupRepository|claimOrResolveSignalScoped|public abstract|[]|[java.lang.String,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,TX]|io.vertx.core.Future<java.lang.Boolean>|[]|false
 METHOD|dev.vertique.workflow.engine.spi.WorkflowDedupRepository|claimOrResolveSignal|public abstract|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX]|io.vertx.core.Future<java.lang.Boolean>|[]|false
+METHOD|dev.vertique.workflow.engine.spi.WorkflowDedupRepository|claimOrResolveStart|public abstract|[]|[java.lang.String,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX]|io.vertx.core.Future<dev.vertique.workflow.engine.spi.StartDedupResult>|[]|false
 METHOD|dev.vertique.workflow.engine.spi.WorkflowDedupRepository|claimOrResolveTaskCompletion|public abstract|[]|[java.util.UUID,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX]|io.vertx.core.Future<dev.vertique.workflow.engine.spi.DedupClaim>|[]|false
 METHOD|dev.vertique.workflow.engine.spi.WorkflowDedupRepository|claimOrResolveTaskReassignment|public abstract|[]|[java.util.UUID,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX]|io.vertx.core.Future<dev.vertique.workflow.engine.spi.DedupClaim>|[]|false
 METHOD|dev.vertique.workflow.engine.spi.WorkflowDedupRepository|findSignal|public abstract|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX]|io.vertx.core.Future<java.util.Optional<java.util.UUID>>|[]|false
@@ -901,6 +925,7 @@ METHOD|dev.vertique.workflow.engine.spi.WorkflowHistoryRepository|listByInstance
 METHOD|dev.vertique.workflow.engine.spi.WorkflowHistoryRepository|listByInstance|public abstract|[]|[dev.vertique.workflow.ops.WorkflowInstanceId]|io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntry>>|[]|false
 METHOD|dev.vertique.workflow.engine.spi.WorkflowHistoryRepository|listRecentByInstance|public abstract|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,int,TX]|io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntry>>|[]|false
 METHOD|dev.vertique.workflow.engine.spi.WorkflowHistoryRepository|nextSequence|public abstract|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,TX]|io.vertx.core.Future<java.lang.Long>|[]|false
+METHOD|dev.vertique.workflow.engine.spi.WorkflowInstanceRepository|findByBusinessKey|public abstract|[]|[java.lang.String,java.lang.String,TX]|io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>>|[]|false
 METHOD|dev.vertique.workflow.engine.spi.WorkflowInstanceRepository|findByIdForUpdate|public abstract|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,TX]|io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>>|[]|false
 METHOD|dev.vertique.workflow.engine.spi.WorkflowInstanceRepository|findById|public abstract|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,TX]|io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>>|[]|false
 METHOD|dev.vertique.workflow.engine.spi.WorkflowInstanceRepository|findById|public abstract|[]|[dev.vertique.workflow.ops.WorkflowInstanceId]|io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>>|[]|false
@@ -982,6 +1007,7 @@ METHOD|dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException|de
 METHOD|dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException|instanceId|public|[]|[]|dev.vertique.workflow.ops.WorkflowInstanceId|[]|false
 METHOD|dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException|version|public|[]|[]|long|[]|false
 METHOD|dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry|all|public|[]|[]|java.util.Collection<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>>|[]|false
+METHOD|dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry|find|public|[]|[java.lang.String,long,long]|java.util.Optional<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>>|[]|false
 METHOD|dev.vertique.workflow.migration.MigrationContext|currentStepId|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.migration.MigrationContext|equals|public final|[]|[java.lang.Object]|boolean|[]|false
 METHOD|dev.vertique.workflow.migration.MigrationContext|hashCode|public final|[]|[]|int|[]|false
@@ -1017,6 +1043,7 @@ METHOD|dev.vertique.workflow.migration.WorkflowMigrationHandler|targetStateType|
 METHOD|dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException|reason|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException|workflowId|public|[]|[]|dev.vertique.workflow.ops.WorkflowInstanceId|[]|false
 METHOD|dev.vertique.workflow.migration.WorkflowMigrationRegistry|all|public abstract|[]|[]|java.util.Collection<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>>|[]|false
+METHOD|dev.vertique.workflow.migration.WorkflowMigrationRegistry|find|public abstract|[]|[java.lang.String,long,long]|java.util.Optional<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>>|[]|false
 METHOD|dev.vertique.workflow.ops.StartCommand|businessKey|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.ops.StartCommand|definitionId|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.ops.StartCommand|equals|public final|[]|[java.lang.Object]|boolean|[]|false
@@ -1295,6 +1322,7 @@ METHOD|dev.vertique.workflow.postgresql.repository.PgJoinStateRepository|insert|
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository|claimOrResolveDispatch|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<java.lang.Boolean>|[]|false
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository|claimOrResolveSignalScoped|public|[]|[java.lang.String,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<java.lang.Boolean>|[]|false
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository|claimOrResolveSignal|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<java.lang.Boolean>|[]|false
+METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository|claimOrResolveStart|public|[]|[java.lang.String,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<dev.vertique.workflow.engine.spi.StartDedupResult>|[]|false
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository|claimOrResolveTaskCompletion|public|[]|[java.util.UUID,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<dev.vertique.workflow.engine.spi.DedupClaim>|[]|false
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository|claimOrResolveTaskReassignment|public|[]|[java.util.UUID,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<dev.vertique.workflow.engine.spi.DedupClaim>|[]|false
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository|findSignal|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<java.util.Optional<java.util.UUID>>|[]|false
@@ -1304,6 +1332,7 @@ METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository|l
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository|listByInstance|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId]|io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntry>>|[]|false
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository|listRecentByInstance|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,int,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntry>>|[]|false
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository|nextSequence|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<java.lang.Long>|[]|false
+METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository|findByBusinessKey|public|[]|[java.lang.String,java.lang.String,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>>|[]|false
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository|findByIdForUpdate|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>>|[]|false
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository|findById|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,io.vertx.sqlclient.SqlClient]|io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>>|[]|false
 METHOD|dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository|findById|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId]|io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>>|[]|false
@@ -1368,13 +1397,17 @@ METHOD|dev.vertique.workflow.registry.CallbackId|hashCode|public final|[]|[]|int
 METHOD|dev.vertique.workflow.registry.CallbackId|toString|public final|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.registry.CallbackId|value|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.registry.DefaultWorkflowRegistry|allRegistered|public|[]|[]|java.util.Collection<dev.vertique.workflow.registry.RuntimeWorkflow>|[]|false
+METHOD|dev.vertique.workflow.registry.DefaultWorkflowRegistry|contractMetadata|public|[]|[java.lang.Class<?>]|dev.vertique.workflow.contract.WorkflowContractMetadata|[]|false
 METHOD|dev.vertique.workflow.registry.DefaultWorkflowRegistry|register|public|[]|[dev.vertique.workflow.dsl.WorkflowDefinition<?, ?>]|void|[]|false
+METHOD|dev.vertique.workflow.registry.DefaultWorkflowRegistry|resolveCurrent|public|[]|[java.lang.String]|dev.vertique.workflow.registry.RuntimeWorkflow|[]|false
+METHOD|dev.vertique.workflow.registry.DefaultWorkflowRegistry|resolvePinned|public|[]|[java.lang.String,long]|dev.vertique.workflow.registry.RuntimeWorkflow|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|callbacks|public|[]|[]|dev.vertique.workflow.registry.WorkflowCallbackRegistry|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|compensationByForwardStepId|public|[]|[]|java.util.Map<java.lang.String, dev.vertique.workflow.plan.CompensationNode>|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|equals|public final|[]|[java.lang.Object]|boolean|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|hashCode|public final|[]|[]|int|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|initialState|public|[]|[]|java.util.function.Function<java.lang.Object, java.lang.Object>|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|nodeById|public|[]|[]|java.util.Map<java.lang.String, dev.vertique.workflow.plan.WorkflowNode>|[]|false
+METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|of|public static|[]|[dev.vertique.workflow.plan.WorkflowPlan,java.lang.Class<?>,java.lang.Class<?>,java.util.function.Function<java.lang.Object, java.lang.Object>,java.util.Map<java.lang.String, java.lang.Class<?>>,dev.vertique.workflow.registry.WorkflowCallbackRegistry]|dev.vertique.workflow.registry.RuntimeWorkflow|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|plan|public|[]|[]|dev.vertique.workflow.plan.WorkflowPlan|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|signalPayloadTypes|public|[]|[]|java.util.Map<java.lang.String, java.lang.Class<?>>|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|startPayloadType|public|[]|[]|java.lang.Class<?>|[]|false
@@ -1393,7 +1426,10 @@ METHOD|dev.vertique.workflow.registry.WorkflowCallbackRegistry|taskAssignmentRes
 METHOD|dev.vertique.workflow.registry.WorkflowCallbackRegistry|timerResolver|public default|[S extends java.lang.Object]|[dev.vertique.workflow.registry.CallbackId]|java.util.function.Function<S, java.time.Instant>|[]|false
 METHOD|dev.vertique.workflow.registry.WorkflowContributor|contribute|public abstract|[]|[dev.vertique.workflow.registry.WorkflowRegistry]|void|[]|false
 METHOD|dev.vertique.workflow.registry.WorkflowRegistry|allRegistered|public abstract|[]|[]|java.util.Collection<dev.vertique.workflow.registry.RuntimeWorkflow>|[]|false
+METHOD|dev.vertique.workflow.registry.WorkflowRegistry|contractMetadata|public abstract|[]|[java.lang.Class<?>]|dev.vertique.workflow.contract.WorkflowContractMetadata|[]|false
 METHOD|dev.vertique.workflow.registry.WorkflowRegistry|register|public abstract|[]|[dev.vertique.workflow.dsl.WorkflowDefinition<?, ?>]|void|[]|false
+METHOD|dev.vertique.workflow.registry.WorkflowRegistry|resolveCurrent|public abstract|[]|[java.lang.String]|dev.vertique.workflow.registry.RuntimeWorkflow|[]|false
+METHOD|dev.vertique.workflow.registry.WorkflowRegistry|resolvePinned|public abstract|[]|[java.lang.String,long]|dev.vertique.workflow.registry.RuntimeWorkflow|[]|false
 METHOD|dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult|equals|public final|[]|[java.lang.Object]|boolean|[]|false
 METHOD|dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult|hashCode|public final|[]|[]|int|[]|false
 METHOD|dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult|moreRowsRemaining|public|[]|[]|boolean|[]|false
@@ -1428,6 +1464,7 @@ METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|equ
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|forkStepId|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|hashCode|public final|[]|[]|int|[]|false
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|sequence|public|[]|[]|long|[]|false
+METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|singlePath|public static|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,long,java.lang.String,java.lang.String]|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|[]|false
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|stepId|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|toString|public final|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation|workflowId|public|[]|[]|dev.vertique.workflow.ops.WorkflowInstanceId|[]|false
@@ -1777,6 +1814,7 @@ TYPE|dev.vertique.workflow.contract.SignalDedupKeyed|interface|public abstract i
 TYPE|dev.vertique.workflow.contract.SignalDedupKey|annotation|public abstract interface|[]|||[java.lang.annotation.Annotation]
 TYPE|dev.vertique.workflow.contract.SubjectReferenced|interface|public abstract interface|[]|||[]
 TYPE|dev.vertique.workflow.contract.SubjectRef|annotation|public abstract interface|[]|||[java.lang.annotation.Annotation]
+TYPE|dev.vertique.workflow.contract.WorkflowContractMetadata|record|public final|[]||java.lang.Record|[]
 TYPE|dev.vertique.workflow.contract.WorkflowContract|annotation|public abstract interface|[]|||[java.lang.annotation.Annotation]
 TYPE|dev.vertique.workflow.contract.WorkflowQuery|annotation|public abstract interface|[]|||[java.lang.annotation.Annotation]
 TYPE|dev.vertique.workflow.contract.WorkflowSignal|annotation|public abstract interface|[]|||[java.lang.annotation.Annotation]

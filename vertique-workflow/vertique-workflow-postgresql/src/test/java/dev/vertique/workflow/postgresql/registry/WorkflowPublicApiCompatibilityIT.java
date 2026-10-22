@@ -27,6 +27,8 @@ public class WorkflowPublicApiCompatibilityIT {
 
     private static final String CAPTURE_PROPERTY = "workflow.compatibility.capture";
     private static final String BASELINE_RESOURCE = "/compatibility/workflow-public-api-baseline.txt";
+    private static final String APPROVED_REMOVALS_RESOURCE = "/compatibility/workflow-public-api-approved-removals.txt";
+    private static final int APPROVED_REMOVAL_COUNT = 38;
 
     @Test
     @DisplayName("capture the original public API baseline when requested")
@@ -47,12 +49,15 @@ public class WorkflowPublicApiCompatibilityIT {
     }
 
     @Test
-    @DisplayName("preserve the original public API except the approved service replacements")
-    void preservesBaselineExceptApprovedServiceReplacements() throws Exception {
+    @DisplayName("preserve the original public API except the approved replacements and removals")
+    void preservesBaselineExceptApprovedReplacementsAndRemovals() throws Exception {
         Path repositoryRoot = WorkflowPublicApiSnapshot.repositoryRoot();
         List<String> baseline = readBaseline();
         List<String> approvedReplacements = approvedReplacements();
         Set<String> replacementSet = Set.copyOf(approvedReplacements);
+        List<ApprovedRemoval> approvedRemovals = readApprovedRemovals();
+        Set<String> removalSet = new HashSet<>();
+        approvedRemovals.forEach(removal -> removalSet.add(removal.declaration()));
 
         assertThat(baseline)
                 .containsExactlyElementsOf(baseline.stream().sorted().toList());
@@ -61,16 +66,57 @@ public class WorkflowPublicApiCompatibilityIT {
         assertThat(baseline.stream().filter(replacementSet::contains).toList())
                 .containsExactlyInAnyOrderElementsOf(approvedReplacements);
 
+        assertThat(approvedRemovals).hasSize(APPROVED_REMOVAL_COUNT);
+        assertThat(approvedRemovals).extracting(ApprovedRemoval::declaration).doesNotHaveDuplicates();
+        assertThat(approvedRemovals).extracting(ApprovedRemoval::reason).allMatch(reason -> !reason.isBlank());
+        assertThat(baseline)
+                .as("every approved removal is a captured declaration")
+                .containsAll(removalSet);
+        assertThat(removalSet)
+                .as("a declaration is replaced or removed, not both")
+                .doesNotContainAnyElementsOf(replacementSet);
+
+        // A removed type cannot be loaded, so the current capture looks up only the types the baseline keeps.
+        List<String> keptForLookup = baseline.stream()
+                .filter(declaration -> !removalSet.contains(declaration))
+                .toList();
         Set<String> currentDeclarations =
-                new HashSet<>(WorkflowPublicApiSnapshot.captureCurrentTypes(repositoryRoot, baseline));
+                new HashSet<>(WorkflowPublicApiSnapshot.captureCurrentTypes(repositoryRoot, keptForLookup));
         List<String> missing = baseline.stream()
                 .filter(declaration -> !replacementSet.contains(declaration))
+                .filter(declaration -> !removalSet.contains(declaration))
                 .filter(declaration -> !currentDeclarations.contains(declaration))
                 .toList();
 
         assertThat(missing)
                 .as("Original public declarations missing from the compiled modules")
                 .isEmpty();
+        assertThat(removalSet.stream().filter(currentDeclarations::contains).toList())
+                .as("Approved removals that are still declared, which no longer need an approval")
+                .isEmpty();
+    }
+
+    /** One captured declaration the release removes on purpose, with the reason it is removed. */
+    private record ApprovedRemoval(String declaration, String reason) {}
+
+    private List<ApprovedRemoval> readApprovedRemovals() throws IOException {
+        InputStream removalStream = getClass().getResourceAsStream(APPROVED_REMOVALS_RESOURCE);
+        if (removalStream == null) {
+            throw new AssertionError("The approved public API removals fixture is missing");
+        }
+        try (removalStream) {
+            return new String(removalStream.readAllBytes(), StandardCharsets.UTF_8)
+                    .lines()
+                    .filter(line -> !line.isBlank())
+                    .map(line -> {
+                        int separator = line.indexOf('\t');
+                        if (separator < 0) {
+                            throw new AssertionError("An approved removal has no reason: " + line);
+                        }
+                        return new ApprovedRemoval(line.substring(0, separator), line.substring(separator + 1));
+                    })
+                    .toList();
+        }
     }
 
     private List<String> readBaseline() throws IOException {
