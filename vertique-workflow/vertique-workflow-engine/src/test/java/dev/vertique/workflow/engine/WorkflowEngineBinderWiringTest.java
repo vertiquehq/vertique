@@ -10,6 +10,8 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import dev.vertique.context.DefaultContextHolder;
@@ -832,11 +834,16 @@ class WorkflowEngineBinderWiringTest {
         when(h.taskStore().lockForCompletion(taskId, tx))
                 .thenReturn(Future.succeededFuture(Optional.of(closedBranchTask)));
 
-        // No stub on instances.findById/updateOptimistic for the instance-path: if the branch-owned
-        // route incorrectly fell through to the instance-path bind, it would call
-        // instances.findById(workflowId, tx), which is unstubbed here and returns Mockito's default
-        // null-Future — surfacing as a NullPointerException that fails the test, proving the
-        // instance-path binder route was never taken for this branch-owned drive.
+        // The branch-owned route reads the instance without a lock only to check that this node can run its pin,
+        // before any write. The instance carries tenant metadata, so a fall-through to the instance-path bind would
+        // fill the ambient TenantCtx and fail the assertion below.
+        RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
+        WorkflowInstance inst =
+                instanceAt("human-task-due", WaitType.TASK, taskId.toString(), dueTimerId, tenantMetadata("T1"));
+        when(h.instances().findById(workflowId, tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+
         runOnDuplicated(vertx, v -> h.taskCallbacks()
                 .taskDueFired(workflowId, taskId, tx)
                 .onComplete(ar -> ctx.verify(() -> {
@@ -847,6 +854,7 @@ class WorkflowEngineBinderWiringTest {
                     assertThat(holder.current(TenantCtx.class))
                             .as("no instance-path bind should have touched the ambient TenantCtx binding")
                             .isEmpty();
+                    verify(h.taskStore(), never()).markExpired(any(), any(), any());
                     ctx.completeNow();
                 })));
     }
