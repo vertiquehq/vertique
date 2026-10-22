@@ -241,12 +241,12 @@ public class WorkflowVersionPinUnavailableIT {
     }
 
     /**
-     * Querying an instance via engine B, which lacks the pinned version's code, fails with the typed
-     * not-runnable refusal instead of returning a view.
+     * Querying an instance via engine B, which lacks the pinned version's code, returns the stored view: reading
+     * needs no plan.
      */
     @Test
-    @DisplayName("query via engine without pinned version fails with the not-runnable refusal")
-    void queryViaEngineWithoutPinnedVersionFailsNotRunnable(VertxTestContext ctx) {
+    @DisplayName("query via engine without pinned version returns the stored view")
+    void queryViaEngineWithoutPinnedVersionReturnsStoredView(VertxTestContext ctx) {
         SimpleStartType payload = new SimpleStartType("query-value");
         String idempotencyKey = "version-pin-query-" + UUID.randomUUID();
         StartCommand startCmd = new StartCommand(
@@ -263,7 +263,36 @@ public class WorkflowVersionPinUnavailableIT {
         engineA.start(startCmd)
                 .compose(id -> engineB.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
-                    assertTrue(ar.failed(), "engineB.query must fail without the pinned code");
+                    assertTrue(ar.succeeded(), "engineB.query must read without the pinned code: " + ar.cause());
+                    assertTrue(
+                            "version-test".equals(ar.result().instance().definitionId()),
+                            "expected the stored instance but was: " + ar.result());
+                    ctx.completeNow();
+                }));
+    }
+
+    /**
+     * A typed client's query compares its contract with the pinned plan; engine B has no plan to compare with, so
+     * it refuses with the not-runnable error.
+     */
+    @Test
+    @DisplayName("query with a contract name via engine without pinned version fails with the not-runnable refusal")
+    void queryWithContractNameWithoutPinnedVersionFailsNotRunnable(VertxTestContext ctx) {
+        StartCommand startCmd = new StartCommand(
+                "version-test",
+                VersionTestContract.class.getName(),
+                new SimpleStartType("query-contract-value"),
+                "version-pin-query-contract-" + UUID.randomUUID(),
+                null,
+                null,
+                null,
+                null,
+                null);
+
+        engineA.start(startCmd)
+                .compose(id -> engineB.query(id, "version-test"))
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertTrue(ar.failed(), "engineB.query with a contract name must fail without the pinned code");
                     assertTrue(
                             ar.cause() instanceof WorkflowVersionNotRunnableException,
                             "expected the not-runnable refusal but was: " + ar.cause());

@@ -486,7 +486,7 @@ To remove a definition id or a version, in order:
 3. Wait out the cooling window, then `retire` each version once no instance is pinned to it. `retire` is refused with `COOLING` or `PINNED_INSTANCES` until then, so treat it as retryable.
 4. Remove the definition class in a later deployment.
 
-`query(id)` needs the pinned plan on the serving node. After a version is retired and its class removed, finished instances pinned to it cannot be queried: the refusal is the not-runnable error, and no node will ever have the code. Query the instances you need to keep before removing the class, or keep the class.
+`query(id)` reads the instance and its history from the database and does not need the pinned plan, so a finished instance of a retired version stays readable after its class is removed. A typed client's `query(id, contractName)` compares the client's contract with the pinned plan's contract; a node without that plan cannot vouch for the contract and refuses with the not-runnable error.
 
 Deprecating or retiring the default scope's current version is refused with `INVALID_TRANSITION` until step 1 is done.
 

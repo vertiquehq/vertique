@@ -628,10 +628,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * <p>Loads the instance snapshot and full history rows from the database in a single
      * {@code REPEATABLE READ} transaction so the result is a consistent point-in-time snapshot.
-     * Concurrent transitions cannot interleave between the two reads. Looks up the plan of the
-     * instance's pinned definition version on this node and fails the future with
-     * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException} when the node holds
-     * no code for it.
+     * Concurrent transitions cannot interleave between the two reads. Reads the instance and its history
+     * from the database without the plan of its pinned definition version, so a finished instance of a
+     * retired version stays readable on a node that no longer holds the code.
      *
      * @param id the workflow instance id; must not be null
      * @return a {@link Future} resolving to a {@link WorkflowView} for the instance
@@ -669,14 +668,15 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         return Future.<WorkflowView>failedFuture(new WorkflowInstanceNotFoundException(id));
                     }
                     WorkflowInstance inst = optInst.get();
-                    RuntimeWorkflow pinned;
-                    try {
-                        // A node without the code of the pinned version cannot answer for the instance.
-                        pinned = PinnedPlans.resolve(registry, inst);
-                    } catch (Exception e) {
-                        return Future.<WorkflowView>failedFuture(e);
-                    }
                     if (callerContractName != null) {
+                        // A contract can only be compared with the pinned plan; a node without the code
+                        // cannot vouch for the caller's contract and refuses.
+                        RuntimeWorkflow pinned;
+                        try {
+                            pinned = PinnedPlans.resolve(registry, inst);
+                        } catch (Exception e) {
+                            return Future.<WorkflowView>failedFuture(e);
+                        }
                         WorkflowDefinitionContractMismatchException refusal =
                                 ContractMismatch.refusal(inst, pinned, callerContractName, "query");
                         if (refusal != null) {

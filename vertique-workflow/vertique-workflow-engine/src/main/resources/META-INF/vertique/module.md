@@ -324,7 +324,7 @@ version in any following scope fail with `WorkflowNoCurrentVersionException` as 
 does not bring the record back, because it is not a first publication. See the durable registry section of `dev.vertique:vertique-workflow-core` for the
 record rules and the guard that refuses to deprecate or retire the default scope's current version.
 
-`query(id)` needs the pinned plan on the serving node. After a version is retired and its class removed, finished instances pinned to it cannot be queried: the refusal is the not-runnable error, and no node will ever have the code. Query the instances you need to keep before removing the class, or keep the class.
+`query(id)` reads the instance and its history from the database and does not need the pinned plan, so a finished instance of a retired version stays readable after its class is removed. A typed client's `query(id, contractName)` compares the client's contract with the pinned plan's contract; a node without that plan cannot vouch for the contract and refuses with the not-runnable error.
 
 ### Document Publication And Startup Restoration
 

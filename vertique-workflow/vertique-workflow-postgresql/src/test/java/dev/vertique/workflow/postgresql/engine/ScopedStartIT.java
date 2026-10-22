@@ -25,9 +25,9 @@ import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.client.WorkflowClientBuilder;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.source.SourceMetadata;
+import dev.vertique.workflow.exception.WorkflowBusinessKeyConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
-import dev.vertique.workflow.exception.WorkflowPersistenceException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -167,9 +167,9 @@ public class ScopedStartIT {
 
         // Then: the duplicate business key is refused by the unique index, and no third instance exists
         assertThat(duplicate)
-                .isInstanceOf(WorkflowPersistenceException.class)
+                .isInstanceOf(WorkflowBusinessKeyConflictException.class)
                 .hasCauseInstanceOf(UniqueConstraintViolationException.class)
-                .hasStackTraceContaining("idx_workflow_instances_business_key");
+                .hasMessageNotContaining("PO-42");
         assertThat(instanceRows(pool)).isEqualTo(2L);
     }
 

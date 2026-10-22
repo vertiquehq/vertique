@@ -4,6 +4,7 @@
 package dev.vertique.workflow.postgresql.repository;
 
 import dev.vertique.db.DbSchemas;
+import dev.vertique.db.exception.UniqueConstraintViolationException;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
 import dev.vertique.db.postgresql.PgTableNames;
@@ -11,6 +12,7 @@ import dev.vertique.db.query.OrderKey;
 import dev.vertique.db.query.PageCursor;
 import dev.vertique.db.query.PagedResult;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
+import dev.vertique.workflow.exception.WorkflowBusinessKeyConflictException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.registry.DefinitionPinAdmission;
 import dev.vertique.workflow.query.WorkflowInstanceQuery;
@@ -248,7 +250,20 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 .compose(admitted -> tx.preparedQuery(sqlInsert)
                         .execute(params)
                         .<Void>mapEmpty()
-                        .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances insert"))));
+                        .recover(t -> Future.failedFuture(insertFailure(inst, t))));
+    }
+
+    /**
+     * Maps an insert failure: a violation of the business-key index is a business-key conflict, anything else
+     * keeps the database-layer translation.
+     */
+    private Throwable insertFailure(WorkflowInstance inst, Throwable failure) {
+        Throwable mapped = exceptionMapper.translate(failure, "workflow_instances insert");
+        if (mapped instanceof UniqueConstraintViolationException unique
+                && "idx_workflow_instances_business_key".equals(unique.constraintName())) {
+            return new WorkflowBusinessKeyConflictException(inst.scopeKey(), inst.definitionId(), unique);
+        }
+        return mapped;
     }
 
     /**
