@@ -84,7 +84,7 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
 
     static Pool pool;
 
-    /** Starts simple-def v1 instances (only v1 registered → resolveCurrent returns v1). */
+    /** Starts simple-def v1 instances (only v1 registered, so a start without a version runs v1). */
     static WorkflowEngineHandle engineSimpleV1;
 
     /** Performs migrate on simple-def instances (both v1+v2 registered). */

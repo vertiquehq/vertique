@@ -506,9 +506,9 @@ public final class WorkflowDefinitionDocumentValidator {
     }
 
     /**
-     * Checks that the resolved contract class is annotated with {@link WorkflowContract}. The
-     * annotation's legacy {@code definitionId()} and {@code definitionVersion()} are not compared with
-     * the document, because many definitions and versions may share one contract.
+     * Checks that the resolved contract class is annotated with {@link WorkflowContract}. Nothing else
+     * of the annotation is compared with the document, because many definitions and versions may share
+     * one contract.
      */
     private static void checkContractAnnotation(
             String definitionId, long definitionVersion, Class<?> contractClass, List<Violation> violations) {

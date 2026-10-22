@@ -475,6 +475,7 @@ hook that the default registry fills with the source definition it registered; i
 version registered through `register(definition)`, which is how deployed code and packaged documents register, and `false`
 for one registered through `register(scopeKey, definition)`, which publishes at run time. An engine without a durable store
 uses it to compute the default scope's current versions.
+Three more internal hooks serve the durable registry's type-name bindings and are not called by applications: `register(scopeKey, definition, nameBinding)` (default throws `UnsupportedOperationException`) registers a version under the type names its plan hash was first computed with, `nameBinding(key)` (default empty map) returns the binding of a registered version, and `rebind(key, nameBinding, requiredPlanHash)` (default empty) replaces a registered runtime with one built under a binding when that plan has the required hash. `ScopeKeyRules` (`dev.vertique.workflow.types`) is an internal validator shared by the workflow modules so every entry point applies one scope key rule; it is not an application contract.
 Rows of different scopes and versions of one id coexist and do not conflict: a claim, completion or static reconciliation
 looks only at its own row.
 

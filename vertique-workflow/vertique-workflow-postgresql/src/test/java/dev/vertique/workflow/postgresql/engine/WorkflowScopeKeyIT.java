@@ -94,15 +94,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-public class WorkflowTenantKeyIT {
+public class WorkflowScopeKeyIT {
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_scope_key_test")
             .withMigration("classpath:db/migration/workflow");
 
-    private static final String SINGLE_ID = "tenant-single";
-    private static final String FORK_ID = "tenant-fork";
-    private static final String MIGRATE_ID = "tenant-migrate";
+    private static final String SINGLE_ID = "scope-single";
+    private static final String FORK_ID = "scope-fork";
+    private static final String MIGRATE_ID = "scope-migrate";
 
     static Vertx vertxRef;
     static Pool pool;
@@ -414,7 +414,7 @@ public class WorkflowTenantKeyIT {
                         .setPassword(config.password()))
                 .using(vertx)
                 .build();
-        host = DaggerWorkflowTenantKeyIT_TenantEngineHost.factory().create(pool, Clock.systemUTC());
+        host = DaggerWorkflowScopeKeyIT_TenantEngineHost.factory().create(pool, Clock.systemUTC());
         DefaultVersionSeed.recordAndActivate(
                 host.pgWorkflowDefinitionRegistryStore(), host.definitionLifecycle(), host.workflowRegistry());
         operations = host.workflowOperations();

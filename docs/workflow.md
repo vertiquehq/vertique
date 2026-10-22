@@ -352,6 +352,7 @@ All versions of one scope and definition id use one state class. Registration re
 - **Scope-owned state must extend the default's.** When a scope's definition and the default scope's definition of the same id name the same contract and different state classes, the scope's class must extend the default's: every property exists with the same type, nested objects, collection items and map values compare by the same rule, and an enum keeps every constant. This is schema compatibility, not Java inheritance.
 - **Comparison needs `vertique-workflow-schema`.** Without it, differing state classes of one id and contract across scopes are refused. A migration between differing state classes applies the same comparison.
 - **Callbacks.** A document definition can use only named callbacks registered for exactly its own state class.
+- **Not compared.** The cross-scope state comparison does not compare `required` or `additionalProperties`, so a non-default-scope state class can loosen them and still be accepted (see the schema module reference).
 
 ## Shared Business And Idempotency Keys
 
@@ -376,7 +377,9 @@ definitions, their lifecycle status and their document sources survive restarts 
 - **Definition ids.** Ids are unprefixed: the document id is the definition id everywhere it is used
   (`StartCommand.definitionId`, pinned resolution, migration targets). A document may use the id of a code definition or of
   another scope's document, and each scope numbers its own versions. `load` and `publish` take any scope key, so restrict
-  them to trusted callers and never forward their refusal messages to end users: a refusal can name other scopes and plan hashes.
+  them to trusted callers and never forward their refusal messages to end users: a refusal can name other scopes and plan hashes. Ids and scope keys
+  may contain Unicode format and bidirectional characters that validation does not strip; do not render them unescaped in
+  operator UIs or logs.
 
 ### Code and document definitions
 
@@ -428,7 +431,8 @@ synchronous exceptions.
   `follow` and `activations` perform no access check. Restrict them to authorized callers in your application.
 - **Retire and scope records.** `retire` guards only the default scope's current version. A non-default scope's activation
   record can name a version that is then retired or deprecated; starts without a version in that scope fail until the record
-  is moved (`activate`) or removed (`follow`).
+  is moved (`activate`) or removed (`follow`). A start through a record that names a retired version fails with the
+  not-runnable error, which is permanent until the record is moved (`activate` another version or `follow`).
 - **Deactivation is not durable across a release.** A later release that deploys a higher version activates it on its
   first publication unless it opts out (see [Deploying new versions](#deploying-new-versions)).
 
@@ -481,6 +485,8 @@ To remove a definition id or a version, in order:
 2. `deprecate` each version. New explicit starts and migrations are refused; pinned instances keep running.
 3. Wait out the cooling window, then `retire` each version once no instance is pinned to it. `retire` is refused with `COOLING` or `PINNED_INSTANCES` until then, so treat it as retryable.
 4. Remove the definition class in a later deployment.
+
+`query(id)` needs the pinned plan on the serving node. After a version is retired and its class removed, finished instances pinned to it cannot be queried: the refusal is the not-runnable error, and no node will ever have the code. Query the instances you need to keep before removing the class, or keep the class.
 
 Deprecating or retiring the default scope's current version is refused with `INVALID_TRANSITION` until step 1 is done.
 
@@ -790,7 +796,7 @@ prerequisites. Each packaged document now must:
 Metadata limits now apply in every mode, with or without a store, to `load` and static sources: definition id and scope
 key at most 255 code points; source type at most 64; URI at most 2048; revision, author and upload id at most 255. The
 retained `WorkflowDefinitionStore` methods check only the key (id length and control characters, positive version). NUL and unpaired surrogates are rejected in every text field, and
-ISO control characters in ids and scope keys. A version must be positive. An over-limit source is rejected before anything
+ISO control characters in ids and scope keys. A scope key must also be nonblank, at most 255 code points, free of format characters (zero-width characters, bidirectional marks and overrides), must not start or end with whitespace, and must not be blank once its format characters are removed. A version must be positive. An over-limit source is rejected before anything
 is registered, and a static source failing a limit fails startup naming the resource.
 
 ### 6. Plan the rollout
@@ -859,7 +865,8 @@ instance's start scope for its life; a migration to another scope's definition c
   signal, cancel, retry, migrate, task complete or reassign) do not check it, and timers, branch tokens and definition
   resolution are global: before acting on a caller-supplied id, load the instance and compare its `scopeKey()` with the
   caller's scope. Definition-lifecycle refusal messages can name another scope, status and plan hashes: do not
-  forward them to end users.
+  forward them to end users. Ids and scope keys may contain Unicode format and bidirectional characters that validation
+  does not strip; do not render them unescaped in operator UIs or logs.
 
 ## Durable Context Propagation
 

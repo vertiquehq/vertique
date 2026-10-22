@@ -244,7 +244,7 @@ public class PgWorkflowEngineMigrateIT {
         PgBranchTokenRepository branches = new PgBranchTokenRepository(pool, ex);
         PgJoinStateRepository joins = new PgJoinStateRepository(pool, ex);
 
-        // Registry for engineV1: only v1 registered so resolveCurrent returns v1.
+        // Registry for engineV1: only v1 is registered, so a start without a version runs v1.
         DefaultWorkflowRegistry registryV1 = new DefaultWorkflowRegistry();
         registryV1.register(DEF_V1);
 

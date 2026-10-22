@@ -5,7 +5,8 @@ package dev.vertique.workflow.definition.service;
 
 /**
  * Lifecycle status of a document-backed workflow definition as tracked by
- * {@link WorkflowDefinitionStore}.
+ * {@link WorkflowDefinitionStore}. It mirrors the values of
+ * {@link dev.vertique.workflow.registry.store.DefinitionStatus} and is kept for the pinned public baseline.
  *
  * <p>This status is used by management and audit surfaces to communicate the lifecycle of a
  * definition through the store. It <strong>never</strong> overrides registry semantics: the
