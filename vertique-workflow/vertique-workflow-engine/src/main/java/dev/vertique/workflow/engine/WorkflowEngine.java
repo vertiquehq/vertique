@@ -28,6 +28,7 @@ import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
@@ -734,7 +735,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * keys are shared by the clients of one start scope and id. A start that names no version otherwise returns
      * the existing instance. A start that names a version, and possibly a target scope, must name the definition
      * the existing instance is pinned to; any other pin fails as an idempotency conflict. A replay never changes
-     * a pin.
+     * a pin. When this node has no plan for the pin, the contract of another registered version of the same id in
+     * the scope stands in for it; a node that holds no version of the id fails with
+     * {@link WorkflowVersionNotRunnableException}, because it cannot compare the contracts.
      */
     private Future<WorkflowInstanceId> replayedStart(StartCommand cmd, WorkflowInstanceId existing, SqlClient tx) {
         return instances.findById(existing, tx).compose(found -> {
@@ -744,15 +747,23 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         : Future.failedFuture(new WorkflowInstanceNotFoundException(existing));
             }
             WorkflowInstance pinned = found.get();
-            // A pin that is not registered on this node skips the comparison, like a query does.
-            Optional<RuntimeWorkflow> pinnedWorkflow = registry.find(
-                    new DefinitionKey(pinned.definitionScopeKey(), pinned.definitionId(), pinned.definitionVersion()));
-            if (pinnedWorkflow.isPresent()
-                    && !cmd.contractName().equals(pinnedWorkflow.get().contractName())) {
+            // The pinned version's own plan names the contract; on a node without that plan, any other registered
+            // version of the same id in the scope does, because every version of an id in a scope implements one
+            // contract. A node that holds no version of the id cannot vouch for the caller's contract and refuses,
+            // like a contract-checked query does.
+            DefinitionKey pin =
+                    new DefinitionKey(pinned.definitionScopeKey(), pinned.definitionId(), pinned.definitionVersion());
+            Optional<String> pinnedContract = registry.find(pin)
+                    .map(RuntimeWorkflow::contractName)
+                    .or(() -> registry.contractOf(pin.scopeKey(), pin.definitionId()));
+            if (pinnedContract.isEmpty()) {
+                return Future.failedFuture(new WorkflowVersionNotRunnableException(pin, existing));
+            }
+            if (!cmd.contractName().equals(pinnedContract.get())) {
                 return Future.failedFuture(new WorkflowIdempotencyConflictException(
                         "start",
                         cmd.idempotencyKey(),
-                        "contract=" + pinnedWorkflow.get().contractName(),
+                        "contract=" + pinnedContract.get(),
                         "contract=" + EchoedNames.bounded(cmd.contractName())));
             }
             if (cmd.requestedDefinitionVersion() == null) {

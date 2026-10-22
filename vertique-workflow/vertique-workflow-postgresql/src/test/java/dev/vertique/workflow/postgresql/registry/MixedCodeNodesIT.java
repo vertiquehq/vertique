@@ -28,6 +28,7 @@ import dev.vertique.workflow.delayed.job.TimerFirePayload;
 import dev.vertique.workflow.delayed.job.WorkflowTimerFireExecutor;
 import dev.vertique.workflow.delayed.job.WorkflowTimerFireJob;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
@@ -370,6 +371,48 @@ public class MixedCodeNodesIT {
                     .isEqualTo("FIRED");
             assertThat(Rows.of(database, instance).tasks()).contains("EXPIRED");
             assertThat(Rows.of(database, instance).branches()).isNotEqualTo(before.branches());
+        }
+    }
+
+    @Test
+    @DisplayName("a start replay on a node without the pinned code still compares the contract of the client")
+    void startReplayOnNodeWithoutPinnedCodeComparesTheContract(Vertx vertx) {
+        String id = "mixed-code-replay";
+
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, id);
+
+            // Given a version 2 instance started on A and B with version 1 only
+            Boot b = nodeWithV1Only(database, id);
+            Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
+            await(b.app().definitionPropagationPoller().pollNow());
+            WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            Rows before = Rows.of(database, instance);
+            StartCommand otherContract = new StartCommand(
+                    id, "mixed-code-other", new PlaceOrderDoc("order-k1"), "k1", null, null, null, DEFAULT, null);
+
+            // When B replays the start through the contract of the instance and through another contract
+            WorkflowInstanceId sameContract = await(b.app().workflowOperations().start(start(id, "k1")));
+            Throwable otherContractRefused = ActivationFixtures.failureOf(
+                    () -> b.app().workflowOperations().start(otherContract));
+
+            // Then the same contract returns the existing instance on B
+            assertThat(sameContract).isEqualTo(instance);
+
+            // and: another contract is an idempotency conflict of kind start, not the existing instance id
+            assertThat(otherContractRefused).isInstanceOf(WorkflowIdempotencyConflictException.class);
+
+            // and: once B holds no version of the id at all, the replay is refused typed, naming the pin
+            b.app().workflowRegistry().unregister(new DefinitionKey(DEFAULT, id, 1));
+            Throwable withoutAnyVersionRefused = ActivationFixtures.failureOf(
+                    () -> b.app().workflowOperations().start(start(id, "k1")));
+            assertThat(withoutAnyVersionRefused)
+                    .isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
+                        assertThat(failure.definitionKey()).isEqualTo(new DefinitionKey(DEFAULT, id, 2));
+                    });
+
+            // and: nothing changed
+            assertThat(Rows.of(database, instance)).isEqualTo(before);
         }
     }
 
