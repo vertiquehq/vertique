@@ -20,8 +20,10 @@ import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
+import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -188,6 +190,20 @@ class StateCompatibilityTest {
 
     record EnumeratedKind(String id, Kind kind) {}
 
+    // --- Fixture: recursive shapes ---
+
+    record TreeNode(String label, List<TreeNode> children) {}
+
+    record TreeNodePlus(String label, String note, List<TreeNodePlus> children) {}
+
+    record TreeNodeRetypedLabel(int label, List<TreeNodeRetypedLabel> children) {}
+
+    record Forest(String id, TreeNode root) {}
+
+    record ForestPlus(String id, TreeNodePlus root, String owner) {}
+
+    record ForestRetypedLabel(String id, TreeNodeRetypedLabel root) {}
+
     // --- Fixture: older state JSON ---
 
     record Order(String id) {}
@@ -309,5 +325,72 @@ class StateCompatibilityTest {
 
         // and: an unchanged free text property is accepted
         assertThat(unchanged).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a recursive nested type compares to a verdict instead of overflowing the stack")
+    void recursiveNestedTypeComparesToAVerdict() {
+        // Given: a state holding a tree node whose children are tree nodes, reached through a shared definition
+        WorkflowStateCompatibility comparison = comparison();
+
+        // When: the state is compared with a target that adds properties to every level, with an unchanged copy and
+        // with a target that retypes the label of every level
+        Optional<String> extended = comparison.firstIncompatibility(Forest.class, ForestPlus.class);
+        Optional<String> unchanged = comparison.firstIncompatibility(Forest.class, Forest.class);
+        Optional<String> retyped = comparison.firstIncompatibility(Forest.class, ForestRetypedLabel.class);
+
+        // Then: the extension and the unchanged copy are compatible
+        assertThat(extended).isEmpty();
+        assertThat(unchanged).isEmpty();
+
+        // and: the retyped label is reported at its first path
+        assertThat(retyped).contains("root.label");
+    }
+
+    @Test
+    @DisplayName("a recursive root type compares to a verdict, and a change deep in the recursion is found")
+    void recursiveRootTypeComparesToAVerdict() {
+        // Given: a tree node whose children are tree nodes
+        WorkflowStateCompatibility comparison = comparison();
+
+        // When: it is compared with an extended copy, with an unchanged copy and with a copy retyping the label
+        Optional<String> extended = comparison.firstIncompatibility(TreeNode.class, TreeNodePlus.class);
+        Optional<String> unchanged = comparison.firstIncompatibility(TreeNode.class, TreeNode.class);
+        Optional<String> retyped = comparison.firstIncompatibility(TreeNode.class, TreeNodeRetypedLabel.class);
+
+        // Then: the extension and the unchanged copy are compatible and the retyped label is found
+        assertThat(extended).isEmpty();
+        assertThat(unchanged).isEmpty();
+        assertThat(retyped).contains("label");
+    }
+
+    @Test
+    @DisplayName("a recursion through shared definitions that a hand-written schema map holds terminates")
+    void recursionThroughMapBackedDefinitionsTerminates() {
+        // Given: two schemas read from JSON text, so their nested objects are plain maps, whose node refers to
+        // itself through the shared definitions
+        String schemaText = """
+                {"type":"object","properties":{"root":{"$ref":"#/$defs/Node"}},
+                 "$defs":{"Node":{"type":"object","properties":{"label":{"type":"LABEL"},
+                   "children":{"type":"array","items":{"$ref":"#/$defs/Node"}}}}}}
+                """;
+        PayloadSchemaGenerator generator =
+                new PayloadSchemaGenerator(
+                        new DefaultJsonMapperProfileRegistry(Set.of()), JsonConfig.defaults(), Optional.empty()) {
+                    @Override
+                    JsonObject describe(Type type) {
+                        String label = type == ForestRetypedLabel.class ? "integer" : "string";
+                        return new JsonObject(schemaText.replace("LABEL", label));
+                    }
+                };
+        WorkflowStateCompatibility comparison = new SchemaStateCompatibility(generator);
+
+        // When: the schema is compared with a copy of itself and with the retyped one
+        Optional<String> unchanged = comparison.firstIncompatibility(Forest.class, ForestPlus.class);
+        Optional<String> changed = comparison.firstIncompatibility(Forest.class, ForestRetypedLabel.class);
+
+        // Then: the copy is compatible and the retyped label is reported
+        assertThat(unchanged).isEmpty();
+        assertThat(changed).contains("root.label");
     }
 }

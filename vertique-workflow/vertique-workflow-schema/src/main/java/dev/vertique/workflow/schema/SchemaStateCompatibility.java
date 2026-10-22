@@ -90,11 +90,15 @@ final class SchemaStateCompatibility implements WorkflowStateCompatibility {
         return described;
     }
 
-    /** One comparison of two documents; the visited pairs end the walk of a recursive type. */
+    /**
+     * One comparison of two documents; the visited pairs end the walk of a recursive type. A pair is identified by
+     * the maps behind the two nodes, because reading a nested object out of a map-backed document wraps the same
+     * map in a new {@link JsonObject} each time, so the wrappers of one node differ.
+     */
     private static final class Walk {
         private final JsonObject sourceRoot;
         private final JsonObject targetRoot;
-        private final Map<JsonObject, Set<JsonObject>> visited = new IdentityHashMap<>();
+        private final Map<Map<String, Object>, Set<Map<String, Object>>> visited = new IdentityHashMap<>();
 
         Walk(JsonObject sourceRoot, JsonObject targetRoot) {
             this.sourceRoot = sourceRoot;
@@ -108,8 +112,9 @@ final class SchemaStateCompatibility implements WorkflowStateCompatibility {
             if (source == null || target == null) {
                 return at(path);
             }
-            if (!visited.computeIfAbsent(source, k -> java.util.Collections.newSetFromMap(new IdentityHashMap<>()))
-                    .add(target)) {
+            if (!visited.computeIfAbsent(
+                            source.getMap(), k -> java.util.Collections.newSetFromMap(new IdentityHashMap<>()))
+                    .add(target.getMap())) {
                 return null;
             }
             if (!sameComposition(source, target) || !formatKept(source, target) || !typesKept(source, target)) {
