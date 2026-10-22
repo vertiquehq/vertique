@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -26,6 +27,7 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
@@ -855,6 +857,99 @@ class WorkflowEngineBinderWiringTest {
                             .as("no instance-path bind should have touched the ambient TenantCtx binding")
                             .isEmpty();
                     verify(h.taskStore(), never()).markExpired(any(), any(), any());
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("taskDueFired(): branch-owned expiry on a node without the pinned plan writes nothing")
+    void taskDueFired_branchOwned_withoutPinnedPlan_writesNothing(Vertx vertx, VertxTestContext ctx) {
+        DefaultContextHolder holder = new DefaultContextHolder();
+        Harness h = buildHarness(TenantCtxCodec.propagator(holder), holder);
+        SqlClient tx = ActiveTransactionClient.create();
+
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        UUID taskId = UUID.randomUUID();
+        UUID dueTimerId = UUID.randomUUID();
+        UUID branchTokenId = UUID.randomUUID();
+        TaskRecord branchTask = openBranchTaskWithDueDate(taskId, workflowId, dueTimerId, branchTokenId);
+        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(branchTask)));
+        DefinitionKey pin = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L);
+        when(h.registry().resolve(pin)).thenThrow(new WorkflowVersionNotRunnableException(pin));
+        WorkflowInstance inst =
+                instanceAt("human-task-due", WaitType.TASK, taskId.toString(), dueTimerId, tenantMetadata("T1"));
+        when(h.instances().findById(workflowId, tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+
+        runOnDuplicated(vertx, v -> h.taskCallbacks()
+                .taskDueFired(workflowId, taskId, tx)
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertThat(ar.failed()).isTrue();
+                    assertThat(ar.cause()).isInstanceOf(WorkflowVersionNotRunnableException.class);
+                    verify(h.timerStore(), never()).markCancelled(any(), any(), any());
+                    verify(h.taskStore(), never()).lockForCompletion(any(), any());
+                    verify(h.taskStore(), never()).markExpired(any(), any(), any());
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("taskDueFired(): branch-owned expiry acts on the instance it resolved the plan for")
+    void taskDueFired_branchOwned_readsTheInstanceOnceBeforeItWrites(Vertx vertx, VertxTestContext ctx) {
+        DefaultContextHolder holder = new DefaultContextHolder();
+        Harness h = buildHarness(TenantCtxCodec.propagator(holder), holder);
+        SqlClient tx = ActiveTransactionClient.create();
+
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        UUID taskId = UUID.randomUUID();
+        UUID dueTimerId = UUID.randomUUID();
+        UUID branchTokenId = UUID.randomUUID();
+        TaskRecord branchTask = openBranchTaskWithDueDate(taskId, workflowId, dueTimerId, branchTokenId);
+        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(branchTask)));
+        when(h.timerStore().findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
+        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(branchTask)));
+        BranchToken branch = new BranchToken(
+                branchTokenId,
+                workflowId,
+                "fork-step",
+                "branch-1",
+                "branch-human-task-due",
+                dev.vertique.workflow.state.BranchStatus.WAITING,
+                WaitType.TASK,
+                taskId.toString(),
+                dueTimerId,
+                null,
+                null,
+                null,
+                0,
+                3,
+                null,
+                null,
+                null,
+                null,
+                0L,
+                FIXED_NOW,
+                FIXED_NOW,
+                tenantMetadata("BRANCH"));
+        when(h.branchTokens().findByIdForUpdate(branchTokenId, tx))
+                .thenReturn(Future.succeededFuture(Optional.of(branch)));
+        when(h.taskStore().markExpired(eq(taskId), any(), eq(tx)))
+                .thenReturn(Future.succeededFuture(TaskTransition.APPLIED));
+        RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
+        WorkflowInstance inst =
+                instanceAt("human-task-due", WaitType.TASK, taskId.toString(), dueTimerId, tenantMetadata("T1"));
+        when(h.instances().findById(workflowId, tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+
+        // The task row names a step the plan does not have, so the drive fails right after markExpired; what the
+        // test observes is that nothing was read or resolved again after that write.
+        runOnDuplicated(vertx, v -> h.taskCallbacks()
+                .taskDueFired(workflowId, taskId, tx)
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertThat(ar.failed()).isTrue();
+                    verify(h.taskStore()).markExpired(eq(taskId), any(), eq(tx));
+                    verify(h.instances(), times(1)).findById(workflowId, tx);
+                    verify(h.registry(), times(1)).resolve(any(DefinitionKey.class));
                     ctx.completeNow();
                 })));
     }
