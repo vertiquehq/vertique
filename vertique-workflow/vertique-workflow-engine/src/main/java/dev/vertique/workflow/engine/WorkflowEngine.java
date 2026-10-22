@@ -736,9 +736,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * the existing instance. A start that names a version, and possibly a target scope, must name the definition
      * the existing instance is pinned to; any other pin fails as an idempotency conflict. A replay never changes
      * a pin. When this node has no plan for the pin, the contract the durable registry stores for the pinned
-     * definition stands in for it, and failing that the contract of another registered version of the same id in
-     * the scope; a node that knows neither fails with {@link WorkflowVersionNotRunnableException}, because it
-     * cannot compare the contracts.
+     * definition stands in for it, read through the given transaction. With a durable registry and no stored row the
+     * start fails with {@link WorkflowVersionNotRunnableException}. An engine without a durable registry uses the
+     * contract of another registered version of the same id in the scope, and fails the same way when there is
+     * none, because it cannot compare the contracts.
      */
     private Future<WorkflowInstanceId> replayedStart(StartCommand cmd, WorkflowInstanceId existing, SqlClient tx) {
         return instances.findById(existing, tx).compose(found -> {
@@ -749,17 +750,18 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             }
             WorkflowInstance pinned = found.get();
             // The pinned version's own plan names the contract. On a node without that plan, the contract stored for
-            // the pinned definition does, and failing that any other registered version of the same id in the
-            // scope. A node that knows none of them cannot vouch for the caller's contract and refuses, like a
-            // contract-checked query does.
+            // the pinned definition does, read through the start transaction so that no second connection is taken;
+            // with a durable registry and no stored row the node refuses. Only an engine without a durable registry
+            // falls back to another registered version of the same id in the scope. A node that knows none of them
+            // cannot vouch for the caller's contract and refuses, like a contract-checked query does.
             DefinitionKey pin =
                     new DefinitionKey(pinned.definitionScopeKey(), pinned.definitionId(), pinned.definitionVersion());
             Optional<String> local = registry.find(pin).map(RuntimeWorkflow::contractName);
             Future<Optional<String>> contractOfPin = local.isPresent()
                     ? Future.succeededFuture(local)
-                    : activations
-                            .storedContract(pin)
-                            .map(stored -> stored.or(() -> registry.contractOf(pin.scopeKey(), pin.definitionId())));
+                    : activations.hasDurableRegistry()
+                            ? instances.findDefinitionContract(pin, tx)
+                            : Future.succeededFuture(registry.contractOf(pin.scopeKey(), pin.definitionId()));
             return contractOfPin.compose(pinnedContract -> checkReplay(cmd, existing, pinned, pin, pinnedContract));
         });
     }

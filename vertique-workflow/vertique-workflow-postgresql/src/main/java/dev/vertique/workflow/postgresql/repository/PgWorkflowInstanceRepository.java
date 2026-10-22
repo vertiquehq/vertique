@@ -475,6 +475,23 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     }
 
     /**
+     * Reads the contract name of the definition row through the given transaction, so the read takes no further
+     * pool connection.
+     */
+    @Override
+    public Future<Optional<String>> findDefinitionContract(DefinitionKey key, SqlClient tx) {
+        return tx.preparedQuery("SELECT contract_name FROM " + definitionsTable
+                        + " WHERE scope_key = $1 AND definition_id = $2 AND definition_version = $3")
+                .execute(Tuple.of(key.scopeKey(), key.definitionId(), key.definitionVersion()))
+                .<Optional<String>>map(rs -> {
+                    var it = rs.iterator();
+                    return it.hasNext() ? Optional.of(it.next().getString("contract_name")) : Optional.empty();
+                })
+                .recover(t -> Future.failedFuture(
+                        exceptionMapper.translate(t, "workflow_definitions findDefinitionContract")));
+    }
+
+    /**
      * Loads a workflow instance by id and acquires a {@code SELECT FOR UPDATE} row lock within
      * the given transaction.
      *

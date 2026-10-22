@@ -9,10 +9,8 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
-import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -77,15 +75,13 @@ final class DefinitionActivations {
     }
 
     /**
-     * The contract name the durable registry stores for the definition, which holds whether or not this node has
-     * code for it. Empty without a durable registry and when the registry has no row for the key.
+     * Whether a durable registry is bound. Without one this view computes the default scope's versions and the
+     * engine has no stored definition rows to read.
      *
-     * @param key the full definition key
-     * @return a {@link Future} of the stored contract name
+     * @return {@code true} when a durable registry is bound
      */
-    Future<Optional<String>> storedContract(DefinitionKey key) {
-        if (store.isEmpty()) return Future.succeededFuture(Optional.empty());
-        return store.get().find(key).map(found -> found.map(WorkflowDefinitionRecord::contractName));
+    boolean hasDurableRegistry() {
+        return store.isPresent();
     }
 
     /** The scope's own record of the id, if the view holds one. */

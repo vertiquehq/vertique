@@ -7,6 +7,7 @@ import dev.vertique.db.query.PageCursor;
 import dev.vertique.db.query.PagedResult;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.query.WorkflowInstanceQuery;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.WorkflowInstance;
 import io.vertx.core.Future;
 import java.util.Optional;
@@ -86,6 +87,22 @@ public interface WorkflowInstanceRepository<TX> {
      * @return a {@link Future} containing the instance if found, or {@link Optional#empty()}
      */
     Future<Optional<WorkflowInstance>> findById(WorkflowInstanceId id, TX tx);
+
+    /**
+     * Reads the contract name that the durable definition registry stores for a definition, within the supplied
+     * transaction. The read uses the caller's transaction and takes no further connection, so a caller that holds
+     * one can ask without waiting on the pool.
+     *
+     * <p>The default returns empty, as an implementation without access to the definition rows has no answer; a
+     * caller that needs the contract then refuses instead of guessing.
+     *
+     * @param key the full definition key
+     * @param tx the active transaction or pooled connection to use for the read
+     * @return a {@link Future} containing the stored contract name, or {@link Optional#empty()} when there is no row
+     */
+    default Future<Optional<String>> findDefinitionContract(DefinitionKey key, TX tx) {
+        return Future.succeededFuture(Optional.empty());
+    }
 
     /**
      * Loads a workflow instance by id and acquires a row lock ({@code SELECT ... FOR UPDATE}) within

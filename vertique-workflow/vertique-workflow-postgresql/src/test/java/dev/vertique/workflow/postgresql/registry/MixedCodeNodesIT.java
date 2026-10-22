@@ -50,6 +50,7 @@ import io.vertx.core.internal.ContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
+import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Tuple;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -542,6 +543,39 @@ public class MixedCodeNodesIT {
 
             // and: nothing changed
             assertThat(Rows.of(database, instance)).isEqualTo(before);
+        }
+    }
+
+    @Test
+    @DisplayName("a start replay on a node without the pinned code takes no connection besides the start transaction")
+    void startReplayOnNodeWithoutPinnedCodeTakesNoSecondConnection(Vertx vertx) {
+        String id = "mixed-code-replay-pool";
+
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, id);
+
+            // Given a version 2 instance started on A, and B with version 1 only
+            Boot b = nodeWithV1Only(database, id);
+            Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
+            await(b.app().definitionPropagationPoller().pollNow());
+            WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+
+            // and: every connection of B's pool but one is held
+            List<SqlConnection> held = new ArrayList<>();
+            try {
+                for (int i = 0; i < 9; i++) held.add(await(b.app().pool().getConnection()));
+
+                // When B replays the start in a transaction on the one connection left, which must suffice
+                WorkflowInstanceId replayed = await(b.app()
+                        .pool()
+                        .withTransaction(tx -> b.app().transactionalOperations().start(start(id, "k1"), tx))
+                        .timeout(5, TimeUnit.SECONDS));
+
+                // Then the replay returned the existing instance without waiting for another connection
+                assertThat(replayed).isEqualTo(instance);
+            } finally {
+                held.forEach(connection -> connection.close());
+            }
         }
     }
 
