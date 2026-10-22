@@ -106,7 +106,10 @@ class ScopedKeysScenarioIT {
             assertEquals(pin(ACME, ACME), second.pin(acme));
             assertEquals(pin(GLOBEX, DEFAULT), second.pin(globex));
             assertNotNull(repeated, "the business key is already taken in Acme");
-            assertInstanceOf(WorkflowBusinessKeyConflictException.class, repeated);
+            assertEquals(
+                    ACME,
+                    assertInstanceOf(WorkflowBusinessKeyConflictException.class, repeated)
+                            .scopeKey());
 
             // When Acme's instance, pinned to the variant that waits for the audit, is sent the approval
             approveFinance(second, acme);
