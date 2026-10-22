@@ -971,6 +971,30 @@ final class TaskLifecycleService {
      */
     private Future<TaskMutationResult> doBranchTaskDueFired(
             WorkflowInstanceId workflowId, TaskRecord task, SqlClient tx) {
+        // Resolve the pinned plan BEFORE any write: a node that cannot run the pinned version must
+        // leave the reminders and the task untouched so the timer can be re-queued for a node that can.
+        return instances.findById(workflowId, tx).compose(optPinned -> {
+            if (optPinned.isPresent()) {
+                try {
+                    resolveAndCheckPlanHash(optPinned.get());
+                } catch (Exception e) {
+                    return Future.<TaskMutationResult>failedFuture(e);
+                }
+            }
+            return doBranchTaskDueFiredResolved(workflowId, task, tx);
+        });
+    }
+
+    /**
+     * Body of {@link #doBranchTaskDueFired} once the pinned plan is known to be runnable on this node.
+     *
+     * @param workflowId the owning workflow instance id
+     * @param task       the task record (non-locking snapshot from the caller)
+     * @param tx         the active transaction
+     * @return a {@link Future} resolving to the mutation result
+     */
+    private Future<TaskMutationResult> doBranchTaskDueFiredResolved(
+            WorkflowInstanceId workflowId, TaskRecord task, SqlClient tx) {
         UUID taskId = task.taskId();
         UUID branchTokenId = task.branchTokenId();
 
@@ -1373,6 +1397,14 @@ final class TaskLifecycleService {
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> doTaskDueFiredBound(UUID taskId, WorkflowInstance inst, SqlClient tx) {
+        // Resolve the pinned plan BEFORE any write: a node that cannot run the pinned version must
+        // leave the reminders and the task untouched so the timer can be re-queued for a node that can.
+        RuntimeWorkflow rw;
+        try {
+            rw = resolveAndCheckPlanHash(inst);
+        } catch (Exception e) {
+            return Future.failedFuture(e);
+        }
         return reminderScheduler
                 .cancelPendingReminders(taskId, inst, tx)
                 .compose(v -> taskStore.lockForCompletion(taskId, tx))
@@ -1386,7 +1418,7 @@ final class TaskLifecycleService {
                         if (transition != TaskTransition.APPLIED) {
                             return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
                         }
-                        return advanceForDueExpired(inst, optLocked.get(), taskId, now, tx);
+                        return advanceForDueExpired(inst, rw, taskId, now, tx);
                     });
                 });
     }
@@ -1397,26 +1429,14 @@ final class TaskLifecycleService {
      * transitions. Called only after the wait-slot match has been validated.
      *
      * @param inst   the WAITING instance whose due-date timer fired (slot already validated)
-     * @param task   the locked task row
+     * @param rw     the pinned plan, already resolved and plan-hash checked before any write
      * @param taskId the task id whose due-date timer fired
      * @param now    the expiry timestamp
      * @param tx     the active transaction
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> advanceForDueExpired(
-            WorkflowInstance inst, TaskRecord task, UUID taskId, Instant now, SqlClient tx) {
-        RuntimeWorkflow rw;
-        try {
-            rw = PinnedPlans.resolve(registry, inst);
-            // Same plan-hash drift gate as completion / signal / timer paths: if the
-            // pinned-version plan in the registry has drifted from the snapshot the
-            // instance was started against, refuse to apply the due-date mutator
-            // (which could route to a different next-step or use a stale state mutator).
-            WorkflowPayloads.requirePlanHashMatches(inst, rw);
-        } catch (Exception e) {
-            return Future.failedFuture(e);
-        }
-
+            WorkflowInstance inst, RuntimeWorkflow rw, UUID taskId, Instant now, SqlClient tx) {
         WorkflowNode node = rw.nodeById().get(inst.currentStepId());
         if (!(node instanceof HumanTaskNode htn) || htn.onDueMutatorCallbackId() == null) {
             return Future.failedFuture(new WorkflowDefinitionException(

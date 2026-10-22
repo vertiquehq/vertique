@@ -278,6 +278,102 @@ public class MixedCodeNodesIT {
     }
 
     @Test
+    @DisplayName(
+            "a task due date firing on a node without the pinned code changes nothing and expires on a capable node")
+    void taskDueDateOnNodeWithoutPinnedCodeChangesNothingAndExpiresOnCapableNode(Vertx vertx) {
+        String id = "mixed-code-due";
+
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, id);
+
+            // Given a version 2 instance on A waiting for a task with a due date, and B with version 1 only
+            Boot b = nodeWithV1Only(database, id);
+            Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK_WITH_DUE_DATE);
+            await(b.app().definitionPropagationPoller().pollNow());
+            WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            TimerRow due = timerWithPurpose(database, instance, "TASK_DUE");
+            assertThat(due.status()).isEqualTo("SCHEDULED");
+            Rows before = Rows.of(database, instance);
+            assertThat(before.tasks()).contains("OPEN");
+            SteppedClock clock = new SteppedClock(due.fireAt());
+            RecordingFireJob bJob = new RecordingFireJob(clock);
+
+            // When B's executor runs the due-date timer
+            Throwable firedOnB = fireOn(executor(b, bJob, clock), due.timerId(), instance);
+
+            // Then the timer is queued again and stays scheduled, pointing at the new job
+            assertThat(firedOnB).as("failure of the executor on B").isNull();
+            assertThat(bJob.delays()).hasSize(1);
+            TimerRow requeued = timerWithPurpose(database, instance, "TASK_DUE");
+            assertThat(requeued.status()).isEqualTo("SCHEDULED");
+            assertThat(requeued.executionId()).isEqualTo(bJob.lastExecutionId());
+
+            // And the task is still open, not expired, and the instance, its history and its rows are as they were
+            assertThat(Rows.of(database, instance).tasks()).contains("OPEN").doesNotContain("EXPIRED");
+            assertThat(Rows.of(database, instance)).isEqualTo(before);
+            assertThat(database.instanceStatus(instance.value())).isEqualTo("WAITING");
+
+            // When A's executor runs the timer
+            Throwable firedOnA = fireOn(executor(a, new RecordingFireJob(clock), clock), due.timerId(), instance);
+
+            // Then the task expired and the workflow moved on
+            assertThat(firedOnA).as("failure of the executor on A").isNull();
+            assertThat(timerWithPurpose(database, instance, "TASK_DUE").status())
+                    .isEqualTo("FIRED");
+            assertThat(Rows.of(database, instance).tasks()).contains("EXPIRED");
+            assertThat(database.instanceStatus(instance.value())).isEqualTo("COMPLETED");
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "a branch task due date firing on a node without the pinned code changes nothing and expires elsewhere")
+    void branchTaskDueDateOnNodeWithoutPinnedCodeChangesNothingAndExpiresOnCapableNode(Vertx vertx) {
+        String id = "mixed-code-branch-due";
+
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, id);
+
+            // Given a version 2 instance on A whose first branch waits for a task with a due date, and B with version 1
+            // only
+            Boot b = nodeWithV1Only(database, id);
+            Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_IN_BRANCHES_FOR_TASK_WITH_DUE_DATE);
+            await(b.app().definitionPropagationPoller().pollNow());
+            WorkflowInstanceId instance = await(onDuplicatedContext(
+                    vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
+            TimerRow due = timerWithPurpose(database, instance, "TASK_DUE");
+            Rows before = Rows.of(database, instance);
+            assertThat(before.tasks()).contains("OPEN");
+            SteppedClock clock = new SteppedClock(due.fireAt());
+            RecordingFireJob bJob = new RecordingFireJob(clock);
+
+            // When B's executor runs the due-date timer
+            Throwable firedOnB = failureOf(onDuplicatedContext(vertx, () -> executor(b, bJob, clock)
+                    .execute(new TimerFirePayload(due.timerId(), instance, null), mock(JobContext.class))));
+
+            // Then the timer is queued again and stays scheduled, and the task, the branches and the instance are
+            // as they were
+            assertThat(firedOnB).as("failure of the executor on B").isNull();
+            assertThat(bJob.delays()).hasSize(1);
+            assertThat(timerWithPurpose(database, instance, "TASK_DUE").status())
+                    .isEqualTo("SCHEDULED");
+            assertThat(Rows.of(database, instance)).isEqualTo(before);
+
+            // When A's executor runs the timer
+            Throwable firedOnA =
+                    failureOf(onDuplicatedContext(vertx, () -> executor(a, new RecordingFireJob(clock), clock)
+                            .execute(new TimerFirePayload(due.timerId(), instance, null), mock(JobContext.class))));
+
+            // Then the task expired and its branch moved on
+            assertThat(firedOnA).as("failure of the executor on A").isNull();
+            assertThat(timerWithPurpose(database, instance, "TASK_DUE").status())
+                    .isEqualTo("FIRED");
+            assertThat(Rows.of(database, instance).tasks()).contains("EXPIRED");
+            assertThat(Rows.of(database, instance).branches()).isNotEqualTo(before.branches());
+        }
+    }
+
+    @Test
     @DisplayName("a branch signal through a node without the pinned code fails typed and leaves the branch unchanged")
     void branchSignalThroughNodeWithoutPinnedCodeFailsTypedAndLeavesBranchUnchanged(Vertx vertx) {
         String id = "mixed-code-branch";
@@ -548,6 +644,18 @@ public class MixedCodeNodesIT {
                 SELECT timer_id, status, delayed_job_execution_id, fire_at
                 FROM workflow_timers WHERE workflow_id = $1
                 """, instance.value());
+        return new TimerRow(
+                row.getUUID("timer_id"),
+                row.getString("status"),
+                row.getUUID("delayed_job_execution_id"),
+                row.getOffsetDateTime("fire_at").toInstant());
+    }
+
+    private static TimerRow timerWithPurpose(DefinitionScenario database, WorkflowInstanceId instance, String purpose) {
+        Row row = one(database, """
+                SELECT timer_id, status, delayed_job_execution_id, fire_at
+                FROM workflow_timers WHERE workflow_id = $1 AND purpose = $2
+                """, instance.value(), purpose);
         return new TimerRow(
                 row.getUUID("timer_id"),
                 row.getString("status"),
