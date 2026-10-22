@@ -25,7 +25,7 @@ import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.examples.workflow.order.OrderFulfillmentDefinition;
 import dev.vertique.examples.workflow.order.OrderFulfillmentWorkflow;
 import dev.vertique.examples.workflow.order.scenario.ScenarioNode.Pin;
-import dev.vertique.workflow.exception.WorkflowPersistenceException;
+import dev.vertique.workflow.exception.WorkflowBusinessKeyConflictException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import io.vertx.core.Vertx;
@@ -106,8 +106,7 @@ class ScopedKeysScenarioIT {
             assertEquals(pin(ACME, ACME), second.pin(acme));
             assertEquals(pin(GLOBEX, DEFAULT), second.pin(globex));
             assertNotNull(repeated, "the business key is already taken in Acme");
-            assertInstanceOf(WorkflowPersistenceException.class, repeated);
-            assertTrue(rootMessage(repeated).contains("idx_workflow_instances_business_key"), rootMessage(repeated));
+            assertInstanceOf(WorkflowBusinessKeyConflictException.class, repeated);
 
             // When Acme's instance, pinned to the variant that waits for the audit, is sent the approval
             approveFinance(second, acme);
@@ -134,12 +133,6 @@ class ScopedKeysScenarioIT {
             // Then the approval is delivered
             assertEquals("COMPLETED", second.status(globex));
         }
-    }
-
-    private static String rootMessage(Throwable failure) {
-        Throwable current = failure;
-        while (current.getCause() != null) current = current.getCause();
-        return String.valueOf(current.getMessage());
     }
 
     private static void assertRejectedNamingVersionOne(Throwable failure, String signal) {
