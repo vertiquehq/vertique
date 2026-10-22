@@ -321,7 +321,7 @@ OrderFulfillmentWorkflow pinned = factory.client(OrderFulfillmentDefinition.clas
 - **From a contract and an id.** The id need not be registered yet, because documents may be loaded later.
 - **Version and scope.** A client starts the current version of its definition. The builder's `scope(startScope)` runs the start in that scope, `version(n)` starts a specific registered version, and `version(targetScope, n)` names the scope of that version, which must be the start scope or `default`.
 - **Generated or reflective.** With `vertique-codegen-workflow` on the processor path the factory uses a generated proxy; otherwise it falls back to a reflective one. Both send the same command, and the proxy embeds no definition id or version.
-- **Replays resolve first.** A start is looked up by start scope, definition id and idempotency key before any version is resolved, so a replay returns the original instance even after the current version moved or the pinned version was deprecated. A replay that names another version than the original pin fails with an idempotency conflict.
+- **Replays resolve first.** A start is looked up by start scope, definition id and idempotency key before any version is resolved, so a replay returns the original instance even after the current version moved or the pinned version was deprecated. A replay that names another version than the original pin fails with an idempotency conflict. A node that has no plan for the pin compares the contract stored for it in the durable registry; with a durable registry and no stored row for the pin, or without a durable registry and without another registered version of the id, the replay fails with `WorkflowVersionNotRunnableException`.
 
 ## Scopes
 
