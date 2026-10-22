@@ -467,7 +467,9 @@ The same procedure applies to a packaged document with `activateOnDeploy: false`
 
 #### Roll-forward only
 
-Deployments are roll-forward only. A node whose code lacks a version that is not retired fails startup with `CODE_UNAVAILABLE`. Three cases are therefore unsupported: an old-code node that restarts or autoscales after a newer version went live, a rollback of the code past a version that has live instances, and rolling code back to 0.3.0. To undo a bad rollout, activate the previous version again or deploy a corrected version.
+Deployments are roll-forward only. A node whose code lacks a version that is not retired fails application startup with `CODE_UNAVAILABLE`: the node does not start, and none of its workflows run. Three cases are therefore unsupported: an old-code node that restarts or autoscales after a newer version was published, a rollback of the code past a version that has live instances, and rolling code back to 0.3.0. Old nodes that stay up keep serving, but starts that resolve to the newer version fail with the retryable not-runnable error.
+
+Activating the previous version again changes only which version new starts use; it does not let an old-code node restart, because the startup check looks at the published row, not at the activation. To undo a bad rollout, activate the previous version and then retire the newer one once the cooling window has passed and no instance is pinned to it, or deploy a corrected version. To keep a rollback possible, deploy with `activateOnDeploy` set to `false`, activate once every node runs the new code, and retire the new version promptly if you abandon it.
 
 #### Work a node cannot run
 

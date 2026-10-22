@@ -512,7 +512,7 @@ made current later.
 **Rolling deploys.** Auto-activation runs on the first node that starts with the new version, and every node then reads the
 activation record. Nodes still running the previous code cannot run the new version, so to roll a new version out across a
 mixed fleet deploy it with `activateOnDeploy` set to `false`, and activate it once every node runs the new code. Rollback is
-roll-forward only: activate the previous version again, or deploy a corrected version.
+roll-forward only: activate the previous version again and retire the newer one once nothing is pinned to it (activation alone does not let an old-code node restart), or deploy a corrected version.
 
 **Default-current guard.** While the default scope's record of an id names a version, `deprecate` and `retire` of that
 version fail with `INVALID_TRANSITION` naming the key; the check runs in the same store transaction as the status change.
