@@ -155,7 +155,7 @@ SPDX-License-Identifier: EUPL-1.2
         <jakarta.validation.version>3.1.1</jakarta.validation.version>
         <hibernate-validator.version>9.1.4.Final</hibernate-validator.version>
         <!-- victools JSON-schema generator (annotation -> JSON Schema synthesis, rest-validation) -->
-        <victools.version>4.38.0</victools.version>
+        <victools.version>5.0.0</victools.version>
         <expressly.version>6.0.0</expressly.version>
         <owasp-html-sanitizer.version>20260313.1</owasp-html-sanitizer.version>
         <cel.version>0.14.0</cel.version>
