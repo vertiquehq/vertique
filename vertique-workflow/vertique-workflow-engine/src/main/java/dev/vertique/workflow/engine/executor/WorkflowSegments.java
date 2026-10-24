@@ -6,6 +6,7 @@ package dev.vertique.workflow.engine.executor;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
 
@@ -49,4 +50,42 @@ public interface WorkflowSegments {
      * @return a future of the outcome; it fails when the work fails, and the transaction then rolls back
      */
     Future<Outcome> run(CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx);
+
+    /**
+     * Runs the work of a fenced command like {@link #run(CommandHead, ClaimedCommand, SegmentCommand, SqlClient)}, with
+     * a cap on the nodes the segment may execute. A segment that executes more nodes than the cap without reaching a
+     * wait fails with a {@link StepLimitExceededException} and the transaction rolls back.
+     *
+     * <p>The default ignores the cap.
+     *
+     * @param head     the peeked command the claim came from
+     * @param claim    the claim
+     * @param command  the fenced command
+     * @param tx       the segment's transaction handle
+     * @param maxSteps the most nodes the segment may execute; at least 1
+     * @return a future of the outcome; it fails when the work fails, and the transaction then rolls back
+     */
+    default Future<Outcome> run(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
+        return run(head, claim, command, tx);
+    }
+
+    /**
+     * Adds what a failed instance carries beyond its rows, such as its lifecycle event, in the transaction in which
+     * the executor failed the instance on behalf of a command. Called after the instance row and its history entry are
+     * written; a failed future rolls the transaction back.
+     *
+     * <p>The default does nothing.
+     *
+     * @param instance        the failed instance
+     * @param historySequence the sequence of the history entry that records the failure
+     * @param reasonCode      the reason code stored on the instance
+     * @param message         the sanitized reason stored on the instance
+     * @param tx              the transaction that fails the instance
+     * @return a future that completes when the writes are done
+     */
+    default Future<Void> instanceFailed(
+            WorkflowInstanceId instance, long historySequence, String reasonCode, String message, SqlClient tx) {
+        return Future.succeededFuture();
+    }
 }

@@ -18,6 +18,7 @@ import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.postgresql.executor.PgWorkflowCommandRepository;
@@ -566,6 +567,7 @@ public final class PgWorkflowEngineTestSupport {
         private Set<WorkflowSideEffectRecorder<SqlClient>> recorders = Set.of();
         private WorkflowExecutorConfig executorConfig = WorkflowExecutorConfig.defaults();
         private DurableContextPropagator propagator;
+        private Set<WorkflowExecutorObserver> executorObservers = Set.of();
         private UnaryOperator<WorkflowTransactionRunner<SqlClient>> runnerDecorator = UnaryOperator.identity();
         private UnaryOperator<WorkflowCommandRepository<SqlClient>> commandsDecorator = UnaryOperator.identity();
 
@@ -584,6 +586,12 @@ public final class PgWorkflowEngineTestSupport {
         /** The executor configuration: instances, concurrency, poll interval and lease. */
         public ExecutorEngine executorConfig(WorkflowExecutorConfig executorConfig) {
             this.executorConfig = executorConfig;
+            return this;
+        }
+
+        /** The observers the engine's executor reports its events to. */
+        public ExecutorEngine executorObservers(Set<WorkflowExecutorObserver> executorObservers) {
+            this.executorObservers = executorObservers;
             return this;
         }
 
@@ -633,6 +641,7 @@ public final class PgWorkflowEngineTestSupport {
                     .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                     .vertx(vertx)
                     .executorConfig(executorConfig)
+                    .executorObservers(executorObservers)
                     .build());
         }
     }

@@ -16,6 +16,9 @@ import org.slf4j.LoggerFactory;
 /**
  * INTERNAL: reads the commands an executor could claim and makes their plans resident, outside any transaction.
  *
+ * <p>A candidate whose instance has ended is kept without making any plan resident: its claim settles it without one,
+ * so a removed plan cannot leave it unsettled.
+ *
  * <p>A peeked command whose plan this node cannot resolve is skipped for this peek and logged at debug level with its
  * ids only, never a payload; nothing is claimed, no attempt is spent and nothing is written, so the command is peeked
  * again on the next pass.
@@ -49,7 +52,7 @@ final class CommandPeek {
                 return resident;
             }
             for (CommandHead head : heads) {
-                if (segments.makeResident(head)) {
+                if (head.instanceEnded() || segments.makeResident(head)) {
                     resident.add(head);
                 } else {
                     log.debug(

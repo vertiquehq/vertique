@@ -5,6 +5,9 @@ package dev.vertique.workflow.engine.testsupport;
 
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
+import dev.vertique.workflow.engine.spi.DispositionResult;
+import dev.vertique.workflow.engine.spi.InstanceFailureListener;
+import dev.vertique.workflow.engine.spi.QueueCounts;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.history.PendingCommand;
@@ -15,6 +18,7 @@ import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.IntToLongFunction;
 
 /** A command repository of a database that records no commands, for engine tests that do not read the log. */
 public final class EmptyCommandRepository implements WorkflowCommandRepository<SqlClient> {
@@ -70,7 +74,12 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
     }
 
     @Override
-    public Future<Optional<ClaimedCommand>> claim(CommandHead head, String claimedBy, int leaseSeconds) {
+    public Future<Optional<ClaimedCommand>> claim(
+            CommandHead head,
+            String claimedBy,
+            int leaseSeconds,
+            int maxAttempts,
+            InstanceFailureListener<SqlClient> failures) {
         return Future.succeededFuture(Optional.empty());
     }
 
@@ -92,5 +101,26 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
     @Override
     public Future<Boolean> release(ClaimedCommand claim) {
         return Future.succeededFuture(false);
+    }
+
+    @Override
+    public Future<Integer> retryTransient(ClaimedCommand claim, IntToLongFunction backoffMs, String lastError) {
+        return Future.succeededFuture(0);
+    }
+
+    @Override
+    public Future<DispositionResult> failCommand(
+            ClaimedCommand claim, String reasonCode, String lastError, InstanceFailureListener<SqlClient> failures) {
+        return Future.succeededFuture(DispositionResult.CLAIM_LOST);
+    }
+
+    @Override
+    public Future<List<PendingCommand>> findStuck(WorkflowInstanceId instance, long stuckAfterSeconds) {
+        return Future.succeededFuture(List.of());
+    }
+
+    @Override
+    public Future<QueueCounts> countQueue(long stuckAfterSeconds) {
+        return Future.succeededFuture(new QueueCounts(0, 0, 0, 0));
     }
 }

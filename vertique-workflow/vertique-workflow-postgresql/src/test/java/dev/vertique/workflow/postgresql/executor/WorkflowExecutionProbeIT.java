@@ -212,7 +212,7 @@ public class WorkflowExecutionProbeIT {
                 .lastError("not runnable")
                 .insert();
         Fixture parked = command(a, 2, "SIGNAL", "PARKED").insert();
-        command(a, 3, "SIGNAL", "DEAD").attempts(5).insert();
+        Fixture dead = command(a, 3, "SIGNAL", "DEAD").attempts(5).insert();
         Fixture timer = command(a, 4, "TIMER", "PENDING")
                 .timerKind("FIRE")
                 .fireAt("now() + interval '1 hour'")
@@ -228,19 +228,19 @@ public class WorkflowExecutionProbeIT {
         IdleReport single = join(probe.awaitIdle(a, Duration.ofSeconds(2)), Duration.ofSeconds(3));
         IdleReport all = join(probe.awaitAllIdle(Duration.ofSeconds(2)), Duration.ofSeconds(3));
 
-        // Then awaitIdle completes with the commands it stopped on and nothing for the dead-lettered and settled
-        // ones
+        // Then awaitIdle completes with the commands it stopped on, the dead-lettered one only as stuck and nothing
+        // for the settled one
         assertThat(single.deferred()).containsExactly(deferred.pending());
         assertThat(single.deferred().get(0).lastError()).isEqualTo("not runnable");
         assertThat(single.parked()).containsExactly(parked.pending());
         assertThat(single.notYetAvailable()).containsExactly(timer.pending());
-        assertThat(single.stuck()).isEmpty();
+        assertThat(single.stuck()).containsExactly(dead.pending());
 
         // And awaitAllIdle adds B's parked command after A's
         assertThat(all.deferred()).containsExactly(deferred.pending());
         assertThat(all.parked()).containsExactly(parked.pending(), otherParked.pending());
         assertThat(all.notYetAvailable()).containsExactly(timer.pending());
-        assertThat(all.stuck()).isEmpty();
+        assertThat(all.stuck()).containsExactly(dead.pending());
     }
 
     @Test
@@ -367,11 +367,12 @@ public class WorkflowExecutionProbeIT {
         // When awaitIdle(F) is called
         IdleReport report = join(probe.awaitIdle(f, Duration.ofSeconds(2)), Duration.ofSeconds(3));
 
-        // Then it completes at once with the held-back due date as not yet available and the dead completion nowhere
+        // Then it completes at once with the held-back due date as not yet available and the dead completion only as
+        // stuck
         assertThat(report.notYetAvailable()).containsExactly(dueF.pending());
         assertThat(report.deferred()).isEmpty();
         assertThat(report.parked()).isEmpty();
-        assertThat(report.stuck()).isEmpty();
+        assertThat(report.stuck()).containsExactly(deadCompletion.pending());
 
         // And awaitIdle(G) times out because its due date is claimable
         assertThatThrownBy(() -> join(probe.awaitIdle(g, Duration.ofMillis(300)), Duration.ofSeconds(3)))

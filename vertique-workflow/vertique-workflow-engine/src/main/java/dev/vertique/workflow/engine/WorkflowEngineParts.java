@@ -14,6 +14,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -63,6 +64,7 @@ public final class WorkflowEngineParts {
     private final WorkflowTypeNames typeNames;
     private final Optional<WorkflowStateCompatibility> stateCompatibility;
     private final WorkflowExecutorConfig executorConfig;
+    private final Set<WorkflowExecutorObserver> executorObservers;
     private final @Nullable Vertx vertx;
 
     private WorkflowEngineParts(Builder b) {
@@ -87,6 +89,7 @@ public final class WorkflowEngineParts {
         this.typeNames = Objects.requireNonNull(b.typeNames, "typeNames");
         this.stateCompatibility = b.stateCompatibility;
         this.executorConfig = Objects.requireNonNull(b.executorConfig, "executorConfig");
+        this.executorObservers = Set.copyOf(b.executorObservers);
         this.vertx = b.vertx;
     }
 
@@ -206,11 +209,16 @@ public final class WorkflowEngineParts {
     }
 
     /**
-     * The configuration of the engine's executor: instances, concurrency, poll interval and lease;
-     * {@link WorkflowExecutorConfig#defaults()} by default.
+     * The configuration of the engine's executor: instances, concurrency, poll interval, lease, attempts, backoff,
+     * step cap and stuck age; {@link WorkflowExecutorConfig#defaults()} by default.
      */
     public WorkflowExecutorConfig executorConfig() {
         return executorConfig;
+    }
+
+    /** The observers the executor reports its events to; empty by default. */
+    public Set<WorkflowExecutorObserver> executorObservers() {
+        return executorObservers;
     }
 
     /**
@@ -244,6 +252,7 @@ public final class WorkflowEngineParts {
         private WorkflowTypeNames typeNames;
         private Optional<WorkflowStateCompatibility> stateCompatibility = Optional.empty();
         private WorkflowExecutorConfig executorConfig = WorkflowExecutorConfig.defaults();
+        private Set<WorkflowExecutorObserver> executorObservers = Set.of();
         private @Nullable Vertx vertx;
 
         private Builder() {}
@@ -372,6 +381,12 @@ public final class WorkflowEngineParts {
         /** Sets the executor configuration. */
         public Builder executorConfig(WorkflowExecutorConfig executorConfig) {
             this.executorConfig = Objects.requireNonNull(executorConfig, "executorConfig");
+            return this;
+        }
+
+        /** Sets the observers the executor reports its events to. */
+        public Builder executorObservers(Set<WorkflowExecutorObserver> executorObservers) {
+            this.executorObservers = Objects.requireNonNull(executorObservers, "executorObservers");
             return this;
         }
 

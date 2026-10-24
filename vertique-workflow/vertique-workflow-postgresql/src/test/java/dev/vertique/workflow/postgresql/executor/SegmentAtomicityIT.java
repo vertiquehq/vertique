@@ -54,8 +54,9 @@ class SegmentAtomicityIT {
             node.startExecutor();
             node.awaitIdle(healthy);
             awaitCondition("the poisoned segment to fail", IDLE, () -> fixture.recorderFailures.get() >= 1);
-            awaitCondition("the poisoned segment to release its lock", IDLE, () -> fixture.holdersOfX(poisoned)
-                    .isEmpty());
+            awaitCondition("the poisoned start to be failed", IDLE, () -> fixture.commandOf(poisoned)
+                    .state()
+                    .equals("FAILED"));
 
             // Then the first instance is waiting with both intents and its segment's history
             InstanceRow waiting = fixture.instanceOf(healthy);
@@ -69,16 +70,17 @@ class SegmentAtomicityIT {
                     .isEqualTo(1);
 
             // And the second instance, whose recorders did run, has no intent in the outbox, no state and no history
-            // entry of a segment
+            // entry of a segment; its deterministic failure failed the start and the instance
             assertThat(fixture.intentCalls.stream()
                             .filter(call -> call.workflowId().equals(poisoned.value()))
                             .map(ExecutorFixture.IntentCall::stepId))
                     .containsExactly("charge-1", "charge-2");
             assertThat(fixture.intentsOf(poisoned)).isEmpty();
-            InstanceRow pending = fixture.instanceOf(poisoned);
-            assertThat(pending.status()).isEqualTo("PENDING");
-            assertThat(pending.stateJson()).isNull();
-            assertThat(pending.currentStepId()).isNull();
+            InstanceRow failed = fixture.instanceOf(poisoned);
+            assertThat(failed.status()).isEqualTo("FAILED");
+            assertThat(failed.stateJson()).isNull();
+            assertThat(failed.currentStepId()).isNull();
+            assertThat(fixture.commandOf(poisoned).state()).isEqualTo("FAILED");
             assertThat(fixture.historyOf(poisoned)).doesNotContainAnyElementsOf(SEGMENT_ENTRIES);
         }
     }

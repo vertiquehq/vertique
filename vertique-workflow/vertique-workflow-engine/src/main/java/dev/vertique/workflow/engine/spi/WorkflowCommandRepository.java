@@ -10,6 +10,7 @@ import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.IntToLongFunction;
 
 /**
  * Repository SPI for the recorded command log.
@@ -63,6 +64,28 @@ public interface WorkflowCommandRepository<TX> {
      * @return a {@link Future} containing the commands
      */
     Future<List<PendingCommand>> findNotYetAvailable(@Nullable WorkflowInstanceId instance);
+
+    /**
+     * Lists the commands reported stuck, ordered by instance and sequence: every dead-lettered command, and every
+     * unsettled command whose first availability is older than {@code stuckAfterSeconds}. The first availability of a
+     * timer command is its fire time and of any other command the time it was recorded, never its current
+     * availability, which deferral and transient backoff move forward. Reads each command's last error as stored,
+     * bounded to its column limit.
+     *
+     * @param instance          the instance to read, or {@code null} for every instance
+     * @param stuckAfterSeconds the age after which an unsettled command is reported stuck, in seconds
+     * @return a {@link Future} containing the commands
+     */
+    Future<List<PendingCommand>> findStuck(@Nullable WorkflowInstanceId instance, long stuckAfterSeconds);
+
+    /**
+     * Counts the queue for the executor's queue snapshot: the commands claimable now, those reported stuck (as
+     * {@link #findStuck}), the parked ones and the dead-lettered ones, over every instance.
+     *
+     * @param stuckAfterSeconds the age after which an unsettled command is reported stuck, in seconds
+     * @return a {@link Future} containing the counts
+     */
+    Future<QueueCounts> countQueue(long stuckAfterSeconds);
 
     /**
      * Takes the instance's execution lock for the caller's transaction, waiting for another transaction that holds it
@@ -133,15 +156,61 @@ public interface WorkflowCommandRepository<TX> {
 
     /**
      * Claims a peeked command in one short transaction of its own: tries the instance's execution lock, locks the
-     * command row, checks again that it is claimable, spends an attempt, sets a new token and a lease and marks it
-     * {@code CLAIMED}. When the lock is busy or the command is no longer claimable, nothing is written.
+     * command row and checks again that it is claimable. Then, in this order:
+     *
+     * <ol>
+     *   <li>when the command's instance has ended, settles the command per the outcome table with its history entry,
+     *       spends no attempt, never dead-letters it and leaves the instance as it is
+     *       ({@link ClaimedCommand.Result#SETTLED_INSTANCE_ENDED});</li>
+     *   <li>otherwise, when the command has spent {@code maxAttempts} attempts, dead-letters it and leaves its
+     *       attempts unchanged; a {@code START} also fails its instance, with history, in the same transaction
+     *       ({@link ClaimedCommand.Result#DEAD_LETTERED});</li>
+     *   <li>otherwise spends an attempt, sets a new token and a lease and marks it {@code CLAIMED}
+     *       ({@link ClaimedCommand.Result#CLAIMED}).</li>
+     * </ol>
+     *
+     * <p>When the lock is busy or the command is no longer claimable, nothing is written.
      *
      * @param head         the peeked head
      * @param claimedBy    the executor instance that claims
      * @param leaseSeconds how long the claim holds the command
-     * @return a {@link Future} containing the claim, or empty when the lock was busy or the command was not claimable
+     * @param maxAttempts  the attempts a command may spend before it is dead-lettered
+     * @param failures     called in the claim's transaction when the claim fails an instance
+     * @return a {@link Future} containing what the claim came to, or empty when the lock was busy or the command was
+     *     not claimable
      */
-    Future<Optional<ClaimedCommand>> claim(CommandHead head, String claimedBy, int leaseSeconds);
+    Future<Optional<ClaimedCommand>> claim(
+            CommandHead head,
+            String claimedBy,
+            int leaseSeconds,
+            int maxAttempts,
+            InstanceFailureListener<TX> failures);
+
+    /**
+     * Claims a peeked command like the five-argument overload, with nobody told when an instance fails.
+     *
+     * @param head         the peeked head
+     * @param claimedBy    the executor instance that claims
+     * @param leaseSeconds how long the claim holds the command
+     * @param maxAttempts  the attempts a command may spend before it is dead-lettered
+     * @return a {@link Future} as for the five-argument overload
+     */
+    default Future<Optional<ClaimedCommand>> claim(
+            CommandHead head, String claimedBy, int leaseSeconds, int maxAttempts) {
+        return claim(head, claimedBy, leaseSeconds, maxAttempts, InstanceFailureListener.none());
+    }
+
+    /**
+     * Claims a peeked command with no limit on its attempts, so it is never dead-lettered.
+     *
+     * @param head         the peeked head
+     * @param claimedBy    the executor instance that claims
+     * @param leaseSeconds how long the claim holds the command
+     * @return a {@link Future} as for {@link #claim(CommandHead, String, int, int)}
+     */
+    default Future<Optional<ClaimedCommand>> claim(CommandHead head, String claimedBy, int leaseSeconds) {
+        return claim(head, claimedBy, leaseSeconds, Integer.MAX_VALUE);
+    }
 
     /**
      * Locks the claimed command's row and checks, in the segment's transaction, that the claim still stands: the
@@ -187,4 +256,33 @@ public interface WorkflowCommandRepository<TX> {
      *     longer stood
      */
     Future<Boolean> release(ClaimedCommand claim);
+
+    /**
+     * Schedules a retry of a claimed command whose segment failed transiently, in one transaction that locks only the
+     * command row, without the execution lock: back to {@code PENDING}, the spent attempt restored, the transient
+     * count raised by one, availability moved forward by the backoff of the new count, token and lease cleared and the
+     * last error stored. Writes only while the command is still {@code CLAIMED} with this token.
+     *
+     * @param claim     the claim
+     * @param backoffMs the pause in milliseconds before the retry, from the new transient count
+     * @param lastError the sanitized, bounded reason to store
+     * @return a {@link Future} containing the new transient count, or {@code 0} when the claim no longer stood
+     */
+    Future<Integer> retryTransient(ClaimedCommand claim, IntToLongFunction backoffMs, String lastError);
+
+    /**
+     * Settles a claimed command as failed after its segment rolled back with a failure that a retry would repeat, in
+     * one transaction of its own that tries the execution lock without waiting. Locks the command row and writes only
+     * while it is still {@code CLAIMED} with this token: the command is {@code FAILED} with token and lease cleared
+     * and the last error stored, and its instance is {@code FAILED} with the reason and a history entry. A settled
+     * command has no token, so a late call writes nothing.
+     *
+     * @param claim       the claim
+     * @param reasonCode  the reason code stored on the instance
+     * @param lastError   the sanitized, bounded reason to store on the command and the instance
+     * @param failures    called in the transaction when the instance is failed, after its rows are written
+     * @return a {@link Future} containing what the call came to
+     */
+    Future<DispositionResult> failCommand(
+            ClaimedCommand claim, String reasonCode, String lastError, InstanceFailureListener<TX> failures);
 }

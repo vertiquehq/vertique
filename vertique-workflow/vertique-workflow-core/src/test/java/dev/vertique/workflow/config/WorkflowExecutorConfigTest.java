@@ -81,6 +81,43 @@ class WorkflowExecutorConfigTest {
         assertRefused(executor(1, 8, 5000, 4), "workflow.executor.leaseSeconds");
     }
 
+    @Test
+    @DisplayName("defaults and bounds of attempts, backoff, step cap and stuck age")
+    void defaultsAndBoundsOfAttemptsBackoffStepCapAndStuckAge() {
+        // Given no workflow.executor section and sections with the new keys at the edges of their bounds
+        JsonObject absent = new JsonObject();
+        JsonObject lowest = failureKeys(1, 1, 1, 1, 1);
+        JsonObject custom = failureKeys(3, 10, 50, 50, 7);
+
+        // When each is parsed through the config module
+        WorkflowExecutorConfig defaults = configured(absent);
+        WorkflowExecutorConfig low = configured(lowest);
+        WorkflowExecutorConfig changed = configured(custom);
+
+        // Then the defaults are 5 attempts, a backoff of 200 ms to 30 s, 1000 steps and 300 seconds
+        assertThat(defaults.maxAttempts()).isEqualTo(5);
+        assertThat(defaults.transientBackoffBaseMs()).isEqualTo(200L);
+        assertThat(defaults.transientBackoffMaxMs()).isEqualTo(30_000L);
+        assertThat(defaults.maxStepsPerSegment()).isEqualTo(1000);
+        assertThat(defaults.stuckAfterSeconds()).isEqualTo(300L);
+        assertThat(WorkflowExecutorConfig.defaults()).isEqualTo(defaults);
+
+        // And the valid values are kept
+        assertThat(low.maxAttempts()).isEqualTo(1);
+        assertThat(low.maxStepsPerSegment()).isEqualTo(1);
+        assertThat(low.stuckAfterSeconds()).isEqualTo(1L);
+        assertThat(changed.maxAttempts()).isEqualTo(3);
+        assertThat(changed.transientBackoffBaseMs()).isEqualTo(10L);
+        assertThat(changed.transientBackoffMaxMs()).isEqualTo(50L);
+        assertThat(changed.maxStepsPerSegment()).isEqualTo(50);
+        assertThat(changed.stuckAfterSeconds()).isEqualTo(7L);
+
+        // And each invalid value is refused, naming its key
+        assertRefused(failureKeys(0, 200, 30_000, 1000, 300), "workflow.executor.maxAttempts");
+        assertRefused(failureKeys(5, 200, 30_000, 0, 300), "workflow.executor.maxStepsPerSegment");
+        assertRefused(failureKeys(5, 200, 30_000, 1000, 0), "workflow.executor.stuckAfterSeconds");
+    }
+
     private static void assertRefused(JsonObject config, String key) {
         assertThatThrownBy(() -> configured(config))
                 .isInstanceOf(ConfigurationException.class)
@@ -99,6 +136,22 @@ class WorkflowExecutorConfigTest {
                                                 .put("concurrency", concurrency)
                                                 .put("pollIntervalMs", pollIntervalMs)
                                                 .put("leaseSeconds", leaseSeconds)));
+    }
+
+    private static JsonObject failureKeys(
+            int maxAttempts, long backoffBaseMs, long backoffMaxMs, int maxStepsPerSegment, long stuckAfterSeconds) {
+        return new JsonObject()
+                .put(
+                        "workflow",
+                        new JsonObject()
+                                .put(
+                                        "executor",
+                                        new JsonObject()
+                                                .put("maxAttempts", maxAttempts)
+                                                .put("transientBackoffBaseMs", backoffBaseMs)
+                                                .put("transientBackoffMaxMs", backoffMaxMs)
+                                                .put("maxStepsPerSegment", maxStepsPerSegment)
+                                                .put("stuckAfterSeconds", stuckAfterSeconds)));
     }
 
     private static WorkflowExecutorConfig configured(JsonObject config) {

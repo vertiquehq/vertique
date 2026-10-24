@@ -732,7 +732,7 @@ public class RequireVersionStabilityIT {
 
         @Test
         @DisplayName(
-                "null subjectRef.version fails the first segment with WorkflowSubjectVersionUnavailableException; the instance stays pending")
+                "null subjectRef.version fails the first segment with WorkflowSubjectVersionUnavailableException; the instance fails")
         void nullSnapshotFailsAtTaskCreationInTheFirstSegment(VertxTestContext ctx) {
             StabilityState state = StabilityState.of("null-snap-start-" + UUID.randomUUID());
             // subjectRef with null version — fails per-task stability guard in the first segment.
@@ -748,9 +748,9 @@ public class RequireVersionStabilityIT {
                             null,
                             null,
                             null))
-                    // The start only records; the executor claims it and its first segment fails and rolls back
-                    .compose(id -> awaitCommandState(id, "CLAIMED").map(ignored -> id))
-                    .compose(id -> sleep(500).map(ignored -> id))
+                    // The start only records; the executor claims it, its first segment fails and rolls back, and the
+                    // failure settles the start and fails the instance
+                    .compose(id -> awaitCommandState(id, "FAILED").map(ignored -> id))
                     .compose(id -> pool.preparedQuery("SELECT status, state_json FROM workflow_instances WHERE id = $1")
                             .execute(Tuple.of(id.value())))
                     .onComplete(ar -> {
@@ -760,7 +760,7 @@ public class RequireVersionStabilityIT {
                         }
                         var row = ar.result().iterator().next();
                         ctx.verify(() -> {
-                            assertEquals("PENDING", row.getString("status"), "the failed segment commits nothing");
+                            assertEquals("FAILED", row.getString("status"), "the failed segment fails the instance");
                             assertNull(row.getValue("state_json"), "the failed segment commits no state");
                         });
                         ctx.completeNow();

@@ -6,11 +6,13 @@ package dev.vertique.workflow.engine.executor;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Promise;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.sqlclient.SqlClient;
 import java.util.Objects;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,6 +37,7 @@ public final class WorkflowExecutorVerticle extends AbstractVerticle {
     private final WorkflowTransactionRunner<SqlClient> runner;
     private final WorkflowSegments segments;
     private final String instanceId;
+    private final Set<WorkflowExecutorObserver> observers;
 
     private ExecutorLoop loop;
 
@@ -53,6 +56,27 @@ public final class WorkflowExecutorVerticle extends AbstractVerticle {
             WorkflowTransactionRunner<SqlClient> runner,
             WorkflowSegments segments,
             String instanceId) {
+        this(config, commands, runner, segments, instanceId, Set.of());
+    }
+
+    /**
+     * Creates one executor instance that reports its events to observers.
+     *
+     * @param config     the executor configuration
+     * @param commands   the command repository
+     * @param runner     the transaction runner segments run through
+     * @param segments   the engine's side of a segment
+     * @param instanceId the id this instance claims commands as
+     * @param observers  the observers of the executor's events; may be empty
+     */
+    public WorkflowExecutorVerticle(
+            WorkflowExecutorConfig config,
+            WorkflowCommandRepository<SqlClient> commands,
+            WorkflowTransactionRunner<SqlClient> runner,
+            WorkflowSegments segments,
+            String instanceId,
+            Set<WorkflowExecutorObserver> observers) {
+        this.observers = Set.copyOf(observers);
         this.config = Objects.requireNonNull(config, "config");
         this.commands = Objects.requireNonNull(commands, "commands");
         this.runner = Objects.requireNonNull(runner, "runner");
@@ -63,6 +87,7 @@ public final class WorkflowExecutorVerticle extends AbstractVerticle {
     @Override
     public void start(Promise<Void> startPromise) {
         ContextInternal root = (ContextInternal) context;
+        ExecutorEvents events = ExecutorEvents.to(observers);
         loop = new ExecutorLoop(
                 vertx,
                 root,
@@ -70,7 +95,10 @@ public final class WorkflowExecutorVerticle extends AbstractVerticle {
                 instanceId,
                 new CommandPeek(commands, segments),
                 commands,
-                new SegmentRunner(vertx, config, commands, runner, segments));
+                new SegmentRunner(vertx, config, commands, runner, segments, events),
+                segments,
+                events,
+                new StuckReporter(commands, config.stuckAfterSeconds(), events));
         loop.start();
         log.info("Workflow executor {} started", instanceId);
         startPromise.complete();

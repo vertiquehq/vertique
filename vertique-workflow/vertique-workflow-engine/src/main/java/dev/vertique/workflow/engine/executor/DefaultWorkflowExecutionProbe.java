@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine.executor;
 
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.history.PendingCommand;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
@@ -26,7 +27,8 @@ import java.util.concurrent.TimeoutException;
  * read and longer after each following one, up to 250 ms, so a long wait does not re-run the eligibility scan at a
  * high rate. A timeout longer than ten minutes is shortened to ten minutes. The timeout is measured on the local
  * monotonic clock, eligibility on the database clock. When it completes it reads
- * the deferred, parked and not-yet-available commands it stopped on.
+ * the deferred, parked, not-yet-available and stuck commands it stopped on. A command is stuck once it is dead-lettered or
+ * has been unsettled for longer than the configured stuck age.
  */
 public final class DefaultWorkflowExecutionProbe implements WorkflowExecutionProbe {
 
@@ -48,6 +50,7 @@ public final class DefaultWorkflowExecutionProbe implements WorkflowExecutionPro
     private final WorkflowCommandRepository<?> commands;
     private final Pause pause;
     private final Duration maxTimeout;
+    private final long stuckAfterSeconds;
 
     /**
      * Creates a probe that pauses between reads with Vert.x timers.
@@ -56,11 +59,27 @@ public final class DefaultWorkflowExecutionProbe implements WorkflowExecutionPro
      * @param vertx    the Vert.x instance whose timers pace the polling
      */
     public DefaultWorkflowExecutionProbe(WorkflowCommandRepository<?> commands, Vertx vertx) {
-        this(commands, delayMs -> {
-            Promise<Void> promise = Promise.promise();
-            vertx.setTimer(delayMs, id -> promise.complete());
-            return promise.future();
-        });
+        this(commands, vertx, WorkflowExecutorConfig.DEFAULT_STUCK_AFTER_SECONDS);
+    }
+
+    /**
+     * Creates a probe that pauses between reads with Vert.x timers and reports a command stuck once it has been
+     * unsettled for {@code stuckAfterSeconds}.
+     *
+     * @param commands          the command repository
+     * @param vertx             the Vert.x instance whose timers pace the polling
+     * @param stuckAfterSeconds the age after which an unsettled command is reported stuck, in seconds; at least 1
+     */
+    public DefaultWorkflowExecutionProbe(WorkflowCommandRepository<?> commands, Vertx vertx, long stuckAfterSeconds) {
+        this(
+                commands,
+                delayMs -> {
+                    Promise<Void> promise = Promise.promise();
+                    vertx.setTimer(delayMs, id -> promise.complete());
+                    return promise.future();
+                },
+                MAX_TIMEOUT,
+                stuckAfterSeconds);
     }
 
     /**
@@ -70,17 +89,33 @@ public final class DefaultWorkflowExecutionProbe implements WorkflowExecutionPro
      * @param commands the command repository
      */
     public DefaultWorkflowExecutionProbe(WorkflowCommandRepository<?> commands) {
-        this(commands, Shared::pause);
+        this(commands, WorkflowExecutorConfig.DEFAULT_STUCK_AFTER_SECONDS);
     }
 
-    private DefaultWorkflowExecutionProbe(WorkflowCommandRepository<?> commands, Pause pause) {
-        this(commands, pause, MAX_TIMEOUT);
+    /**
+     * Creates a probe that pauses between reads on a shared daemon thread and reports a command stuck once it has
+     * been unsettled for {@code stuckAfterSeconds}.
+     *
+     * @param commands          the command repository
+     * @param stuckAfterSeconds the age after which an unsettled command is reported stuck, in seconds; at least 1
+     */
+    public DefaultWorkflowExecutionProbe(WorkflowCommandRepository<?> commands, long stuckAfterSeconds) {
+        this(commands, Shared::pause, MAX_TIMEOUT, stuckAfterSeconds);
     }
 
     DefaultWorkflowExecutionProbe(WorkflowCommandRepository<?> commands, Pause pause, Duration maxTimeout) {
+        this(commands, pause, maxTimeout, WorkflowExecutorConfig.DEFAULT_STUCK_AFTER_SECONDS);
+    }
+
+    DefaultWorkflowExecutionProbe(
+            WorkflowCommandRepository<?> commands, Pause pause, Duration maxTimeout, long stuckAfterSeconds) {
+        if (stuckAfterSeconds < 1) {
+            throw new IllegalArgumentException("stuckAfterSeconds must be at least 1 but was " + stuckAfterSeconds);
+        }
         this.commands = Objects.requireNonNull(commands, "commands");
         this.pause = pause;
         this.maxTimeout = maxTimeout;
+        this.stuckAfterSeconds = stuckAfterSeconds;
     }
 
     @Override
@@ -125,9 +160,10 @@ public final class DefaultWorkflowExecutionProbe implements WorkflowExecutionPro
         Future<List<PendingCommand>> deferred = commands.findDeferred(scope);
         Future<List<PendingCommand>> parked = commands.findParked(scope);
         Future<List<PendingCommand>> notYetAvailable = commands.findNotYetAvailable(scope);
-        return Future.all(deferred, parked, notYetAvailable)
+        Future<List<PendingCommand>> stuck = commands.findStuck(scope, stuckAfterSeconds);
+        return Future.all(deferred, parked, notYetAvailable, stuck)
                 .map(ignored ->
-                        new IdleReport(deferred.result(), List.of(), parked.result(), notYetAvailable.result()));
+                        new IdleReport(deferred.result(), stuck.result(), parked.result(), notYetAvailable.result()));
     }
 
     /** One daemon thread paces the polling of probes built without a Vert.x instance. */

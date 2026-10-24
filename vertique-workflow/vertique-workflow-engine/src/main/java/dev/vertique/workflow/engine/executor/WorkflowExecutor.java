@@ -9,6 +9,7 @@ import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.engine.WorkflowExecutorControl;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -16,6 +17,7 @@ import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import java.net.InetAddress;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -40,6 +42,7 @@ public final class WorkflowExecutor implements WorkflowExecutorControl {
     private final WorkflowTransactionRunner<SqlClient> runner;
     private final WorkflowSegments segments;
     private final String nodeId;
+    private final Set<WorkflowExecutorObserver> observers;
 
     private String deploymentId;
     private boolean starting;
@@ -62,6 +65,30 @@ public final class WorkflowExecutor implements WorkflowExecutorControl {
             WorkflowTransactionRunner<SqlClient> runner,
             WorkflowSegments segments,
             String nodeId) {
+        this(vertx, config, commands, runner, segments, nodeId, Set.of());
+    }
+
+    /**
+     * Creates the executor of one engine that reports its events to observers.
+     *
+     * @param vertx     the Vert.x instance the executor is deployed on; {@code null} when the engine was assembled
+     *                  without one, in which case {@link #start()} fails
+     * @param config    the executor configuration
+     * @param commands  the command repository
+     * @param runner    the transaction runner segments run through
+     * @param segments  the engine's side of a segment
+     * @param nodeId    the node id the instances' ids are derived from; see {@link #newNodeId()}
+     * @param observers the observers of the executor's events; may be empty
+     */
+    public WorkflowExecutor(
+            @Nullable Vertx vertx,
+            WorkflowExecutorConfig config,
+            WorkflowCommandRepository<SqlClient> commands,
+            WorkflowTransactionRunner<SqlClient> runner,
+            WorkflowSegments segments,
+            String nodeId,
+            Set<WorkflowExecutorObserver> observers) {
+        this.observers = Set.copyOf(Objects.requireNonNull(observers, "observers"));
         this.vertx = vertx;
         this.config = Objects.requireNonNull(config, "config");
         this.commands = Objects.requireNonNull(commands, "commands");
@@ -98,7 +125,12 @@ public final class WorkflowExecutor implements WorkflowExecutorControl {
         return new VerticleDeployment(
                 DEPLOYMENT_NAME,
                 () -> new WorkflowExecutorVerticle(
-                        config, commands, runner, segments, nodeId + "-" + instanceCounter.getAndIncrement()),
+                        config,
+                        commands,
+                        runner,
+                        segments,
+                        nodeId + "-" + instanceCounter.getAndIncrement(),
+                        observers),
                 new DeploymentOptions().setInstances(config.instances()),
                 LifecyclePhase.SERVICES,
                 DEPLOYMENT_PRIORITY);

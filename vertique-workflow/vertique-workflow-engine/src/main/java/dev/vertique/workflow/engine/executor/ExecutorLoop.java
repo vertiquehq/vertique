@@ -7,11 +7,14 @@ import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
+import dev.vertique.workflow.executor.WorkflowExecutorEvent.CommandSettled;
+import dev.vertique.workflow.executor.WorkflowExecutorEvent.LeaseExpired;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.sqlclient.SqlClient;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -46,6 +49,9 @@ final class ExecutorLoop {
     private final CommandPeek peek;
     private final WorkflowCommandRepository<SqlClient> commands;
     private final SegmentRunner segmentRunner;
+    private final WorkflowSegments segments;
+    private final ExecutorEvents events;
+    private final StuckReporter reporter;
     private final AtomicInteger inFlight = new AtomicInteger();
 
     private volatile boolean running;
@@ -61,7 +67,10 @@ final class ExecutorLoop {
             String instanceId,
             CommandPeek peek,
             WorkflowCommandRepository<SqlClient> commands,
-            SegmentRunner segmentRunner) {
+            SegmentRunner segmentRunner,
+            WorkflowSegments segments,
+            ExecutorEvents events,
+            StuckReporter reporter) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
         this.root = Objects.requireNonNull(root, "root");
         this.config = Objects.requireNonNull(config, "config");
@@ -69,6 +78,9 @@ final class ExecutorLoop {
         this.peek = Objects.requireNonNull(peek, "peek");
         this.commands = Objects.requireNonNull(commands, "commands");
         this.segmentRunner = Objects.requireNonNull(segmentRunner, "segmentRunner");
+        this.segments = Objects.requireNonNull(segments, "segments");
+        this.events = Objects.requireNonNull(events, "events");
+        this.reporter = Objects.requireNonNull(reporter, "reporter");
     }
 
     /** Starts looking for commands: the first pass runs after one poll interval. */
@@ -149,6 +161,7 @@ final class ExecutorLoop {
                 } else if (result.result() > 0 || kicked) {
                     next = IMMEDIATE_MS;
                 }
+                reporter.sampleIfDue();
             } finally {
                 passing = false;
                 schedule(next);
@@ -192,7 +205,9 @@ final class ExecutorLoop {
         Future<Optional<ClaimedCommand>> claimed;
         try {
             claimed = Objects.requireNonNull(
-                    commands.claim(head, instanceId, config.leaseSeconds()), "claim returned null instead of a future");
+                    commands.claim(
+                            head, instanceId, config.leaseSeconds(), config.maxAttempts(), segments::instanceFailed),
+                    "claim returned null instead of a future");
         } catch (Exception | LinkageError | AssertionError e) {
             claimed = Future.failedFuture(e);
         }
@@ -201,7 +216,20 @@ final class ExecutorLoop {
                         release();
                         return false;
                     }
-                    startSegment(head, result.get(), claimStartNanos);
+                    ClaimedCommand claim = result.get();
+                    if (claim.leaseLapsed()) {
+                        events.emit(new LeaseExpired(claim.kind()));
+                    }
+                    if (!claim.isClaim()) {
+                        // dead-lettered or settled by the claim itself: there is no segment to run
+                        events.emit(new CommandSettled(
+                                claim.kind(),
+                                claim.result() == ClaimedCommand.Result.DEAD_LETTERED ? "DEAD_LETTERED" : "REJECTED",
+                                Duration.ofNanos(System.nanoTime() - claimStartNanos)));
+                        release();
+                        return true;
+                    }
+                    startSegment(head, claim, claimStartNanos);
                     return true;
                 })
                 .recover(failure -> {

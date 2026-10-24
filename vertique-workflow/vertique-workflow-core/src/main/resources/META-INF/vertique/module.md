@@ -181,7 +181,7 @@ record IdleReport(List<PendingCommand> deferred, List<PendingCommand> stuck,
                   List<PendingCommand> parked, List<PendingCommand> notYetAvailable) {}
 ```
 
-An instance is idle when it has no command in flight (claimed under a live lease) and no command an executor could claim now: one at the head of its queue, not held back and available. Availability alone is not the rule: a command behind a blocking head, a timer before its fire time, and a due-date or reminder timer whose task is completing do not hold the probe. The probe polls the database at short intervals and reads the database clock, so it observes work recorded by any node. It completes with a report of the commands it stopped on, each list ordered by instance and sequence: `deferred` (deferred commands that cannot be claimed yet), `parked`, and `notYetAvailable` (the other pending and claimed commands that cannot be claimed now). `stuck` is empty until stuck detection exists; until then dead-lettered commands appear in no list, and settled commands never do. `PendingCommand` (package `dev.vertique.workflow.history`) carries the instance id, sequence, kind, state, `availableAt`, `attempts` and a nullable `lastError`; it never carries a payload.
+An instance is idle when it has no command in flight (claimed under a live lease) and no command an executor could claim now: one at the head of its queue, not held back and available. Availability alone is not the rule: a command behind a blocking head, a timer before its fire time, and a due-date or reminder timer whose task is completing do not hold the probe. The probe polls the database at short intervals and reads the database clock, so it observes work recorded by any node. It completes with a report of the commands it stopped on, each list ordered by instance and sequence: `deferred` (deferred commands that cannot be claimed yet), `parked`, and `notYetAvailable` (the other pending and claimed commands that cannot be claimed now). `stuck` lists every dead-lettered command and every unsettled command (pending, deferred, claimed or parked) whose first availability is older than `workflow.executor.stuckAfterSeconds`; the first availability of a timer command is its fire time and of any other command the time it was recorded, never its current `availableAt`, which deferral and transient backoff move forward. A command may appear in `stuck` and in the list of its state; settled commands appear in no list. `PendingCommand` (package `dev.vertique.workflow.history`) carries the instance id, sequence, kind, state, `availableAt`, `attempts` and a nullable `lastError`; it never carries a payload.
 
 The future fails with `TimeoutException` when the wait elapses; the message names the instance (or "all instances") and the number of runnable commands left. A non-positive timeout is refused with `IllegalArgumentException`, and a timeout longer than ten minutes is shortened to ten minutes. Each list of the report holds at most 1000 commands, the first in instance and sequence order. Obtain the probe from `WorkflowEngineHandle.executionProbe()` or from the Dagger graph; both come from `vertique-workflow-engine`. A start recorded while no executor runs keeps the probe waiting until an executor runs it.
 
@@ -591,11 +591,59 @@ executor itself is deployed by `vertique-workflow-engine` (see its module refere
 | `workflow.executor.concurrency` | `8` | Segments one instance keeps in flight; 1 to 256, so at most `instances` x `concurrency` per node |
 | `workflow.executor.pollIntervalMs` | `5000` | The pause between two looks for runnable commands, in milliseconds; at least 100 |
 | `workflow.executor.leaseSeconds` | `60` | How long a claim holds a command, in seconds; at least 5. Size it above the longest healthy segment: the execution lock is admitted until two margins before the lease ends and the segment is bounded one margin before it ends, where the margin is a tenth of the lease and at least one second. A segment that cannot finish in about `leaseSeconds` minus a margin after its claim is rolled back |
+| `workflow.executor.maxAttempts` | `5` | The claims of a command that may end by a crash or a lease overrun before it is dead-lettered; at least 1. A transient failure, a busy execution lock and a release never spend an attempt |
+| `workflow.executor.transientBackoffBaseMs` | `200` | The pause before the first retry of a transient failure, in milliseconds; at least 1. Each further failure of the same command doubles it |
+| `workflow.executor.transientBackoffMaxMs` | `30000` | The longest pause before a retry of a transient failure, in milliseconds; at least `transientBackoffBaseMs` |
+| `workflow.executor.maxStepsPerSegment` | `1000` | The nodes one segment may execute without reaching a wait; at least 1. A start that exceeds it fails its instance with the reason `STEP_LIMIT` |
+| `workflow.executor.stuckAfterSeconds` | `300` | How long an unsettled command may wait after it first became available before it is reported stuck, in seconds; at least 1 |
 
 A value outside its bound fails parsing with a `ConfigurationException` naming the full key. The executor's graceful stop
 ends claiming and waits for in-flight segments to commit or reach their own deadline: normally within `leaseSeconds`, longer
 when a statement is stuck in the database. A process killed before its stop completes leaves its claims to lease recovery:
 another executor claims them after the lease ends, and the attempt of each killed claim stays spent.
+
+What becomes of a command whose segment fails depends on the failure:
+
+- A **transient failure** (a lost connection, a timeout, a serialization failure, a deadlock, a lock timeout or an optimistic
+  conflict of the instance) rolls the segment back and reschedules the command with a capped backoff
+  (`transientBackoffBaseMs` doubling per failure of the command up to `transientBackoffMaxMs`). The attempt its claim spent is
+  restored, so an endless transient failure never dead-letters a command; it is reported stuck after `stuckAfterSeconds`.
+- A **deterministic failure** of a start, and a segment that executes more than `maxStepsPerSegment` nodes, roll the segment
+  back and settle the command `FAILED` and fail its instance with the reason. The instance then has no state.
+- A **crash**, or a segment that does not finish before its deadline, leaves the claim to lapse with its lease and spends the
+  attempt. A command that has spent `maxAttempts` attempts is dead-lettered at its next claim and reported stuck; a dead-lettered
+  start also fails its instance.
+- A claim that finds the command's **instance ended** settles the command as rejected, with a history entry, instead of
+  claiming or dead-lettering it, whatever its attempts.
+
+The reason of a failure is stored in the command's `last_error` as `<REASON_CODE>: <message>`, where the code is one of
+`TRANSIENT_FAILURE`, `DETERMINISTIC_FAILURE`, `STEP_LIMIT`, `ATTEMPTS_EXHAUSTED` and `INSTANCE_ENDED`, and the message is
+composed by the framework from the command kind and the counts involved, at most 4000 characters in all. Exception text,
+class names, stack traces, SQL and payload values are never stored; the full exception goes to the executor log only.
+
+### Executor Observer
+
+`WorkflowExecutorObserver` (package `dev.vertique.workflow.executor`) receives the executor's events; `WorkflowCoreModule`
+declares the empty `Set<WorkflowExecutorObserver>` multibinding, to which an application or a bridge module contributes with
+`@Provides @IntoSet`. A factory-built engine takes the set from `WorkflowEngineParts.Builder.executorObservers`.
+
+```java
+public interface WorkflowExecutorObserver {
+    void onEvent(WorkflowExecutorEvent event);
+}
+```
+
+`WorkflowExecutorEvent` is sealed. Its events carry the command kind, an outcome, counts and durations, never an instance id or
+a payload: `CommandSettled(kind, outcome, elapsed)` (outcome `COMPLETE`, `REJECTED`, `FAILED`, `DEAD_LETTERED` and the other
+settled states), `TransientRetry(kind, transientCount)`, `LeaseExpired(kind)` (a claim ended by a crash or a lease overrun and the
+command was claimed again), `QueueSnapshot(available, stuck, parked, deadLettered, notificationQueueUsage)` (sampled at most once a
+second per executor instance, and only while an observer is registered), and the types `CommandDeferred` and `ActorAbsent`,
+which are declared for the executor features that report them. **The set of event types grows additively in later releases, so an
+observer must tolerate an event type it does not know: give its `switch` a `default` arm that ignores the event.**
+
+`onEvent` runs on an event loop outside any database transaction and must not block. The executor calls each observer in its own
+`try`: an exception it throws is caught and logged at warn level with the observer class and the event type, the other observers
+still receive the event, and command execution is unaffected.
 
 `WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
 including stale claims, unavailable code, missing loaders, and plan drift. Asynchronous entrypoints

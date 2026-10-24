@@ -36,6 +36,8 @@ class DefaultWorkflowExecutionProbeTest {
         Mockito.when(commands.findParked(ArgumentMatchers.any())).thenReturn(Future.succeededFuture(List.of()));
         Mockito.when(commands.findNotYetAvailable(ArgumentMatchers.any()))
                 .thenReturn(Future.succeededFuture(List.of()));
+        Mockito.when(commands.findStuck(ArgumentMatchers.any(), ArgumentMatchers.anyLong()))
+                .thenReturn(Future.succeededFuture(List.of()));
         return commands;
     }
 

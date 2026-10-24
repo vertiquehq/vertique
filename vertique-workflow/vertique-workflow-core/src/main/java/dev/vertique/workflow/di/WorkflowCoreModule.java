@@ -12,6 +12,7 @@ import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
+import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.RaceSafetyTargetContributor;
@@ -78,6 +79,15 @@ public abstract class WorkflowCoreModule {
 
     @Multibinds
     abstract Set<PersistedDefinitionLoader> persistedDefinitionLoaders();
+
+    /**
+     * Declares the empty {@code Set<WorkflowExecutorObserver>} multibinding. Applications and bridge modules
+     * contribute observers of the executor's events via {@code @IntoSet}; without any, the executor reports to nobody.
+     *
+     * @return the (initially empty) set of executor observers
+     */
+    @Multibinds
+    abstract Set<WorkflowExecutorObserver> executorObservers();
 
     /**
      * Provides the {@link WorkflowRegistry} populated with all contributed definitions.

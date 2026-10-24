@@ -97,8 +97,10 @@ public final class WorkflowEngineFactory {
         Clock clock = parts.clock();
         DurableContextPropagator propagator = parts.propagator();
         WorkflowExecutionProbe executionProbe = parts.vertx() == null
-                ? new DefaultWorkflowExecutionProbe(parts.commands())
-                : new DefaultWorkflowExecutionProbe(parts.commands(), parts.vertx());
+                ? new DefaultWorkflowExecutionProbe(
+                        parts.commands(), parts.executorConfig().stuckAfterSeconds())
+                : new DefaultWorkflowExecutionProbe(
+                        parts.commands(), parts.vertx(), parts.executorConfig().stuckAfterSeconds());
         PayloadConstraintCheck payloadConstraintCheck = new PayloadConstraintCheck(parts.beanValidator());
         RecorderRouter recorderRouter = new RecorderRouter(parts.recorders(), parts.optionalIntentKinds());
         FingerprintCanonicalizer fingerprintCanonicalizer = new FingerprintCanonicalizer();
@@ -176,7 +178,8 @@ public final class WorkflowEngineFactory {
                 parts.commands(),
                 txRunner,
                 engine.segments(),
-                WorkflowExecutor.newNodeId());
+                WorkflowExecutor.newNodeId(),
+                parts.executorObservers());
         return engine;
     }
 

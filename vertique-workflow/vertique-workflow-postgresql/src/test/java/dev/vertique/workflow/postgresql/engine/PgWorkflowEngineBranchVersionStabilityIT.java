@@ -280,18 +280,17 @@ public class PgWorkflowEngineBranchVersionStabilityIT {
         // The start only records; the first segment creates the branch tasks and fails fast
         WorkflowInstanceId workflowId = recordStartWithoutSubject("no-ref");
 
-        // The executor claimed the command, its segment rolled back, and the claim lapses with its lease
-        awaitCommandState(workflowId, "CLAIMED");
-        Thread.sleep(500);
+        // The executor claimed the command, its segment rolled back, and the failure settled the start and its instance
+        awaitCommandState(workflowId, "FAILED");
         assertEquals(
-                "PENDING",
+                "FAILED",
                 pool.preparedQuery("SELECT status FROM workflow_instances WHERE id = $1")
                         .execute(Tuple.of(workflowId.value()))
                         .map(rs -> rs.iterator().next().getString("status"))
                         .toCompletionStage()
                         .toCompletableFuture()
                         .join(),
-                "the failed first segment must leave the instance pending");
+                "the failed first segment must fail the instance");
         assertEquals(
                 0L,
                 pool.preparedQuery("SELECT count(*) FROM workflow_tasks WHERE workflow_id = $1")

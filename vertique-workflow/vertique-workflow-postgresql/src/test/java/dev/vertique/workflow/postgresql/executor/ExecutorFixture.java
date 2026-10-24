@@ -31,6 +31,8 @@ import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
+import dev.vertique.workflow.events.WorkflowEventIntent;
+import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.engine.PgWorkflowEngineTestSupport;
@@ -105,6 +107,7 @@ final class ExecutorFixture implements AutoCloseable {
     static final String SKELETON = "recorded-skeleton";
     static final String LATE = "recorded-late";
     static final String ATOMIC = "recorded-atomic";
+    static final String LOOP = "recorded-loop";
 
     private static final String CORRELATION_NAMESPACE = "correlation";
     private static final String IDENTITY_NAMESPACE = "identity-snapshot";
@@ -143,6 +146,12 @@ final class ExecutorFixture implements AutoCloseable {
         Future<Void> paid(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
     }
 
+    /** Contract of the workflow whose only decision loops to itself. */
+    interface LoopContract {
+        @WorkflowSignal("paid")
+        Future<Void> paid(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
+    }
+
     /**
      * A correlation identifier in the durable context.
      *
@@ -168,7 +177,11 @@ final class ExecutorFixture implements AutoCloseable {
             @Nullable String claimedBy,
             @Nullable OffsetDateTime leaseUntil,
             @Nullable OffsetDateTime settledAt,
-            @Nullable JsonObject payload) {}
+            @Nullable JsonObject payload,
+            int transientCount,
+            @Nullable String lastError,
+            OffsetDateTime recordedAt,
+            OffsetDateTime availableAt) {}
 
     /** A row of {@code workflow_instances}, as the tests read it. */
     record InstanceRow(
@@ -192,6 +205,9 @@ final class ExecutorFixture implements AutoCloseable {
 
     /** Every service call a recorder received, in arrival order, including those whose transaction rolled back. */
     final List<IntentCall> intentCalls = new CopyOnWriteArrayList<>();
+
+    /** The workflow events the engines' segments emitted, in the order they were recorded. */
+    final List<WorkflowEventIntent> workflowEvents = new CopyOnWriteArrayList<>();
 
     /** The reference of every initial state computed, in order, including those whose transaction rolled back. */
     final List<String> initialStates = new CopyOnWriteArrayList<>();
@@ -251,6 +267,7 @@ final class ExecutorFixture implements AutoCloseable {
                         + " executor_it_outbox CASCADE")
                 .execute());
         intentCalls.clear();
+        workflowEvents.clear();
         initialStates.clear();
         logs.list.clear();
         recorderFailures.set(0);
@@ -314,6 +331,14 @@ final class ExecutorFixture implements AutoCloseable {
         private boolean recordDeadlines;
         private boolean holdFirstDeadlineCall;
         private boolean carryContext;
+        private int poolSize = -1;
+        private int maxAttempts = 5;
+        private long transientBackoffBaseMs = 200;
+        private long transientBackoffMaxMs = 30_000;
+        private int maxStepsPerSegment = 1000;
+        private long stuckAfterSeconds = 300;
+        private Set<WorkflowExecutorObserver> observers = Set.of();
+        private UnaryOperator<WorkflowTransactionRunner<SqlClient>> runnerDecorator = UnaryOperator.identity();
         private UnaryOperator<WorkflowCommandRepository<SqlClient>> commandsDecorator = UnaryOperator.identity();
 
         private NodeSpec(String name) {
@@ -370,24 +395,84 @@ final class ExecutorFixture implements AutoCloseable {
             return this;
         }
 
+        /** The engine's transaction runner is wrapped by the decorator, inside the deadline recording. */
+        NodeSpec runner(UnaryOperator<WorkflowTransactionRunner<SqlClient>> decorator) {
+            this.runnerDecorator = decorator;
+            return this;
+        }
+
+        /** The size of the engine's connection pool, in place of the generous default. */
+        NodeSpec poolSize(int poolSize) {
+            this.poolSize = poolSize;
+            return this;
+        }
+
+        /** The claims a command may spend before it is dead-lettered. */
+        NodeSpec maxAttempts(int maxAttempts) {
+            this.maxAttempts = maxAttempts;
+            return this;
+        }
+
+        /** The backoff of a transient retry: it doubles from the base and is capped at the maximum. */
+        NodeSpec transientBackoffMs(long baseMs, long maxMs) {
+            this.transientBackoffBaseMs = baseMs;
+            this.transientBackoffMaxMs = maxMs;
+            return this;
+        }
+
+        /** The nodes one segment may execute before it is failed. */
+        NodeSpec maxStepsPerSegment(int maxStepsPerSegment) {
+            this.maxStepsPerSegment = maxStepsPerSegment;
+            return this;
+        }
+
+        /** The age after which unsettled work is reported stuck. */
+        NodeSpec stuckAfterSeconds(long stuckAfterSeconds) {
+            this.stuckAfterSeconds = stuckAfterSeconds;
+            return this;
+        }
+
+        /** The observers the engine's executor reports to. */
+        NodeSpec observers(WorkflowExecutorObserver... observers) {
+            this.observers = Set.of(observers);
+            return this;
+        }
+
+        /** The one place that builds the executor configuration of a node. */
+        private WorkflowExecutorConfig executorConfig() {
+            return new WorkflowExecutorConfig(
+                    instances,
+                    concurrency,
+                    pollIntervalMs,
+                    leaseSeconds,
+                    maxAttempts,
+                    transientBackoffBaseMs,
+                    transientBackoffMaxMs,
+                    maxStepsPerSegment,
+                    stuckAfterSeconds);
+        }
+
         Node build() {
             Vertx nodeVertx = ownVertx ? Vertx.vertx(new VertxOptions().setEventLoopPoolSize(2)) : vertx;
-            Pool pool = pool(nodeVertx, Math.max(20, instances * concurrency + 4));
+            Pool pool = pool(nodeVertx, poolSize > 0 ? poolSize : Math.max(20, instances * concurrency + 4));
             DeadlineRecordingRunner[] runnerRef = new DeadlineRecordingRunner[1];
             DefaultWorkflowRegistry registry = newRegistry();
             PgWorkflowEngineTestSupport.ExecutorEngine engine = PgWorkflowEngineTestSupport.executorEngine(
                             pool, nodeVertx, registry)
-                    .recorders(Set.of(new IntentRecorder()))
-                    .executorConfig(new WorkflowExecutorConfig(instances, concurrency, pollIntervalMs, leaseSeconds))
+                    .recorders(Set.of(new IntentRecorder(), new EventRecorder()))
+                    .executorConfig(executorConfig())
+                    .executorObservers(observers)
                     .commandsDecorator(commandsDecorator);
             if (carryContext) {
                 engine.propagator(propagator);
             }
             if (recordDeadlines) {
                 engine.runnerDecorator(delegate -> {
-                    runnerRef[0] = new DeadlineRecordingRunner(delegate, holdFirstDeadlineCall);
+                    runnerRef[0] = new DeadlineRecordingRunner(runnerDecorator.apply(delegate), holdFirstDeadlineCall);
                     return runnerRef[0];
                 });
+            } else {
+                engine.runnerDecorator(runnerDecorator);
             }
             WorkflowEngineHandle handle = engine.build();
             Node node = new Node(name, nodeVertx, ownVertx, pool, handle, runnerRef[0]);
@@ -475,7 +560,8 @@ final class ExecutorFixture implements AutoCloseable {
         List<CommandRow> commands = new ArrayList<>();
         for (Row row : await(observer.preparedQuery(
                         "SELECT id, seq, kind, state, attempts, claim_token, claimed_by, lease_until, settled_at,"
-                                + " payload_json FROM workflow_commands WHERE workflow_id = $1 ORDER BY seq")
+                                + " payload_json, transient_count, last_error, recorded_at, available_at"
+                                + " FROM workflow_commands WHERE workflow_id = $1 ORDER BY seq")
                 .execute(Tuple.of(id.value())))) {
             commands.add(new CommandRow(
                     row.getLong("id"),
@@ -487,7 +573,11 @@ final class ExecutorFixture implements AutoCloseable {
                     row.getString("claimed_by"),
                     row.getOffsetDateTime("lease_until"),
                     row.getOffsetDateTime("settled_at"),
-                    (JsonObject) row.getValue("payload_json")));
+                    (JsonObject) row.getValue("payload_json"),
+                    row.getInteger("transient_count"),
+                    row.getString("last_error"),
+                    row.getOffsetDateTime("recorded_at"),
+                    row.getOffsetDateTime("available_at")));
         }
         return commands;
     }
@@ -587,6 +677,107 @@ final class ExecutorFixture implements AutoCloseable {
         return new HeldLock(connection, transaction);
     }
 
+    /**
+     * Takes the instance's execution lock in a transaction of the test, without blocking the calling thread.
+     *
+     * @param id the instance
+     * @return a future of the held lock
+     */
+    Future<HeldLock> holdExecutionLockAsync(WorkflowInstanceId id) {
+        int[] key = ExecutionLock.keyOf(id);
+        return observer.getConnection().compose(connection -> connection.begin().compose(transaction -> connection
+                .preparedQuery("SELECT pg_advisory_xact_lock($1::int4, $2::int4)")
+                .execute(Tuple.of(key[0], key[1]))
+                .map(ignored -> new HeldLock(connection, transaction))));
+    }
+
+    /** Whether the lease of the instance's only command has ended by the database clock. */
+    boolean leaseExpired(WorkflowInstanceId id) {
+        return await(observer.preparedQuery("SELECT bool_and(lease_until IS NULL OR lease_until < clock_timestamp())"
+                                + " FROM workflow_commands WHERE workflow_id = $1")
+                        .execute(Tuple.of(id.value())))
+                .iterator()
+                .next()
+                .getBoolean(0);
+    }
+
+    /** The number of advisory locks that some backend waits for. */
+    long ungrantedAdvisoryLocks() {
+        return await(observer.query("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted")
+                        .execute())
+                .iterator()
+                .next()
+                .getLong(0);
+    }
+
+    /** The database clock now. */
+    OffsetDateTime databaseNow() {
+        return await(observer.query("SELECT clock_timestamp()").execute())
+                .iterator()
+                .next()
+                .getOffsetDateTime(0);
+    }
+
+    /**
+     * Whether the code is recorded as the reason of the instance: on the instance row or in one of its history
+     * entries.
+     */
+    boolean reasonRecorded(WorkflowInstanceId id, String code) {
+        return await(observer.preparedQuery("SELECT position($2 IN COALESCE(i.error_type, '') || ' '"
+                                + " || COALESCE(i.error_message, '')) > 0 OR EXISTS (SELECT 1 FROM workflow_history h"
+                                + " WHERE h.workflow_id = i.id AND position($2 IN h.payload_json::text) > 0)"
+                                + " FROM workflow_instances i WHERE i.id = $1")
+                        .execute(Tuple.of(id.value(), code)))
+                .iterator()
+                .next()
+                .getBoolean(0);
+    }
+
+    /** The history entries of the instance as one text per entry: its type and payload. */
+    List<String> historyTextsOf(WorkflowInstanceId id) {
+        List<String> texts = new ArrayList<>();
+        for (Row row : await(observer.preparedQuery("SELECT entry_type || ' ' || payload_json::text || ' '"
+                        + " || COALESCE(outcome, '') FROM workflow_history WHERE workflow_id = $1"
+                        + " ORDER BY sequence")
+                .execute(Tuple.of(id.value())))) {
+            texts.add(row.getString(0));
+        }
+        return texts;
+    }
+
+    /**
+     * Ends the instance as another command's segment would: under the execution lock it writes a settled command at
+     * the end of the queue, sets the instance {@code COMPLETED} and writes the history entry of the end.
+     *
+     * @param id the instance
+     */
+    void endInstanceThroughFixtureCommand(WorkflowInstanceId id) {
+        int[] key = ExecutionLock.keyOf(id);
+        await(observer.withTransaction(connection -> connection
+                .preparedQuery("SELECT pg_advisory_xact_lock($1::int4, $2::int4)")
+                .execute(Tuple.of(key[0], key[1]))
+                .compose(ignored -> connection
+                        .preparedQuery("INSERT INTO workflow_commands (workflow_id, seq, kind, state, recorded_at,"
+                                + " available_at, settled_at) SELECT $1, COALESCE(MAX(seq), 0) + 1, 'SIGNAL',"
+                                + " 'COMPLETE', clock_timestamp(), clock_timestamp(), clock_timestamp()"
+                                + " FROM workflow_commands WHERE workflow_id = $1")
+                        .execute(Tuple.of(id.value())))
+                .compose(ignored -> connection
+                        .preparedQuery("UPDATE workflow_command_queues SET next_seq = next_seq + 1"
+                                + " WHERE workflow_id = $1")
+                        .execute(Tuple.of(id.value())))
+                .compose(ignored -> connection
+                        .preparedQuery("UPDATE workflow_instances SET status = 'COMPLETED',"
+                                + " completed_at = clock_timestamp() WHERE id = $1")
+                        .execute(Tuple.of(id.value())))
+                .compose(ignored -> connection
+                        .preparedQuery("INSERT INTO workflow_history (workflow_id, sequence, entry_type, payload_json)"
+                                + " SELECT $1, COALESCE(MAX(sequence), 0) + 1, 'COMPLETED', '{}'::jsonb"
+                                + " FROM workflow_history WHERE workflow_id = $1")
+                        .execute(Tuple.of(id.value())))
+                .mapEmpty()));
+    }
+
     /** A transaction of the test that holds an execution lock until released. */
     static final class HeldLock implements AutoCloseable {
         private final SqlConnection connection;
@@ -656,6 +847,7 @@ final class ExecutorFixture implements AutoCloseable {
         registry.register(skeleton());
         registry.register(late());
         registry.register(atomic());
+        registry.register(loop());
         return registry;
     }
 
@@ -720,6 +912,13 @@ final class ExecutorFixture implements AutoCloseable {
                     .decide("second", state -> "charge-1")
                     .dispatch("charge-1", "charge.service", ExecutorFixture::payloadOf, "charge-2")
                     .dispatch("charge-2", "charge.service", ExecutorFixture::payloadOf, "paid");
+            paidWait(wf);
+        });
+    }
+
+    private WorkflowDefinition<FlowState, LoopContract> loop() {
+        return new Def<>(LOOP, LoopContract.class, wf -> {
+            init(wf).initialStep("again").decide("again", state -> "again");
             paidWait(wf);
         });
     }
@@ -811,6 +1010,21 @@ final class ExecutorFixture implements AutoCloseable {
                         }
                         return Future.<RecorderResult>succeededFuture(RecorderResult.empty());
                     });
+        }
+    }
+
+    /** Collects the workflow events of every segment; the events join the segment's transaction like any intent. */
+    private final class EventRecorder implements WorkflowSideEffectRecorder<SqlClient> {
+
+        @Override
+        public IntentKind kind() {
+            return IntentKind.WORKFLOW_EVENT;
+        }
+
+        @Override
+        public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
+            workflowEvents.add((WorkflowEventIntent) intent.payload());
+            return Future.succeededFuture(RecorderResult.empty());
         }
     }
 

@@ -234,10 +234,10 @@ and returns the engine as a `WorkflowEngineHandle`.
 release can add a part without breaking a caller. One setter per part, named like its accessor: `txRunner`, `registry`,
 `definitionStore`, `instances`, `history`, `dedup`, `branchTokens`, `joinStates`, `timerStore`, `taskStore`, `commands`, `clock`,
 `recorders`, `optionalIntentKinds`, `migrationRegistry`, `propagator`, `inboundContextInitializers`, `beanValidator`,
-`typeNames`, `stateCompatibility`, `executorConfig` and `vertx`. `build()` throws a `NullPointerException` that names the first required part
+`typeNames`, `stateCompatibility`, `executorConfig`, `executorObservers` and `vertx`. `build()` throws a `NullPointerException` that names the first required part
 that is missing. Required: the repositories and stores (including the command repository, `commands`), the registry, the **definition store**, the type-name index and the
 clock. Defaulted: `recorders` and `inboundContextInitializers` to empty sets, `optionalIntentKinds` to
-`DEFAULT_OPTIONAL_INTENT_KINDS`, `executorConfig` to `WorkflowExecutorConfig.defaults()`, and `migrationRegistry`,
+`DEFAULT_OPTIONAL_INTENT_KINDS`, `executorConfig` to `WorkflowExecutorConfig.defaults()`, `executorObservers` to an empty set (the observers of the executor's events, see the executor observer in `vertique-workflow-core`), and `migrationRegistry`,
 `beanValidator` and `stateCompatibility` to empty. `vertx` may be `null`; the executor of such an engine cannot be started. The
 `propagator` may be `null`. The `typeNames` index is the one the registry fills (`DefaultWorkflowRegistry#typeNames()`);
 with a different index a decision payload name resolves as a binary class name only. An empty `beanValidator` leaves
@@ -689,7 +689,7 @@ History entries appended during a bound drive may additionally record `commandCo
 `WorkflowExecutionProbe` (public, in `vertique-workflow-core`) waits until recorded work has run. The engine implements it as
 `DefaultWorkflowExecutionProbe` over the read members of `WorkflowCommandRepository`: it polls the count of runnable
 commands until it is zero or the timeout elapses, then reads the report. It pauses 25 ms after the first read and longer after each
-following one, up to 250 ms; a timeout beyond ten minutes is shortened to ten minutes; each list of the report holds at most 1000 commands. A factory-built engine exposes
+following one, up to 250 ms; a timeout beyond ten minutes is shortened to ten minutes; each list of the report holds at most 1000 commands. Its `stuck` list is read with the configured `workflow.executor.stuckAfterSeconds` (300 s for a probe built without a configuration): every dead-lettered command and every unsettled command first available longer ago than that. A factory-built engine exposes
 it as `WorkflowEngineHandle.executionProbe()`; a Dagger graph provides it from `WorkflowEngineModule`. The adapter module must
 bind `WorkflowCommandRepository<SqlClient>`.
 
@@ -720,11 +720,40 @@ The margin is a tenth of the lease and at least one second. Instances coordinate
 The segment carries a deadline one margin before the lease ends, measured from a monotonic reading taken before the claim
 was sent, and passed to the runner as the transaction deadline of `vertique-db`. A segment whose work has not completed by
 then rolls back and its claim lapses at the end of its lease, so another executor claims the command after that (the attempt
-stays spent); work that completed before the deadline commits even when the commit ends after it. Any other failure of a
-segment also rolls back, is logged at error level with the exception class only (never a payload), and leaves the claim to
-lapse. A peek, claim or segment start that throws, returns no future or fails never ends the loop: the failure is logged at
+stays spent, exactly as after a crash); work that completed before the deadline commits even when the commit ends after it. A
+peek, claim or segment start that throws, returns no future or fails never ends the loop: the failure is logged at
 warn level and the next pass is scheduled. A peeked
 command whose plan this node cannot resolve is skipped and logged at debug level; it is peeked again on the next pass.
+
+**Failed segments.** The executor reads a failure as the transaction runner returns it, after both of its mapping stages, and
+disposes of it in this order:
+
+1. The deadline overrun (`TransactionDeadlineExceededException`, as the failure or its cause) is the crash-like outcome above:
+   no disposition, the attempt stays spent, logged at debug level only.
+2. A **transient failure** (a retryable `WorkflowPersistenceException`: connection, timeout, deadlock, lock timeout; a
+   `WorkflowConflictException` itself, an optimistic conflict; the database-layer equivalents) reschedules the command in one
+   transaction that locks only the command row: `PENDING`, the attempt restored, `transient_count` + 1, `available_at` =
+   now + the backoff (`transientBackoffBaseMs` doubled per failure, capped at `transientBackoffMaxMs`), token cleared and
+   `last_error` set. It is retried until the lease ends, and reported to observers as `TransientRetry`.
+3. A step-limit overrun (`StepLimitExceededException`: the segment executed more than `maxStepsPerSegment` nodes without a wait;
+   the transition driver counts every node on the segment's transaction handle) and any other failure roll back the segment
+   and fail the command: one transaction of its own, `PgWorkflowCommandRepository.failCommand`, tries the execution lock
+   without waiting, locks the command row, writes only while the command is still `CLAIMED` with this token, settles it `FAILED`
+   and, for a `START`, fails the instance (no state) with a `FAILED` history entry and a `WORKFLOW_FAILED` event (`errorType` the reason code, `errorMessage` the sanitized text), emitted through the engine's event recorders in the same transaction like the event of a fail node; a dead-lettered `START` emits it the same way from its claim. A busy lock is retried every 100 ms until one
+   margin before the lease ends, then the claim is released with its attempt restored (the failure recurs on the next claim). A
+   settled command has no token, so a late disposition writes nothing.
+
+No executor connection ever waits on an execution lock. The claim itself checks, in this order: an ended instance settles the
+command as rejected with a history entry (no attempt spent, never dead-lettered, the instance unchanged); otherwise a command
+that has spent `maxAttempts` attempts is dead-lettered with its attempts unchanged (a `START` also fails its instance); otherwise
+the claim spends an attempt. A peek routes a command whose instance has ended to the claim without making any plan resident.
+The command's `last_error` is built by `CommandErrors` (`<REASON_CODE>: <message>`, at most 4000 characters, framework-composed
+text that names only the kind, the cap or the counts); exception text and payloads go to the log only.
+
+**Observers.** The executor reports `CommandSettled`, `TransientRetry`, `LeaseExpired` and `QueueSnapshot` events to the
+`Set<WorkflowExecutorObserver>` it is built with (empty unless contributed; see `vertique-workflow-core`). Each observer runs in its
+own `try`, and a throwing observer is logged at warn level and affects nothing. A `QueueSnapshot` is read at most once per second
+per executor instance and only while an observer is registered.
 
 The deployment has no supervision and no liveness check: a crashed process leaves its claims to lease recovery, and process
 health comes from the platform's database liveness check and the runtime's restart policy.
@@ -780,7 +809,7 @@ parameterized over `<TX>` (typically `SqlClient`):
 | `BranchTokenRepository<TX>` | Fork/join branch token CRUD, status queries, and recovery queries |
 | `JoinStateRepository<TX>` | Fork/join state insert, read variants, open-for-workflow list, and the optimistic `decide` CAS |
 | `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping. The client it hands the work is a `SqlConnection` whose `transaction()` reports the underlying pending transaction; the deadline-guarded connection of `vertique-db` meets that. Its internal overload `inTransaction(level, deadline, work)` bounds the transaction (the executor's segment deadline) and returns `TransactionDeadlineExceededException` unchanged; the default fails with `UnsupportedOperationException` without running the work |
-| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked and not-yet-available commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock. The executor's members: `recordStart` inserts a `START` command in the caller's transaction; `peek(limit)` reads the claimable heads without locks; `claim(head, claimedBy, leaseSeconds)` is one self-contained transaction that tries the lock, locks the row and checks `claimable` again; `fence`, `complete` and `reject` run in the segment's transaction, fenced on the command being `CLAIMED` with the claim's token (`complete` and `reject` return the number of rows updated, and `0` means the claim no longer stands); `release` returns a claim whose segment did not run to `PENDING` with its attempt restored, in one statement that takes no lock |
+| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked, not-yet-available and stuck commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock. The executor's members: `recordStart` inserts a `START` command in the caller's transaction; `peek(limit)` reads the claimable heads without locks; `claim(head, claimedBy, leaseSeconds, maxAttempts)` is one self-contained transaction that tries the lock, locks the row, checks `claimable` again and settles an ended instance's command, dead-letters a command that spent `maxAttempts`, or claims (the three-argument overload never dead-letters); `retryTransient` and `failCommand` are the dispositions of a failed segment (the first locks only the command row, the second tries the execution lock in a transaction of its own); `findStuck` and `countQueue` read the stuck report and the queue snapshot; `fence`, `complete` and `reject` run in the segment's transaction, fenced on the command being `CLAIMED` with the claim's token (`complete` and `reject` return the number of rows updated, and `0` means the claim no longer stands); `release` returns a claim whose segment did not run to `PENDING` with its attempt restored, in one statement that takes no lock |
 
 The adapter also provides:
 - A `WorkflowRecoveryBridge` is already bound by `WorkflowEngineModule`; no adapter re-binding needed.

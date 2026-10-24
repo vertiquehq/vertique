@@ -13,23 +13,32 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.CommandRow;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.InstanceRow;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.Node;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.internal.ContextInternal;
+import io.vertx.sqlclient.SqlClient;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.UnaryOperator;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -57,7 +66,14 @@ class ExecutorInstancesIT {
         try (ExecutorFixture fixture = ExecutorFixture.open(db.toPoolConfig())) {
             // Given a Vert.x with several event loops, one engine with two executor instances of concurrency one, and
             // an initial-state callback that records its thread and whether it runs on an event-loop context
-            Node node = fixture.node("engine").instances(2).concurrency(1).build();
+            // and a gate that returns no claim to its segment until both instances hold one, so that neither can finish
+            // its work before the other has taken a command
+            ClaimGate gate = new ClaimGate(2);
+            Node node = fixture.node("engine")
+                    .instances(2)
+                    .concurrency(1)
+                    .commands(gate.decorator())
+                    .build();
             ConcurrentMap<String, Seen> seen = new ConcurrentHashMap<>();
             fixture.onInitialState = ref -> seen.put(
                     ref,
@@ -270,4 +286,60 @@ class ExecutorInstancesIT {
 
     /** What an initial-state callback saw of the thread it ran on. */
     private record Seen(String thread, boolean eventLoop) {}
+
+    /**
+     * Holds the result of every successful claim until the given number of distinct claimants have each claimed a
+     * command, then lets all of them go and passes every later claim straight through. Which instance wins which
+     * command is left to the database, but every instance takes part.
+     */
+    private static final class ClaimGate {
+        private final int claimants;
+        private final Set<String> seen = new HashSet<>();
+        private final List<Promise<Void>> held = new ArrayList<>();
+        private boolean open;
+
+        ClaimGate(int claimants) {
+            this.claimants = claimants;
+        }
+
+        @SuppressWarnings("unchecked")
+        UnaryOperator<WorkflowCommandRepository<SqlClient>> decorator() {
+            return real -> (WorkflowCommandRepository<SqlClient>) Proxy.newProxyInstance(
+                    WorkflowCommandRepository.class.getClassLoader(),
+                    new Class<?>[] {WorkflowCommandRepository.class},
+                    (proxy, method, arguments) -> {
+                        Object result;
+                        try {
+                            result = method.invoke(real, arguments);
+                        } catch (InvocationTargetException e) {
+                            throw e.getCause();
+                        }
+                        if (!method.getName().equals("claim")) {
+                            return result;
+                        }
+                        String claimant = (String) arguments[1];
+                        return ((Future<Optional<ClaimedCommand>>) result)
+                                .compose(claimed -> claimed.isPresent()
+                                        ? hold(claimant, claimed)
+                                        : Future.succeededFuture(claimed));
+                    });
+        }
+
+        private <T> Future<T> hold(String claimant, T result) {
+            Promise<Void> promise;
+            synchronized (this) {
+                seen.add(claimant);
+                if (open || seen.size() >= claimants) {
+                    open = true;
+                    List<Promise<Void>> release = new ArrayList<>(held);
+                    held.clear();
+                    release.forEach(Promise::tryComplete);
+                    return Future.succeededFuture(result);
+                }
+                promise = ((ContextInternal) Vertx.currentContext()).promise();
+                held.add(promise);
+            }
+            return promise.future().map(result);
+        }
+    }
 }

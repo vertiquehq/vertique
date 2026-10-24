@@ -358,8 +358,8 @@ class PgWorkflowEngineSubjectResolverIT {
     }
 
     @Test
-    @DisplayName("Resolver returns null → the first segment fails and rolls back; the instance stays PENDING")
-    void resolverReturnsNull_segmentFailsAndInstanceStaysPending() throws Exception {
+    @DisplayName("Resolver returns null → the first segment fails and rolls back; the start and the instance fail")
+    void resolverReturnsNull_segmentFailsAndInstanceFails() throws Exception {
         // articleId=null causes the resolver in WITH_RESOLVER_DEF to return null.
         StartCommand cmd = new StartCommand(
                 "subj-test-with-resolver",
@@ -379,19 +379,18 @@ class PgWorkflowEngineSubjectResolverIT {
         // The executor claims the command and its segment fails on the resolver
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         String commandState = "PENDING";
-        while (System.nanoTime() < deadline && !"CLAIMED".equals(commandState)) {
+        while (System.nanoTime() < deadline && !"FAILED".equals(commandState)) {
             commandState = commandState(id);
             Thread.sleep(50);
         }
-        Thread.sleep(500);
 
-        // Then nothing of the segment committed: no state, no subject, no history entry
+        // Then nothing of the segment committed: no state, no subject, and the only history entry is the failure
         WorkflowInstance instance = instanceOf(id);
-        assertEquals(WorkflowStatus.PENDING, instance.status());
+        assertEquals(WorkflowStatus.FAILED, instance.status());
         assertNull(instance.stateJson());
         assertNull(instance.subjectRef());
-        assertEquals("CLAIMED", commandState(id), "the failed segment leaves its claim to lapse");
-        assertEquals(0L, historyEntries(id), "the failed segment leaves no history entry");
+        assertEquals("FAILED", commandState(id), "the failed segment settles its command as failed");
+        assertEquals(1L, historyEntries(id), "the failed segment leaves only the entry of the failure");
     }
 
     @Test

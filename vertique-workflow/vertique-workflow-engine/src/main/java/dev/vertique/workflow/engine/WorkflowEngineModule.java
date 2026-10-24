@@ -20,6 +20,7 @@ import dev.vertique.workflow.engine.executor.WorkflowExecutor;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
@@ -108,13 +109,19 @@ public abstract class WorkflowEngineModule {
      *
      * @param commands the command repository
      * @param vertx    the optional Vert.x instance
+     * @param config   the executor configuration, or empty for the defaults; its stuck age applies to the report
      * @return the probe
      */
     @Provides
     @Singleton
-    static WorkflowExecutionProbe executionProbe(WorkflowCommandRepository<SqlClient> commands, Optional<Vertx> vertx) {
-        return vertx.map(instance -> new DefaultWorkflowExecutionProbe(commands, instance))
-                .orElseGet(() -> new DefaultWorkflowExecutionProbe(commands));
+    static WorkflowExecutionProbe executionProbe(
+            WorkflowCommandRepository<SqlClient> commands,
+            Optional<Vertx> vertx,
+            Optional<WorkflowExecutorConfig> config) {
+        long stuckAfterSeconds =
+                config.orElseGet(WorkflowExecutorConfig::defaults).stuckAfterSeconds();
+        return vertx.map(instance -> new DefaultWorkflowExecutionProbe(commands, instance, stuckAfterSeconds))
+                .orElseGet(() -> new DefaultWorkflowExecutionProbe(commands, stuckAfterSeconds));
     }
 
     /**
@@ -140,6 +147,26 @@ public abstract class WorkflowEngineModule {
                     SqlClient tx) {
                 return engine.get().segments().run(head, claim, command, tx);
             }
+
+            @Override
+            public io.vertx.core.Future<Outcome> run(
+                    dev.vertique.workflow.engine.spi.CommandHead head,
+                    dev.vertique.workflow.engine.spi.ClaimedCommand claim,
+                    dev.vertique.workflow.engine.spi.SegmentCommand command,
+                    SqlClient tx,
+                    int maxSteps) {
+                return engine.get().segments().run(head, claim, command, tx, maxSteps);
+            }
+
+            @Override
+            public io.vertx.core.Future<Void> instanceFailed(
+                    dev.vertique.workflow.ops.WorkflowInstanceId instance,
+                    long historySequence,
+                    String reasonCode,
+                    String message,
+                    SqlClient tx) {
+                return engine.get().segments().instanceFailed(instance, historySequence, reasonCode, message, tx);
+            }
         };
     }
 
@@ -152,6 +179,7 @@ public abstract class WorkflowEngineModule {
      * @param commands the command repository
      * @param runner   the transaction runner segments run through
      * @param segments the engine's side of a segment
+     * @param observers the observers of the executor's events; empty unless the application contributes some
      * @return the executor
      */
     @Provides
@@ -161,14 +189,16 @@ public abstract class WorkflowEngineModule {
             Optional<Vertx> vertx,
             WorkflowCommandRepository<SqlClient> commands,
             WorkflowTransactionRunner<SqlClient> runner,
-            WorkflowSegments segments) {
+            WorkflowSegments segments,
+            Set<WorkflowExecutorObserver> observers) {
         return new WorkflowExecutor(
                 vertx.orElse(null),
                 config.orElseGet(WorkflowExecutorConfig::defaults),
                 commands,
                 runner,
                 segments,
-                WorkflowExecutor.newNodeId());
+                WorkflowExecutor.newNodeId(),
+                observers);
     }
 
     /**

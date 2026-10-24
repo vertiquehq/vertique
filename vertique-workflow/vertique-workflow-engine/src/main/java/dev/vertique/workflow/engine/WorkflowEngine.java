@@ -1039,9 +1039,56 @@ final class WorkflowEngine implements WorkflowEngineHandle {
 
             @Override
             public Future<Outcome> run(CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
-                return runSegment(head, claim, command, tx);
+                return runSegment(head, claim, command, tx, Integer.MAX_VALUE);
+            }
+
+            @Override
+            public Future<Outcome> run(
+                    CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
+                return runSegment(head, claim, command, tx, maxSteps);
+            }
+
+            @Override
+            public Future<Void> instanceFailed(
+                    WorkflowInstanceId instance,
+                    long historySequence,
+                    String reasonCode,
+                    String message,
+                    SqlClient tx) {
+                return emitInstanceFailed(instance, historySequence, reasonCode, message, tx);
             }
         };
+    }
+
+    /**
+     * Emits {@code WORKFLOW_FAILED} for an instance that the executor failed on behalf of a command, in the same
+     * transaction and the way a fail node does. The event's step is the plan's initial step when the pin still
+     * resolves, and {@code start} otherwise: an instance that failed before its first step has no current step.
+     */
+    private Future<Void> emitInstanceFailed(
+            WorkflowInstanceId id, long historySequence, String reasonCode, String message, SqlClient tx) {
+        return instances.findById(id, tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.succeededFuture();
+            }
+            WorkflowInstance inst = found.get();
+            String stepId = inst.currentStepId();
+            if (stepId == null) {
+                try {
+                    stepId = PinnedPlans.resolve(registry, inst).plan().initialStepId();
+                } catch (RuntimeException e) {
+                    stepId = "start";
+                }
+            }
+            return eventEmitter.emitEvent(
+                    inst,
+                    WorkflowEventType.WORKFLOW_FAILED,
+                    historySequence,
+                    null,
+                    stepId,
+                    WorkflowEventEmitter.attrs("errorType", reasonCode, "errorMessage", message),
+                    tx);
+        });
     }
 
     /**
@@ -1063,7 +1110,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
 
     /** Runs a fenced command's work in the segment's transaction. Only {@code START} exists at this point. */
     private Future<WorkflowSegments.Outcome> runSegment(
-            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
         if (!"START".equals(command.kind())) {
             return Future.failedFuture(
                     new IllegalStateException("The executor cannot run a command of kind " + command.kind()));
@@ -1090,8 +1137,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             } catch (Exception e) {
                 return Future.failedFuture(e);
             }
-            return contextBinder
-                    .withBound(inst, null, () -> startSegment(inst, rw, claim, command, tx))
+            return driver.withStepCap(
+                            tx,
+                            maxSteps,
+                            () -> contextBinder.withBound(inst, null, () -> startSegment(inst, rw, claim, command, tx)))
                     .map(v -> WorkflowSegments.Outcome.APPLIED);
         });
     }

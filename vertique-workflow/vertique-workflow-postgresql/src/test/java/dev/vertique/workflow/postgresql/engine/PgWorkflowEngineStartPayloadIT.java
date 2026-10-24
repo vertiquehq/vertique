@@ -357,8 +357,8 @@ public class PgWorkflowEngineStartPayloadIT {
     }
 
     @Test
-    @DisplayName("an initialState throw fails the first segment, not the start, and leaves the instance pending")
-    void initialStateThrowFailsTheFirstSegmentAndLeavesTheInstancePending() throws Exception {
+    @DisplayName("an initialState throw fails the first segment, not the start, and fails the instance")
+    void initialStateThrowFailsTheFirstSegmentAndTheInstance() throws Exception {
         // Given: a start whose initial-state function throws for a valid payload, and a capture of the warnings
         logs = CapturedLogs.attach(Level.WARN);
         String key = "idem-" + UUID.randomUUID();
@@ -387,9 +387,9 @@ public class PgWorkflowEngineStartPayloadIT {
                 warning.getFormattedMessage().contains(INITIALIZER_SENTINEL),
                 "the warning must not copy the application exception message");
 
-        // And: nothing of the segment committed, so the instance is still pending without a state
+        // And: nothing of the segment committed, so the failed instance has no state
         assertEquals(
-                "PENDING",
+                "FAILED",
                 pool.preparedQuery("SELECT status FROM workflow_instances WHERE id = $1")
                         .execute(Tuple.of(id.value()))
                         .map(rs -> rs.iterator().next().getString("status"))

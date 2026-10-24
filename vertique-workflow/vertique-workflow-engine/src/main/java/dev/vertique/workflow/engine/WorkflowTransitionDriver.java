@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.executor.StepLimitExceededException;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.events.WorkflowEventType;
@@ -43,9 +44,12 @@ import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Package-private collaborator owning the core state-machine transition driver.
@@ -123,6 +127,26 @@ final class WorkflowTransitionDriver {
     private final Provider<TaskLifecycleService> taskPvd;
 
     /**
+     * The step counters of the segments that run with a step cap, keyed by the segment's transaction handle by
+     * identity. A drive on a handle with no counter is not capped.
+     */
+    private final Map<SqlClient, StepCounter> stepCounters = Collections.synchronizedMap(new IdentityHashMap<>());
+
+    /** Counts the nodes one segment executes against its cap. */
+    private static final class StepCounter {
+        private final int cap;
+        private int steps;
+
+        StepCounter(int cap) {
+            this.cap = cap;
+        }
+
+        boolean overrun() {
+            return ++steps > cap;
+        }
+    }
+
+    /**
      * Constructs a new transition driver.
      *
      * @param instances the instance repository used for optimistic-concurrency state transitions
@@ -187,6 +211,32 @@ final class WorkflowTransitionDriver {
     }
 
     /**
+     * Runs a segment's work with a cap on the nodes it executes: every node the driver steps through on the
+     * segment's transaction handle counts, and the node past the cap fails with a {@link StepLimitExceededException}.
+     * The counter is dropped when the work completes.
+     *
+     * @param tx   the segment's transaction handle
+     * @param cap  the most nodes the segment may execute; {@link Integer#MAX_VALUE} for no cap
+     * @param work the segment's work
+     * @param <T>  the result type of the work
+     * @return the future of the work
+     */
+    <T> Future<T> withStepCap(SqlClient tx, int cap, Supplier<Future<T>> work) {
+        if (cap == Integer.MAX_VALUE) {
+            return work.get();
+        }
+        stepCounters.put(tx, new StepCounter(cap));
+        Future<T> result;
+        try {
+            result = work.get();
+        } catch (RuntimeException e) {
+            stepCounters.remove(tx);
+            throw e;
+        }
+        return result.onComplete(ignored -> stepCounters.remove(tx));
+    }
+
+    /**
      * Executes one step of the state machine, then recurses via {@code Future.compose} for
      * non-terminal, non-waiting transitions.
      *
@@ -200,6 +250,10 @@ final class WorkflowTransitionDriver {
      * @return a {@link Future} that completes when the engine settles
      */
     Future<Void> driveTransitionsStep(WorkflowInstance inst, RuntimeWorkflow rw, SqlClient tx) {
+        StepCounter counter = stepCounters.get(tx);
+        if (counter != null && counter.overrun()) {
+            return Future.failedFuture(new StepLimitExceededException(counter.cap));
+        }
         WorkflowNode node = rw.nodeById().get(inst.currentStepId());
         if (node == null) {
             return Future.failedFuture(new WorkflowDefinitionException(
