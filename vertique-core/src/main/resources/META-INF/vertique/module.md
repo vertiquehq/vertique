@@ -143,19 +143,24 @@ can be read back. The five context-producing SPIs carry the same bound on their 
 parameter. The holder implementation and the encoder/decoder registries ship in
 `dev.vertique:vertique-context`.
 
-### Scope keys
+### Scope vocabulary
 
-`ScopeKey` is an immutable partition name in `dev.vertique.core.scope`. Applications use it to name
-a data or execution partition — a tenant, project, workspace, or organization supplies the meaning.
-The canonical constructor rejects `null` with `NullPointerException` and other invalid text with
+`ScopeKey` and `ScopeContext` live in `dev.vertique.core.scope`. Applications use a key to name a
+data or execution partition — a tenant, project, workspace, or organization supplies the meaning.
+The key constructor rejects `null` with `NullPointerException` and other invalid text with
 `IllegalArgumentException`. A valid key has 1–255 Unicode code points, no ISO controls, no unpaired
 surrogate, no format character, at least one non-whitespace code point, and no leading or trailing
 whitespace (`Character.isWhitespace` or `Character.isSpaceChar`). Internal whitespace other than
 controls (including U+00A0, U+2028, and U+2029) is accepted. Construction preserves the exact
 string; equality uses that exact text. `ScopeKey.DEFAULT` equals `new ScopeKey("default")` and
-names an ordinary partition — it confers no privilege, fallback, or automatic binding. A key
-asserts no trust or access; values are not neutralized for logging, so consumers encode them for
-their sink. Declaring or constructing a key installs no runtime, codec, or ambient state.
+names an ordinary partition — it confers no privilege, fallback, or automatic binding.
+
+`ScopeContext` wraps one non-null `ScopeKey` and implements `ContextValue`, so callers may bind it
+explicitly through the existing holder API. Construction installs no ambient state, codec, or
+adapter; a missing context stays absent. Existing generic snapshots still retain explicitly bound
+immutable values by reference when no adapter is registered — this vocabulary neither suppresses
+that behavior nor adds a propagation seam. Neither type asserts trust or access; key text is not
+neutralized for logging, so consumers encode values for their sink.
 
 ---
 
@@ -411,16 +416,19 @@ The resilience annotation vocabulary and its declaration metadata are provided b
 applications using `@Retry`, `@Timeout`, or `@CircuitBreaker` should depend on the resilience module
 directly or through the module that enforces those declarations.
 
-### `ScopeKey`
+### `ScopeKey` and `ScopeContext`
 
 ```java
 public record ScopeKey(String value) {
     public static final ScopeKey DEFAULT;   // equal to new ScopeKey("default")
 }
+
+public record ScopeContext(ScopeKey scopeKey) implements ContextValue {}
 ```
 
-Validated exact-identity partition name. See [Scope keys](#scope-keys). `system` is an ordinary
-accepted value, not a special variant.
+Validated exact-identity partition name and its holder-eligible composition. See
+[Scope vocabulary](#scope-vocabulary). `system` is an ordinary accepted key, not a special variant.
+`ScopeKey` itself does not implement `ContextValue`.
 
 ### `CorrelationContext`
 
@@ -1033,18 +1041,22 @@ bounded `<T extends ContextValue>` on its context type; the registries that coll
 | `InboundContextInitializer` | `ContextHolder.Scope initialize(InboundContextInitializationContext)` |
 
 ```java
-public record TenantContext(String tenantId) implements ContextValue {}
+public record RequestLabelContext(String label) implements ContextValue {}
 
-public final class TenantDispatchEncoder implements ServiceDispatchContextEncoder<TenantContext> {
-    @Inject public TenantDispatchEncoder() {}
+public final class RequestLabelDispatchEncoder
+        implements ServiceDispatchContextEncoder<RequestLabelContext> {
+    @Inject public RequestLabelDispatchEncoder() {}
 
-    @Override public Class<TenantContext> type() { return TenantContext.class; }
+    @Override public Class<RequestLabelContext> type() { return RequestLabelContext.class; }
 
-    @Override public Object encode(TenantContext value, ServiceDispatchEncodeContext context) {
-        return value.tenantId();
+    @Override public Object encode(RequestLabelContext value, ServiceDispatchEncodeContext context) {
+        return value.label();
     }
 }
 ```
+
+`ScopeContext` is partition vocabulary eligible for the same explicit holder write path; this
+foundation does not register a scope encoder or supply a sample scope codec.
 
 Decoders report problems by returning `ContextDecodeResult.failure(warnings)` rather than throwing;
 the record is `(Optional<T> value, List<ContextDecodeWarning> warnings)` with the factories

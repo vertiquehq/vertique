@@ -13,6 +13,8 @@
  * <ul>
  *   <li>{@link dev.vertique.core.scope.ScopeKey} — validated exact-identity partition name, with
  *       an ordinary {@link dev.vertique.core.scope.ScopeKey#DEFAULT DEFAULT} constant.
+ *   <li>{@link dev.vertique.core.scope.ScopeContext} — {@code ContextValue} that composes one
+ *       {@code ScopeKey} for explicit holder use; construction binds nothing.
  * </ul>
  */
 package dev.vertique.core.scope;
