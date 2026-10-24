@@ -34,8 +34,6 @@ Poor fits for the current implementation:
 - Business-user-authored object schemas that must not contain Java class names.
 - Arbitrary scripting inside definitions.
 
-For Vertique Objects, prefer an objects workflow bridge with fixed Java state/payload types carrying object type, object id, object version, and workflow-local context.
-
 ---
 
 ## Compilation Flow
@@ -383,28 +381,6 @@ limits. Raise L everywhere before admitting larger sources; increased limits inc
 parsing costs. Lowering L below a required stored row's envelope makes restoration fail explicitly.
 A changed catalogue lookup alias alone need not change the existing plan hash: the hash includes
 builder-generated plan callback identities and structure. Keep the required callback behavior deployed.
-
----
-
-## Vertique Objects Fit
-
-Object-backed workflows should carry object references, not object document content.
-
-Recommended state shape for an objects bridge:
-
-```java
-record ObjectWorkflowState(
-    String objectTypeId,
-    String objectId,
-    long objectVersion,
-    String transitionId,
-    Map<String, Object> workflowContext
-) {}
-```
-
-The workflow definition then orchestrates approval, publish, expiration, compensation, and escalation. Vertique Objects remains the source of truth for object fields, schema, lifecycle state, and versioning.
-
-ObjectType bundles should reference workflow definition ids and versions through the objects workflow bridge. They should not need per-object Java workflow classes or embed object content inside workflow state.
 
 ---
 
