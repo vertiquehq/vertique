@@ -59,6 +59,26 @@ Install it in the application component for local caching. Annotation apps also 
 - `CaffeineCacheStore(CacheConfig)` — direct use without a Dagger graph (empty JSON profile set)
 - `CaffeineCacheStore(CacheConfig, JsonMapperProfileRegistry)` — Dagger-injected form
 
+### ObjectCache and ObjectCaches
+
+`ObjectCaches.create(name, maxEntries, cacheFailure, observers)` returns an `ObjectCache<K, V>`: a
+by-reference, size-bounded, single-flight cache for runtime objects that cannot or should not be
+serialized. It is independent of `cache.enabled` and reads no `CacheConfig`; there is no TTL, no
+identity dimension and no serialization, so `getOrLoad` returns the identical instance on every hit.
+
+- `getOrLoad(key, loader)` runs the loader once per key across concurrent callers. Each caller gets
+  its own future over the shared in-flight load, completed on that caller's current Vert.x context,
+  or on the completing thread when there is none.
+- A failed load is dropped so the next call loads again, unless `cacheFailure` accepts the error;
+  accepted failures stay cached as failed futures until evicted or invalidated.
+- `getIfPresent`, `invalidate`, `size` and `name` complete the API. `maxEntries` below 1, a blank
+  name or a null argument is refused at creation.
+
+Events go to the supplied observers under provider id `"caffeine-object"`: a miss emits
+`GET`/`MISS`, a finished load emits `LOAD`/`SUCCESS` or `LOAD`/`ERROR` with the load duration, and a
+size eviction emits `EVICT`/`SIZE_EVICTED` with zero elapsed time. Hits and `invalidate` emit nothing,
+and observer failures are swallowed.
+
 ## Module Dagger Bindings
 
 | Binding | Kind | Description |

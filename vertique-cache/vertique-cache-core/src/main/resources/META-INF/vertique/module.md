@@ -190,7 +190,7 @@ only after their application authorization decision. The optional `CacheObserver
 empty by default and receives the sealed `dev.vertique.cache.spi.event` vocabulary:
 `CacheOperationCompleted` (typed `CacheOperation`/`CacheOutcome` enums plus provider,
 cache name, and elapsed time), at most one `CacheLateCompletion` supplement after a
-timed-out operation, and provider-maintenance `CacheCleanupCompleted` events. Observers
+timed-out operation, and provider-maintenance `CacheCleanupCompleted` events. `CacheOperation.LOAD` reports a value load behind a miss and `CacheOutcome.SIZE_EVICTED` an entry removed by a size bound; the Caffeine object cache emits both. Observers
 implement the single `onEvent(CacheEvent)` method, must remain bounded and
 non-blocking, and their failures are suppressed. A standalone annotation eviction whose
 name and ordered selector paths have no matching registered definition emits

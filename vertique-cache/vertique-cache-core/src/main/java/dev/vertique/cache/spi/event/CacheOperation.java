@@ -8,5 +8,7 @@ public enum CacheOperation {
     GET,
     PUT,
     EVICT,
-    CLEAR
+    CLEAR,
+    /** A value loader ran to completion on behalf of a cache miss. */
+    LOAD
 }
