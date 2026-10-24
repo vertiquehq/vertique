@@ -143,6 +143,20 @@ can be read back. The five context-producing SPIs carry the same bound on their 
 parameter. The holder implementation and the encoder/decoder registries ship in
 `dev.vertique:vertique-context`.
 
+### Scope keys
+
+`ScopeKey` is an immutable partition name in `dev.vertique.core.scope`. Applications use it to name
+a data or execution partition — a tenant, project, workspace, or organization supplies the meaning.
+The canonical constructor rejects `null` with `NullPointerException` and other invalid text with
+`IllegalArgumentException`. A valid key has 1–255 Unicode code points, no ISO controls, no unpaired
+surrogate, no format character, at least one non-whitespace code point, and no leading or trailing
+whitespace (`Character.isWhitespace` or `Character.isSpaceChar`). Internal whitespace other than
+controls (including U+00A0, U+2028, and U+2029) is accepted. Construction preserves the exact
+string; equality uses that exact text. `ScopeKey.DEFAULT` equals `new ScopeKey("default")` and
+names an ordinary partition — it confers no privilege, fallback, or automatic binding. A key
+asserts no trust or access; values are not neutralized for logging, so consumers encode them for
+their sink. Declaring or constructing a key installs no runtime, codec, or ambient state.
+
 ---
 
 ## Key Classes
@@ -396,6 +410,17 @@ The resilience annotation vocabulary and its declaration metadata are provided b
 `dev.vertique:vertique-resilience`. Core deliberately remains independent of that artifact;
 applications using `@Retry`, `@Timeout`, or `@CircuitBreaker` should depend on the resilience module
 directly or through the module that enforces those declarations.
+
+### `ScopeKey`
+
+```java
+public record ScopeKey(String value) {
+    public static final ScopeKey DEFAULT;   // equal to new ScopeKey("default")
+}
+```
+
+Validated exact-identity partition name. See [Scope keys](#scope-keys). `system` is an ordinary
+accepted value, not a special variant.
 
 ### `CorrelationContext`
 
