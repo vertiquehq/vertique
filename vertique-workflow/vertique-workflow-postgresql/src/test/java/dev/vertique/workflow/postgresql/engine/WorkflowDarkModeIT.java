@@ -22,6 +22,7 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.ops.StartCommand;
@@ -192,6 +193,7 @@ public class WorkflowDarkModeIT {
         probe = component.workflowExecutionProbe();
         recovery = new PgWorkflowBranchRecoveryService(
                 component.transactionRunner(),
+                component.commandRepository(),
                 component.branchTokenRepository(),
                 component.instanceRepository(),
                 component.recoveryBridge(),
@@ -252,6 +254,8 @@ public class WorkflowDarkModeIT {
         WorkflowTransactionRunner<SqlClient> transactionRunner();
 
         BranchTokenRepository<SqlClient> branchTokenRepository();
+
+        WorkflowCommandRepository<SqlClient> commandRepository();
 
         WorkflowInstanceRepository<SqlClient> instanceRepository();
 

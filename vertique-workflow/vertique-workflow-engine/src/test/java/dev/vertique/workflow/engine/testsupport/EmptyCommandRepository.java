@@ -32,4 +32,19 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
     public Future<List<PendingCommand>> findNotYetAvailable(WorkflowInstanceId instance) {
         return Future.succeededFuture(List.of());
     }
+
+    @Override
+    public Future<Void> lockInstance(WorkflowInstanceId instance, SqlClient tx) {
+        return Future.succeededFuture();
+    }
+
+    @Override
+    public Future<Boolean> tryLockInstance(WorkflowInstanceId instance, SqlClient tx) {
+        return Future.succeededFuture(true);
+    }
+
+    @Override
+    public Future<Long> nextQueueSequence(WorkflowInstanceId instance, SqlClient tx) {
+        return Future.succeededFuture(1L);
+    }
 }

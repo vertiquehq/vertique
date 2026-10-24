@@ -10,6 +10,7 @@ import dev.vertique.db.DbSchemas;
 import dev.vertique.db.DbSchemasModule;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.logging.LoggingContextModule;
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.WorkflowEngineModule;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -239,13 +240,21 @@ public abstract class WorkflowPostgresqlModule {
      * @param pool    the PostgreSQL connection pool
      * @param mapper  the PostgreSQL failure mapper
      * @param schemas the optional schema placement; absent means unqualified table names
+     * @param recording the optional recording configuration; defaults apply when absent
      * @return the scoped PostgreSQL command repository
      */
     @Provides
     @Singleton
     static PgWorkflowCommandRepository pgWorkflowCommandRepository(
-            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
-        return new PgWorkflowCommandRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+            Pool pool,
+            PgDbExceptionMapper mapper,
+            Optional<DbSchemas> schemas,
+            Optional<WorkflowRecordingConfig> recording) {
+        return new PgWorkflowCommandRepository(
+                pool,
+                mapper,
+                schemas.orElseGet(DbSchemas::empty),
+                recording.orElseGet(WorkflowRecordingConfig::defaults));
     }
 
     // --- Store SPI bindings ---

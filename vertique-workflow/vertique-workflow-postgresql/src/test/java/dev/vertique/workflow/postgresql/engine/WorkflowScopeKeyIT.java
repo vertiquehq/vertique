@@ -26,6 +26,7 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
@@ -388,6 +389,8 @@ public class WorkflowScopeKeyIT {
 
         BranchTokenRepository<SqlClient> branchTokenRepository();
 
+        WorkflowCommandRepository<SqlClient> commandRepository();
+
         WorkflowInstanceRepository<SqlClient> instanceRepository();
 
         WorkflowRecoveryBridge recoveryBridge();
@@ -430,6 +433,7 @@ public class WorkflowScopeKeyIT {
         holder = host.contextHolder();
         recovery = new PgWorkflowBranchRecoveryService(
                 txRunner,
+                host.commandRepository(),
                 host.branchTokenRepository(),
                 instanceRepository,
                 host.recoveryBridge(),

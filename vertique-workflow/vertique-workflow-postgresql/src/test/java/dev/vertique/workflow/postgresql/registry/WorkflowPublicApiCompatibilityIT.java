@@ -28,7 +28,7 @@ public class WorkflowPublicApiCompatibilityIT {
     private static final String CAPTURE_PROPERTY = "workflow.compatibility.capture";
     private static final String BASELINE_RESOURCE = "/compatibility/workflow-public-api-baseline.txt";
     private static final String APPROVED_REMOVALS_RESOURCE = "/compatibility/workflow-public-api-approved-removals.txt";
-    private static final int APPROVED_REMOVAL_COUNT = 44;
+    private static final int APPROVED_REMOVAL_COUNT = 47;
 
     @Test
     @DisplayName("capture the original public API baseline when requested")

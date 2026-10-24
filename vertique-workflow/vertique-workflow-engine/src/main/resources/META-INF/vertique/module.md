@@ -66,6 +66,16 @@ The engine performs no transaction management of its own. Public operation metho
 and pass the resulting `SqlClient` handle into their transactional variants. Callers that already own a
 transaction use `TransactionalWorkflowOperations<SqlClient>` directly.
 
+**Execution lock.** Every transaction that changes an instance takes that instance's execution lock before its first
+workflow change, through `WorkflowCommandRepository.lockInstance`, so one transaction at a time changes an instance and
+appends to its history. This covers a new instance's `start` (the lock of the new id, after the lock-free checks and
+before the dedup claim; a replay of a start that already exists takes none), the three `signal` forms, `cancel`, `retry`,
+both `migrate` forms, the four task callbacks (`taskCompleted` and `taskReassigned` take it for the instance of the task
+they look up), the two timer callbacks, and both `WorkflowRecoveryBridge` methods. A caller waits for a busy instance for
+at most `workflow.recording.lockTimeoutMs` (default 5000); a timeout or a deadlock fails the call with
+`WorkflowPersistenceException` whose `retryable()` is true and rolls the caller's transaction back, so retry the whole
+transaction. The lock lasts until the transaction ends, and taking it again inside the same transaction costs nothing.
+
 A signal is refused, with nothing changed (no state, history, dedup row or timer), when the version the instance is pinned to
 does not wait for it: the future fails with `WorkflowSignalRejectedException` naming the instance, the signal and the
 pinned definition id and version. The check reads the pinned plan, so it applies after the pin is resolved and its plan hash
@@ -594,7 +604,8 @@ Bound by `WorkflowEngineModule` to its package-private implementation; adapter r
 inject this interface.
 
 The bridge is pure orchestration — it performs no transaction management and owns no durable context
-scope. The adapter recovery service retains ownership of the transaction boundary, the
+scope. Each method takes the execution lock of the branch's instance inside the caller's transaction first (a no-op
+when the caller already holds it). The adapter recovery service retains ownership of the transaction boundary, the
 `DurableContextScope` bind, and optimistic-concurrency retries.
 
 ### WorkflowContextBinder
@@ -712,7 +723,7 @@ parameterized over `<TX>` (typically `SqlClient`):
 | `BranchTokenRepository<TX>` | Fork/join branch token CRUD, status queries, and recovery queries |
 | `JoinStateRepository<TX>` | Fork/join state insert, read variants, open-for-workflow list, and the optimistic `decide` CAS |
 | `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping |
-| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked and not-yet-available commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock |
+| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked and not-yet-available commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock |
 
 The adapter also provides:
 - A `WorkflowRecoveryBridge` is already bound by `WorkflowEngineModule`; no adapter re-binding needed.

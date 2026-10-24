@@ -564,6 +564,18 @@ All nodes sharing the table must use the same policy. Raising L increases parsin
 raise it on every node before admitting larger documents. Before lowering it, ensure documents
 required for restoration fit the new envelope; otherwise startup fails explicitly and a periodic reconciliation counts and retries the row.
 
+### Recording Configuration
+
+Bind `WorkflowRecordingConfig` directly, or install `WorkflowRecordingConfigModule` together with
+`dev.vertique.config.parser.ConfigParsingModule` and the `@VertxConfig` input to parse `workflow.recording`.
+`WorkflowCoreModule` declares the binding optional, so a graph without it keeps the defaults and needs no parser.
+
+| Property | Default | Meaning |
+|---|---|---|
+| `workflow.recording.lockTimeoutMs` | `5000` | How long, in milliseconds, a caller waits to take an instance's execution lock before its transaction fails with a retryable `WorkflowPersistenceException`; at least 1, and a smaller value fails parsing with a `ConfigurationException` naming the key |
+
+The timeout bounds only that one acquisition; the caller's own `lock_timeout` is unchanged afterwards.
+
 `WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
 including stale claims, unavailable code, missing loaders, and plan drift. Asynchronous entrypoints
 report invalid arguments through failed Futures.

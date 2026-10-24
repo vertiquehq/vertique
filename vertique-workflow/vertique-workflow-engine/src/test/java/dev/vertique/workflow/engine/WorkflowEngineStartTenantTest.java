@@ -23,6 +23,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
@@ -187,7 +188,8 @@ class WorkflowEngineStartTenantTest {
                 activations,
                 Optional.empty(),
                 new FailingDefinitions(),
-                mock(WorkflowExecutionProbe.class));
+                mock(WorkflowExecutionProbe.class),
+                new EmptyCommandRepository());
         return new Rig(engine, instances, history, taskStore);
     }
 

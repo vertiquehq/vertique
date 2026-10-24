@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 
 import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -44,6 +45,8 @@ import org.mockito.InOrder;
  * transaction runs ahead of the row's own CAS transaction, and the instance is never read twice.
  * This preserves the timers→tasks→branches→instances lock-order invariant: the instance read
  * stays non-locking, and no {@code FOR UPDATE} read is introduced ahead of the branch lock.
+ * The instance's execution lock comes before all of them: the sweep takes it for the branch's
+ * instance before it locks the branch row, on the resume path and on the demote path.
  *
  * <p>Uses {@link org.mockito.Mockito#mock} collaborators (mirroring
  * {@link PgWorkflowBranchRecoverySweepMappingTest}'s pattern) and an {@link InOrder} verification
@@ -68,11 +71,14 @@ class PgWorkflowBranchRecoveryLockOrderTest {
         BranchTokenRepository<SqlClient> branchTokens = mock(BranchTokenRepository.class);
         @SuppressWarnings("unchecked")
         WorkflowInstanceRepository<SqlClient> instances = mock(WorkflowInstanceRepository.class);
+        @SuppressWarnings("unchecked")
+        WorkflowCommandRepository<SqlClient> commands = mock(WorkflowCommandRepository.class);
         WorkflowRegistry registry = mock(WorkflowRegistry.class);
         WorkflowRecoveryBridge recoveryBridge = mock(WorkflowRecoveryBridge.class, RETURNS_DEEP_STUBS);
         Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
 
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        when(commands.lockInstance(eq(workflowId), isNull())).thenReturn(Future.succeededFuture());
         BranchToken due = dueRetryScheduledToken(workflowId, clock.instant());
         WorkflowInstance inst = minimalInstance(workflowId);
 
@@ -91,13 +97,14 @@ class PgWorkflowBranchRecoveryLockOrderTest {
                 .thenReturn(Future.succeededFuture(0));
 
         PgWorkflowBranchRecoveryService recovery = new PgWorkflowBranchRecoveryService(
-                new InlineRunner(), branchTokens, instances, recoveryBridge, registry, clock);
+                new InlineRunner(), commands, branchTokens, instances, recoveryBridge, registry, clock);
 
         Future<Integer> result = recovery.sweepOnce(Instant.now(clock), 10);
 
         assertTrue(result.succeeded(), "sweep must succeed: " + result.cause());
 
-        InOrder order = inOrder(branchTokens, instances);
+        InOrder order = inOrder(commands, branchTokens, instances);
+        order.verify(commands).lockInstance(eq(workflowId), isNull());
         order.verify(branchTokens).findByIdForUpdate(eq(due.id()), isNull());
         order.verify(instances).findById(eq(workflowId), isNull());
         // Single fresh read: the restructure computes the effective durable-context document from
@@ -106,14 +113,61 @@ class PgWorkflowBranchRecoveryLockOrderTest {
         verify(instances, times(1)).findById(eq(workflowId), isNull());
     }
 
+    @Test
+    @DisplayName("demoteOne takes the instance's execution lock before it locks the branch row")
+    void demotingAStaleBranchTakesTheExecutionLockBeforeTheBranchRowLock() {
+        @SuppressWarnings("unchecked")
+        BranchTokenRepository<SqlClient> branchTokens = mock(BranchTokenRepository.class);
+        @SuppressWarnings("unchecked")
+        WorkflowInstanceRepository<SqlClient> instances = mock(WorkflowInstanceRepository.class);
+        @SuppressWarnings("unchecked")
+        WorkflowCommandRepository<SqlClient> commands = mock(WorkflowCommandRepository.class);
+        WorkflowRegistry registry = mock(WorkflowRegistry.class);
+        WorkflowRecoveryBridge recoveryBridge = mock(WorkflowRecoveryBridge.class, RETURNS_DEEP_STUBS);
+        Clock clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
+
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        when(commands.lockInstance(eq(workflowId), isNull())).thenReturn(Future.succeededFuture());
+        BranchToken stale = staleRunningToken(workflowId, clock.instant());
+
+        when(branchTokens.findRecoverable(any(Instant.class), anyInt(), isNull()))
+                .thenReturn(Future.succeededFuture(List.of()));
+        when(branchTokens.findStaleRunning(any(Instant.class), anyInt(), isNull()))
+                .thenReturn(Future.succeededFuture(List.of(stale)));
+        when(branchTokens.findByIdForUpdate(eq(stale.id()), isNull()))
+                .thenReturn(Future.succeededFuture(Optional.of(stale)));
+        // Fail the CAS so demoteOne short-circuits right after the reads under test.
+        when(branchTokens.updateOptimistic(any(BranchToken.class), org.mockito.ArgumentMatchers.anyLong(), isNull()))
+                .thenReturn(Future.succeededFuture(0));
+
+        PgWorkflowBranchRecoveryService recovery = new PgWorkflowBranchRecoveryService(
+                new InlineRunner(), commands, branchTokens, instances, recoveryBridge, registry, clock);
+
+        Future<Integer> result = recovery.sweepOnce(Instant.now(clock), 10);
+
+        assertTrue(result.succeeded(), "sweep must succeed: " + result.cause());
+
+        InOrder order = inOrder(commands, branchTokens);
+        order.verify(commands).lockInstance(eq(workflowId), isNull());
+        order.verify(branchTokens).findByIdForUpdate(eq(stale.id()), isNull());
+    }
+
     private static BranchToken dueRetryScheduledToken(WorkflowInstanceId workflowId, Instant now) {
+        return tokenWithStatus(workflowId, BranchStatus.RETRY_SCHEDULED, now);
+    }
+
+    private static BranchToken staleRunningToken(WorkflowInstanceId workflowId, Instant now) {
+        return tokenWithStatus(workflowId, BranchStatus.RUNNING, now);
+    }
+
+    private static BranchToken tokenWithStatus(WorkflowInstanceId workflowId, BranchStatus status, Instant now) {
         return new BranchToken(
                 UUID.randomUUID(),
                 workflowId,
                 "fork",
                 "a",
                 "dispatch-a",
-                BranchStatus.RETRY_SCHEDULED,
+                status,
                 null,
                 null,
                 null,

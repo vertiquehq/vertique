@@ -35,6 +35,7 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
@@ -460,6 +461,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // duplicated-context write guard while the sweep runs off a JUnit-driven async chain.
         recovery = new PgWorkflowBranchRecoveryService(
                 component.transactionRunner(),
+                component.commandRepository(),
                 component.branchTokenRepository(),
                 component.instanceRepository(),
                 component.recoveryBridge(),
@@ -491,6 +493,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
         ac2CorrelationFactory = ac2Component.correlationContextFactory();
         ac2Recovery = new PgWorkflowBranchRecoveryService(
                 ac2Component.transactionRunner(),
+                ac2Component.commandRepository(),
                 ac2Component.branchTokenRepository(),
                 ac2Component.instanceRepository(),
                 ac2Component.recoveryBridge(),
@@ -589,6 +592,8 @@ public class PgWorkflowBranchRecoveryServiceIT {
          * @return the SqlClient-typed branch-token repository
          */
         BranchTokenRepository<SqlClient> branchTokenRepository();
+
+        WorkflowCommandRepository<SqlClient> commandRepository();
 
         /**
          * Returns the instance repository the recovery service resolves parent instances through.
@@ -812,6 +817,8 @@ public class PgWorkflowBranchRecoveryServiceIT {
         WorkflowTransactionRunner<SqlClient> transactionRunner();
 
         BranchTokenRepository<SqlClient> branchTokenRepository();
+
+        WorkflowCommandRepository<SqlClient> commandRepository();
 
         WorkflowInstanceRepository<SqlClient> instanceRepository();
 

@@ -163,7 +163,8 @@ public final class WorkflowEngineFactory {
                 activations,
                 parts.stateCompatibility(),
                 new FailingDefinitions(),
-                executionProbe);
+                executionProbe,
+                parts.commands());
     }
 
     /**

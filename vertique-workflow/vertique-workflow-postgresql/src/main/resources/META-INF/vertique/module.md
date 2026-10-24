@@ -140,7 +140,7 @@ The migration files live with the module under `db/migration/workflow`. The ship
 - `workflow_tasks.status` admits `COMPLETING` (the check `workflow_tasks_status_check` is replaced), and `reservation_command_id BIGINT` and `require_version_stability BOOLEAN` are added, both nullable; existing tasks read null.
 - `workflow_timers.delayed_job_execution_id` becomes nullable and `command_id BIGINT` is added.
 
-The command log is read by `PgWorkflowCommandRepository` for the execution probe ('Execution probe' below); no store writes it yet. The stores read these columns: an instance row with `status = 'PENDING'` and null `state_json` and `current_step_id` reads as a `WorkflowInstance` (it is not terminal); a `COMPLETING` task reads back and `reassign` refuses it as if it were already completed; the decisions snapshot stores `payloadSchema` per decision only when present and reads it back as null when absent; `PgTimerStore` writes and reads `command_id` and still writes and reads `delayed_job_execution_id`, which may be null. No store writes `PENDING`, `COMPLETING` or a timer command link yet.
+The command log is read by `PgWorkflowCommandRepository` for the execution probe ('Execution probe' below); no store writes it yet. The same repository takes the per-instance execution lock and allocates positions in `workflow_command_queues` ('Lock-Order Requirements' below). The stores read these columns: an instance row with `status = 'PENDING'` and null `state_json` and `current_step_id` reads as a `WorkflowInstance` (it is not terminal); a `COMPLETING` task reads back and `reassign` refuses it as if it were already completed; the decisions snapshot stores `payloadSchema` per decision only when present and reads it back as null when absent; `PgTimerStore` writes and reads `command_id` and still writes and reads `delayed_job_execution_id`, which may be null. No store writes `PENDING`, `COMPLETING` or a timer command link yet.
 
 The script sets `SET LOCAL lock_timeout = '30s'` and takes `ACCESS EXCLUSIVE` locks for the `ALTER`s until the migration commits; every statement is `IF [NOT] EXISTS` or drops before it creates, so a failed run can be repeated. Stop every node of the previous release before the first node of this release applies it. Existing rows keep their values.
 
@@ -403,7 +403,7 @@ Tests that run no engine build a probe from a pool with `PgExecutionProbeSupport
 | `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository`, `PgTaskStore`, `PgTimerStore`, `PgWorkflowDefinitionRegistryStore`, `PgWorkflowRetentionRepository` | Singleton | Nine explicit providers, each built from `Optional<DbSchemas>`: placed in the schema mapped to `workflow` when the component supplies `DbSchemas` (a component that installs `DbModule` gets it from `db.schemas.workflow`), unqualified when it does not |
 | The five repository SPIs, `TaskStore<SqlClient>`, `TimerStore<SqlClient>` | Singleton | Aliases of the concrete instances above, so a concrete lookup and an SPI lookup return the same instance |
 | `WorkflowTransactionRunner<SqlClient>` | Singleton | The PostgreSQL transaction seam |
-| `PgWorkflowCommandRepository`, `WorkflowCommandRepository<SqlClient>` | Singleton | The read members of the command repository, built from `Optional<DbSchemas>` like the stores; the engine module builds the `WorkflowExecutionProbe` from it |
+| `PgWorkflowCommandRepository`, `WorkflowCommandRepository<SqlClient>` | Singleton | The command repository (reads, execution lock, queue sequence), built from `Optional<DbSchemas>` like the stores and from the optional `WorkflowRecordingConfig` (default lock timeout 5000 ms); the engine module builds the `WorkflowExecutionProbe` from it |
 | `WorkflowInstanceQueryService`, `WorkflowRetentionService` | Singleton | Services over the same scoped instances (as is the branch query service), so queries, archive and purge follow the placement |
 | `Set<MigrationDefinition>` | `@IntoSet` | The `workflow` declaration from `WorkflowMigrationsModule`: location `classpath:db/migration/workflow`, no dependencies |
 
@@ -450,8 +450,19 @@ The engine does not depend on in-memory workflow state for correctness.
 Operations that touch multiple workflow tables follow a fixed lock order to avoid deadlocks with the timer firing executor and the signal claim path:
 
 ```
-workflow_timers  →  workflow_tasks  →  workflow_branch_tokens  →  workflow_instances
+execution lock (instance)  →  workflow_timers  →  workflow_tasks  →  workflow_branch_tokens  →  workflow_instances  →  workflow_command_queues
 ```
+
+The execution lock is an exclusive, transaction-scoped PostgreSQL advisory lock in the two-integer form, derived from the
+instance id in a namespace of its own; it never collides with the definition locks, which are single-bigint. Every
+transaction that changes an instance takes it first (`PgWorkflowCommandRepository.lockInstance`), so one transaction at a
+time changes an instance and appends to its history. The wait applies `workflow.recording.lockTimeoutMs` (default 5000, at
+least 1) to that one acquisition and restores the caller's own `lock_timeout` in the same statement, so it never leaks into
+the rest of the caller's transaction. A timeout (`55P03`) or a deadlock (`40P01`) fails the call with
+`WorkflowPersistenceException` with `retryable()` true, and PostgreSQL rolls the caller's transaction back. The branch
+recovery sweep takes the lock of a branch's instance, as a requester, before it locks the branch row.
+`tryLockInstance` takes the lock without waiting. `nextQueueSequence` allocates from `workflow_command_queues` under the
+lock, creating the queue row on first touch (the first value is 1); a rolled-back transaction gives its value back.
 
 Reversing any segment of this chain deadlocks against an already-running firing executor or a concurrent signal claim. All engine code paths — fire, signal, cancel, complete, supersede — follow it.
 

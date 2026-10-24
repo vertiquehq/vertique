@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.state.BranchToken;
@@ -31,6 +32,7 @@ final class WorkflowRecoveryBridgeImpl implements WorkflowRecoveryBridge {
     private final BranchTransitionEngine branchEngine;
     private final ForkJoinCoordinator forkJoin;
     private final WorkflowInstanceRepository<SqlClient> instances;
+    private final WorkflowCommandRepository<SqlClient> commands;
 
     /**
      * Constructs a new recovery bridge.
@@ -40,12 +42,16 @@ final class WorkflowRecoveryBridgeImpl implements WorkflowRecoveryBridge {
      *     branch reaches a terminal state
      * @param instances the instance repository, read to learn the scopes of the branch's owning
      *     instance
+     * @param commands the command repository whose execution lock each bridge method takes for the branch's
+     *     instance, a no-op when the caller already holds it
      */
     @Inject
     WorkflowRecoveryBridgeImpl(
             BranchTransitionEngine branchEngine,
             ForkJoinCoordinator forkJoin,
-            WorkflowInstanceRepository<SqlClient> instances) {
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowCommandRepository<SqlClient> commands) {
+        this.commands = commands;
         this.branchEngine = branchEngine;
         this.forkJoin = forkJoin;
         this.instances = instances;
@@ -59,29 +65,33 @@ final class WorkflowRecoveryBridgeImpl implements WorkflowRecoveryBridge {
             RuntimeWorkflow rw,
             SqlClient tx,
             @Nullable dev.vertique.core.context.DurableMetadata effectiveBaseOverride) {
-        return instances.findById(token.workflowId(), tx).compose(opt -> {
-            if (opt.isEmpty()) {
-                return Future.failedFuture(new IllegalStateException(
-                        "Workflow instance " + token.workflowId().value() + " not found for recovered branch"));
-            }
-            return branchEngine.driveBranchTransitions(
-                    token,
-                    parentStateJson,
-                    parentSubjectVersion,
-                    rw,
-                    BranchTransitionEngine.InstanceScope.of(opt.get()),
-                    tx,
-                    effectiveBaseOverride);
-        });
+        return commands.lockInstance(token.workflowId(), tx)
+                .compose(locked -> instances.findById(token.workflowId(), tx))
+                .compose(opt -> {
+                    if (opt.isEmpty()) {
+                        return Future.failedFuture(new IllegalStateException(
+                                "Workflow instance " + token.workflowId().value() + " not found for recovered branch"));
+                    }
+                    return branchEngine.driveBranchTransitions(
+                            token,
+                            parentStateJson,
+                            parentSubjectVersion,
+                            rw,
+                            BranchTransitionEngine.InstanceScope.of(opt.get()),
+                            tx,
+                            effectiveBaseOverride);
+                });
     }
 
     @Override
     public Future<Void> evaluateRecoveredBranchIfTerminal(
             WorkflowInstance inst, BranchToken branch, RuntimeWorkflow rw, SqlClient tx) {
-        if (!ForkJoinCoordinator.isBranchTerminal(branch.status())) {
-            return Future.succeededFuture();
-        }
-        return forkJoin.evaluateJoinForRecoveredBranch(inst, branch, rw, tx);
+        return commands.lockInstance(inst.id(), tx).compose(locked -> {
+            if (!ForkJoinCoordinator.isBranchTerminal(branch.status())) {
+                return Future.<Void>succeededFuture();
+            }
+            return forkJoin.evaluateJoinForRecoveredBranch(inst, branch, rw, tx);
+        });
     }
 
     @Override

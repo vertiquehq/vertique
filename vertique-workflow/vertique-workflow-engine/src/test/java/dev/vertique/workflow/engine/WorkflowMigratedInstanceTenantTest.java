@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.migration.MigrationContext;
 import dev.vertique.workflow.migration.MigrationResult;
 import dev.vertique.workflow.migration.WorkflowMigrationHandler;
@@ -171,7 +172,8 @@ class WorkflowMigratedInstanceTenantTest {
                 branchTokens,
                 driver,
                 FIXED_CLOCK,
-                WorkflowContextBinder.noop());
+                WorkflowContextBinder.noop(),
+                new EmptyCommandRepository());
 
         SqlClient tx = ActiveTransactionClient.create();
         Future<Void> outcome = executor.migrate(source.id(), 2L, tx);

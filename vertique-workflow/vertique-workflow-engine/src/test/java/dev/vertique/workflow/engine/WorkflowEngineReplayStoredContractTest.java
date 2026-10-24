@@ -15,6 +15,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
@@ -142,6 +143,7 @@ class WorkflowEngineReplayStoredContractTest {
                 new DefinitionActivations(store),
                 Optional.<WorkflowStateCompatibility>empty(),
                 new FailingDefinitions(),
-                mock(WorkflowExecutionProbe.class));
+                mock(WorkflowExecutionProbe.class),
+                new EmptyCommandRepository());
     }
 }

@@ -24,6 +24,7 @@ import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.migration.WorkflowMigrationHandler;
@@ -210,6 +211,8 @@ public class ScopedPinLookupIT {
 
         BranchTokenRepository<SqlClient> branchTokenRepository();
 
+        WorkflowCommandRepository<SqlClient> commandRepository();
+
         WorkflowInstanceRepository<SqlClient> instanceRepository();
 
         WorkflowRecoveryBridge recoveryBridge();
@@ -239,6 +242,7 @@ public class ScopedPinLookupIT {
                 FORK_ID);
         PgWorkflowBranchRecoveryService recovery = new PgWorkflowBranchRecoveryService(
                 host.transactionRunner(),
+                host.commandRepository(),
                 host.branchTokenRepository(),
                 host.instanceRepository(),
                 host.recoveryBridge(),

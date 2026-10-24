@@ -16,6 +16,7 @@ import dev.vertique.db.IsolationLevel;
 import dev.vertique.db.exception.DataAccessException;
 import dev.vertique.workflow.engine.WorkflowExceptionMapper;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.exception.WorkflowException;
@@ -70,6 +71,8 @@ class PgWorkflowBranchRecoverySweepMappingTest {
         BranchTokenRepository<SqlClient> branchTokens = mock(BranchTokenRepository.class);
         @SuppressWarnings("unchecked")
         WorkflowInstanceRepository<SqlClient> instances = mock(WorkflowInstanceRepository.class);
+        @SuppressWarnings("unchecked")
+        WorkflowCommandRepository<SqlClient> commands = mock(WorkflowCommandRepository.class);
         WorkflowRegistry registry = mock(WorkflowRegistry.class);
 
         DataAccessException dbFailure = new DataAccessException("persistence boom", null, "08006");
@@ -79,7 +82,7 @@ class PgWorkflowBranchRecoverySweepMappingTest {
         // The recovery bridge is never reached: the first transactional read fails, so the sweep
         // short-circuits before any per-branch processing — a null bridge is therefore fine here.
         PgWorkflowBranchRecoveryService recovery = new PgWorkflowBranchRecoveryService(
-                new MappingOnlyRunner(), branchTokens, instances, null, registry, Clock.systemUTC());
+                new MappingOnlyRunner(), commands, branchTokens, instances, null, registry, Clock.systemUTC());
 
         Future<Integer> result = recovery.sweepOnce(Duration.ofMinutes(5), 10);
 

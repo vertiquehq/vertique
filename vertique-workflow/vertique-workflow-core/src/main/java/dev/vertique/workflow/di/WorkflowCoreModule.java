@@ -10,6 +10,7 @@ import dagger.Provides;
 import dagger.multibindings.Multibinds;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.RaceSafetyTargetContributor;
@@ -60,6 +61,9 @@ public abstract class WorkflowCoreModule {
 
     @BindsOptionalOf
     abstract WorkflowDefinitionsConfig definitionsConfig();
+
+    @BindsOptionalOf
+    abstract WorkflowRecordingConfig recordingConfig();
 
     /**
      * Declares the optional schema producer; the schema module binds it. Without it definition rows are written

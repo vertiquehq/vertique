@@ -10,6 +10,7 @@ import dev.vertique.core.context.DurableMetadata.MergePolicy;
 import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
@@ -61,6 +62,7 @@ public final class PgWorkflowBranchRecoveryService {
     private static final String STALE_RUNNING_NO_RETRIES = "stale_running_no_retries";
 
     private final WorkflowTransactionRunner<SqlClient> txRunner;
+    private final WorkflowCommandRepository<SqlClient> commands;
     private final BranchTokenRepository<SqlClient> branchTokens;
     private final WorkflowInstanceRepository<SqlClient> instances;
     private final WorkflowRecoveryBridge recoveryBridge;
@@ -91,6 +93,8 @@ public final class PgWorkflowBranchRecoveryService {
      *
      * @param txRunner transaction runner that owns the transaction boundary and the two-stage
      *     workflow exception mapping for the sweep's DB work
+     * @param commands command repository whose execution lock the sweep takes for a branch's instance before it
+     *     locks the branch row
      * @param branchTokens branch token repository
      * @param instances instance repository (used to resolve definitionId/Version per branch)
      * @param recoveryBridge recovery bridge exposing the engine internals the sweep needs (branch
@@ -105,6 +109,7 @@ public final class PgWorkflowBranchRecoveryService {
     @Inject
     public PgWorkflowBranchRecoveryService(
             WorkflowTransactionRunner<SqlClient> txRunner,
+            WorkflowCommandRepository<SqlClient> commands,
             BranchTokenRepository<SqlClient> branchTokens,
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowRecoveryBridge recoveryBridge,
@@ -113,6 +118,7 @@ public final class PgWorkflowBranchRecoveryService {
             dev.vertique.context.DurableContextPropagator propagator,
             dev.vertique.context.InboundExecutionContextScope inboundExecScope) {
         this.txRunner = txRunner;
+        this.commands = commands;
         this.branchTokens = branchTokens;
         this.instances = instances;
         this.recoveryBridge = recoveryBridge;
@@ -128,6 +134,8 @@ public final class PgWorkflowBranchRecoveryService {
      *
      * @param txRunner transaction runner that owns the transaction boundary and the two-stage
      *     workflow exception mapping for the sweep's DB work
+     * @param commands command repository whose execution lock the sweep takes for a branch's instance before it
+     *     locks the branch row
      * @param branchTokens branch token repository
      * @param instances instance repository (used to resolve definitionId/Version per branch)
      * @param recoveryBridge recovery bridge exposing the engine internals the sweep needs
@@ -138,13 +146,14 @@ public final class PgWorkflowBranchRecoveryService {
      */
     public PgWorkflowBranchRecoveryService(
             WorkflowTransactionRunner<SqlClient> txRunner,
+            WorkflowCommandRepository<SqlClient> commands,
             BranchTokenRepository<SqlClient> branchTokens,
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowRecoveryBridge recoveryBridge,
             WorkflowRegistry registry,
             Clock clock,
             dev.vertique.context.DurableContextPropagator propagator) {
-        this(txRunner, branchTokens, instances, recoveryBridge, registry, clock, propagator, null);
+        this(txRunner, commands, branchTokens, instances, recoveryBridge, registry, clock, propagator, null);
     }
 
     /**
@@ -153,6 +162,8 @@ public final class PgWorkflowBranchRecoveryService {
      *
      * @param txRunner transaction runner that owns the transaction boundary and the two-stage
      *     workflow exception mapping for the sweep's DB work
+     * @param commands command repository whose execution lock the sweep takes for a branch's instance before it
+     *     locks the branch row
      * @param branchTokens branch token repository
      * @param instances instance repository (used to resolve definitionId/Version per branch)
      * @param recoveryBridge recovery bridge exposing the engine internals the sweep needs
@@ -161,12 +172,13 @@ public final class PgWorkflowBranchRecoveryService {
      */
     public PgWorkflowBranchRecoveryService(
             WorkflowTransactionRunner<SqlClient> txRunner,
+            WorkflowCommandRepository<SqlClient> commands,
             BranchTokenRepository<SqlClient> branchTokens,
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowRecoveryBridge recoveryBridge,
             WorkflowRegistry registry,
             Clock clock) {
-        this(txRunner, branchTokens, instances, recoveryBridge, registry, clock, null, null);
+        this(txRunner, commands, branchTokens, instances, recoveryBridge, registry, clock, null, null);
     }
 
     /**
@@ -313,22 +325,24 @@ public final class PgWorkflowBranchRecoveryService {
      * the recovery-time effective durable-context document around the drive and the subsequent
      * join evaluation.
      *
-     * <p>Single fresh read, no extra transaction: opens one transaction, locks the branch row
+     * <p>Single fresh read, no extra transaction: opens one transaction, takes the execution lock of
+     * the branch's instance (waiting, like any requester), locks the branch row
      * ({@code findByIdForUpdate}), then reads the parent instance via the existing
      * {@link #loadInstanceAndRuntime} call (a plain non-locking {@code findById}, already required
      * for the plan-hash drift guard) — no separate pre-load transaction runs before this one. The
      * effective document is computed from that single instance read and the durable scope is
      * opened <em>inside</em> this transaction, immediately before the drive, closing on
      * {@code Future.eventually(...)} so it covers the drive and the terminal-join evaluation that
-     * follows it in the same row's processing. Preserves the lock-order invariant: the branch-token
-     * {@code FOR UPDATE} lock is taken first; the instance read stays a non-locking {@code findById}.
+     * follows it in the same row's processing. Preserves the lock-order invariant: the execution lock comes first, then the branch-token
+     * {@code FOR UPDATE} lock; the instance read stays a non-locking {@code findById}.
      *
      * @param stale the branch token to resume
      * @return a {@link Future} that completes when the row's processing (bound or unbound) finishes
      */
     private Future<Void> resumeOne(BranchToken stale) {
-        return txRunner.inTransaction(
-                null, tx -> branchTokens.findByIdForUpdate(stale.id(), tx).compose(opt -> {
+        return txRunner.inTransaction(null, tx -> commands.lockInstance(stale.workflowId(), tx)
+                .compose(locked -> branchTokens.findByIdForUpdate(stale.id(), tx))
+                .compose(opt -> {
                     if (opt.isEmpty()) return Future.<Void>succeededFuture();
                     BranchToken token = opt.get();
                     if (token.status() != BranchStatus.RETRY_SCHEDULED) return Future.<Void>succeededFuture();
@@ -374,6 +388,9 @@ public final class PgWorkflowBranchRecoveryService {
      * effective durable-context document around that terminal-evaluation work exactly as the drive
      * path does.
      *
+     * <p>Like {@link #resumeOne}, the transaction takes the execution lock of the branch's instance before it locks
+     * the branch row.
+     *
      * <p>The non-terminal ({@code RETRY_SCHEDULED}) path never reaches the instance read at all —
      * unchanged short-circuit before {@link #loadInstanceAndRuntime} — so no durable scope is
      * opened in that case. On the terminal path, {@link #loadInstanceAndRuntime} is the same single
@@ -384,8 +401,9 @@ public final class PgWorkflowBranchRecoveryService {
      * @return a {@link Future} that completes when the row's processing (bound or unbound) finishes
      */
     private Future<Void> demoteOne(BranchToken stale) {
-        return txRunner.inTransaction(
-                null, tx -> branchTokens.findByIdForUpdate(stale.id(), tx).compose(opt -> {
+        return txRunner.inTransaction(null, tx -> commands.lockInstance(stale.workflowId(), tx)
+                .compose(locked -> branchTokens.findByIdForUpdate(stale.id(), tx))
+                .compose(opt -> {
                     if (opt.isEmpty()) return Future.<Void>succeededFuture();
                     BranchToken token = opt.get();
                     if (token.status() != BranchStatus.RUNNING) return Future.<Void>succeededFuture();

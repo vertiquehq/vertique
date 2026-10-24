@@ -4,6 +4,7 @@
 package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
@@ -68,6 +69,7 @@ final class MigrationExecutor {
     private final FailingDefinitions failing;
     private final WorkflowInstanceRepository<SqlClient> instances;
     private final WorkflowHistoryRepository<SqlClient> history;
+    private final WorkflowCommandRepository<SqlClient> commands;
 
     /**
      * Branch-token repository used to reject migration of instances with active fork-branch state.
@@ -116,6 +118,8 @@ final class MigrationExecutor {
      *     empty refuses such a migration
      * @param failing this node's evaluation of the scope rows that deployed code conflicts with; a migration into
      *     a version it holds is refused
+     * @param commands the command repository whose execution lock a migration takes before it reads or writes the
+     *     instance
      */
     @Inject
     MigrationExecutor(
@@ -128,7 +132,8 @@ final class MigrationExecutor {
             Clock clock,
             WorkflowContextBinder contextBinder,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
-            FailingDefinitions failing) {
+            FailingDefinitions failing,
+            WorkflowCommandRepository<SqlClient> commands) {
         // migrationRegistryOpt is null only from test-only constructors that delegate with null;
         // Dagger always provides a non-null Optional via @BindsOptionalOf.
         this.migrationRegistry = migrationRegistryOpt != null ? migrationRegistryOpt.orElse(null) : null;
@@ -136,6 +141,7 @@ final class MigrationExecutor {
         this.failing = failing;
         this.instances = instances;
         this.history = history;
+        this.commands = commands;
         this.branchTokens = branchTokens;
         this.driver = driver;
         this.clock = clock;
@@ -155,6 +161,7 @@ final class MigrationExecutor {
      * @param clock the clock
      * @param contextBinder the binder-row seam
      * @param stateCompatibility the state comparison; empty refuses a migration between differing state classes
+     * @param commands the command repository whose execution lock a migration takes
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -165,7 +172,8 @@ final class MigrationExecutor {
             WorkflowTransitionDriver driver,
             Clock clock,
             WorkflowContextBinder contextBinder,
-            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility) {
+            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
+            WorkflowCommandRepository<SqlClient> commands) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -176,7 +184,8 @@ final class MigrationExecutor {
                 clock,
                 contextBinder,
                 stateCompatibility,
-                new FailingDefinitions());
+                new FailingDefinitions(),
+                commands);
     }
 
     /**
@@ -191,6 +200,7 @@ final class MigrationExecutor {
      * @param driver the transition driver
      * @param clock the clock
      * @param contextBinder the binder-row seam
+     * @param commands the command repository whose execution lock a migration takes
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -200,7 +210,8 @@ final class MigrationExecutor {
             @jakarta.annotation.Nullable BranchTokenRepository<SqlClient> branchTokens,
             WorkflowTransitionDriver driver,
             Clock clock,
-            WorkflowContextBinder contextBinder) {
+            WorkflowContextBinder contextBinder,
+            WorkflowCommandRepository<SqlClient> commands) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -210,7 +221,8 @@ final class MigrationExecutor {
                 driver,
                 clock,
                 contextBinder,
-                Optional.empty());
+                Optional.empty(),
+                commands);
     }
 
     // --- Migration flow ---
@@ -283,15 +295,19 @@ final class MigrationExecutor {
                     new UnsupportedOperationException(
                             "migrate() requires WorkflowMigrationRegistry; install WorkflowMigrationModule in your Dagger component"));
         }
-        return instances.findById(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
-            if (optInst.isEmpty()) {
-                return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
-            }
-            WorkflowInstance inst = optInst.get();
+        // The execution lock comes first, before the instance is read and before any write.
+        return commands.lockInstance(id, tx)
+                .compose(locked -> instances.findById(id, tx))
+                .compose((Optional<WorkflowInstance> optInst) -> {
+                    if (optInst.isEmpty()) {
+                        return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
+                    }
+                    WorkflowInstance inst = optInst.get();
 
-            // Binder-row bind (Contract Appendix C2): instance-owned migrate drive.
-            return contextBinder.withBound(inst, null, () -> doMigrateSteps(id, targetScope, targetVersion, inst, tx));
-        });
+                    // Binder-row bind (Contract Appendix C2): instance-owned migrate drive.
+                    return contextBinder.withBound(
+                            inst, null, () -> doMigrateSteps(id, targetScope, targetVersion, inst, tx));
+                });
     }
 
     /**

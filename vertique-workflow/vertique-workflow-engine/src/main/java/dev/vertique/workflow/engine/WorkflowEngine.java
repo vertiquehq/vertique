@@ -12,6 +12,7 @@ import dev.vertique.workflow.actor.WorkflowActorMaps;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -75,6 +76,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -225,6 +227,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** Waits until the recorded commands of an instance, or of every instance, have run. */
     private final WorkflowExecutionProbe executionProbe;
 
+    /**
+     * Takes the execution lock of an instance inside the caller's transaction, before the first workflow change of
+     * every instance-changing entry point.
+     */
+    private final WorkflowCommandRepository<SqlClient> commands;
+
     @Inject
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -251,8 +259,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             PayloadConstraintCheck payloadConstraintCheck,
             DefinitionActivations activations,
             FailingDefinitions failing,
-            WorkflowExecutionProbe executionProbe) {
+            WorkflowExecutionProbe executionProbe,
+            WorkflowCommandRepository<SqlClient> commands) {
         this.executionProbe = executionProbe;
+        this.commands = commands;
         this.activations = activations;
         this.failing = failing;
         this.txRunner = txRunner;
@@ -322,7 +332,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * <p>The {@code typeNames} parameter is the type-name index a decision payload's declared type
      * name resolves through; the factory passes the one index the registry fills. The {@code activations}
      * parameter is this engine's view of the activation records, which the factory builds empty. The
-     * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes. The {@code executionProbe} parameter is the probe the handle exposes.
+     * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes. The {@code executionProbe} parameter is the probe the handle exposes. The {@code commands} parameter is the
+     * command repository whose execution lock every instance-changing entry point takes.
      *
      * <p>Package-visible (not {@code private}) so the factory in the same package can invoke it; it
      * is not part of any production API.
@@ -354,8 +365,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             DefinitionActivations activations,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
             FailingDefinitions failing,
-            WorkflowExecutionProbe executionProbe) {
+            WorkflowExecutionProbe executionProbe,
+            WorkflowCommandRepository<SqlClient> commands) {
         this.executionProbe = executionProbe;
+        this.commands = commands;
         this.payloadConstraintCheck = payloadConstraintCheck;
         this.activations = activations;
         this.failing = failing;
@@ -440,7 +453,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 () -> timerLifecycleHolder[0],
                 builtContextBinder,
                 payloadConstraintCheck,
-                typeNames);
+                typeNames,
+                commands);
         taskLifecycleHolder[0] = this.taskLifecycle;
         // TimerLifecycleService needs the driver, coordinator, and task service eagerly; all three
         // are now built. The driver reaches resolveFireAt through the lazy Provider above
@@ -483,7 +497,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 clock,
                 builtContextBinder,
                 stateCompatibility,
-                failing);
+                failing,
+                commands);
     }
 
     // --- WorkflowEngineHandle ---
@@ -786,8 +801,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         UUID newId = UUID.randomUUID();
         WorkflowInstanceId proposedId = new WorkflowInstanceId(newId);
 
-        return dedup.claimOrResolveStart(
-                        startScope, rw.plan().definitionId(), cmd.idempotencyKey(), proposedId, fingerprint, tx)
+        // The execution lock of the new instance comes before the dedup claim, the first write; nobody else knows the
+        // id yet, so the acquisition is uncontended.
+        return commands.lockInstance(proposedId, tx)
+                .compose(locked -> dedup.claimOrResolveStart(
+                        startScope, rw.plan().definitionId(), cmd.idempotencyKey(), proposedId, fingerprint, tx))
                 .compose((StartDedupResult result) -> {
                     if (!result.didInsert()) {
                         // Loser: a concurrent start claimed the slot first. Apply the replay rules to its instance.
@@ -1100,33 +1118,35 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         // row, both apply the signal, and the loser of the workflow_instances optimistic-version race
         // would surface a WorkflowConflictException to a caller that the public contract promises is
         // idempotent. Claiming before the load also spares the loser an unnecessary instance read.
-        return dedup.claimOrResolveSignal(id, signalDedupKey, tx).compose(inserted -> {
-            if (!inserted) {
-                // Prior committed transaction already applied the signal — idempotent no-op. The
-                // instance row is never read on this path.
-                return Future.<Void>succeededFuture();
-            }
-            // Non-locking read: optimistic-version check on the subsequent UPDATE catches concurrent
-            // writes. Using findByIdForUpdate here would lock workflow_instances before
-            // workflow_timers, inverting the lock-order invariant (timers must be locked first) and
-            // causing deadlocks under signal-vs-fire / cancel-vs-fire races.
-            return instances.findById(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
-                if (optInst.isEmpty()) {
-                    return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
-                }
-                WorkflowInstance inst = optInst.get();
-                // Binder-row bind (Contract Appendix C2): instance-owned no-branch signal drive. No
-                // explicit carrier on this arity — the 8-arg explicit-carrier overload threads one
-                // instead.
-                return contextBinder.withBound(
-                        inst,
-                        null,
-                        () -> signalHandler.doApplySignal(
+        return underExecutionLock(id, tx, () -> dedup.claimOrResolveSignal(id, signalDedupKey, tx))
+                .compose(inserted -> {
+                    if (!inserted) {
+                        // Prior committed transaction already applied the signal — idempotent no-op. The
+                        // instance row is never read on this path.
+                        return Future.<Void>succeededFuture();
+                    }
+                    // Non-locking read: optimistic-version check on the subsequent UPDATE catches concurrent
+                    // writes. Using findByIdForUpdate here would lock workflow_instances before
+                    // workflow_timers, inverting the lock-order invariant (timers must be locked first) and
+                    // causing deadlocks under signal-vs-fire / cancel-vs-fire races.
+                    return instances.findById(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
+                        if (optInst.isEmpty()) {
+                            return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
+                        }
+                        WorkflowInstance inst = optInst.get();
+                        // Binder-row bind (Contract Appendix C2): instance-owned no-branch signal drive. No
+                        // explicit carrier on this arity — the 8-arg explicit-carrier overload threads one
+                        // instead.
+                        return contextBinder.withBound(
                                 inst,
-                                new SignalDeliveryContext(signalName, payload, signalDedupKey, callerContractName),
-                                tx));
-            });
-        });
+                                null,
+                                () -> signalHandler.doApplySignal(
+                                        inst,
+                                        new SignalDeliveryContext(
+                                                signalName, payload, signalDedupKey, callerContractName),
+                                        tx));
+                    });
+                });
     }
 
     /**
@@ -1165,43 +1185,45 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         // WorkflowDedupScopes.signalKey. Use the same dedup repository as the instance path.
         String scope = dev.vertique.workflow.dedup.WorkflowDedupScopes.signalScope(id);
         String key = dev.vertique.workflow.dedup.WorkflowDedupScopes.signalKey(signalDedupKey, forkStepId, branchId);
-        return dedup.claimOrResolveSignalScoped(scope, key, id, tx).compose(inserted -> {
-            if (!inserted) {
-                return Future.<Void>succeededFuture();
-            }
-            return instances.findById(id, tx).compose(optInst -> {
-                if (optInst.isEmpty()) {
-                    return Future.<Void>failedFuture(new WorkflowInstanceNotFoundException(id));
-                }
-                WorkflowInstance inst = optInst.get();
-                RuntimeWorkflow rw;
-                try {
-                    rw = PinnedPlans.resolve(registry, inst);
-                    // Codex review fix H2: every other engine entry-point that resolves rw
-                    // also asserts plan-hash drift. Branch signals must do the same so a
-                    // redeployed-but-same-version plan doesn't silently run new callbacks
-                    // against a persisted instance.
-                    requirePlanHashMatches(inst, rw);
-                } catch (Exception e) {
-                    return Future.<Void>failedFuture(e);
-                }
-                return branchTokens
-                        .findByWaitForBranch(id, forkStepId, branchId, WaitType.SIGNAL.name(), signalName, tx)
-                        .compose(opt -> {
-                            if (opt.isEmpty()) {
-                                return Future.<Void>failedFuture(new WorkflowSignalRejectedException(
-                                        "No branch waiting for signal '" + signalName + "' on workflow '"
-                                                + id.value() + "' fork '" + forkStepId + "' branch '"
-                                                + branchId + "'"));
-                            }
-                            // Apply the signal payload to the branch-local state slice via the
-                            // wait-signal node's stateUpdater callback, then drive the branch
-                            // forward (which will trigger evaluateJoin if it terminates).
-                            BranchToken waiting = opt.get();
-                            return signalHandler.applyBranchSignal(inst, waiting, rw, signalName, payload, tx, null);
-                        });
-            });
-        });
+        return underExecutionLock(id, tx, () -> dedup.claimOrResolveSignalScoped(scope, key, id, tx))
+                .compose(inserted -> {
+                    if (!inserted) {
+                        return Future.<Void>succeededFuture();
+                    }
+                    return instances.findById(id, tx).compose(optInst -> {
+                        if (optInst.isEmpty()) {
+                            return Future.<Void>failedFuture(new WorkflowInstanceNotFoundException(id));
+                        }
+                        WorkflowInstance inst = optInst.get();
+                        RuntimeWorkflow rw;
+                        try {
+                            rw = PinnedPlans.resolve(registry, inst);
+                            // Codex review fix H2: every other engine entry-point that resolves rw
+                            // also asserts plan-hash drift. Branch signals must do the same so a
+                            // redeployed-but-same-version plan doesn't silently run new callbacks
+                            // against a persisted instance.
+                            requirePlanHashMatches(inst, rw);
+                        } catch (Exception e) {
+                            return Future.<Void>failedFuture(e);
+                        }
+                        return branchTokens
+                                .findByWaitForBranch(id, forkStepId, branchId, WaitType.SIGNAL.name(), signalName, tx)
+                                .compose(opt -> {
+                                    if (opt.isEmpty()) {
+                                        return Future.<Void>failedFuture(new WorkflowSignalRejectedException(
+                                                "No branch waiting for signal '" + signalName + "' on workflow '"
+                                                        + id.value() + "' fork '" + forkStepId + "' branch '"
+                                                        + branchId + "'"));
+                                    }
+                                    // Apply the signal payload to the branch-local state slice via the
+                                    // wait-signal node's stateUpdater callback, then drive the branch
+                                    // forward (which will trigger evaluateJoin if it terminates).
+                                    BranchToken waiting = opt.get();
+                                    return signalHandler.applyBranchSignal(
+                                            inst, waiting, rw, signalName, payload, tx, null);
+                                });
+                    });
+                });
     }
 
     /**
@@ -1341,23 +1363,24 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         // under the lock-order invariant: the workflow_dedup upsert (kind='signal') locks only its own
         // row and is not part of the workflow_timers -> workflow_tasks -> workflow_branch_tokens ->
         // workflow_instances chain — same rationale as the 5-arg signal() overload.
-        return dedup.claimOrResolveSignal(id, signalDedupKey, tx).compose(inserted -> {
-            if (!inserted) {
-                return Future.<Void>succeededFuture();
-            }
-            // Non-locking read: same lock-order rationale as the 5-arg signal() overload.
-            return instances.findById(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
-                if (optInst.isEmpty()) {
-                    return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
-                }
-                WorkflowInstance inst = optInst.get();
-                return contextBinder.withBound(
-                        inst,
-                        signalMetadata,
-                        () -> signalHandler.doApplySignal(
-                                inst, new SignalDeliveryContext(signalName, payload, signalDedupKey), tx));
-            });
-        });
+        return underExecutionLock(id, tx, () -> dedup.claimOrResolveSignal(id, signalDedupKey, tx))
+                .compose(inserted -> {
+                    if (!inserted) {
+                        return Future.<Void>succeededFuture();
+                    }
+                    // Non-locking read: same lock-order rationale as the 5-arg signal() overload.
+                    return instances.findById(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
+                        if (optInst.isEmpty()) {
+                            return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
+                        }
+                        WorkflowInstance inst = optInst.get();
+                        return contextBinder.withBound(
+                                inst,
+                                signalMetadata,
+                                () -> signalHandler.doApplySignal(
+                                        inst, new SignalDeliveryContext(signalName, payload, signalDedupKey), tx));
+                    });
+                });
     }
 
     /**
@@ -1391,45 +1414,47 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         // never reaches driveBranchTransitions.
         String scope = dev.vertique.workflow.dedup.WorkflowDedupScopes.signalScope(id);
         String key = dev.vertique.workflow.dedup.WorkflowDedupScopes.signalKey(signalDedupKey, forkStepId, branchId);
-        return dedup.claimOrResolveSignalScoped(scope, key, id, tx).compose(inserted -> {
-            if (!inserted) {
-                return Future.<Void>succeededFuture();
-            }
-            return instances.findById(id, tx).compose(optInst -> {
-                if (optInst.isEmpty()) {
-                    return Future.<Void>failedFuture(new WorkflowInstanceNotFoundException(id));
-                }
-                WorkflowInstance inst = optInst.get();
-                RuntimeWorkflow rw;
-                try {
-                    rw = PinnedPlans.resolve(registry, inst);
-                    requirePlanHashMatches(inst, rw);
-                } catch (Exception e) {
-                    return Future.<Void>failedFuture(e);
-                }
-                return branchTokens
-                        .findByWaitForBranch(id, forkStepId, branchId, WaitType.SIGNAL.name(), signalName, tx)
-                        .compose(opt -> {
-                            if (opt.isEmpty()) {
-                                return Future.<Void>failedFuture(new WorkflowSignalRejectedException(
-                                        "No branch waiting for signal '" + signalName + "' on workflow '"
-                                                + id.value() + "' fork '" + forkStepId + "' branch '"
-                                                + branchId + "'"));
-                            }
-                            BranchToken waiting = opt.get();
-                            // Carrier-authoritative + instance-fill (Contract Appendix C2/C3): the
-                            // explicit carrier wins for any namespace present on both sides; the
-                            // instance only fills namespaces the carrier lacks. NULL instance
-                            // metadata is a no-op merge — the effective base is the carrier alone,
-                            // with no fallback to the branch token's own metadata.
-                            DurableMetadata effectiveBase = inst.metadata() == null
-                                    ? signalMetadata
-                                    : signalMetadata.merge(inst.metadata(), DurableMetadata.MergePolicy.CALLER_WINS);
-                            return signalHandler.applyBranchSignal(
-                                    inst, waiting, rw, signalName, payload, tx, effectiveBase);
-                        });
-            });
-        });
+        return underExecutionLock(id, tx, () -> dedup.claimOrResolveSignalScoped(scope, key, id, tx))
+                .compose(inserted -> {
+                    if (!inserted) {
+                        return Future.<Void>succeededFuture();
+                    }
+                    return instances.findById(id, tx).compose(optInst -> {
+                        if (optInst.isEmpty()) {
+                            return Future.<Void>failedFuture(new WorkflowInstanceNotFoundException(id));
+                        }
+                        WorkflowInstance inst = optInst.get();
+                        RuntimeWorkflow rw;
+                        try {
+                            rw = PinnedPlans.resolve(registry, inst);
+                            requirePlanHashMatches(inst, rw);
+                        } catch (Exception e) {
+                            return Future.<Void>failedFuture(e);
+                        }
+                        return branchTokens
+                                .findByWaitForBranch(id, forkStepId, branchId, WaitType.SIGNAL.name(), signalName, tx)
+                                .compose(opt -> {
+                                    if (opt.isEmpty()) {
+                                        return Future.<Void>failedFuture(new WorkflowSignalRejectedException(
+                                                "No branch waiting for signal '" + signalName + "' on workflow '"
+                                                        + id.value() + "' fork '" + forkStepId + "' branch '"
+                                                        + branchId + "'"));
+                                    }
+                                    BranchToken waiting = opt.get();
+                                    // Carrier-authoritative + instance-fill (Contract Appendix C2/C3): the
+                                    // explicit carrier wins for any namespace present on both sides; the
+                                    // instance only fills namespaces the carrier lacks. NULL instance
+                                    // metadata is a no-op merge — the effective base is the carrier alone,
+                                    // with no fallback to the branch token's own metadata.
+                                    DurableMetadata effectiveBase = inst.metadata() == null
+                                            ? signalMetadata
+                                            : signalMetadata.merge(
+                                                    inst.metadata(), DurableMetadata.MergePolicy.CALLER_WINS);
+                                    return signalHandler.applyBranchSignal(
+                                            inst, waiting, rw, signalName, payload, tx, effectiveBase);
+                                });
+                    });
+                });
     }
 
     /**
@@ -1466,19 +1491,20 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         // Non-locking read: same lock-order rationale as signal(). The optimistic UPDATE catches
         // concurrent writes; using findByIdForUpdate would invert the timers-before-instances
         // invariant and cause deadlocks under cancel-vs-fire races.
-        return instances.findById(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
-            if (optInst.isEmpty()) {
-                return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
-            }
-            WorkflowInstance inst = optInst.get();
-            if (isTerminal(inst.status())) {
-                return Future.failedFuture(new WorkflowSignalRejectedException(
-                        "Cannot cancel instance '" + id.value() + "': already in terminal status " + inst.status()));
-            }
+        return underExecutionLock(id, tx, () -> instances.findById(id, tx))
+                .compose((Optional<WorkflowInstance> optInst) -> {
+                    if (optInst.isEmpty()) {
+                        return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
+                    }
+                    WorkflowInstance inst = optInst.get();
+                    if (isTerminal(inst.status())) {
+                        return Future.failedFuture(new WorkflowSignalRejectedException("Cannot cancel instance '"
+                                + id.value() + "': already in terminal status " + inst.status()));
+                    }
 
-            // Binder-row bind (Contract Appendix C2): instance-owned cancel drive.
-            return contextBinder.withBound(inst, null, () -> doCancel(id, reason, inst, tx));
-        });
+                    // Binder-row bind (Contract Appendix C2): instance-owned cancel drive.
+                    return contextBinder.withBound(inst, null, () -> doCancel(id, reason, inst, tx));
+                });
     }
 
     /**
@@ -1617,19 +1643,20 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         // findById to honor the workflow_timers-before-workflow_instances lock-order invariant).
         // retry() does not touch workflow_timers — a retry only fires for FAILED instances, which
         // are terminal w.r.t. timer firing — so the lock-order constraint does not apply.
-        return instances.findByIdForUpdate(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
-            if (optInst.isEmpty()) {
-                return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
-            }
-            WorkflowInstance inst = optInst.get();
-            if (inst.status() != WorkflowStatus.FAILED) {
-                return Future.failedFuture(new WorkflowSignalRejectedException("Cannot retry instance '" + id.value()
-                        + "': status is " + inst.status() + " (must be FAILED)"));
-            }
+        return underExecutionLock(id, tx, () -> instances.findByIdForUpdate(id, tx))
+                .compose((Optional<WorkflowInstance> optInst) -> {
+                    if (optInst.isEmpty()) {
+                        return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
+                    }
+                    WorkflowInstance inst = optInst.get();
+                    if (inst.status() != WorkflowStatus.FAILED) {
+                        return Future.failedFuture(new WorkflowSignalRejectedException("Cannot retry instance '"
+                                + id.value() + "': status is " + inst.status() + " (must be FAILED)"));
+                    }
 
-            // Binder-row bind (Contract Appendix C2): instance-owned retry drive.
-            return contextBinder.withBound(inst, null, () -> doRetry(id, inst, tx));
-        });
+                    // Binder-row bind (Contract Appendix C2): instance-owned retry drive.
+                    return contextBinder.withBound(inst, null, () -> doRetry(id, inst, tx));
+                });
     }
 
     /**
@@ -1826,7 +1853,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
 
-        return taskLifecycle.taskDueFired(workflowId, taskId, tx);
+        return underExecutionLock(workflowId, tx, () -> taskLifecycle.taskDueFired(workflowId, taskId, tx));
     }
 
     /**
@@ -1877,7 +1904,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
 
-        return taskLifecycle.taskReminderFired(workflowId, taskId, timerId, scheduledFireAt, tx);
+        return underExecutionLock(
+                workflowId,
+                tx,
+                () -> taskLifecycle.taskReminderFired(workflowId, taskId, timerId, scheduledFireAt, tx));
     }
 
     // --- TransactionalTimerCallbacks ---
@@ -1907,7 +1937,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
 
-        return timerLifecycle.timerFired(workflowId, timerId, tx);
+        return underExecutionLock(workflowId, tx, () -> timerLifecycle.timerFired(workflowId, timerId, tx));
     }
 
     /**
@@ -1935,10 +1965,28 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
 
-        return timerLifecycle.timerFiringFailed(workflowId, timerId, errorType, errorMessage, tx);
+        return underExecutionLock(
+                workflowId,
+                tx,
+                () -> timerLifecycle.timerFiringFailed(workflowId, timerId, errorType, errorMessage, tx));
     }
 
     // --- Internal helpers ---
+
+    /**
+     * Takes the execution lock of the instance in the caller's transaction, then runs the body. Every
+     * instance-changing entry point calls it before its first read-for-write or write, so one transaction at a time
+     * changes an instance. A wait that times out, or a deadlock, fails the returned future with the database error.
+     *
+     * @param id   the instance to lock
+     * @param tx   the caller's transaction
+     * @param body the work to run once the lock is held
+     * @param <T>  the result type of the body
+     * @return the future of the body, or the failure of the lock
+     */
+    private <T> Future<T> underExecutionLock(WorkflowInstanceId id, SqlClient tx, Supplier<Future<T>> body) {
+        return commands.lockInstance(id, tx).compose(locked -> body.get());
+    }
 
     /**
      * Returns a successful {@code Future<Void>} when {@code rowCount > 0}, or a failed future with

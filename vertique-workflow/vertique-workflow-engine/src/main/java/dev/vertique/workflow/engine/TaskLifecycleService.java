@@ -7,6 +7,7 @@ import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMaps;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.DedupClaim;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -161,6 +162,9 @@ final class TaskLifecycleService {
     /** Resolves the logical decision payload type names the plan holds. */
     private final WorkflowTypeNames typeNames;
 
+    /** Takes the execution lock of a task's instance before a completion or a reassignment writes. */
+    private final WorkflowCommandRepository<SqlClient> commands;
+
     /**
      * Constructs a new task-lifecycle service.
      *
@@ -188,6 +192,8 @@ final class TaskLifecycleService {
      * @param payloadConstraintCheck the opt-in constraint check applied to coerced decision payloads
      * @param typeNames the type-name index the registry fills as definitions register; a decision
      *     payload name the index does not know is resolved as a binary class name
+     * @param commands the command repository whose execution lock a completion or a reassignment takes after it has
+     *     found the task's instance
      */
     @Inject
     TaskLifecycleService(
@@ -207,7 +213,9 @@ final class TaskLifecycleService {
             Provider<TimerLifecycleService> timerPvd,
             WorkflowContextBinder contextBinder,
             PayloadConstraintCheck payloadConstraintCheck,
-            WorkflowTypeNames typeNames) {
+            WorkflowTypeNames typeNames,
+            WorkflowCommandRepository<SqlClient> commands) {
+        this.commands = commands;
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -444,8 +452,10 @@ final class TaskLifecycleService {
                 return Future.failedFuture(e);
             }
 
-            return dedup.claimOrResolveTaskCompletion(
-                            cmd.taskId(), cmd.idempotencyKey(), task.workflowId(), fingerprint, tx)
+            // The execution lock comes before the dedup claim, the first write.
+            return commands.lockInstance(task.workflowId(), tx)
+                    .compose(locked -> dedup.claimOrResolveTaskCompletion(
+                            cmd.taskId(), cmd.idempotencyKey(), task.workflowId(), fingerprint, tx))
                     .compose((DedupClaim claim) -> {
                         if (!claim.inserted()) {
                             if (fingerprint.equals(claim.existingFingerprint())) {
@@ -1523,8 +1533,10 @@ final class TaskLifecycleService {
                 return Future.failedFuture(e);
             }
 
-            return dedup.claimOrResolveTaskReassignment(
-                            cmd.taskId(), cmd.idempotencyKey(), task.workflowId(), fingerprint, tx)
+            // The execution lock comes before the dedup claim, the first write.
+            return commands.lockInstance(task.workflowId(), tx)
+                    .compose(locked -> dedup.claimOrResolveTaskReassignment(
+                            cmd.taskId(), cmd.idempotencyKey(), task.workflowId(), fingerprint, tx))
                     .compose((DedupClaim claim) -> {
                         if (!claim.inserted()) {
                             if (fingerprint.equals(claim.existingFingerprint())) {
