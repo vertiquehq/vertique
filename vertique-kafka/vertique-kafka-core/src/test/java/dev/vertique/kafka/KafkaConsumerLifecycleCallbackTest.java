@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -363,6 +364,43 @@ class KafkaConsumerLifecycleCallbackTest {
         return new Fixture(verticle, consumer, errors);
     }
 
+    private static Fixture wireForShutdown(
+            Vertx vertx, long drainTimeoutMs, long closeTimeoutMs, Future<Void> closeFuture)
+            throws ReflectiveOperationException {
+        ConsumerEntry entry = failingHandlerEntry(ErrorStrategy.SKIP, null);
+        KafkaProducerFactory producerFactory = mock(KafkaProducerFactory.class);
+        KafkaConsumerVerticle verticle = new KafkaConsumerVerticle(
+                entry,
+                List.of(),
+                producerFactory,
+                mock(ServiceRequestSender.class),
+                KafkaTestSupport.noOpTargetResolver(),
+                KafkaTestSupport.eventBusClient(vertx),
+                KafkaTestSupport.noOpInboundExecutionContextScope(),
+                KafkaTestSupport.noOpEnvelopeBuilder(),
+                KafkaTestSupport.jsonSerdeRegistry(),
+                drainTimeoutMs,
+                closeTimeoutMs);
+        verticle.init(vertx, vertx.getOrCreateContext());
+
+        KafkaConsumer<String, byte[]> consumer = mock(KafkaConsumer.class);
+        when(consumer.assignment()).thenReturn(Future.succeededFuture(Set.of()));
+        when(consumer.close()).thenReturn(closeFuture);
+        setField(verticle, "consumer", consumer);
+        KafkaErrorHandler errors = new KafkaErrorHandler(entry, producerFactory);
+        setField(verticle, "errorHandler", errors);
+        return new Fixture(verticle, consumer, errors);
+    }
+
+    private static Throwable awaitStopFailure(Promise<Void> stopPromise) throws Exception {
+        ExecutionException failure = assertThrows(ExecutionException.class, () -> stopPromise
+                .future()
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(2, TimeUnit.SECONDS));
+        return failure.getCause();
+    }
+
     /** A record with key {@code "k"}, no headers and the given value ({@code null} = tombstone). */
     private static KafkaConsumerRecord<String, byte[]> record(long offset, @Nullable byte[] value) {
         return record(offset, "k", value, null);
@@ -406,6 +444,60 @@ class KafkaConsumerLifecycleCallbackTest {
                 "the event and the record view must share one identity instance");
         assertEquals(0, fixture.inFlight(), "the in-flight slot must be released");
         return completion;
+    }
+
+    @Nested
+    @DisplayName("consumer shutdown deadlines")
+    class ShutdownDeadlines {
+
+        @Test
+        @DisplayName("drain timeout closes the consumer and fails with pending count and close failure")
+        void drainTimeoutReportsPendingRecordsAndCloseFailure(Vertx vertx) throws Exception {
+            RuntimeException closeFailure = new RuntimeException("close failed");
+            Fixture fixture = wireForShutdown(vertx, 1L, 1_000L, Future.failedFuture(closeFailure));
+            setField(fixture.verticle(), "inFlight", new AtomicInteger(1));
+            Promise<Void> stopPromise = Promise.promise();
+
+            fixture.verticle().stop(stopPromise);
+
+            Throwable failure = awaitStopFailure(stopPromise);
+            assertEquals(TimeoutException.class, failure.getClass());
+            assertTrue(failure.getMessage().contains("1 in-flight record(s)"));
+            assertSame(closeFailure, failure.getSuppressed()[0]);
+            verify(fixture.consumer()).close();
+        }
+
+        @Test
+        @DisplayName("consumer close timeout fails stop, and a later close completion is ignored")
+        void closeTimeoutFailsAndIgnoresLateClose(Vertx vertx) throws Exception {
+            Promise<Void> closePromise = Promise.promise();
+            Fixture fixture = wireForShutdown(vertx, 1_000L, 5L, closePromise.future());
+            Promise<Void> stopPromise = Promise.promise();
+
+            fixture.verticle().stop(stopPromise);
+
+            Throwable failure = awaitStopFailure(stopPromise);
+            assertEquals(TimeoutException.class, failure.getClass());
+            assertTrue(failure.getMessage().contains("did not complete within 5 ms"));
+
+            CompletableFuture<Void> lateCloseObserved = new CompletableFuture<>();
+            closePromise.future().onComplete(ignored -> lateCloseObserved.complete(null));
+            closePromise.complete();
+            lateCloseObserved.get(1, TimeUnit.SECONDS);
+            assertEquals(TimeoutException.class, awaitStopFailure(stopPromise).getClass());
+        }
+
+        @Test
+        @DisplayName("consumer close failure fails stop when draining completed")
+        void closeFailureFailsStop(Vertx vertx) throws Exception {
+            RuntimeException closeFailure = new RuntimeException("close failed");
+            Fixture fixture = wireForShutdown(vertx, 1_000L, 1_000L, Future.failedFuture(closeFailure));
+            Promise<Void> stopPromise = Promise.promise();
+
+            fixture.verticle().stop(stopPromise);
+
+            assertSame(closeFailure, awaitStopFailure(stopPromise));
+        }
     }
 
     // --- Terminal paths ---
