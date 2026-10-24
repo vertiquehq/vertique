@@ -271,8 +271,8 @@ public class ScopeMigrationOperationsIT {
             taskIndexBefore = Long.parseLong(scalar(connection, "SELECT '" + TASK_INDEX + "'::regclass::oid"));
         }
 
-        // When the database is migrated to the latest version
-        Flyway latest = flyway(aheadDb).load();
+        // When the database is migrated to version 2
+        Flyway latest = flyway(aheadDb).target("2").load();
         latest.migrate();
 
         // Then the migration is applied as version 2 and nothing is left pending

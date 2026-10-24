@@ -214,7 +214,9 @@ public class PgWorkflowSchemaIT {
             "workflow_branch_tokens",
             "workflow_join_states",
             "workflow_definitions",
-            "workflow_definition_activations");
+            "workflow_definition_activations",
+            "workflow_commands",
+            "workflow_command_queues");
     private static final Set<String> TRANSACTION_DECOY_TABLES = with(WORKFLOW_TABLES, "outbox", "inbox", "orders");
 
     private static final Set<String> MIGRATED_INDEXES = Set.of(
@@ -765,14 +767,19 @@ public class PgWorkflowSchemaIT {
     }
 
     private static void assertWorkflowObjectsLiveOnlyInMappedSchema() throws SQLException {
-        // The mapped schema holds the history, the eight tables, their indexes and named constraints, and
+        // The mapped schema holds the history, the eleven tables, their indexes and named constraints, and
         // nothing that the packaged scripts do not create
         assertEquals(with(WORKFLOW_TABLES, WORKFLOW_HISTORY), tablesIn(MAPPED_SCHEMA));
         assertTrue(
                 indexesIn(MAPPED_SCHEMA).containsAll(MIGRATED_INDEXES),
                 "migrated indexes in the mapped schema: " + indexesIn(MAPPED_SCHEMA));
-        assertTrue(sequencesIn(MAPPED_SCHEMA).isEmpty(), "the workflow scripts create no sequence");
-        assertTrue(functionsIn(MAPPED_SCHEMA).isEmpty(), "the workflow scripts create no function");
+        assertTrue(
+                sequencesIn(MAPPED_SCHEMA).isEmpty(),
+                "the workflow scripts create no standalone sequence (an identity column owns its own)");
+        assertEquals(
+                Set.of("workflow_commands_notify"),
+                functionsIn(MAPPED_SCHEMA),
+                "the workflow scripts create only the command notify function");
 
         // No other schema received any of them
         assertEquals(Set.of(MAPPED_SCHEMA), schemasHoldingTable(WORKFLOW_HISTORY));
