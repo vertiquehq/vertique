@@ -5,6 +5,7 @@ package dev.vertique.job.delayed;
 
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.async.Combinators;
+import dev.vertique.core.async.Shutdowns;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.DeferredExecutionOrigin;
 import dev.vertique.core.context.DispatchBoundary;
@@ -41,7 +42,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 
@@ -443,8 +443,11 @@ public class DelayedJobPoller extends AbstractVerticle {
         // contain nothing at all.
         Combinators.joinAllSwallow(
                         pending,
-                        resources ->
-                                resources.logFlusher().drain().timeout(shutdownFlushTimeoutMs, TimeUnit.MILLISECONDS),
+                        resources -> Shutdowns.withTimeout(
+                                vertx,
+                                resources.logFlusher().drain(),
+                                shutdownFlushTimeoutMs,
+                                "shutdown job-log flush for queue='" + queue + "'"),
                         (resources, err) -> log.warn(
                                 "Shutdown job-log flush did not settle for queue='{}': {}", queue, err.getMessage()))
                 .onComplete(ar -> {

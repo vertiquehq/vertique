@@ -1191,8 +1191,8 @@ class DelayedJobPollerTest {
                     .thenReturn(Future.succeededFuture(List.of()));
 
             // A wedged connection pool yields a write that never settles at all. recover() cannot
-            // rescue that — only a time bound can — so this pins the .timeout() on the shutdown
-            // hook: without it a stuck pool would hold undeploy open far past the drain's own
+            // rescue that — only a time bound can — so this pins the shared shutdown timeout on
+            // the hook: without it a stuck pool would hold undeploy open far past the drain's own
             // per-write bound, which the round cap then multiplies.
             Promise<Void> neverSettles = Promise.promise();
             when(repository.saveLogs(eq(execution.id()), any())).thenReturn(neverSettles.future());
