@@ -136,7 +136,7 @@ The migration files live with the module under `db/migration/workflow`. The ship
 - An `AFTER INSERT OR UPDATE OF state, available_at` trigger on `workflow_commands` calls `pg_notify` on the channel `vertique_workflow_commands` when the new state is `PENDING` or `DEFERRED`. The payload is `available_at` in epoch milliseconds and names no instance; PostgreSQL delivers it at commit.
 - `workflow_instances.state_json` and `current_step_id` become nullable (`status` has no check, so a `PENDING` instance needs no further change), and `baseline_logged BOOLEAN NOT NULL DEFAULT TRUE` is added.
 - `workflow_history` gains fourteen nullable columns (`actor_kind`, `actor_id`, `actor_reason`, `on_behalf_of`, `attribution_status`, `executor_id`, `command_id`, `step_id`, `outcome`, `definition_scope_key`, `definition_id`, `definition_version`, `plan_hash`, `state_version_before`, `state_version_after`, `patch_json`) and `entry_version SMALLINT NOT NULL DEFAULT 1`; existing rows keep nulls and version 1.
-- `workflow_definitions` gains nullable `signal_names_json` and `start_schema_json`. The definition store writes them in the same statement as the plan hash (code insert, code rehash, document insert) when the node binds the schema producer (`WorkflowSchemaModule`), leaves them unchanged for an unchanged hash, and fills a row that has both null with `fillSignalSchemas`, guarded by `signal_names_json IS NULL`. A node without the producer writes both as null. Nothing reads them yet.
+- `workflow_definitions` gains nullable `signal_names_json` and `start_schema_json`. The definition store writes them in the same statement as the plan hash (code insert, code rehash, document insert) when the node binds the schema producer (`WorkflowSchemaModule`), leaves them unchanged for an unchanged hash, and fills a row that has both null with `fillSignalSchemas`, guarded by `signal_names_json IS NULL` and the expected plan hash. A node without the producer writes both as null. Nothing reads them yet.
 - `workflow_tasks.status` admits `COMPLETING` (the check `workflow_tasks_status_check` is replaced), and `reservation_command_id BIGINT` and `require_version_stability BOOLEAN` are added, both nullable; existing tasks read null.
 - `workflow_timers.delayed_job_execution_id` becomes nullable and `command_id BIGINT` is added.
 
@@ -187,7 +187,7 @@ server default.
 `retire(key)` moves a CANDIDATE row, or a DEPRECATED row past the cooling window (`maxStalenessSeconds`, database
 clock), to RETIRED. Every registry mutation runs at READ COMMITTED, whatever the server default, so the pin count sees
 every row and pin committed while the mutation waited for the id lock. Under the id lock it checks the row, the status, and for a
-DEPRECATED row the cooling age and then the exact-version count of RUNNING, WAITING and COMPENSATING instances (archived
+DEPRECATED row the cooling age and then the exact-version count of PENDING, RUNNING, WAITING and COMPENSATING instances (archived
 rows included), in that order; a CANDIDATE row is retired without the pin check because a candidate is not admitted for
 pinning (a runtime registered directly for the same version is outside the guard). AVAILABLE rows cannot retire. The count scans `workflow_instances` by definition id and version while
 retirement holds the exclusive id lock and no index covers that predicate, so on a very large live instance table a

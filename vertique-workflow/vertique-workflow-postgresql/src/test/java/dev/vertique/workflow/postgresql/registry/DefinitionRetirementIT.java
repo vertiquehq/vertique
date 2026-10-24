@@ -244,6 +244,50 @@ public class DefinitionRetirementIT {
     }
 
     @Test
+    void pendingInstanceBlocksRetirementAndIsCountedLive(Vertx vertx) {
+        String id = "retirement-it-pending-pin-doc";
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+
+        try (Fixture fixture = new Fixture(vertx)) {
+            fixture.ownRows(id);
+            AppComponent app = fixture.node().app();
+            PgWorkflowInstanceQueryService instances = new PgWorkflowInstanceQueryService(
+                    new PgWorkflowInstanceRepository(fixture.admin(), new PgDbExceptionMapper()));
+            long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
+
+            // Given a deprecated, cooled version whose only instance is accepted but not yet initialized
+            CompiledDefinitionRef loaded = await(app.definitionService()
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 1, PinnedCaseV7.class),
+                            DocumentFormat.YAML,
+                            source("pending-pin")));
+            await(app.definitionService().publish(key));
+            await(app.definitionService().deprecate(key));
+            fixture.ageStatus(key, coolingSeconds + 60);
+            UUID pending = fixture.insertInstance(id, 1, loaded.planHash(), "PENDING", false);
+
+            // When the live instances are counted and retirement is requested
+            long count = await(instances.countNonTerminal(id, 1));
+            Throwable refusal = failureOf(app.definitionService().retire(key));
+
+            // Then the pending instance is counted live and pins the version
+            assertThat(count).isEqualTo(1);
+            assertThat(refusal).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
+                assertThat(failure.reason()).isEqualTo(Reason.PINNED_INSTANCES);
+                assertThat(failure.key()).isEqualTo(key);
+            });
+
+            // When the instance finishes
+            fixture.setInstanceStatus(pending, "FAILED");
+            await(app.definitionService().retire(key));
+
+            // Then the version retires
+            assertThat(fixture.stored(id, 1).status()).isEqualTo("RETIRED");
+        }
+    }
+
+    @Test
     void rejectsActiveRetirementAndCountsExactVersion(Vertx vertx) {
         String id = "retirement-it-count-doc";
         String otherId = "retirement-it-count-other-doc";

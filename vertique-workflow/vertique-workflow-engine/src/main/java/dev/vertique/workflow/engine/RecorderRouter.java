@@ -30,7 +30,7 @@ import java.util.Set;
  *   <li>If no recorder is registered and the kind is not optional → fails the returned future
  *       with an {@link IllegalStateException} (rolls back the workflow transaction).</li>
  * </ul>
- * */
+ */
 @Singleton
 final class RecorderRouter {
 

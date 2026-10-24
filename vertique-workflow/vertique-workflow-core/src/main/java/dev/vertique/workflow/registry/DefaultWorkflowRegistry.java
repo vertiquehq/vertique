@@ -515,6 +515,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      * replaces the registered one under the publication lock only when its plan hash equals
      * {@code requiredPlanHash} and the version still holds that definition. The deprecation mark and the
      * deployed flag of the version are kept.
+     *
+     * <p>The registration validators are not run again: the plan hash equal to {@code requiredPlanHash} means the
+     * plan is the one that already passed registration, and only the name binding differs.
      */
     @Override
     public Optional<RuntimeWorkflow> rebind(

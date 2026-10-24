@@ -21,6 +21,8 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -163,6 +165,41 @@ public class DefinitionRowSchemasIT {
             assertThat(filled.signalNames()).isEqualTo(new JsonObject("""
                             {"instance":["approve"],"branches":{}}"""));
             assertThat(propertyNames(filled.startSchema())).containsExactlyInAnyOrder("shipmentId");
+            assertThat(filled.planHash()).isEqualTo(nulled.planHash());
+        }
+    }
+
+    @Test
+    @DisplayName("filling a row is refused once its plan hash is no longer the expected one")
+    void fillIsRefusedWhenThePlanHashChangedAfterItWasRead(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            database.ownRows(LEGACY);
+
+            // Given a row whose two columns are null and a plan hash another node has since replaced
+            Boot boot = schemaGraph(database, vertx, new ShipmentCode(LEGACY, Shape.LEGACY));
+            database.execute("""
+                    UPDATE workflow_definitions SET signal_names_json = NULL, start_schema_json = NULL
+                    WHERE scope_key = $1 AND definition_id = $2 AND definition_version = 1""", Tuple.of(WorkflowScopes.DEFAULT, LEGACY));
+            RowColumns nulled = rowColumns(database, WorkflowScopes.DEFAULT, LEGACY, 1);
+            WorkflowDefinitionRegistryStore store = boot.app().definitionRegistryStore();
+            DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, LEGACY, 1);
+            JsonObject names = new JsonObject("""
+                    {"instance":["approve"],"branches":{}}""");
+
+            // When the fill carries a hash that is not the row's
+            await(store.fillSignalSchemas(key, "0".repeat(64), names, new JsonObject("{}")));
+            RowColumns stale = rowColumns(database, WorkflowScopes.DEFAULT, LEGACY, 1);
+
+            // Then the row is left untouched
+            assertThat(stale).isEqualTo(nulled);
+
+            // When the fill carries the row's own hash
+            await(store.fillSignalSchemas(key, nulled.planHash(), names, new JsonObject("{}")));
+            RowColumns filled = rowColumns(database, WorkflowScopes.DEFAULT, LEGACY, 1);
+            boot.close();
+
+            // Then the names are written and the hash is unchanged
+            assertThat(filled.signalNames()).isEqualTo(names);
             assertThat(filled.planHash()).isEqualTo(nulled.planHash());
         }
     }

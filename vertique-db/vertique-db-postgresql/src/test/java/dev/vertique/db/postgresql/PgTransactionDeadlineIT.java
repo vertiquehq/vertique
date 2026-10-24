@@ -130,7 +130,8 @@ public class PgTransactionDeadlineIT {
         IN_FLIGHT,
         LATE_COMMIT,
         SPENT_BUDGET,
-        NO_DEADLINE
+        NO_DEADLINE,
+        CAPTURED_AFTER_COMPLETION
     }
 
     @ParameterizedTest
@@ -143,6 +144,7 @@ public class PgTransactionDeadlineIT {
             case LATE_COMMIT -> lateCommit();
             case SPENT_BUDGET -> spentBudget();
             case NO_DEADLINE -> noDeadline();
+            case CAPTURED_AFTER_COMPLETION -> capturedAfterCompletion();
         }
     }
 
@@ -319,6 +321,22 @@ public class PgTransactionDeadlineIT {
         assertTrue(outcome.succeeded(), "got " + outcome.cause());
         assertEquals(1, rowsOf("a"));
         assertNotEquals("dev.vertique.db", probe.clientPackage, "no guard is installed without a deadline");
+    }
+
+    // (g) captured after completion: the work finishes normally, then a statement through its connection is refused
+    private void capturedAfterCompletion() throws Exception {
+        List<SqlConnection> captured = new ArrayList<>();
+        Function<SqlConnection, Future<Void>> work = conn -> {
+            captured.add(conn);
+            return conn.preparedQuery(INSERT).execute(Tuple.of("g")).mapEmpty();
+        };
+
+        await(repository.transaction().deadline(Duration.ofSeconds(5)).execute(work));
+        Throwable late = failureOf(captured.getFirst().preparedQuery(INSERT).execute(Tuple.of("late")));
+
+        assertInstanceOf(TransactionDeadlineExceededException.class, late);
+        assertEquals(1, rowsOf("g"), "the work's own row is committed");
+        assertEquals(0, rowsOf("late"), "the late statement must write nothing");
     }
 
     /** What a piece of work observed, and the gate that releases it. */

@@ -22,6 +22,8 @@ import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Public assembly seam for the portable workflow engine — the non-Dagger parallel to the wiring
@@ -45,6 +47,8 @@ import java.util.Set;
  * cannot drift.
  */
 public final class WorkflowEngineFactory {
+
+    private static final Logger LOG = LoggerFactory.getLogger(WorkflowEngineFactory.class);
 
     /**
      * The default set of {@link IntentKind} values the engine treats as optional — the single
@@ -126,7 +130,12 @@ public final class WorkflowEngineFactory {
         // A factory-built engine runs no startup step, so the view of the activation records is seeded from the
         // records the store holds now; a store that answers later seeds it when it does.
         DefinitionActivations activations = new DefinitionActivations(parts.definitionStore());
-        parts.definitionStore().listActivations(null).onSuccess(records -> records.forEach(activations::put));
+        parts.definitionStore()
+                .listActivations(null)
+                .onSuccess(records -> records.forEach(activations::put))
+                .onFailure(failure -> LOG.warn(
+                        "Could not seed the definition activation view; it stays empty until the store answers ({})",
+                        failure.getClass().getSimpleName()));
         return new WorkflowEngine(
                 txRunner,
                 registry,

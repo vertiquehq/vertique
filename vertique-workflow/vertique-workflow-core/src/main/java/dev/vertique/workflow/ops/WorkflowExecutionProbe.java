@@ -10,7 +10,12 @@ import java.util.List;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Waits until recorded work has run. For tests and operational probes.
+ * Waits until recorded work has run. For tests and operator tooling.
+ *
+ * <p>The probe is not for application request paths and must not be exposed to callers without authorization: its
+ * reports name instances and carry the stored failure text of their commands. {@link PendingCommand#lastError()} is
+ * whatever the writer of the command stored, so writers must store only a reason code plus a sanitized, bounded
+ * message.
  *
  * <p>An instance is idle when it has no command in flight (claimed under a live lease) and no command an executor
  * could claim now: one at the head of its queue, not held back and available. A command behind a blocking head, or

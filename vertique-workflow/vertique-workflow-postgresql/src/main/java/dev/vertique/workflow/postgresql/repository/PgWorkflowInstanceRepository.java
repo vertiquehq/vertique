@@ -169,7 +169,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
 
         this.sqlCountNonTerminal = "SELECT count(*) AS total FROM " + instances
                 + " WHERE definition_id = $1 AND definition_version = $2"
-                + " AND definition_scope_key = $3 AND status IN ('RUNNING','WAITING','COMPENSATING')";
+                + " AND definition_scope_key = $3 AND status IN ('PENDING','RUNNING','WAITING','COMPENSATING')";
 
         this.sqlFindByBusinessKey =
                 sqlSelectAllColumns + " WHERE scope_key = $1 AND definition_id = $2 AND business_key = $3";

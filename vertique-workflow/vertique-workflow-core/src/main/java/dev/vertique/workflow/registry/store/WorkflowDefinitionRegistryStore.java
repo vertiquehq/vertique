@@ -238,17 +238,19 @@ public interface WorkflowDefinitionRegistryStore {
     /**
      * Writes the declared signal names and the start schema of a row that has neither, as a node that builds the
      * row's plan at startup does for a row written before they were stored. A row that already holds signal names,
-     * and a row that does not exist, are left unchanged. The plan hash is never touched.
+     * a row whose plan hash is no longer the expected one, and a row that does not exist, are left unchanged. The
+     * plan hash is never touched.
      *
      * <p>The default implementation does nothing, for a store that keeps no such columns.
      *
      * @param key the key of the row
+     * @param planHash the plan hash the schemas were built from; the row is written only while it still holds it
      * @param signalNames the signal names the row's plan declares
      * @param startSchema the schema of the row's start payload, or {@code null} when the plan declares none
      * @return a future completed after the statement ran
      */
     default Future<Void> fillSignalSchemas(
-            DefinitionKey key, JsonObject signalNames, @Nullable JsonObject startSchema) {
+            DefinitionKey key, String planHash, JsonObject signalNames, @Nullable JsonObject startSchema) {
         return Future.succeededFuture();
     }
 }

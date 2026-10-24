@@ -185,14 +185,23 @@ public abstract class AbstractSqlRepository implements SqlRepository {
                 result.tryFail(new TransactionDeadlineExceededException("Transaction deadline exceeded"));
             }
         });
-        applyTransactionOptions(conn, options).compose(v -> fn.apply(guarded)).onComplete(ar -> {
-            vertx.cancelTimer(timerId);
-            if (ar.succeeded()) {
-                result.tryComplete(ar.result());
-            } else {
-                result.tryFail(ar.cause());
-            }
-        });
+        applyTransactionOptions(conn, options)
+                .compose(v -> result.future().isComplete()
+                        // The deadline fired while the options were applied: the work must not start.
+                        ? Future.<T>failedFuture(new TransactionDeadlineExceededException(
+                                "Transaction deadline exceeded before the work started"))
+                        : fn.apply(guarded))
+                .onComplete(ar -> {
+                    vertx.cancelTimer(timerId);
+                    // The work is over, whatever the outcome: a later statement must be refused, not reach a
+                    // connection that has gone back to the pool.
+                    guarded.expire();
+                    if (ar.succeeded()) {
+                        result.tryComplete(ar.result());
+                    } else {
+                        result.tryFail(ar.cause());
+                    }
+                });
         return result.future();
     }
 

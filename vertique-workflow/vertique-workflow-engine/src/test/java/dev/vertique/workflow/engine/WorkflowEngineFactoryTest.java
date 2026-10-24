@@ -226,4 +226,37 @@ class WorkflowEngineFactoryTest {
                     ctx.completeNow();
                 })));
     }
+
+    @Test
+    @DisplayName("a store that fails the activation listing is logged at warn without its message")
+    void logsAWarningWhenTheActivationSeedFails() {
+        // Given a store whose activation listing fails with a message that must not be logged
+        Fixture fixture = fixture();
+        InMemoryWorkflowDefinitionRegistryStore failing = new InMemoryWorkflowDefinitionRegistryStore() {
+            @Override
+            public Future<java.util.List<dev.vertique.workflow.registry.store.DefinitionActivation>> listActivations(
+                    String scopeKey) {
+                return Future.failedFuture(new IllegalStateException("secret-payload-detail"));
+            }
+        };
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(WorkflowEngineFactory.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            // When the factory assembles the engine
+            WorkflowEngineFactory.create(partsWithout(fixture, "definitionStore")
+                    .definitionStore(failing)
+                    .build());
+
+            // Then one warning is logged and it carries no data from the failure message
+            assertThat(appender.list).hasSize(1);
+            assertThat(appender.list.getFirst().getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+            assertThat(appender.list.getFirst().getFormattedMessage()).doesNotContain("secret-payload-detail");
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
 }

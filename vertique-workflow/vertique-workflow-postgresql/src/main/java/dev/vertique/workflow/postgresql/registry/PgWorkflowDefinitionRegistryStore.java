@@ -174,7 +174,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
         this.sqlFillSignalSchemas = "UPDATE " + definitions
                 + " SET signal_names_json=$4::jsonb, start_schema_json=$5::jsonb WHERE " + KEY
-                + " AND signal_names_json IS NULL";
+                + " AND signal_names_json IS NULL AND plan_hash = $6";
 
         this.sqlRecordFailure = "UPDATE " + definitions + " SET failure_reason=$4 WHERE " + KEY
                 + " AND kind='DOCUMENT' AND scope_key <> 'default'";
@@ -208,7 +208,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         + definitions + " WHERE " + KEY;
 
         this.sqlCountNonTerminal = "SELECT count(*) AS total FROM " + instances
-                + " WHERE definition_id = $1 AND definition_version = $2 AND definition_scope_key = $3 AND status IN ('RUNNING','WAITING','COMPENSATING')";
+                + " WHERE definition_id = $1 AND definition_version = $2 AND definition_scope_key = $3 AND status IN ('PENDING','RUNNING','WAITING','COMPENSATING')";
 
         this.sqlLockRows = "SELECT " + LOCKED_COLUMNS
                 + ", publish_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM "
@@ -583,14 +583,19 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
-    public Future<Void> fillSignalSchemas(DefinitionKey key, JsonObject signalNames, @Nullable JsonObject startSchema) {
+    public Future<Void> fillSignalSchemas(
+            DefinitionKey key, String planHash, JsonObject signalNames, @Nullable JsonObject startSchema) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(planHash, "planHash");
             Objects.requireNonNull(signalNames, "signalNames");
-            // Guarded by the null column, so a row another node has filled meanwhile, or whose hash changed, is
-            // left as it is; the plan hash is never written here.
+            // Guarded by the null column and the expected plan hash, so a row another node has filled meanwhile, or
+            // whose hash changed since the plan was read, is left as it is; the plan hash is never written here.
             return mutate(key, (tx, rows) -> tx.preparedQuery(sqlFillSignalSchemas)
-                    .execute(parameters(key).addValue(signalNames).addValue(startSchema))
+                    .execute(parameters(key)
+                            .addValue(signalNames)
+                            .addValue(startSchema)
+                            .addString(planHash))
                     .mapEmpty());
         });
     }

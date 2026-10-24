@@ -22,6 +22,9 @@ public interface ObjectCache<K, V> {
      * future over the shared in-flight load; it completes on the caller's current Vert.x context, or on the
      * completing thread when there is none.
      *
+     * <p>Single flight holds only while the in-flight entry is resident: the cache is size-bounded, so an entry
+     * still loading can be evicted by other keys, and a later caller for that key then starts a second load.
+     *
      * @param key the cache key
      * @param loader produces the value on a miss
      * @return a future of the cached or freshly loaded value

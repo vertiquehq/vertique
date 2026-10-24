@@ -357,7 +357,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         if (previous.isEmpty() || previous.get().signalNames() != null || reconciled.signalNames() == null)
             return Future.succeededFuture();
         if (!previous.get().planHash().equals(reconciled.planHash())) return Future.succeededFuture();
-        return store.fillSignalSchemas(reconciled.key(), reconciled.signalNames(), reconciled.startSchema());
+        return store.fillSignalSchemas(
+                reconciled.key(), reconciled.planHash(), reconciled.signalNames(), reconciled.startSchema());
     }
 
     private void requireBoundNamesResolve(WorkflowDefinitionRecord row) {
@@ -635,7 +636,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         RuntimeWorkflow held = held(local, record.key());
         if (held == null || !record.planHash().equals(held.plan().planHash())) return Future.succeededFuture();
         WorkflowDefinitionRecord filled = withSchemas(record, held);
-        return store.fillSignalSchemas(record.key(), filled.signalNames(), filled.startSchema());
+        return store.fillSignalSchemas(record.key(), record.planHash(), filled.signalNames(), filled.startSchema());
     }
 
     /**
