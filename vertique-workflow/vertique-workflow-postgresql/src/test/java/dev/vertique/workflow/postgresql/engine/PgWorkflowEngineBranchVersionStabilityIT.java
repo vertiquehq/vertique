@@ -276,18 +276,65 @@ public class PgWorkflowEngineBranchVersionStabilityIT {
 
     @Test
     @DisplayName("branch task creation fail-fasts when requireVersionStability=true and parent has no subject ref")
-    void branchTaskCreationFailsFastWithoutSubjectRef(VertxTestContext ctx) {
-        try {
-            startWithSubjectVersion("no-ref", null);
-            ctx.failNow("expected WorkflowSubjectVersionUnavailableException, got success");
-            return;
-        } catch (CompletionException e) {
-            Throwable cause = e.getCause();
-            assertTrue(
-                    cause instanceof WorkflowSubjectVersionUnavailableException,
-                    "expected WorkflowSubjectVersionUnavailableException, got: " + cause);
-            ctx.completeNow();
+    void branchTaskCreationFailsFastWithoutSubjectRef(VertxTestContext ctx) throws Exception {
+        // The start only records; the first segment creates the branch tasks and fails fast
+        WorkflowInstanceId workflowId = recordStartWithoutSubject("no-ref");
+
+        // The executor claimed the command, its segment rolled back, and the claim lapses with its lease
+        awaitCommandState(workflowId, "CLAIMED");
+        Thread.sleep(500);
+        assertEquals(
+                "PENDING",
+                pool.preparedQuery("SELECT status FROM workflow_instances WHERE id = $1")
+                        .execute(Tuple.of(workflowId.value()))
+                        .map(rs -> rs.iterator().next().getString("status"))
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .join(),
+                "the failed first segment must leave the instance pending");
+        assertEquals(
+                0L,
+                pool.preparedQuery("SELECT count(*) FROM workflow_tasks WHERE workflow_id = $1")
+                        .execute(Tuple.of(workflowId.value()))
+                        .map(rs -> rs.iterator().next().getLong(0))
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .join(),
+                "no branch task may be created");
+        ctx.completeNow();
+    }
+
+    private WorkflowInstanceId recordStartWithoutSubject(String id) {
+        return engine.start(new StartCommand(
+                        DEFINITION.definitionId(),
+                        DEFINITION.contract().getName(),
+                        new StartReview(id),
+                        "idem-vsa-" + id,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+    }
+
+    private void awaitCommandState(WorkflowInstanceId workflowId, String state) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            String current = pool.preparedQuery("SELECT state FROM workflow_commands WHERE workflow_id = $1")
+                    .execute(Tuple.of(workflowId.value()))
+                    .map(rs -> rs.iterator().next().getString("state"))
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .join();
+            if (state.equals(current)) {
+                return;
+            }
+            Thread.sleep(50);
         }
+        throw new AssertionError("The command did not reach " + state);
     }
 
     @Test

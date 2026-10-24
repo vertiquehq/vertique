@@ -6,11 +6,13 @@ package dev.vertique.workflow.postgresql.engine;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.engine.WorkflowEngineFactory;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.engine.WorkflowEngineParts;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -19,6 +21,13 @@ import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegist
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.postgresql.executor.PgWorkflowCommandRepository;
+import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
+import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
+import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
+import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
+import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
+import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
+import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
@@ -28,14 +37,20 @@ import dev.vertique.workflow.timer.TimerStore;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
+import io.vertx.core.Vertx;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Proxy;
 import java.lang.reflect.Type;
 import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.UnaryOperator;
 import org.mockito.Answers;
 import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
@@ -218,25 +233,25 @@ public final class PgWorkflowEngineTestSupport {
             JoinStateRepository<SqlClient> joinStates,
             DurableContextPropagator propagator,
             Optional<WorkflowMigrationRegistry> migrationRegistryOpt) {
-        return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
-                .txRunner(runnerFor(pool))
-                .commands(new PgWorkflowCommandRepository(pool, new PgDbExceptionMapper()))
-                .registry(registry)
-                .instances(instances)
-                .history(history)
-                .dedup(dedup)
-                .branchTokens(standIn(branchTokens, BranchTokenRepository.class))
-                .joinStates(standIn(joinStates, JoinStateRepository.class))
-                .timerStore(timerStore)
-                .taskStore(taskStore)
-                .clock(clock)
-                .recorders(recorders)
-                .optionalIntentKinds(optionalIntentKinds)
-                .migrationRegistry(migrationRegistryOpt)
-                .propagator(propagator)
-                .typeNames(typeNamesOf(registry))
-                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
-                .build());
+        return startedEngine(
+                pool,
+                WorkflowEngineParts.builder()
+                        .txRunner(runnerFor(pool))
+                        .registry(registry)
+                        .instances(instances)
+                        .history(history)
+                        .dedup(dedup)
+                        .branchTokens(standIn(branchTokens, BranchTokenRepository.class))
+                        .joinStates(standIn(joinStates, JoinStateRepository.class))
+                        .timerStore(timerStore)
+                        .taskStore(taskStore)
+                        .clock(clock)
+                        .recorders(recorders)
+                        .optionalIntentKinds(optionalIntentKinds)
+                        .migrationRegistry(migrationRegistryOpt)
+                        .propagator(propagator)
+                        .typeNames(typeNamesOf(registry))
+                        .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry)));
     }
 
     /**
@@ -277,27 +292,27 @@ public final class PgWorkflowEngineTestSupport {
             DurableContextPropagator propagator,
             Optional<WorkflowMigrationRegistry> migrationRegistryOpt,
             Optional<BeanValidator> beanValidator) {
-        return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
-                .txRunner(runnerFor(pool))
-                .commands(new PgWorkflowCommandRepository(pool, new PgDbExceptionMapper()))
-                .registry(registry)
-                .instances(instances)
-                .history(history)
-                .dedup(dedup)
-                .branchTokens(standIn(branchTokens, BranchTokenRepository.class))
-                .joinStates(standIn(joinStates, JoinStateRepository.class))
-                .timerStore(timerStore)
-                .taskStore(taskStore)
-                .clock(clock)
-                .recorders(recorders)
-                .optionalIntentKinds(optionalIntentKinds)
-                .migrationRegistry(migrationRegistryOpt)
-                .propagator(propagator)
-                .inboundContextInitializers(Set.of())
-                .beanValidator(beanValidator)
-                .typeNames(typeNamesOf(registry))
-                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
-                .build());
+        return startedEngine(
+                pool,
+                WorkflowEngineParts.builder()
+                        .txRunner(runnerFor(pool))
+                        .registry(registry)
+                        .instances(instances)
+                        .history(history)
+                        .dedup(dedup)
+                        .branchTokens(standIn(branchTokens, BranchTokenRepository.class))
+                        .joinStates(standIn(joinStates, JoinStateRepository.class))
+                        .timerStore(timerStore)
+                        .taskStore(taskStore)
+                        .clock(clock)
+                        .recorders(recorders)
+                        .optionalIntentKinds(optionalIntentKinds)
+                        .migrationRegistry(migrationRegistryOpt)
+                        .propagator(propagator)
+                        .inboundContextInitializers(Set.of())
+                        .beanValidator(beanValidator)
+                        .typeNames(typeNamesOf(registry))
+                        .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry)));
     }
 
     /**
@@ -315,28 +330,28 @@ public final class PgWorkflowEngineTestSupport {
             Clock clock,
             WorkflowMigrationRegistry migrationRegistry,
             Optional<WorkflowStateCompatibility> stateCompatibility) {
-        return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
-                .txRunner(runnerFor(pool))
-                .commands(new PgWorkflowCommandRepository(pool, new PgDbExceptionMapper()))
-                .registry(registry)
-                .instances(instances)
-                .history(history)
-                .dedup(dedup)
-                .branchTokens(standIn(null, BranchTokenRepository.class))
-                .joinStates(standIn(null, JoinStateRepository.class))
-                .timerStore(timerStore)
-                .taskStore(taskStore)
-                .clock(clock)
-                .recorders(Set.of())
-                .optionalIntentKinds(Set.of(IntentKind.WORKFLOW_EVENT))
-                .migrationRegistry(Optional.of(migrationRegistry))
-                .propagator(null)
-                .inboundContextInitializers(Set.of())
-                .beanValidator(Optional.empty())
-                .typeNames(((DefaultWorkflowRegistry) registry).typeNames())
-                .stateCompatibility(stateCompatibility)
-                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
-                .build());
+        return startedEngine(
+                pool,
+                WorkflowEngineParts.builder()
+                        .txRunner(runnerFor(pool))
+                        .registry(registry)
+                        .instances(instances)
+                        .history(history)
+                        .dedup(dedup)
+                        .branchTokens(standIn(null, BranchTokenRepository.class))
+                        .joinStates(standIn(null, JoinStateRepository.class))
+                        .timerStore(timerStore)
+                        .taskStore(taskStore)
+                        .clock(clock)
+                        .recorders(Set.of())
+                        .optionalIntentKinds(Set.of(IntentKind.WORKFLOW_EVENT))
+                        .migrationRegistry(Optional.of(migrationRegistry))
+                        .propagator(null)
+                        .inboundContextInitializers(Set.of())
+                        .beanValidator(Optional.empty())
+                        .typeNames(((DefaultWorkflowRegistry) registry).typeNames())
+                        .stateCompatibility(stateCompatibility)
+                        .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry)));
     }
 
     /**
@@ -389,5 +404,236 @@ public final class PgWorkflowEngineTestSupport {
         return new PgWorkflowTransactionRunner(
                 new WorkflowTxRunnerRepository(pool, new PgWorkflowExceptionMapper()),
                 new dev.vertique.workflow.engine.WorkflowExceptionMapper());
+    }
+
+    // --- executors of the plain overloads ---
+
+    /**
+     * Assembles an engine and starts its executor, which polls fast, unless the pool is a mock. The executor runs only
+     * the starts that this engine recorded, as the engine ran them itself before starts were recorded: tests build
+     * several engines over one database with different registries, and an executor that ran another engine's start would
+     * run it with the wrong plan. The executor stops itself once the engine's pool is closed, so a test that closes its
+     * pool at the end leaves nothing running.
+     */
+    private static WorkflowEngineHandle startedEngine(Pool pool, WorkflowEngineParts.Builder parts) {
+        AtomicReference<WorkflowEngineHandle> handle = new AtomicReference<>();
+        java.util.Set<java.util.UUID> own = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        WorkflowCommandRepository<SqlClient> commands =
+                ownStartsOnly(new PgWorkflowCommandRepository(pool, new PgDbExceptionMapper()), own, handle);
+        boolean mocked = Mockito.mockingDetails(pool).isMock();
+        WorkflowEngineHandle engine = WorkflowEngineFactory.create(parts.commands(commands)
+                .vertx(mocked ? null : ownerOf(pool))
+                .executorConfig(new WorkflowExecutorConfig(1, 8, 100, 60))
+                .build());
+        handle.set(engine);
+        if (mocked) {
+            // an engine over a mocked pool has no database to claim from, so it runs no executor
+            return engine;
+        }
+        try {
+            engine.executor().start().toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new IllegalStateException("The executor of the test engine did not start", e);
+        }
+        return remembering(engine, own);
+    }
+
+    /** Wraps an engine so that every instance it records a start for is remembered in {@code own}. */
+    private static WorkflowEngineHandle remembering(WorkflowEngineHandle engine, java.util.Set<java.util.UUID> own) {
+        return (WorkflowEngineHandle) Proxy.newProxyInstance(
+                WorkflowEngineHandle.class.getClassLoader(),
+                new Class<?>[] {WorkflowEngineHandle.class},
+                (proxy, method, arguments) -> {
+                    Object result;
+                    try {
+                        result = method.invoke(engine, arguments);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                    if ("start".equals(method.getName()) && result instanceof Future<?> future) {
+                        future.onSuccess(id -> {
+                            if (id instanceof dev.vertique.workflow.ops.WorkflowInstanceId started) {
+                                own.add(started.value());
+                            }
+                        });
+                    }
+                    return result;
+                });
+    }
+
+    /**
+     * Decorates a command repository so that a peek returns only the heads of instances in {@code own}, and so that a
+     * peek that fails because the pool was closed stops the executor.
+     */
+    @SuppressWarnings("unchecked")
+    private static WorkflowCommandRepository<SqlClient> ownStartsOnly(
+            WorkflowCommandRepository<SqlClient> real,
+            java.util.Set<java.util.UUID> own,
+            AtomicReference<WorkflowEngineHandle> handle) {
+        return (WorkflowCommandRepository<SqlClient>) Proxy.newProxyInstance(
+                WorkflowCommandRepository.class.getClassLoader(),
+                new Class<?>[] {WorkflowCommandRepository.class},
+                (proxy, method, arguments) -> {
+                    boolean peek = "peek".equals(method.getName());
+                    Object[] forwarded = arguments;
+                    int limit = 0;
+                    if (peek) {
+                        limit = (Integer) arguments[0];
+                        forwarded = new Object[] {Math.max(limit, 256)};
+                    }
+                    Object result;
+                    try {
+                        result = method.invoke(real, forwarded);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                    if (!peek || !(result instanceof Future<?> future)) {
+                        return result;
+                    }
+                    int wanted = limit;
+                    return ((Future<List<dev.vertique.workflow.engine.spi.CommandHead>>) future)
+                            .<List<dev.vertique.workflow.engine.spi.CommandHead>>map(heads -> heads.stream()
+                                    .filter(head ->
+                                            own.contains(head.workflowId().value()))
+                                    .limit(wanted)
+                                    .toList())
+                            .recover(failure -> {
+                                if (!poolClosed(failure)) {
+                                    return Future.failedFuture(failure);
+                                }
+                                handle.get().executor().stop();
+                                return Future.succeededFuture(List.of());
+                            });
+                });
+    }
+
+    private static boolean poolClosed(Throwable failure) {
+        for (Throwable t = failure; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (t instanceof java.util.concurrent.RejectedExecutionException
+                    || message != null
+                            && (message.toLowerCase(java.util.Locale.ROOT).contains("closed")
+                                    || message.toLowerCase(java.util.Locale.ROOT)
+                                            .contains("terminated"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The Vert.x instance a pool runs on. The executor must run on it: a segment's continuations return on the pool's
+     * Vert.x instance, so a verticle of another instance would lose its duplicated context after the first statement.
+     */
+    private static Vertx ownerOf(Pool pool) {
+        java.util.concurrent.CompletableFuture<Vertx> owner = new java.util.concurrent.CompletableFuture<>();
+        pool.query("SELECT 1")
+                .execute()
+                .onComplete(result -> owner.complete(Vertx.currentContext().owner()));
+        try {
+            return owner.get(20, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not find the Vert.x instance of the pool", e);
+        }
+    }
+
+    // --- engines with a controllable executor ---
+
+    /**
+     * Starts the description of an engine whose executor a test starts and stops itself, over real PostgreSQL
+     * repositories on the given pool. The engine runs its executor on the given Vert.x instance.
+     *
+     * @param pool     the connection pool the engine transacts on
+     * @param vertx    the Vert.x instance the executor is deployed on
+     * @param registry the workflow registry
+     * @return the description, with the defaults of a plain engine
+     */
+    public static ExecutorEngine executorEngine(Pool pool, Vertx vertx, WorkflowRegistry registry) {
+        return new ExecutorEngine(pool, vertx, registry);
+    }
+
+    /**
+     * Describes an engine with a controllable executor: the executor configuration, the recorders, the durable
+     * context propagator, and decorators for the transaction runner and the command repository the engine is
+     * built with. The decorators are applied to the runner and the repository this support type builds, so no
+     * production visibility changes for them.
+     */
+    public static final class ExecutorEngine {
+
+        private final Pool pool;
+        private final Vertx vertx;
+        private final WorkflowRegistry registry;
+        private Set<WorkflowSideEffectRecorder<SqlClient>> recorders = Set.of();
+        private WorkflowExecutorConfig executorConfig = WorkflowExecutorConfig.defaults();
+        private DurableContextPropagator propagator;
+        private UnaryOperator<WorkflowTransactionRunner<SqlClient>> runnerDecorator = UnaryOperator.identity();
+        private UnaryOperator<WorkflowCommandRepository<SqlClient>> commandsDecorator = UnaryOperator.identity();
+
+        private ExecutorEngine(Pool pool, Vertx vertx, WorkflowRegistry registry) {
+            this.pool = pool;
+            this.vertx = vertx;
+            this.registry = registry;
+        }
+
+        /** The side-effect recorders of the engine. */
+        public ExecutorEngine recorders(Set<WorkflowSideEffectRecorder<SqlClient>> recorders) {
+            this.recorders = recorders;
+            return this;
+        }
+
+        /** The executor configuration: instances, concurrency, poll interval and lease. */
+        public ExecutorEngine executorConfig(WorkflowExecutorConfig executorConfig) {
+            this.executorConfig = executorConfig;
+            return this;
+        }
+
+        /** The durable context propagator the engine captures and binds with. */
+        public ExecutorEngine propagator(DurableContextPropagator propagator) {
+            this.propagator = propagator;
+            return this;
+        }
+
+        /** Wraps the transaction runner that {@code runnerFor(Pool)} builds. */
+        public ExecutorEngine runnerDecorator(UnaryOperator<WorkflowTransactionRunner<SqlClient>> decorator) {
+            this.runnerDecorator = decorator;
+            return this;
+        }
+
+        /** Wraps the command repository the engine is built with. */
+        public ExecutorEngine commandsDecorator(UnaryOperator<WorkflowCommandRepository<SqlClient>> decorator) {
+            this.commandsDecorator = decorator;
+            return this;
+        }
+
+        /**
+         * Builds the engine. Its executor is not started; the test starts and stops it through
+         * {@link WorkflowEngineHandle#executor()}.
+         *
+         * @return the engine handle
+         */
+        public WorkflowEngineHandle build() {
+            PgDbExceptionMapper ex = new PgDbExceptionMapper();
+            return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                    .txRunner(runnerDecorator.apply(runnerFor(pool)))
+                    .commands(commandsDecorator.apply(new PgWorkflowCommandRepository(pool, ex)))
+                    .registry(registry)
+                    .instances(new PgWorkflowInstanceRepository(pool, ex))
+                    .history(new PgWorkflowHistoryRepository(pool, ex))
+                    .dedup(new PgWorkflowDedupRepository(pool, ex))
+                    .branchTokens(new PgBranchTokenRepository(pool, ex))
+                    .joinStates(new PgJoinStateRepository(pool, ex))
+                    .timerStore(new PgTimerStore(ex))
+                    .taskStore(new PgTaskStore(pool, ex))
+                    .clock(Clock.systemUTC())
+                    .recorders(recorders)
+                    .optionalIntentKinds(Set.of(IntentKind.WORKFLOW_EVENT))
+                    .propagator(propagator)
+                    .inboundContextInitializers(Set.of())
+                    .typeNames(typeNamesOf(registry))
+                    .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                    .vertx(vertx)
+                    .executorConfig(executorConfig)
+                    .build());
+        }
     }
 }

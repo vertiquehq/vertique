@@ -77,9 +77,7 @@ public class TaskReviewSagaIT extends SagaTestBase {
 
     @AfterAll
     static void tearDown() {
-        if (component != null && component.pgInboxOutboxRepository() != null) {
-            component.pgInboxOutboxRepository().pool().close();
-        }
+        closeComponent();
     }
 
     // --- Test 1: happy-path approval ---

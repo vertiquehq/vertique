@@ -5,6 +5,7 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
+import dev.vertique.workflow.engine.executor.WorkflowExecutor;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
@@ -95,7 +96,9 @@ public final class WorkflowEngineFactory {
         TaskStore<SqlClient> taskStore = parts.taskStore();
         Clock clock = parts.clock();
         DurableContextPropagator propagator = parts.propagator();
-        WorkflowExecutionProbe executionProbe = new DefaultWorkflowExecutionProbe(parts.commands());
+        WorkflowExecutionProbe executionProbe = parts.vertx() == null
+                ? new DefaultWorkflowExecutionProbe(parts.commands())
+                : new DefaultWorkflowExecutionProbe(parts.commands(), parts.vertx());
         PayloadConstraintCheck payloadConstraintCheck = new PayloadConstraintCheck(parts.beanValidator());
         RecorderRouter recorderRouter = new RecorderRouter(parts.recorders(), parts.optionalIntentKinds());
         FingerprintCanonicalizer fingerprintCanonicalizer = new FingerprintCanonicalizer();
@@ -136,7 +139,8 @@ public final class WorkflowEngineFactory {
                 .onFailure(failure -> LOG.warn(
                         "Could not seed the definition activation view; it stays empty until the store answers ({})",
                         failure.getClass().getSimpleName()));
-        return new WorkflowEngine(
+        WorkflowExecutorControl[] executorHolder = new WorkflowExecutorControl[1];
+        WorkflowEngine engine = new WorkflowEngine(
                 txRunner,
                 registry,
                 instances,
@@ -164,7 +168,16 @@ public final class WorkflowEngineFactory {
                 parts.stateCompatibility(),
                 new FailingDefinitions(),
                 executionProbe,
-                parts.commands());
+                parts.commands(),
+                () -> executorHolder[0]);
+        executorHolder[0] = new WorkflowExecutor(
+                parts.vertx(),
+                parts.executorConfig(),
+                parts.commands(),
+                txRunner,
+                engine.segments(),
+                WorkflowExecutor.newNodeId());
+        return engine;
     }
 
     /**

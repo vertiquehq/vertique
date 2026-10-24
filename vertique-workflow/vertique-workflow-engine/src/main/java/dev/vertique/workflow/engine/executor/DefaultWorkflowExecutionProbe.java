@@ -22,14 +22,22 @@ import java.util.concurrent.TimeoutException;
 /**
  * INTERNAL: the {@link WorkflowExecutionProbe} over the read members of {@link WorkflowCommandRepository}.
  *
- * <p>The probe polls the repository at a bounded interval until no command is runnable or the timeout elapses; the
- * timeout is measured on the local monotonic clock, eligibility on the database clock. When it completes it reads
+ * <p>The probe polls the repository until no command is runnable or the timeout elapses, pausing 25 ms after the first
+ * read and longer after each following one, up to 250 ms, so a long wait does not re-run the eligibility scan at a
+ * high rate. A timeout longer than ten minutes is shortened to ten minutes. The timeout is measured on the local
+ * monotonic clock, eligibility on the database clock. When it completes it reads
  * the deferred, parked and not-yet-available commands it stopped on.
  */
 public final class DefaultWorkflowExecutionProbe implements WorkflowExecutionProbe {
 
-    /** Longest pause between two reads. */
+    /** Shortest pause between two reads; the pause doubles after each read up to {@link #MAX_POLL_INTERVAL_MS}. */
     static final long POLL_INTERVAL_MS = 25;
+
+    /** Longest pause between two reads. */
+    static final long MAX_POLL_INTERVAL_MS = 250;
+
+    /** The longest a probe waits; a longer timeout is shortened to this. */
+    static final Duration MAX_TIMEOUT = Duration.ofMinutes(10);
 
     /** Pauses the polling loop; the future completes after the delay. */
     @FunctionalInterface
@@ -39,6 +47,7 @@ public final class DefaultWorkflowExecutionProbe implements WorkflowExecutionPro
 
     private final WorkflowCommandRepository<?> commands;
     private final Pause pause;
+    private final Duration maxTimeout;
 
     /**
      * Creates a probe that pauses between reads with Vert.x timers.
@@ -65,8 +74,13 @@ public final class DefaultWorkflowExecutionProbe implements WorkflowExecutionPro
     }
 
     private DefaultWorkflowExecutionProbe(WorkflowCommandRepository<?> commands, Pause pause) {
+        this(commands, pause, MAX_TIMEOUT);
+    }
+
+    DefaultWorkflowExecutionProbe(WorkflowCommandRepository<?> commands, Pause pause, Duration maxTimeout) {
         this.commands = Objects.requireNonNull(commands, "commands");
         this.pause = pause;
+        this.maxTimeout = maxTimeout;
     }
 
     @Override
@@ -85,12 +99,13 @@ public final class DefaultWorkflowExecutionProbe implements WorkflowExecutionPro
         if (timeout.isNegative() || timeout.isZero()) {
             throw new IllegalArgumentException("timeout must be positive: " + timeout);
         }
-        long deadline = System.nanoTime() + timeout.toNanos();
-        return poll(scope, subject, timeout, deadline);
+        Duration bounded = timeout.compareTo(maxTimeout) > 0 ? maxTimeout : timeout;
+        long deadline = System.nanoTime() + bounded.toNanos();
+        return poll(scope, subject, bounded, deadline, POLL_INTERVAL_MS);
     }
 
     private Future<IdleReport> poll(
-            @Nullable WorkflowInstanceId scope, String subject, Duration timeout, long deadline) {
+            @Nullable WorkflowInstanceId scope, String subject, Duration timeout, long deadline, long pauseMs) {
         return commands.countRunnable(scope).compose(runnable -> {
             if (runnable == 0) {
                 return report(scope);
@@ -100,8 +115,9 @@ public final class DefaultWorkflowExecutionProbe implements WorkflowExecutionPro
                 return Future.failedFuture(new TimeoutException(
                         subject + " is not idle after " + timeout + ": " + runnable + " runnable command(s) left"));
             }
-            long delayMs = Math.min(POLL_INTERVAL_MS, Math.max(1, TimeUnit.NANOSECONDS.toMillis(remainingNanos)));
-            return pause.after(delayMs).compose(ignored -> poll(scope, subject, timeout, deadline));
+            long delayMs = Math.min(pauseMs, Math.max(1, TimeUnit.NANOSECONDS.toMillis(remainingNanos)));
+            long nextPauseMs = Math.min(pauseMs * 2, MAX_POLL_INTERVAL_MS);
+            return pause.after(delayMs).compose(ignored -> poll(scope, subject, timeout, deadline, nextPauseMs));
         });
     }
 

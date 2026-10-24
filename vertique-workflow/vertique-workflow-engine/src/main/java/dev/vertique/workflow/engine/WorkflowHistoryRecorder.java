@@ -5,13 +5,14 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.events.WorkflowEventType;
-import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
@@ -65,15 +66,15 @@ final class WorkflowHistoryRecorder {
      * Appends the {@code START} history entry for a newly created instance and emits the
      * {@link WorkflowEventType#WORKFLOW_STARTED} event.
      *
-     * @param inst the fresh instance
-     * @param cmd the original start command
+     * @param inst the instance, as initialized by its first segment
+     * @param idempotencyKey the idempotency key of the recorded start, or {@code null} when none was kept
      * @param tx the active transaction
      * @return a {@link Future} that completes when the entry is inserted and the event is emitted
      */
-    Future<Void> appendStartHistory(WorkflowInstance inst, StartCommand cmd, SqlClient tx) {
+    Future<Void> appendStartHistory(WorkflowInstance inst, @Nullable String idempotencyKey, SqlClient tx) {
         return history.nextSequence(inst.id(), tx).compose(seq -> {
             String payload = Json.encode(
-                    new StartHistoryPayload(cmd.definitionId(), inst.definitionVersion(), cmd.businessKey()));
+                    new StartHistoryPayload(inst.definitionId(), inst.definitionVersion(), inst.businessKey()));
             WorkflowHistoryEntry entry =
                     new WorkflowHistoryEntry(inst.id(), seq, WorkflowEntryType.START, payload, clock.instant());
             return history.append(entry, tx)
@@ -83,8 +84,26 @@ final class WorkflowHistoryRecorder {
                             seq,
                             null,
                             null,
-                            Map.of("idempotencyKey", cmd.idempotencyKey()),
+                            idempotencyKey == null ? Map.of() : Map.of("idempotencyKey", idempotencyKey),
                             tx));
+        });
+    }
+
+    /**
+     * Appends a history entry that says what happened to a command: received by a segment, or completed by it.
+     *
+     * @param workflowId the instance
+     * @param type the entry type, one of the {@code COMMAND_*} types
+     * @param commandId the command's row id
+     * @param kind the command kind
+     * @param tx the active transaction
+     * @return a {@link Future} that completes when the entry is inserted
+     */
+    Future<Void> appendCommandHistory(
+            WorkflowInstanceId workflowId, WorkflowEntryType type, long commandId, String kind, SqlClient tx) {
+        return history.nextSequence(workflowId, tx).compose(seq -> {
+            String payload = Json.encode(new CommandHistoryPayload(commandId, kind));
+            return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
         });
     }
 }

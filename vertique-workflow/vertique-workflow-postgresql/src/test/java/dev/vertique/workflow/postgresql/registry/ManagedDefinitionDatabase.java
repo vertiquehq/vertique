@@ -48,6 +48,7 @@ import dev.vertique.workflow.definition.service.WorkflowDefinitionStore;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.di.WorkflowDefinitionsConfigModule;
+import dev.vertique.workflow.di.WorkflowExecutorConfigModule;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowDefinitionPropagationPoller;
@@ -144,6 +145,28 @@ public final class ManagedDefinitionDatabase {
                 .build();
     }
 
+    /**
+     * The config with the executor's poll interval shortened to 100 ms unless the config sets it, so tests do not wait
+     * for the production default between a recorded start and its first segment.
+     */
+    static JsonObject withFastExecutor(JsonObject config) {
+        JsonObject copy = config.copy();
+        JsonObject workflow = copy.getJsonObject("workflow");
+        if (workflow == null) {
+            workflow = new JsonObject();
+            copy.put("workflow", workflow);
+        }
+        JsonObject executor = workflow.getJsonObject("executor");
+        if (executor == null) {
+            executor = new JsonObject();
+            workflow.put("executor", executor);
+        }
+        if (!executor.containsKey("pollIntervalMs")) {
+            executor.put("pollIntervalMs", 100);
+        }
+        return copy;
+    }
+
     public static byte[] yamlFixture() {
         try (InputStream input = Thread.currentThread()
                 .getContextClassLoader()
@@ -218,7 +241,7 @@ public final class ManagedDefinitionDatabase {
             boolean includeLargeUnicodeMapper,
             WorkflowDefinitionParserProbe parserProbe) {
         return DaggerManagedDefinitionDatabase_AppComponent.builder()
-                .vertxModule(new VertxModule(vertx, config))
+                .vertxModule(new VertxModule(vertx, withFastExecutor(config)))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
                 .bootObservationModule(new BootObservationModule(observation))
                 .definitionSourceModule(new DefinitionSourceModule(source))
@@ -253,7 +276,7 @@ public final class ManagedDefinitionDatabase {
             List<WorkflowDefinition<?, ?>> codeDefinitions,
             List<WorkflowTypeCatalogEntry> extraCatalogEntries) {
         return DaggerManagedDefinitionDatabase_AppComponent.builder()
-                .vertxModule(new VertxModule(vertx, config))
+                .vertxModule(new VertxModule(vertx, withFastExecutor(config)))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
                 .bootObservationModule(new BootObservationModule(observation))
                 .definitionSourceModule(new DefinitionSourceModule(source))
@@ -266,7 +289,7 @@ public final class ManagedDefinitionDatabase {
 
     static NoLoaderAppComponent appWithoutLoader(Vertx vertx, Pool pool, BootObservation observation) {
         return DaggerManagedDefinitionDatabase_NoLoaderAppComponent.builder()
-                .vertxModule(new VertxModule(vertx, new JsonObject()))
+                .vertxModule(new VertxModule(vertx, withFastExecutor(new JsonObject())))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
                 .noLoaderBootObservationModule(new NoLoaderBootObservationModule(observation))
                 .build();
@@ -278,6 +301,7 @@ public final class ManagedDefinitionDatabase {
                 VertxModule.class,
                 ConfigParsingModule.class,
                 WorkflowDefinitionsConfigModule.class,
+                WorkflowExecutorConfigModule.class,
                 DeployerModule.class,
                 CoreLifecycleStepsModule.class,
                 WorkflowPostgresqlModule.class,
@@ -320,6 +344,9 @@ public final class ManagedDefinitionDatabase {
         dev.vertique.workflow.ops.WorkflowOperations workflowOperations();
 
         dev.vertique.workflow.ops.WorkflowExecutionProbe executionProbe();
+
+        /** The verticle deployments of the graph, among them the workflow executor. */
+        Set<VerticleDeployment> verticleDeployments();
 
         dev.vertique.workflow.ops.TransactionalWorkflowOperations<io.vertx.sqlclient.SqlClient>
                 transactionalOperations();
@@ -534,6 +561,7 @@ public final class ManagedDefinitionDatabase {
                 VertxModule.class,
                 ConfigParsingModule.class,
                 WorkflowDefinitionsConfigModule.class,
+                WorkflowExecutorConfigModule.class,
                 DeployerModule.class,
                 CoreLifecycleStepsModule.class,
                 WorkflowPostgresqlModule.class,
@@ -555,6 +583,9 @@ public final class ManagedDefinitionDatabase {
         }
 
         WorkflowRegistry workflowRegistry();
+
+        /** The verticle deployments of the graph, among them the workflow executor. */
+        Set<VerticleDeployment> verticleDeployments();
 
         Pool pool();
     }

@@ -9,8 +9,12 @@ import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.IsolationLevel;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMaps;
+import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
+import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
@@ -69,6 +73,7 @@ import io.vertx.core.json.Json;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
+import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
@@ -233,6 +238,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private final WorkflowCommandRepository<SqlClient> commands;
 
+    /** The control of this engine's executor; a supplier because the executor is built from this engine's segments. */
+    private final Supplier<WorkflowExecutorControl> executorControl;
+
     @Inject
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -260,9 +268,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             DefinitionActivations activations,
             FailingDefinitions failing,
             WorkflowExecutionProbe executionProbe,
-            WorkflowCommandRepository<SqlClient> commands) {
+            WorkflowCommandRepository<SqlClient> commands,
+            Provider<WorkflowExecutorControl> executorControl) {
         this.executionProbe = executionProbe;
         this.commands = commands;
+        this.executorControl = executorControl::get;
         this.activations = activations;
         this.failing = failing;
         this.txRunner = txRunner;
@@ -366,9 +376,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
             FailingDefinitions failing,
             WorkflowExecutionProbe executionProbe,
-            WorkflowCommandRepository<SqlClient> commands) {
+            WorkflowCommandRepository<SqlClient> commands,
+            Supplier<WorkflowExecutorControl> executorControl) {
         this.executionProbe = executionProbe;
         this.commands = commands;
+        this.executorControl = executorControl;
         this.payloadConstraintCheck = payloadConstraintCheck;
         this.activations = activations;
         this.failing = failing;
@@ -506,6 +518,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     @Override
     public WorkflowExecutionProbe executionProbe() {
         return executionProbe;
+    }
+
+    @Override
+    public WorkflowExecutorControl executor() {
+        return executorControl.get();
     }
 
     // --- WorkflowOperations ---
@@ -678,9 +695,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * <p>Looks for a start dedup row of the start scope, the definition id and the idempotency key first; a
      * replay returns the existing instance before any version is resolved. A first start resolves the
-     * definition, compares the command's contract with the resolved definition's contract, atomically claims
-     * the start dedup slot and, when it wins, coerces the payload, derives the initial state, persists the
-     * instance and history, and drives initial transitions. A null start scope is the default scope.
+     * definition, compares the command's contract with the resolved definition's contract, validates and coerces
+     * the start payload, takes the new instance's execution lock, atomically claims the start dedup slot and, when it
+     * wins, records the instance as {@code PENDING} with a {@code START} command and returns. The executor derives the
+     * initial state and drives the first steps afterwards. A null start scope is the default scope.
      *
      * @param cmd the start command; must not be null
      * @param tx the active SQL transaction; must not be null
@@ -795,6 +813,18 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return Future.failedFuture(e);
         }
 
+        // The payload is validated and bound to its declared type before any lock is taken or row written.
+        Object coercedPayload;
+        try {
+            coercedPayload = WorkflowPayloads.validateAndCoerceStartPayload(cmd.payload(), rw.startPayloadType());
+            payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.START_REJECTION);
+        } catch (WorkflowInvalidPayloadException e) {
+            if (e.getCause() != null) {
+                log.debug("Start payload rejected", e.getCause());
+            }
+            return Future.failedFuture(e);
+        }
+
         long resolvedVersion = rw.plan().definitionVersion();
         String fingerprint = "definitionVersion=" + resolvedVersion;
 
@@ -812,7 +842,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         return replayedStart(cmd, result.workflowId(), tx);
                     }
                     // Winner: proceed with instance creation.
-                    return doCreateInstance(cmd, startScope, rw, proposedId, tx);
+                    return doCreateInstance(cmd, startScope, rw, coercedPayload, proposedId, tx);
                 });
     }
 
@@ -916,73 +946,59 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Creates the workflow instance row, persists the START history entry, and drives initial
-     * transitions. Called only by the dedup winner in {@link #start(StartCommand, SqlClient)}.
+     * Records a new instance: validates and coerces the start payload as before, inserts the instance as
+     * {@code PENDING} with its pin, business key and durable carrier, and records the {@code START} command with the
+     * payload. No initial state is computed, no subject is resolved and nothing is driven here: the executor does that
+     * when it runs the command. Called only by the dedup winner in {@link #start(StartCommand, SqlClient)}, under the
+     * new instance's execution lock.
      *
      * @param cmd the start command
      * @param startScope the resolved start scope stamped on the instance
      * @param rw the resolved runtime workflow
+     * @param coercedPayload the start payload, validated and bound to the declared start type
      * @param id the instance id to use
      * @param tx the active transaction
-     * @return a {@link Future} resolving to the new instance id after transitions complete
+     * @return a {@link Future} resolving to the new instance id once the instance and its command are recorded
      */
     private Future<WorkflowInstanceId> doCreateInstance(
-            StartCommand cmd, String startScope, RuntimeWorkflow rw, WorkflowInstanceId id, SqlClient tx) {
-        // Validate and coerce the payload to the declared start payload type.
-        Object coercedPayload;
+            StartCommand cmd,
+            String startScope,
+            RuntimeWorkflow rw,
+            Object coercedPayload,
+            WorkflowInstanceId id,
+            SqlClient tx) {
+        String payloadJson;
         try {
-            coercedPayload = WorkflowPayloads.validateAndCoerceStartPayload(cmd.payload(), rw.startPayloadType());
-            payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.START_REJECTION);
-        } catch (WorkflowInvalidPayloadException e) {
-            if (e.getCause() != null) {
-                log.debug("Start payload rejected", e.getCause());
-            }
+            payloadJson = coercedPayload == null ? null : Json.encode(coercedPayload);
+        } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
-
-        // Derive initial state via the init function.
-        Object initialState;
-        try {
-            initialState = rw.initialState().apply(coercedPayload);
-        } catch (Exception e) {
-            return Future.failedFuture(new WorkflowDefinitionException(
-                    "initialState function threw for definition '" + EchoedNames.bounded(cmd.definitionId()) + "'", e));
-        }
-        String stateJson = Json.encode(initialState);
-
-        // Resolve subject ref: caller-supplied wins; fall back to plan resolver if configured.
-        WorkflowSubjectRef subjectRef;
-        try {
-            subjectRef = resolveSubjectRef(cmd, rw.plan(), initialState, rw.callbacks());
-        } catch (WorkflowDefinitionException e) {
-            return Future.failedFuture(e);
-        }
+        String targetJson = cmd.subjectRef() == null ? null : Json.encode(SubjectTarget.of(cmd.subjectRef()));
 
         Instant now = clock.instant();
 
-        // FR-WF-CTX-010/012 (PRD-WF-007 AC-1): capture-only — no new durable scope is installed
-        // around the start drive; the ambient context bound by the caller IS the capture. An empty
-        // capture persists as NULL (never an empty DurableMetadata document, per FR-WF-CTX-010). A
-        // null propagator (legacy test construction without durable-context wiring, mirroring
-        // BranchTransitionEngine's tolerance) captures nothing.
-        DurableMetadata captured =
-                propagator == null ? DurableMetadata.empty() : propagator.capture(DispatchBoundary.WORKFLOW);
+        // The instance carries the durable context of the recording caller, because the executor has no caller to
+        // capture it from later. The capture strips the identity snapshot, so no later drive can bind an identity from
+        // the instance carrier. An empty capture persists as NULL; a null propagator captures nothing.
+        DurableMetadata captured = propagator == null
+                ? DurableMetadata.empty()
+                : propagator.capture(DispatchBoundary.WORKFLOW).without(IDENTITY_SNAPSHOT_NAMESPACE);
         DurableMetadata instanceMetadata = captured.isEmpty() ? null : captured;
 
-        WorkflowInstance fresh = new WorkflowInstance(
+        WorkflowInstance pending = new WorkflowInstance(
                 id,
                 rw.plan().definitionId(),
                 rw.plan().definitionVersion(),
                 rw.plan().planHash(),
                 0L,
-                WorkflowStatus.RUNNING,
+                WorkflowStatus.PENDING,
                 cmd.businessKey(),
-                subjectRef,
-                rw.plan().initialStepId(),
                 null,
                 null,
                 null,
-                stateJson,
+                null,
+                null,
+                null,
                 null,
                 null,
                 now,
@@ -992,10 +1008,162 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 rw.definitionScopeKey());
 
         return instances
-                .insert(fresh, tx)
-                .compose(v -> appendStartHistory(fresh, cmd, tx))
-                .compose(v -> driver.driveTransitions(fresh, rw, tx))
+                .insert(pending, tx)
+                .compose(v -> commands.recordStart(id, cmd.idempotencyKey(), payloadJson, targetJson, tx))
                 .map(v -> id);
+    }
+
+    /** The durable-context namespace of the identity snapshot, which no instance carrier keeps. */
+    private static final String IDENTITY_SNAPSHOT_NAMESPACE = "identity-snapshot";
+
+    /** The caller-supplied subject of a start, as recorded on its command. */
+    record SubjectTarget(WorkflowSubjectRef subject) {
+        static SubjectTarget of(WorkflowSubjectRef subject) {
+            return new SubjectTarget(subject);
+        }
+    }
+
+    // --- Executor segments ---
+
+    /**
+     * The engine's side of a segment, for the executor.
+     *
+     * @return the segments seam over this engine
+     */
+    WorkflowSegments segments() {
+        return new WorkflowSegments() {
+            @Override
+            public boolean makeResident(CommandHead head) {
+                return WorkflowEngine.this.makeResident(head);
+            }
+
+            @Override
+            public Future<Outcome> run(CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+                return runSegment(head, claim, command, tx);
+            }
+        };
+    }
+
+    /**
+     * Makes the plan of a peeked command resident: resolves it through the registry, outside any transaction.
+     *
+     * @param head the peeked command
+     * @return whether this node can resolve the plan
+     */
+    private boolean makeResident(CommandHead head) {
+        try {
+            PinnedPlans.resolve(
+                    registry,
+                    new DefinitionKey(head.definitionScopeKey(), head.definitionId(), head.definitionVersion()));
+            return true;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** Runs a fenced command's work in the segment's transaction. Only {@code START} exists at this point. */
+    private Future<WorkflowSegments.Outcome> runSegment(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        if (!"START".equals(command.kind())) {
+            return Future.failedFuture(
+                    new IllegalStateException("The executor cannot run a command of kind " + command.kind()));
+        }
+        return instances.findById(command.workflowId(), tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.failedFuture(new WorkflowInstanceNotFoundException(command.workflowId()));
+            }
+            WorkflowInstance inst = found.get();
+            if (inst.status() != WorkflowStatus.PENDING) {
+                // The instance no longer waits for its start: it was cancelled or already initialized.
+                return Future.succeededFuture(WorkflowSegments.Outcome.STALE);
+            }
+            if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
+                    || !inst.definitionId().equals(head.definitionId())
+                    || inst.definitionVersion() != head.definitionVersion()
+                    || !inst.planHash().equals(head.planHash())) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            }
+            RuntimeWorkflow rw;
+            try {
+                rw = PinnedPlans.resolve(registry, inst);
+                requirePlanHashMatches(inst, rw);
+            } catch (Exception e) {
+                return Future.failedFuture(e);
+            }
+            return contextBinder
+                    .withBound(inst, null, () -> startSegment(inst, rw, claim, command, tx))
+                    .map(v -> WorkflowSegments.Outcome.APPLIED);
+        });
+    }
+
+    /**
+     * The first segment of an instance: logs that the command was received, computes the initial state from the
+     * recorded payload, resolves the subject, moves the instance out of {@code PENDING}, appends the {@code START}
+     * history entry and its event, advances the instance until it waits or ends, and logs that the command
+     * completed.
+     */
+    private Future<Void> startSegment(
+            WorkflowInstance inst, RuntimeWorkflow rw, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        Object coercedPayload;
+        Object initialState;
+        WorkflowSubjectRef subjectRef;
+        try {
+            Object raw = command.payloadJson() == null ? null : Json.decodeValue(command.payloadJson());
+            coercedPayload = WorkflowPayloads.validateAndCoerceStartPayload(raw, rw.startPayloadType());
+            payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.START_REJECTION);
+            try {
+                initialState = rw.initialState().apply(coercedPayload);
+            } catch (Exception e) {
+                return Future.failedFuture(new WorkflowDefinitionException(
+                        "initialState function threw for definition '" + EchoedNames.bounded(inst.definitionId()) + "'",
+                        e));
+            }
+            subjectRef = resolveSubjectRef(recordedSubject(command), rw.plan(), initialState, rw.callbacks());
+        } catch (Exception e) {
+            return Future.failedFuture(e);
+        }
+        String stateJson = Json.encode(initialState);
+
+        WorkflowInstance running = new WorkflowInstance(
+                inst.id(),
+                inst.definitionId(),
+                inst.definitionVersion(),
+                inst.planHash(),
+                inst.version() + 1,
+                WorkflowStatus.RUNNING,
+                inst.businessKey(),
+                subjectRef,
+                rw.plan().initialStepId(),
+                null,
+                null,
+                null,
+                stateJson,
+                null,
+                null,
+                inst.createdAt(),
+                clock.instant(),
+                inst.metadata(),
+                inst.scopeKey(),
+                inst.definitionScopeKey());
+
+        return historyRecorder
+                .appendCommandHistory(
+                        inst.id(), WorkflowEntryType.COMMAND_RECEIVED, claim.commandId(), command.kind(), tx)
+                .compose(v -> instances.updateOptimistic(running, inst.version(), tx))
+                .compose(rows ->
+                        requireRowUpdated(rows, "workflow instance " + inst.id().value() + " start"))
+                .compose(v -> historyRecorder.appendStartHistory(running, command.dedupKey(), tx))
+                .compose(v -> driver.driveTransitions(running, rw, tx))
+                .compose(v -> historyRecorder.appendCommandHistory(
+                        inst.id(), WorkflowEntryType.COMMAND_COMPLETED, claim.commandId(), command.kind(), tx));
+    }
+
+    /** The caller-supplied subject recorded on a start command, or {@code null}. */
+    private static WorkflowSubjectRef recordedSubject(SegmentCommand command) {
+        if (command.targetJson() == null) {
+            return null;
+        }
+        return Json.decodeValue(command.targetJson(), SubjectTarget.class).subject();
     }
 
     /**
@@ -1014,7 +1182,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * <p>The resolver is invoked before the {@link WorkflowInstance} row is inserted, inside the
      * start transaction, because it is a pure function of the initial state.
      *
-     * @param cmd          the start command; provides the caller-supplied subject ref (precedence 1)
+     * @param callerRef    the caller-supplied subject ref recorded with the start (precedence 1), or {@code null}
      * @param plan         the compiled workflow plan; provides the resolver callback id (precedence 2)
      * @param initialState the initial state derived from the start payload; passed to the resolver
      * @param callbacks    the callback registry used to look up the resolver function
@@ -1022,10 +1190,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * @throws WorkflowDefinitionException if the resolver is configured but returns {@code null}
      */
     private WorkflowSubjectRef resolveSubjectRef(
-            StartCommand cmd, WorkflowPlan plan, Object initialState, WorkflowCallbackRegistry callbacks) {
+            @Nullable WorkflowSubjectRef callerRef,
+            WorkflowPlan plan,
+            Object initialState,
+            WorkflowCallbackRegistry callbacks) {
         // Precedence 1: caller-supplied subject ref wins unconditionally.
-        if (cmd.subjectRef() != null) {
-            return cmd.subjectRef();
+        if (callerRef != null) {
+            return callerRef;
         }
 
         // Precedence 2: plan-configured subject resolver.
@@ -1049,21 +1220,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     "Subject resolver returned null for workflow definition '" + plan.definitionId() + "'");
         }
         return resolved;
-    }
-
-    /**
-     * Appends the {@code START} history entry for a newly created instance and emits the
-     * {@link WorkflowEventType#WORKFLOW_STARTED} event.
-     *
-     * <p>Delegates to {@link WorkflowHistoryRecorder#appendStartHistory}.
-     *
-     * @param inst the fresh instance
-     * @param cmd the original start command
-     * @param tx the active transaction
-     * @return a {@link Future} that completes when the entry is inserted and the event is emitted
-     */
-    private Future<Void> appendStartHistory(WorkflowInstance inst, StartCommand cmd, SqlClient tx) {
-        return historyRecorder.appendStartHistory(inst, cmd, tx);
     }
 
     /**

@@ -165,6 +165,8 @@ The Postgres implementation opens its own transaction for each call. Code that a
 
 Instance state is modeled as a single current snapshot plus an append-only history: `query` returns the latest snapshot, and each transition that produced it is recorded as a separate history entry.
 
+`start` returns once the start is recorded: the instance exists as `PENDING` with no state, current step or subject, and the executor of `vertique-workflow-engine` runs its first segment afterwards (initial state, subject, steps up to the first wait). Await the instance with the execution probe before reading or signalling it. Signals, timers and the other operations still run inline.
+
 Starts require an idempotency key. `StartCommand` has nine components: `definitionId`, `contractName`, `payload`, `idempotencyKey`, `businessKey`, `subjectRef`, `requestedDefinitionVersion`, `startScope` and `requestedTargetScope`; there is no shorter constructor, so a direct caller passes `null` for the optional components. `contractName` names the contract the caller started through and must not be blank. `requestedDefinitionVersion` may pin a new instance to a specific registered version; when omitted, the current version is used. A non-null `startScope` or `requestedTargetScope` must be nonblank, at most 255 code points and free of control characters and unpaired surrogates, or the constructor throws `IllegalArgumentException` that names the field and never repeats the value. A `null` `startScope` is the default scope. Idempotency and dedup keys are scoped to what they protect — a start key is scoped to the start scope and the definition id and a signal dedup key is scoped to the workflow instance; see `dev.vertique:vertique-workflow-postgresql` for the complete key-scope table across all operations.
 
 ### Execution Probe
@@ -181,7 +183,7 @@ record IdleReport(List<PendingCommand> deferred, List<PendingCommand> stuck,
 
 An instance is idle when it has no command in flight (claimed under a live lease) and no command an executor could claim now: one at the head of its queue, not held back and available. Availability alone is not the rule: a command behind a blocking head, a timer before its fire time, and a due-date or reminder timer whose task is completing do not hold the probe. The probe polls the database at short intervals and reads the database clock, so it observes work recorded by any node. It completes with a report of the commands it stopped on, each list ordered by instance and sequence: `deferred` (deferred commands that cannot be claimed yet), `parked`, and `notYetAvailable` (the other pending and claimed commands that cannot be claimed now). `stuck` is empty until stuck detection exists; until then dead-lettered commands appear in no list, and settled commands never do. `PendingCommand` (package `dev.vertique.workflow.history`) carries the instance id, sequence, kind, state, `availableAt`, `attempts` and a nullable `lastError`; it never carries a payload.
 
-The future fails with `TimeoutException` when the wait elapses; the message names the instance (or "all instances") and the number of runnable commands left. A non-positive timeout is refused with `IllegalArgumentException`. Obtain the probe from `WorkflowEngineHandle.executionProbe()` or from the Dagger graph; both come from `vertique-workflow-engine`. Before anything records commands the probe completes at once with an empty report.
+The future fails with `TimeoutException` when the wait elapses; the message names the instance (or "all instances") and the number of runnable commands left. A non-positive timeout is refused with `IllegalArgumentException`, and a timeout longer than ten minutes is shortened to ten minutes. Each list of the report holds at most 1000 commands, the first in instance and sequence order. Obtain the probe from `WorkflowEngineHandle.executionProbe()` or from the Dagger graph; both come from `vertique-workflow-engine`. A start recorded while no executor runs keeps the probe waiting until an executor runs it.
 
 ### Scope Keys on Instances, Tasks And Filters
 
@@ -575,6 +577,25 @@ Bind `WorkflowRecordingConfig` directly, or install `WorkflowRecordingConfigModu
 | `workflow.recording.lockTimeoutMs` | `5000` | How long, in milliseconds, a caller waits to take an instance's execution lock before its transaction fails with a retryable `WorkflowPersistenceException`; at least 1, and a smaller value fails parsing with a `ConfigurationException` naming the key |
 
 The timeout bounds only that one acquisition; the caller's own `lock_timeout` is unchanged afterwards.
+
+### Executor Configuration
+
+Bind `WorkflowExecutorConfig` directly, or install `WorkflowExecutorConfigModule` together with
+`dev.vertique.config.parser.ConfigParsingModule` and the `@VertxConfig` input to parse `workflow.executor`.
+`WorkflowCoreModule` declares the binding optional, so a graph without it keeps the defaults and needs no parser. The
+executor itself is deployed by `vertique-workflow-engine` (see its module reference).
+
+| Property | Default | Meaning |
+|---|---|---|
+| `workflow.executor.instances` | `1` | Executor verticle instances per node, each on its own event loop; 1 to 64 |
+| `workflow.executor.concurrency` | `8` | Segments one instance keeps in flight; 1 to 256, so at most `instances` x `concurrency` per node |
+| `workflow.executor.pollIntervalMs` | `5000` | The pause between two looks for runnable commands, in milliseconds; at least 100 |
+| `workflow.executor.leaseSeconds` | `60` | How long a claim holds a command, in seconds; at least 5. Size it above the longest healthy segment: the execution lock is admitted until two margins before the lease ends and the segment is bounded one margin before it ends, where the margin is a tenth of the lease and at least one second. A segment that cannot finish in about `leaseSeconds` minus a margin after its claim is rolled back |
+
+A value outside its bound fails parsing with a `ConfigurationException` naming the full key. The executor's graceful stop
+ends claiming and waits for in-flight segments to commit or reach their own deadline: normally within `leaseSeconds`, longer
+when a statement is stuck in the database. A process killed before its stop completes leaves its claims to lease recovery:
+another executor claims them after the lease ends, and the attempt of each killed claim stays spent.
 
 `WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
 including stale claims, unavailable code, missing loaders, and plan drift. Asynchronous entrypoints

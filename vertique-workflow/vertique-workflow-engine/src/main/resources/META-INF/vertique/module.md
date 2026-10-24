@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.workflow.engine`
 > **Artifact:** `vertique-workflow-engine`
-> **Depends on:** workflow-core, db-core, context, vertx-sql-client
+> **Depends on:** workflow-core, db-core, context, deploy, vertx-sql-client
 
 `vertique-workflow-engine` is the portable, dialect-neutral workflow orchestration runtime. It holds the
 execution kernel — the durable saga state machine, fork/join coordinator, task and timer lifecycle
@@ -65,6 +65,18 @@ The engine performs no transaction management of its own. Public operation metho
 `cancel`, `retry`, `migrate`, `query`) open a transaction through `WorkflowTransactionRunner.inTransaction`
 and pass the resulting `SqlClient` handle into their transactional variants. Callers that already own a
 transaction use `TransactionalWorkflowOperations<SqlClient>` directly.
+
+**Recorded starts.** `start` records and returns; it does not run the workflow. In the caller's transaction, under the new
+instance's execution lock, it inserts the instance as `PENDING` (its pin, business key and durable carrier; no state,
+current step or subject), the instance's command queue row and a `START` command holding the start payload, and returns
+the new instance id. The payload is still validated and bound to its declared type in the caller's transaction, as before;
+the initial state, the subject reference and every step run later, in the executor's first segment of the instance, which
+also emits `WORKFLOW_STARTED`. A caller that needs the instance running awaits the probe (`executionProbe().awaitIdle`)
+before it reads the instance or signals it. A rolled-back caller leaves no instance, command, queue row or dedup row. The
+carrier captured from the caller's workflow-boundary context drops the identity snapshot namespace before it is stored, so no
+later drive can bind an identity from the instance. A `PENDING` instance counts as a live pin: retirement of its version is
+refused with reason `PINNED_INSTANCES`. A signal to a `PENDING` instance fails as not waiting. Signals, timers and the other
+operations still run inline in the caller's transaction.
 
 **Execution lock.** Every transaction that changes an instance takes that instance's execution lock before its first
 workflow change, through `WorkflowCommandRepository.lockInstance`, so one transaction at a time changes an instance and
@@ -132,8 +144,9 @@ The details the engine builds are value-free: they carry no payload value, class
 key. The decode cause is logged at DEBUG level only, and the same caution applies: do not log it at INFO or
 above. The rejection happens before the instance is started and rolls the start transaction back, so no
 instance row, history entry or deduplication claim is kept; a retry with the same idempotency key and a corrected
-payload starts the instance. An application initial-state function that throws is still reported as
-`WorkflowDefinitionException`, now with the thrown exception as its cause and without its message.
+payload starts the instance. The application's initial-state function and subject resolver run in the executor, not in the
+caller: one that throws (a `WorkflowDefinitionException` with the thrown exception as its cause and without its message) rolls
+the segment back and is logged at error level, and the instance stays `PENDING` while the claim lapses and is claimed again.
 
 #### Payload Constraint Enforcement
 
@@ -201,11 +214,13 @@ public interface WorkflowEngineHandle
                 TransactionalTimerCallbacks<SqlClient>,
                 TransactionalTaskCallbacks<SqlClient> {
     WorkflowExecutionProbe executionProbe();
+    WorkflowExecutorControl executor();
 }
 ```
 
 Public composite handle re-bundling the four already-public engine interfaces into a single type, plus `executionProbe()`:
-the probe of the same engine, built over the command repository part (see Execution Probe). It is the return type of `WorkflowEngineFactory.create(WorkflowEngineParts)` so callers outside
+the probe of the same engine, built over the command repository part (see Execution Probe), and `executor()`: the control
+that starts and stops the engine's executor (see Executor). It is the return type of `WorkflowEngineFactory.create(WorkflowEngineParts)` so callers outside
 the engine package can hold a fully wired engine without depending on the package-private concrete class.
 
 ### WorkflowEngineFactory
@@ -219,10 +234,11 @@ and returns the engine as a `WorkflowEngineHandle`.
 release can add a part without breaking a caller. One setter per part, named like its accessor: `txRunner`, `registry`,
 `definitionStore`, `instances`, `history`, `dedup`, `branchTokens`, `joinStates`, `timerStore`, `taskStore`, `commands`, `clock`,
 `recorders`, `optionalIntentKinds`, `migrationRegistry`, `propagator`, `inboundContextInitializers`, `beanValidator`,
-`typeNames` and `stateCompatibility`. `build()` throws a `NullPointerException` that names the first required part
+`typeNames`, `stateCompatibility`, `executorConfig` and `vertx`. `build()` throws a `NullPointerException` that names the first required part
 that is missing. Required: the repositories and stores (including the command repository, `commands`), the registry, the **definition store**, the type-name index and the
 clock. Defaulted: `recorders` and `inboundContextInitializers` to empty sets, `optionalIntentKinds` to
-`DEFAULT_OPTIONAL_INTENT_KINDS`, and `migrationRegistry`, `beanValidator` and `stateCompatibility` to empty. The
+`DEFAULT_OPTIONAL_INTENT_KINDS`, `executorConfig` to `WorkflowExecutorConfig.defaults()`, and `migrationRegistry`,
+`beanValidator` and `stateCompatibility` to empty. `vertx` may be `null`; the executor of such an engine cannot be started. The
 `propagator` may be `null`. The `typeNames` index is the one the registry fills (`DefaultWorkflowRegistry#typeNames()`);
 with a different index a decision payload name resolves as a binary class name only. An empty `beanValidator` leaves
 payload constraints off, an empty `stateCompatibility` makes the engine refuse a migration between differing state
@@ -264,6 +280,10 @@ Dagger module owning the engine-internal bindings:
 - Binds `WorkflowEngine` as `WorkflowOperations`, `TransactionalWorkflowOperations<SqlClient>`,
   `TransactionalTimerCallbacks<SqlClient>`, and `TransactionalTaskCallbacks<SqlClient>`.
 - Binds `WorkflowRecoveryBridgeImpl` as `WorkflowRecoveryBridge`.
+- Contributes the `workflow-executor` `VerticleDeployment` to `Set<VerticleDeployment>` (see Executor): the `SERVICES` phase,
+  priority 100, `workflow.executor.instances` instances on the event loop. The configuration is the optional
+  `WorkflowExecutorConfig`; install `WorkflowExecutorConfigModule` (workflow-core) to read it from `workflow.executor`, or the
+  defaults apply. It also binds `WorkflowExecutorControl` for `WorkflowEngineHandle.executor()`.
 - Provides `WorkflowExecutionProbe` over the `WorkflowCommandRepository<SqlClient>` the adapter binds. The probe paces its
   polling with the graph's `Vertx` when one is bound (declared `@BindsOptionalOf`) and with a shared daemon thread otherwise.
 - Binds `WorkflowDefinitionLifecycle` for durable document publication and contributes the document registry startup step.
@@ -668,9 +688,46 @@ History entries appended during a bound drive may additionally record `commandCo
 
 `WorkflowExecutionProbe` (public, in `vertique-workflow-core`) waits until recorded work has run. The engine implements it as
 `DefaultWorkflowExecutionProbe` over the read members of `WorkflowCommandRepository`: it polls the count of runnable
-commands at most every 25 ms until it is zero or the timeout elapses, then reads the report. A factory-built engine exposes
+commands until it is zero or the timeout elapses, then reads the report. It pauses 25 ms after the first read and longer after each
+following one, up to 250 ms; a timeout beyond ten minutes is shortened to ten minutes; each list of the report holds at most 1000 commands. A factory-built engine exposes
 it as `WorkflowEngineHandle.executionProbe()`; a Dagger graph provides it from `WorkflowEngineModule`. The adapter module must
 bind `WorkflowCommandRepository<SqlClient>`.
+
+### Executor
+
+Recorded commands run in the executor: the internal `WorkflowExecutorVerticle`, deployed like the outbox relay. A Dagger-built
+application deploys it with the rest of the `SERVICES` phase through the deployer and undeploys it in reverse order at
+shutdown; the engine owns no start or stop of its own. A graph that runs no deployer deploys the `workflow-executor` entry of
+its `Set<VerticleDeployment>` alone, never the whole phase, which would also start the graph's other `SERVICES` verticles. A
+factory-built engine's `executor().start()` deploys the same supplier and options with `vertx.deployVerticle`, and
+`executor().stop()` undeploys it; `stop` ends claiming and completes when every in-flight segment has committed or been rolled
+back by its own deadline, which is normally within the lease and is extended by a statement stuck in the database. An
+application that never starts its executor leaves every start `PENDING`.
+
+Each verticle instance runs on the event loop only (no worker threading, no blocking call). It claims commands as the instance
+id `<node id>-<n>`, where the node id is the host name plus a random suffix and `n` counts the verticle instances of the
+deployment. One pass is one one-shot timer: it peeks the commands that could be claimed (the head of their instance's queue,
+available, not held back), makes their plans resident outside any transaction, claims up to `concurrency` heads (one short
+transaction each: try the execution lock, lock the row, check again that it is claimable, spend an attempt, set a token and a
+lease) and runs a segment for each claim on a fresh duplicate of the instance's own verticle context, never the context of
+whoever deployed it or recorded the command. A segment is one transaction through the engine's `WorkflowTransactionRunner`:
+it tries the execution lock (a busy lock is retried until two margins before the lease ends, and then the claim is released
+with its attempt restored), fences the claim (still claimed with this token and still at the head of its queue), runs the
+command's work, appends the `COMMAND_RECEIVED` and `COMMAND_COMPLETED` history entries and completes the command with its
+token cleared; a completion that updates no row fails the segment, so state, outbox intents and history roll back together.
+The margin is a tenth of the lease and at least one second. Instances coordinate only through PostgreSQL.
+
+The segment carries a deadline one margin before the lease ends, measured from a monotonic reading taken before the claim
+was sent, and passed to the runner as the transaction deadline of `vertique-db`. A segment whose work has not completed by
+then rolls back and its claim lapses at the end of its lease, so another executor claims the command after that (the attempt
+stays spent); work that completed before the deadline commits even when the commit ends after it. Any other failure of a
+segment also rolls back, is logged at error level with the exception class only (never a payload), and leaves the claim to
+lapse. A peek, claim or segment start that throws, returns no future or fails never ends the loop: the failure is logged at
+warn level and the next pass is scheduled. A peeked
+command whose plan this node cannot resolve is skipped and logged at debug level; it is peeked again on the next pass.
+
+The deployment has no supervision and no liveness check: a crashed process leaves its claims to lease recovery, and process
+health comes from the platform's database liveness check and the runtime's restart policy.
 
 ### WorkflowExceptionMapper
 
@@ -722,8 +779,8 @@ parameterized over `<TX>` (typically `SqlClient`):
 | `WorkflowDedupRepository<TX>` | Start lookup and race-safe claim/resolve by start scope for start, race-safe claim/resolve for signal (scoped and unscoped), task completion/reassignment, and service dispatch |
 | `BranchTokenRepository<TX>` | Fork/join branch token CRUD, status queries, and recovery queries |
 | `JoinStateRepository<TX>` | Fork/join state insert, read variants, open-for-workflow list, and the optimistic `decide` CAS |
-| `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping |
-| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked and not-yet-available commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock |
+| `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping. The client it hands the work is a `SqlConnection` whose `transaction()` reports the underlying pending transaction; the deadline-guarded connection of `vertique-db` meets that. Its internal overload `inTransaction(level, deadline, work)` bounds the transaction (the executor's segment deadline) and returns `TransactionDeadlineExceededException` unchanged; the default fails with `UnsupportedOperationException` without running the work |
+| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked and not-yet-available commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock. The executor's members: `recordStart` inserts a `START` command in the caller's transaction; `peek(limit)` reads the claimable heads without locks; `claim(head, claimedBy, leaseSeconds)` is one self-contained transaction that tries the lock, locks the row and checks `claimable` again; `fence`, `complete` and `reject` run in the segment's transaction, fenced on the command being `CLAIMED` with the claim's token (`complete` and `reject` return the number of rows updated, and `0` means the claim no longer stands); `release` returns a claim whose segment did not run to `PENDING` with its attempt restored, in one statement that takes no lock |
 
 The adapter also provides:
 - A `WorkflowRecoveryBridge` is already bound by `WorkflowEngineModule`; no adapter re-binding needed.
@@ -770,6 +827,7 @@ which case `WorkflowReminderComposeValidator` refuses the plan (aborting startup
   `WorkflowPersistenceException`.
 - **db-core** — `IsolationLevel` (used in `WorkflowTransactionRunner`), `DataAccessException` hierarchy
   consumed by `WorkflowExceptionMapper`, and paged-query types.
+- **deploy** — `VerticleDeployment` and `LifecyclePhase` for the `workflow-executor` deployment.
 - **context** — `DurableContextPropagator` injected into `ForkJoinCoordinator` for branch durable-context capture.
 - **vertx-sql-client** — `io.vertx.sqlclient.SqlClient` used as the concrete `<TX>` type throughout
   all SPI signatures and the engine implementation.

@@ -8,6 +8,8 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Repository SPI for the recorded command log.
@@ -97,4 +99,92 @@ public interface WorkflowCommandRepository<TX> {
      * @return a {@link Future} containing the allocated position
      */
     Future<Long> nextQueueSequence(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Records a {@code START} command for a new instance in the caller's transaction: the next position of the
+     * instance's queue, state {@code PENDING}, recorded and available at the database clock now, with the start
+     * payload stored as the command's payload.
+     *
+     * <p>The caller must hold the instance's execution lock.
+     *
+     * @param instance       the new instance
+     * @param idempotencyKey the caller's idempotency key, kept for display
+     * @param payloadJson    the start payload as JSON, or {@code null} when the start has none
+     * @param targetJson     the caller-supplied subject reference of the start as JSON, or {@code null} when the
+     *                       caller supplied none
+     * @param tx             the caller's transaction handle
+     * @return a {@link Future} containing the command's row id
+     */
+    Future<Long> recordStart(
+            WorkflowInstanceId instance,
+            String idempotencyKey,
+            @Nullable String payloadJson,
+            @Nullable String targetJson,
+            TX tx);
+
+    /**
+     * Reads, without locks, the commands an executor could claim now, oldest availability first. Judges eligibility
+     * on the database clock through the one eligibility rule.
+     *
+     * @param limit the most heads to return; at least 1
+     * @return a {@link Future} containing the heads
+     */
+    Future<List<CommandHead>> peek(int limit);
+
+    /**
+     * Claims a peeked command in one short transaction of its own: tries the instance's execution lock, locks the
+     * command row, checks again that it is claimable, spends an attempt, sets a new token and a lease and marks it
+     * {@code CLAIMED}. When the lock is busy or the command is no longer claimable, nothing is written.
+     *
+     * @param head         the peeked head
+     * @param claimedBy    the executor instance that claims
+     * @param leaseSeconds how long the claim holds the command
+     * @return a {@link Future} containing the claim, or empty when the lock was busy or the command was not claimable
+     */
+    Future<Optional<ClaimedCommand>> claim(CommandHead head, String claimedBy, int leaseSeconds);
+
+    /**
+     * Locks the claimed command's row and checks, in the segment's transaction, that the claim still stands: the
+     * command is {@code CLAIMED} with this token and at the head of its queue. When it does not, nothing is written.
+     *
+     * <p>The caller must hold the instance's execution lock.
+     *
+     * @param claim the claim
+     * @param tx    the segment's transaction handle
+     * @return a {@link Future} containing the command, or empty when the fence failed
+     */
+    Future<Optional<SegmentCommand>> fence(ClaimedCommand claim, TX tx);
+
+    /**
+     * Completes the claimed command in the segment's transaction: state {@code COMPLETE}, token and lease cleared,
+     * settled now. The write is fenced on the command being {@code CLAIMED} with this token.
+     *
+     * @param commandId the command's row id
+     * @param token     the claim token
+     * @param tx        the segment's transaction handle
+     * @return a {@link Future} containing the number of rows updated; {@code 0} means the claim no longer stands
+     */
+    Future<Integer> complete(long commandId, UUID token, TX tx);
+
+    /**
+     * Settles the claimed command as rejected, in the segment's transaction, because it no longer applies. The write
+     * is fenced like {@link #complete}.
+     *
+     * @param commandId the command's row id
+     * @param token     the claim token
+     * @param tx        the segment's transaction handle
+     * @return a {@link Future} containing the number of rows updated
+     */
+    Future<Integer> reject(long commandId, UUID token, TX tx);
+
+    /**
+     * Releases a claim whose segment did not run, in one statement that takes no execution lock: back to
+     * {@code PENDING}, the spent attempt restored, token and lease cleared. Writes only while the command is still
+     * {@code CLAIMED} with this token.
+     *
+     * @param claim the claim to release
+     * @return a {@link Future} containing {@code true} when the claim was released and {@code false} when it no
+     *     longer stood
+     */
+    Future<Boolean> release(ClaimedCommand claim);
 }

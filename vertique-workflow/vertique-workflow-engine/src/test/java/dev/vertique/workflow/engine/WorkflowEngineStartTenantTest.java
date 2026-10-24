@@ -189,7 +189,8 @@ class WorkflowEngineStartTenantTest {
                 Optional.empty(),
                 new FailingDefinitions(),
                 mock(WorkflowExecutionProbe.class),
-                new EmptyCommandRepository());
+                new EmptyCommandRepository(),
+                () -> null);
         return new Rig(engine, instances, history, taskStore);
     }
 

@@ -5,7 +5,6 @@ package dev.vertique.workflow.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -61,14 +60,13 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * Start-time durable-context capture tests for {@link WorkflowEngine#doCreateInstance} (PRD-WF-007
- * AC-1, FR-WF-CTX-010/012).
+ * Start-time durable-context capture tests for the recording of a start.
  *
- * <p>{@code doCreateInstance} is expected to capture the ambient durable context via
+ * <p>Recording a start is expected to capture the ambient durable context via
  * {@code propagator.capture(DispatchBoundary.WORKFLOW)} and persist it as the new instance's 18th
  * ({@code metadata}) component — converting an empty capture to {@code null} rather than an empty
  * {@link DurableMetadata} document. Start is capture-only: no new durable scope is installed around
- * the start drive.
+ * the recording. The recorded instance is {@code PENDING}; nothing is driven in the caller.
  *
  * <p>Uses the {@code runOnDuplicated} pattern plus the shared {@link TenantCtx} /
  * {@link TenantCtxCodec} test fixture to bind ambient context on a duplicated Vert.x context before
@@ -91,9 +89,8 @@ class WorkflowEngineStartMetadataTest {
 
     /**
      * Builds a {@link RuntimeWorkflow} with a single terminal {@link CompleteNode} plan so
-     * {@code doCreateInstance}'s post-insert {@code driver.driveTransitions} call settles
-     * immediately without touching any collaborator beyond the mocked instance/history
-     * repositories.
+     * the plan is valid; recording a start drives nothing, so no collaborator beyond the mocked instance
+     * repository is touched.
      */
     private static RuntimeWorkflow minimalRuntimeWorkflow() {
         List<WorkflowNode> nodes = List.of(new CompleteNode(INITIAL_STEP_ID));
@@ -141,9 +138,6 @@ class WorkflowEngineStartMetadataTest {
                         new StartDedupResult(new WorkflowInstanceId(winningId), true, "definitionVersion=1")));
 
         when(instances.insert(any(), any())).thenReturn(Future.succeededFuture());
-        when(instances.updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
-        when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
-        when(history.append(any(), any())).thenReturn(Future.succeededFuture());
 
         WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
                 .txRunner(txRunner)

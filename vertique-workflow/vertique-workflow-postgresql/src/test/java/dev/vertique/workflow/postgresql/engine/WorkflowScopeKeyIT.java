@@ -110,6 +110,7 @@ public class WorkflowScopeKeyIT {
     private static final String MIGRATE_ID = "scope-migrate";
 
     static Vertx vertxRef;
+    static ExecutorDeployment executor;
     static Pool pool;
     static TenantEngineHost host;
     static WorkflowOperations operations;
@@ -375,9 +376,12 @@ public class WorkflowScopeKeyIT {
                 WorkflowMigrationModule.class,
                 ContextRuntimeModule.class,
                 LoggingContextModule.class,
+                ExecutorDeployment.FastPolling.class,
                 TenantEngineHostModule.class
             })
     interface TenantEngineHost {
+
+        java.util.Set<dev.vertique.deploy.VerticleDeployment> verticleDeployments();
 
         WorkflowOperations workflowOperations();
 
@@ -424,6 +428,11 @@ public class WorkflowScopeKeyIT {
                 .using(vertx)
                 .build();
         host = DaggerWorkflowScopeKeyIT_TenantEngineHost.factory().create(pool, Clock.systemUTC());
+        // The graph runs no deployer: only its workflow executor is deployed
+        executor = ExecutorDeployment.deploy(vertx, host.verticleDeployments())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
         DefaultVersionSeed.recordAndActivate(
                 host.pgWorkflowDefinitionRegistryStore(), host.definitionLifecycle(), host.workflowRegistry());
         operations = host.workflowOperations();
@@ -452,6 +461,9 @@ public class WorkflowScopeKeyIT {
 
     @AfterAll
     static void tearDown() {
+        if (executor != null) {
+            executor.undeploy().toCompletionStage().toCompletableFuture().join();
+        }
         if (pool != null) {
             pool.close();
         }

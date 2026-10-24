@@ -89,6 +89,7 @@ public class WorkflowDarkModeIT {
     static WorkflowExecutionProbe probe;
     static PgWorkflowBranchRecoveryService recovery;
     static Vertx vertxRef;
+    static ExecutorDeployment executor;
 
     /** Idempotency-keyed start payload for the dark-mode fanout. */
     record Start(String orderId) implements IdempotencyKeyed {
@@ -184,6 +185,11 @@ public class WorkflowDarkModeIT {
         // absence IS the dark-mode fixture (zero registered durable namespaces).
         DarkModeTestComponent component =
                 DaggerWorkflowDarkModeIT_DarkModeTestComponent.factory().create(pool, Clock.systemUTC());
+        // The graph runs no deployer: only its workflow executor is deployed
+        executor = ExecutorDeployment.deploy(vertx, component.verticleDeployments())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
         DefaultVersionSeed.recordAndActivate(
                 component.pgWorkflowDefinitionRegistryStore(),
                 component.definitionLifecycle(),
@@ -204,6 +210,9 @@ public class WorkflowDarkModeIT {
 
     @AfterAll
     static void tearDown() {
+        if (executor != null) {
+            executor.undeploy().toCompletionStage().toCompletableFuture().join();
+        }
         if (pool != null) {
             pool.close();
         }
@@ -244,8 +253,11 @@ public class WorkflowDarkModeIT {
      * durable namespaces are registered.
      */
     @Singleton
-    @Component(modules = {WorkflowPostgresqlModule.class, DarkModeTestModule.class})
+    @Component(
+            modules = {WorkflowPostgresqlModule.class, ExecutorDeployment.FastPolling.class, DarkModeTestModule.class})
     interface DarkModeTestComponent {
+
+        java.util.Set<dev.vertique.deploy.VerticleDeployment> verticleDeployments();
 
         WorkflowOperations workflowOperations();
 

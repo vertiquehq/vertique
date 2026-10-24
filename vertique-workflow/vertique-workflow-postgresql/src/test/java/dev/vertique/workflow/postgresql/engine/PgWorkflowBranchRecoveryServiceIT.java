@@ -127,6 +127,8 @@ public class PgWorkflowBranchRecoveryServiceIT {
     static WorkflowExecutionProbe probe;
     static PgWorkflowBranchRecoveryService recovery;
     static Vertx vertxRef;
+    static ExecutorDeployment executor;
+    static ExecutorDeployment ac2Executor;
 
     // --- AC-2 fixture ---
 
@@ -447,6 +449,12 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // production composition does.
         RecoveryTestComponent component = DaggerPgWorkflowBranchRecoveryServiceIT_RecoveryTestComponent.factory()
                 .create(pool, Clock.systemUTC());
+        // The graphs run no deployer: only their workflow executors are deployed. Each executor skips the commands of
+        // definitions its own registry lacks, so the two graphs do not run each other's work.
+        executor = ExecutorDeployment.deploy(vertx, component.verticleDeployments())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
 
         engine = component.workflowOperations();
         probe = component.workflowExecutionProbe();
@@ -483,6 +491,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
 
         Ac2TestComponent ac2Component = DaggerPgWorkflowBranchRecoveryServiceIT_Ac2TestComponent.factory()
                 .create(pool, Clock.systemUTC());
+        ac2Executor = ExecutorDeployment.deploy(vertx, ac2Component.verticleDeployments())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
         ac2Engine = ac2Component.workflowOperations();
         ac2Probe = ac2Component.workflowExecutionProbe();
         DefaultVersionSeed.recordAndActivate(
@@ -566,9 +578,12 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 WorkflowPostgresqlModule.class,
                 dev.vertique.context.ContextRuntimeModule.class,
                 LoggingContextModule.class,
+                ExecutorDeployment.FastPolling.class,
                 RecoveryTestModule.class
             })
     interface RecoveryTestComponent {
+
+        java.util.Set<dev.vertique.deploy.VerticleDeployment> verticleDeployments();
 
         /**
          * Returns the workflow operations facade the IT drives via {@code start} / {@code query}.
@@ -806,9 +821,12 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 LoggingContextModule.class,
                 CorrelationContextModule.class,
                 WorkflowEventsModule.class,
+                ExecutorDeployment.FastPolling.class,
                 Ac2TestModule.class
             })
     interface Ac2TestComponent {
+
+        java.util.Set<dev.vertique.deploy.VerticleDeployment> verticleDeployments();
 
         WorkflowOperations workflowOperations();
 
@@ -854,6 +872,12 @@ public class PgWorkflowBranchRecoveryServiceIT {
 
     @AfterAll
     static void tearDown() {
+        if (executor != null) {
+            executor.undeploy().toCompletionStage().toCompletableFuture().join();
+        }
+        if (ac2Executor != null) {
+            ac2Executor.undeploy().toCompletionStage().toCompletableFuture().join();
+        }
         if (pool != null) {
             pool.close();
         }

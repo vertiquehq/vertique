@@ -75,9 +75,7 @@ public class TimerSagaIT extends SagaTestBase {
 
     @AfterAll
     static void tearDown() {
-        if (component != null && component.pgInboxOutboxRepository() != null) {
-            component.pgInboxOutboxRepository().pool().close();
-        }
+        closeComponent();
     }
 
     // --- Test 1: standalone timer fires and advances the workflow ---

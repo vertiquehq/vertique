@@ -9,6 +9,7 @@ import dev.vertique.core.lifecycle.LifecycleOrdered;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.examples.workflow.order.AppComponent;
 import dev.vertique.examples.workflow.order.DaggerAppComponent;
+import dev.vertique.examples.workflow.order.WorkflowExecutorHarness;
 import dev.vertique.examples.workflow.order.command.AuthorizePayment;
 import dev.vertique.examples.workflow.order.command.CreateShipment;
 import dev.vertique.examples.workflow.order.command.PlaceOrder;
@@ -100,6 +101,9 @@ public abstract class SagaTestBase {
 
     /** Fully-wired Dagger component. */
     static AppComponent component;
+
+    /** The deployed workflow executor of the component. */
+    static WorkflowExecutorHarness executor;
 
     /** Vert.x instance captured during {@link #setUpComponent(Vertx)} for re-entry on a duplicated context. */
     static Vertx vertxRef;
@@ -193,12 +197,15 @@ public abstract class SagaTestBase {
                                 .put("shipping", new JsonObject().put("instances", 1))
                                 .put("fraud", new JsonObject().put("instances", 1))
                                 .put("workflow", new JsonObject().put("signals", new JsonObject().put("instances", 1))))
+                .put("workflow", new JsonObject().put("executor", new JsonObject().put("pollIntervalMs", 100)))
                 .put("management", new JsonObject().put("port", 0).put("host", "127.0.0.1"));
 
         component = DaggerAppComponent.builder()
                 .vertxModule(new VertxModule(vertx, config))
                 .build();
 
+        // The graph runs no deployer, so after the startup steps this harness deploys the workflow executor entry
+        // of the graph's deployments alone, never a whole phase.
         // The production AppComponent is now a @VertiqueApp VertiqueApplicationComponent: its
         // CONFIGURE/VALIDATE/MIGRATE choreography lives in framework lifecycle steps, not in
         // hand-written accessors. This harness deliberately does NOT deploy the application's
@@ -211,7 +218,28 @@ public abstract class SagaTestBase {
         //   • VALIDATE  → ComposeValidationStep (forces construction of the three workflow
         //                 ComposeValidators: §3.11 outbox, cycle-2 timer, cycle-3 task)
         //   • MIGRATE   → FlywayMigrationStartupStep (no-op under flyway.mode=DISABLED)
-        return runNonVerticleStartupSteps(component);
+        return runNonVerticleStartupSteps(component)
+                .compose(v -> WorkflowExecutorHarness.deploy(vertx, component.verticleDeployments()))
+                .map(deployed -> {
+                    executor = deployed;
+                    return null;
+                });
+    }
+
+    /**
+     * Undeploys the workflow executor by name and then closes the component's pool. The executor is the only verticle
+     * this harness deploys; it ends before the pool it claims through closes.
+     */
+    protected static void closeComponent() {
+        AppComponent closing = component;
+        WorkflowExecutorHarness deployed = executor;
+        executor = null;
+        if (closing == null || closing.pgInboxOutboxRepository() == null) {
+            return;
+        }
+        Future<Void> undeployed = deployed == null ? Future.succeededFuture() : deployed.undeploy();
+        undeployed.onComplete(
+                ignored -> closing.pgInboxOutboxRepository().pool().close());
     }
 
     /**

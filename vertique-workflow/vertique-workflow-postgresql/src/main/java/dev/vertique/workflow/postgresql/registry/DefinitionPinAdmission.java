@@ -52,8 +52,8 @@ import java.util.Set;
  * {@code INVALID_TRANSITION}.
  *
  * <p>The client must be a connection whose transaction was begun through Vert.x and has not completed. Any
- * other client (a pool, a bare or completed connection, a connection with a raw SQL {@code BEGIN}, or a
- * wrapper) fails the returned future with {@link IllegalArgumentException} before any SQL is issued.
+ * other client (a pool, a bare or completed connection, a connection with a raw SQL {@code BEGIN}, or a wrapper
+ * whose {@code transaction()} does not report the underlying pending transaction) fails the returned future with {@link IllegalArgumentException} before any SQL is issued.
  *
  * <p>The shared lock and the lock-timeout setting stay in force until the caller's transaction ends. A
  * caller must therefore not wait for a separate, store-owned lifecycle transaction on the same definition id
@@ -84,9 +84,10 @@ public final class DefinitionPinAdmission {
         } catch (RuntimeException inspectionFailure) {
             // A client that cannot be inspected is not a client that can be trusted.
         }
-        return Future.failedFuture(new IllegalArgumentException(
-                "A workflow pin write requires a connection with a pending transaction begun through Vert.x"
-                        + " (not a pool, a bare or completed connection, a raw BEGIN, or a wrapper)"));
+        return Future.failedFuture(
+                new IllegalArgumentException(
+                        "A workflow pin write requires a connection with a pending transaction begun through Vert.x"
+                                + " (not a pool, a bare or completed connection, a raw BEGIN, or a wrapper that hides the transaction)"));
     }
 
     /**

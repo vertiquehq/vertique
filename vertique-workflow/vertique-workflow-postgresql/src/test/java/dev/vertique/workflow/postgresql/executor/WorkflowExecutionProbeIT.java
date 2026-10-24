@@ -243,6 +243,37 @@ public class WorkflowExecutionProbeIT {
         assertThat(all.stuck()).isEmpty();
     }
 
+    @Test
+    @DisplayName("Each list of the report holds at most 1000 commands, the first in sequence order")
+    void eachListOfTheReportIsBounded() throws Exception {
+        // Given an instance with 1005 parked commands
+        WorkflowInstanceId a = insertInstance(1);
+        for (long seq = 1; seq <= 1005; seq++) {
+            command(a, seq, "SIGNAL", "PARKED").insert();
+        }
+
+        // When the probe reports on it
+        IdleReport report = join(probe.awaitIdle(a, Duration.ofSeconds(5)), Duration.ofSeconds(6));
+
+        // Then the parked list stops at 1000 and starts with the first command
+        assertThat(report.parked()).hasSize(1000);
+        assertThat(report.parked().get(0).sequence()).isEqualTo(1L);
+        assertThat(report.parked().get(999).sequence()).isEqualTo(1000L);
+    }
+
+    @Test
+    @DisplayName("A timeout longer than the cap is shortened, and the probe still answers")
+    void timeoutAboveTheCapStillAnswers() throws Exception {
+        // Given an idle instance
+        WorkflowInstanceId a = insertInstance(1);
+
+        // When the probe is asked to wait a day
+        IdleReport report = join(probe.awaitIdle(a, Duration.ofDays(1)), Duration.ofSeconds(3));
+
+        // Then it answers at once
+        assertThat(report.parked()).isEmpty();
+    }
+
     // --- TP-004 ---
 
     @Test

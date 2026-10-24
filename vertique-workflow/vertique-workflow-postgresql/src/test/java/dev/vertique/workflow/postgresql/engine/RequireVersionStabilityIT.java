@@ -732,10 +732,10 @@ public class RequireVersionStabilityIT {
 
         @Test
         @DisplayName(
-                "null subjectRef.version during start tx fails with WorkflowSubjectVersionUnavailableException; no instance row inserted")
-        void nullSnapshotFailsAtTaskCreationDuringStartTx(VertxTestContext ctx) {
+                "null subjectRef.version fails the first segment with WorkflowSubjectVersionUnavailableException; the instance stays pending")
+        void nullSnapshotFailsAtTaskCreationInTheFirstSegment(VertxTestContext ctx) {
             StabilityState state = StabilityState.of("null-snap-start-" + UUID.randomUUID());
-            // subjectRef with null version — fails per-task stability guard during start tx.
+            // subjectRef with null version — fails per-task stability guard in the first segment.
             WorkflowSubjectRef refNoVersion = new WorkflowSubjectRef("Article", "art-10", null);
 
             engine.start(new StartCommand(
@@ -748,32 +748,41 @@ public class RequireVersionStabilityIT {
                             null,
                             null,
                             null))
-                    .map(id -> {
-                        ctx.verify(() -> ctx.failNow(new AssertionError(
-                                "Start must have failed with WorkflowSubjectVersionUnavailableException")));
-                        return null;
-                    })
-                    .recover(t -> Future.succeededFuture(t)
-                            .compose(ex -> {
-                                ctx.verify(() -> assertInstanceOf(
-                                        WorkflowSubjectVersionUnavailableException.class,
-                                        ex,
-                                        "must fail with WorkflowSubjectVersionUnavailableException"));
-                                // The whole start tx must have rolled back — no instance row.
-                                return countInstances();
-                            })
-                            .map(count -> {
-                                ctx.verify(() -> assertEquals(
-                                        0L, count, "no workflow_instances row must exist after start-tx rollback"));
-                                return null;
-                            }))
+                    // The start only records; the executor claims it and its first segment fails and rolls back
+                    .compose(id -> awaitCommandState(id, "CLAIMED").map(ignored -> id))
+                    .compose(id -> sleep(500).map(ignored -> id))
+                    .compose(id -> pool.preparedQuery("SELECT status, state_json FROM workflow_instances WHERE id = $1")
+                            .execute(Tuple.of(id.value())))
                     .onComplete(ar -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());
-                        } else {
-                            ctx.completeNow();
+                            return;
                         }
+                        var row = ar.result().iterator().next();
+                        ctx.verify(() -> {
+                            assertEquals("PENDING", row.getString("status"), "the failed segment commits nothing");
+                            assertNull(row.getValue("state_json"), "the failed segment commits no state");
+                        });
+                        ctx.completeNow();
                     });
+        }
+
+        private Future<Void> awaitCommandState(WorkflowInstanceId id, String commandState) {
+            return pool.preparedQuery("SELECT state FROM workflow_commands WHERE workflow_id = $1")
+                    .execute(Tuple.of(id.value()))
+                    .compose(rows -> {
+                        if (rows.iterator().hasNext()
+                                && commandState.equals(rows.iterator().next().getString("state"))) {
+                            return Future.<Void>succeededFuture();
+                        }
+                        return sleep(50).compose(ignored -> awaitCommandState(id, commandState));
+                    });
+        }
+
+        private Future<Void> sleep(long millis) {
+            return pool.preparedQuery("SELECT pg_sleep($1)")
+                    .execute(Tuple.of(millis / 1000.0))
+                    .mapEmpty();
         }
 
         @Test

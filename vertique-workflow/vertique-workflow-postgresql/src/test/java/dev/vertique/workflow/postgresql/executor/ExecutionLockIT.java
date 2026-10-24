@@ -72,6 +72,12 @@ class ExecutionLockIT {
 
     @AfterAll
     static void tearDown() {
+        if (patient != null) {
+            patient.stopExecutor();
+        }
+        if (impatient != null) {
+            impatient.stopExecutor();
+        }
         if (pool != null) {
             pool.close();
         }

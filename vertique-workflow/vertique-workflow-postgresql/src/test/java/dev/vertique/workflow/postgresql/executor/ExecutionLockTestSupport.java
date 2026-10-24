@@ -427,9 +427,12 @@ final class ExecutionLockTestSupport {
                 WorkflowPostgresqlModule.class,
                 ContextRuntimeModule.class,
                 LoggingContextModule.class,
+                dev.vertique.workflow.postgresql.engine.ExecutorDeployment.FastPolling.class,
                 FixtureModule.class
             })
     interface LockComponent {
+
+        java.util.Set<dev.vertique.deploy.VerticleDeployment> verticleDeployments();
 
         WorkflowOperations operations();
 
@@ -472,8 +475,13 @@ final class ExecutionLockTestSupport {
      * @param component the assembled graph
      * @param pool      the pool the graph runs on, also used to observe the database
      * @param vertx     the Vert.x instance that owns the pool
+     * @param executor  the deployed workflow executor of the graph, which runs the starts that tests record
      */
-    record Assembly(LockComponent component, Pool pool, Vertx vertx) {
+    record Assembly(
+            LockComponent component,
+            Pool pool,
+            Vertx vertx,
+            dev.vertique.workflow.postgresql.engine.ExecutorDeployment executor) {
 
         /**
          * Assembles the engine with the given lock timeout.
@@ -490,7 +498,16 @@ final class ExecutionLockTestSupport {
             if (seed) {
                 seedDefinitions(component);
             }
-            return new Assembly(component, pool, vertx);
+            // The graph runs no deployer: only its workflow executor is deployed
+            dev.vertique.workflow.postgresql.engine.ExecutorDeployment executor =
+                    await(dev.vertique.workflow.postgresql.engine.ExecutorDeployment.deploy(
+                            vertx, component.verticleDeployments()));
+            return new Assembly(component, pool, vertx, executor);
+        }
+
+        /** Undeploys the graph's executor; call it before the pool closes. */
+        void stopExecutor() {
+            await(executor.undeploy());
         }
 
         WorkflowCommandRepository<SqlClient> commands() {

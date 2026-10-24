@@ -19,7 +19,9 @@ import jakarta.annotation.Nullable;
  *
  * <ul>
  *   <li>a missing client;
- *   <li>a client that is not a connection, such as a pool or a wrapper around a connection;
+ *   <li>a client that is not a connection, such as a pool, or a wrapper that is not a connection whose
+ *       {@code transaction()} reports the underlying pending transaction (the database module's deadline-guarded
+ *       connection is such a connection);
  *   <li>a connection that has no Vert.x transaction, which includes a connection on which the
  *       caller issued a textual {@code BEGIN};
  *   <li>a connection whose Vert.x transaction has already completed.

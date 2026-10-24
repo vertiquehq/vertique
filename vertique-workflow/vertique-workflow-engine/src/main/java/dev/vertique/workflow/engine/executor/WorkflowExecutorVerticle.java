@@ -1,0 +1,90 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.workflow.engine.executor;
+
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
+import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import io.vertx.core.AbstractVerticle;
+import io.vertx.core.Promise;
+import io.vertx.core.internal.ContextInternal;
+import io.vertx.sqlclient.SqlClient;
+import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * INTERNAL: one instance of the workflow executor, deployed like the outbox relay on the event loop.
+ *
+ * <p>Each instance owns one peek, claim and segment loop. Its root context is its own verticle context, captured when
+ * it starts and never the context of whoever deployed it; every segment runs on a fresh duplicate of that root, so
+ * nothing bound to the context of the deployer, of a recording caller or of another segment reaches a segment.
+ * Instances share the engine's singletons and coordinate only through PostgreSQL. The verticle runs on the event
+ * loop only: it uses no worker threading and makes no blocking call.
+ *
+ * <p>There is no supervision and no liveness check: work held by an instance that died is recovered when its lease
+ * expires.
+ */
+public final class WorkflowExecutorVerticle extends AbstractVerticle {
+
+    private static final Logger log = LoggerFactory.getLogger(WorkflowExecutorVerticle.class);
+
+    private final WorkflowExecutorConfig config;
+    private final WorkflowCommandRepository<SqlClient> commands;
+    private final WorkflowTransactionRunner<SqlClient> runner;
+    private final WorkflowSegments segments;
+    private final String instanceId;
+
+    private ExecutorLoop loop;
+
+    /**
+     * Creates one executor instance.
+     *
+     * @param config     the executor configuration
+     * @param commands   the command repository
+     * @param runner     the transaction runner segments run through
+     * @param segments   the engine's side of a segment
+     * @param instanceId the id this instance claims commands as
+     */
+    public WorkflowExecutorVerticle(
+            WorkflowExecutorConfig config,
+            WorkflowCommandRepository<SqlClient> commands,
+            WorkflowTransactionRunner<SqlClient> runner,
+            WorkflowSegments segments,
+            String instanceId) {
+        this.config = Objects.requireNonNull(config, "config");
+        this.commands = Objects.requireNonNull(commands, "commands");
+        this.runner = Objects.requireNonNull(runner, "runner");
+        this.segments = Objects.requireNonNull(segments, "segments");
+        this.instanceId = Objects.requireNonNull(instanceId, "instanceId");
+    }
+
+    @Override
+    public void start(Promise<Void> startPromise) {
+        ContextInternal root = (ContextInternal) context;
+        loop = new ExecutorLoop(
+                vertx,
+                root,
+                config,
+                instanceId,
+                new CommandPeek(commands, segments),
+                commands,
+                new SegmentRunner(vertx, config, commands, runner, segments));
+        loop.start();
+        log.info("Workflow executor {} started", instanceId);
+        startPromise.complete();
+    }
+
+    @Override
+    public void stop(Promise<Void> stopPromise) {
+        if (loop == null) {
+            stopPromise.complete();
+            return;
+        }
+        loop.stop().onComplete(result -> {
+            log.info("Workflow executor {} stopped", instanceId);
+            stopPromise.complete();
+        });
+    }
+}

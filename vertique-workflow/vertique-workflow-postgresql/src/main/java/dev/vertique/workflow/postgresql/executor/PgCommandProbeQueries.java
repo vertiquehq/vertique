@@ -13,7 +13,10 @@ final class PgCommandProbeQueries {
     private static final String SCOPE = " AND ($1::uuid IS NULL OR c.workflow_id = $1::uuid)";
     private static final String COLUMNS =
             "SELECT c.workflow_id, c.seq, c.kind, c.state, c.available_at, c.attempts, c.last_error";
-    private static final String ORDER = " ORDER BY c.workflow_id, c.seq";
+    /** The most commands one list of the probe's report holds; further commands are left out of the report. */
+    static final int MAX_LISTED = 1000;
+
+    private static final String ORDER = " ORDER BY c.workflow_id, c.seq LIMIT " + MAX_LISTED;
 
     final String countRunnable;
     final String findDeferred;

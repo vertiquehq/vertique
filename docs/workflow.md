@@ -102,6 +102,18 @@ The engine does not make live downstream calls inside a workflow transaction. In
 
 Common side effects are service dispatch, timer scheduling, and workflow events.
 
+### Recorded starts and the executor
+
+`start` records and returns. In the caller's transaction it inserts the instance as `PENDING` (pin, business key and
+durable carrier, no state, step or subject), its queue row and a `START` command; a rolled-back caller leaves nothing. The
+executor, the `workflow-executor` verticle that `vertique-workflow-engine` contributes to the `SERVICES` phase, claims the
+command with a lease, runs the first segment (initial state, subject, steps up to the first wait or the end) in one
+transaction that also writes the segment's intents and history and completes the command, and keeps up to
+`workflow.executor.concurrency` segments in flight per instance and `workflow.executor.instances` instances per node. A
+segment that has not completed one margin before its lease ends is rolled back and another executor takes the command after the
+lease. Wait for a recorded start with the execution probe. Signals, timers and the other operations still run in the caller's
+transaction.
+
 ---
 
 ## Module Map
@@ -884,7 +896,7 @@ Workflow timers, branches, instances, signals, and commands all participate in t
 
 ### Instance carrier and the `WorkflowContextBinder`
 
-At `start`, the engine captures the ambient durable context via the propagator at the `WORKFLOW` boundary and persists it on the new instance row within the start transaction. `start` itself is capture-only — it opens no new durable scope; the ambient it captures *is* the context being persisted, and fork-at-start branch capture continues to read live ambient exactly as it did before this carrier existed.
+At `start`, the engine captures the ambient durable context via the propagator at the `WORKFLOW` boundary and persists it on the new instance row within the start transaction, after removing the identity-snapshot namespace, so no later drive can bind an identity from the instance carrier. `start` itself is capture-only — it opens no new durable scope; the ambient it captures *is* the context being persisted. `start` only records: the instance is `PENDING` until the executor runs its first segment, which binds the instance carrier like any later drive and drives the first steps. That segment runs on a fresh duplicate of the executor verticle's own context, so nothing bound to the context of the caller that recorded the start, or of whoever deployed the executor, reaches it.
 
 Every later drive computes an **effective document**: `base.merge(instanceMetadata, MergePolicy.CALLER_WINS)`. The base is authoritative for every namespace it carries; the instance carrier contributes only namespaces the base lacks. An empty base with a non-`null` instance carrier therefore binds the instance context in full. The base is chosen per drive, in priority order: an explicit signal carrier for that transition, else the drive's own persisted carrier (branch-token or timer-row metadata), else the ambient inbound context for caller-invoked and transport-dispatched drives, else the empty document.
 

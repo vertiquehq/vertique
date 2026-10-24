@@ -13,6 +13,7 @@ import dev.vertique.db.DbModule;
 import dev.vertique.db.flyway.DbFlywayModule;
 import dev.vertique.db.postgresql.DbPostgresqlModule;
 import dev.vertique.deploy.DeployerModule;
+import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.examples.workflow.order.di.AppModule;
 import dev.vertique.examples.workflow.order.di.OrderFulfillmentDefinitionModule;
 import dev.vertique.examples.workflow.order.di.OrderFulfillmentFanOutDefinitionModule;
@@ -39,6 +40,7 @@ import dev.vertique.workflow.client.WorkflowClientFactory;
 import dev.vertique.workflow.delayed.compose.WorkflowDelayedComposeValidator;
 import dev.vertique.workflow.delayed.di.WorkflowDelayedModule;
 import dev.vertique.workflow.delayed.job.WorkflowTimerFireExecutor;
+import dev.vertique.workflow.di.WorkflowExecutorConfigModule;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
@@ -51,6 +53,7 @@ import dev.vertique.workflow.tasks.compose.WorkflowTasksComposeValidator;
 import dev.vertique.workflow.tasks.di.WorkflowTasksModule;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.inject.Singleton;
+import java.util.Set;
 
 /**
  * Root Dagger component for the order-fulfillment example application.
@@ -98,6 +101,8 @@ import jakarta.inject.Singleton;
  *       (required by the {@link WorkflowOutboxComposeValidator} startup contract).</li>
  *   <li>{@link WorkflowPostgresqlModule} — portable {@code WorkflowEngine} (via included
  *       {@code WorkflowEngineModule}), PostgreSQL repositories, and recorder multibinding.</li>
+ *   <li>{@link WorkflowExecutorConfigModule} — the parsed {@code workflow.executor} configuration of the
+ *       workflow executor, which the engine deploys in the {@code SERVICES} phase.</li>
  *   <li>{@link WorkflowServicesModule} — outbox recorder + signal contributor + compose
  *       validator.</li>
  *   <li>{@link WorkflowDelayedModule} — timer recorder, fire-job executor, and recovery
@@ -149,6 +154,7 @@ import jakarta.inject.Singleton;
             TransactionalMessagingPostgresqlModule.class,
             TransactionalMessagingServiceModule.class,
             WorkflowPostgresqlModule.class,
+            WorkflowExecutorConfigModule.class,
             WorkflowBranchRecoveryModule.class,
             WorkflowServicesModule.class,
             WorkflowDelayedModule.class,
@@ -192,6 +198,15 @@ public interface AppComponent extends VertiqueApplicationComponent {
      * @return execution probe
      */
     WorkflowExecutionProbe executionProbe();
+
+    /**
+     * Returns the verticle deployments of the application, among them the {@code workflow-executor} deployment.
+     *
+     * <p>Used by integration tests that build the graph without a deployer to deploy the workflow executor alone.
+     *
+     * @return the verticle deployments
+     */
+    Set<VerticleDeployment> verticleDeployments();
 
     /**
      * Returns the workflow client factory for creating typed proxies from a definition class.

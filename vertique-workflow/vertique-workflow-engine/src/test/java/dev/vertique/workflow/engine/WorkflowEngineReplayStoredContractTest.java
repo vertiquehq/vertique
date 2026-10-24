@@ -144,6 +144,7 @@ class WorkflowEngineReplayStoredContractTest {
                 Optional.<WorkflowStateCompatibility>empty(),
                 new FailingDefinitions(),
                 mock(WorkflowExecutionProbe.class),
-                new EmptyCommandRepository());
+                new EmptyCommandRepository(),
+                () -> null);
     }
 }

@@ -142,6 +142,7 @@ public class DocumentDefinitionFanOutIT {
 
     static Pool pool;
     static WorkflowOperations engine;
+    static dev.vertique.workflow.ops.WorkflowExecutionProbe probe;
     static TransactionalWorkflowOperations<SqlClient> txEngine;
     static WorkflowDefinitionService definitionService;
     static VertiqueApplicationHandle<?> application;
@@ -392,6 +393,7 @@ public class DocumentDefinitionFanOutIT {
                 VertxModule.class,
                 ConfigParsingModule.class,
                 WorkflowDefinitionsConfigModule.class,
+                dev.vertique.workflow.di.WorkflowExecutorConfigModule.class,
                 DeployerModule.class,
                 CoreLifecycleStepsModule.class,
                 WorkflowDefinitionModule.class,
@@ -420,6 +422,13 @@ public class DocumentDefinitionFanOutIT {
          * @return workflow operations
          */
         WorkflowOperations workflowOperations();
+
+        /**
+         * Returns the probe that waits until the executor has run what was recorded.
+         *
+         * @return the execution probe
+         */
+        dev.vertique.workflow.ops.WorkflowExecutionProbe executionProbe();
 
         /**
          * Returns the transactional workflow operations, required for branch-aware signal delivery.
@@ -462,7 +471,12 @@ public class DocumentDefinitionFanOutIT {
                 .build();
 
         FanOutTestComponent component = DaggerDocumentDefinitionFanOutIT_FanOutTestComponent.builder()
-                .vertxModule(new VertxModule(vertx, new JsonObject()))
+                .vertxModule(new VertxModule(
+                        vertx,
+                        new JsonObject()
+                                .put(
+                                        "workflow",
+                                        new JsonObject().put("executor", new JsonObject().put("pollIntervalMs", 100)))))
                 .fanOutInfrastructureModule(new FanOutInfrastructureModule(pool))
                 .build();
 
@@ -474,6 +488,7 @@ public class DocumentDefinitionFanOutIT {
                     }
                     application = started.result();
                     engine = component.workflowOperations();
+                    probe = component.executionProbe();
                     txEngine = component.transactionalWorkflowOperations();
                     definitionService = component.workflowDefinitionService();
                     ctx.completeNow();
@@ -538,6 +553,9 @@ public class DocumentDefinitionFanOutIT {
         io.vertx.core.internal.ContextInternal dup =
                 ((io.vertx.core.internal.ContextInternal) vertxRef.getOrCreateContext()).duplicate();
         dup.runOnContext(unused -> engine.start(cmd)
+                // The start only records: the executor runs the fork before the branches can be counted
+                .compose(started -> probe.awaitIdle(started, java.time.Duration.ofSeconds(10))
+                        .map(idle -> started))
                 .compose(id ->
                         // After start: all three branches are parked at their wait-signal nodes.
                         // The parent instance is RUNNING (waitType=JOIN) — it has not reached a

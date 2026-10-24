@@ -22,7 +22,9 @@ import java.util.concurrent.TimeoutException;
  * available only later, does not hold the probe. The probe polls the database and reads its clock, so it observes
  * work recorded by any node.
  *
- * <p>A non-positive timeout is refused with {@link IllegalArgumentException}.
+ * <p>A non-positive timeout is refused with {@link IllegalArgumentException}. A timeout longer than ten minutes is
+ * shortened to ten minutes. Each list of the report holds at most 1000 commands, the first ones in instance and sequence
+ * order; an instance with more commands in one state than that is not listed in full.
  */
 public interface WorkflowExecutionProbe {
 

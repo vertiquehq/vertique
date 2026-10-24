@@ -5,6 +5,7 @@ package dev.vertique.workflow.postgresql.engine;
 
 import dev.vertique.db.IsolationLevel;
 import dev.vertique.db.TransactionBuilder;
+import dev.vertique.db.exception.TransactionDeadlineExceededException;
 import dev.vertique.workflow.engine.WorkflowExceptionMapper;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import io.vertx.core.Future;
@@ -12,6 +13,7 @@ import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.time.Duration;
 import java.util.function.Function;
 
 /**
@@ -66,5 +68,28 @@ class PgWorkflowTransactionRunner implements WorkflowTransactionRunner<SqlClient
         }
         return tx.<R>execute(conn -> work.apply(conn))
                 .recover(t -> Future.failedFuture(workflowExceptionMapper.translate(t, "workflow transaction")));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Applies the deadline with {@link TransactionBuilder#deadline}. A
+     * {@link TransactionDeadlineExceededException} passes the workflow mapping stage unchanged, because that stage
+     * would otherwise wrap it as a non-retryable persistence failure and hide it from the caller that must
+     * recognise it.
+     */
+    @Override
+    public <R> Future<R> inTransaction(
+            @Nullable IsolationLevel level, Duration deadline, Function<SqlClient, Future<R>> work) {
+        TransactionBuilder tx = repository.transaction().deadline(deadline);
+        if (level != null) {
+            tx = tx.isolationLevel(level);
+        }
+        return tx.<R>execute(conn -> work.apply(conn)).recover(t -> {
+            if (t instanceof TransactionDeadlineExceededException) {
+                return Future.failedFuture(t);
+            }
+            return Future.failedFuture(workflowExceptionMapper.translate(t, "workflow transaction"));
+        });
     }
 }

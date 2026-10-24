@@ -13,11 +13,13 @@ import dev.vertique.db.DbModule;
 import dev.vertique.db.flyway.DbFlywayModule;
 import dev.vertique.db.postgresql.DbPostgresqlModule;
 import dev.vertique.deploy.DeployerModule;
+import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.examples.workflow.order.di.AppModule;
 import dev.vertique.examples.workflow.order.di.OrderFulfillmentDefinitionModule;
 import dev.vertique.examples.workflow.order.di.StubServicesModule;
 import dev.vertique.inboxoutbox.postgresql.TransactionalMessagingPostgresqlModule;
 import dev.vertique.job.cron.dagger.CronPersistenceModule;
+import dev.vertique.job.postgresql.JobPostgresqlModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.services.DispatchModule;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
@@ -26,6 +28,7 @@ import dev.vertique.workflow.services.di.WorkflowServicesModule;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -72,6 +75,8 @@ public class MissingServiceHandlerIT {
                 TransactionalMessagingPostgresqlModule.class,
                 // TransactionalMessagingServiceModule intentionally omitted
                 CronPersistenceModule.class,
+                // the cron scheduler deployment, which the graph's deployments include, needs a job repository
+                JobPostgresqlModule.class,
                 WorkflowPostgresqlModule.class,
                 WorkflowServicesModule.class,
                 OrderFulfillmentDefinitionModule.class,
@@ -89,6 +94,14 @@ public class MissingServiceHandlerIT {
          * @throws IllegalStateException if no SERVICE OutboxDestinationHandler is in the graph
          */
         WorkflowRegistry workflowRegistry();
+
+        /**
+         * Returns the verticle deployments of the graph, among them the workflow executor, which a graph that runs
+         * no deployer deploys alone.
+         *
+         * @return the verticle deployments
+         */
+        Set<VerticleDeployment> verticleDeployments();
     }
 
     // --- Tests ---
@@ -126,6 +139,29 @@ public class MissingServiceHandlerIT {
             org.junit.jupiter.api.Assertions.assertTrue(
                     msg.contains("TransactionalMessagingServiceModule"),
                     "message must reference TransactionalMessagingServiceModule; got: " + msg);
+        } finally {
+            vertx.close();
+        }
+    }
+
+    @Test
+    @DisplayName("the graph contributes the workflow executor as a SERVICES deployment at priority 100")
+    void graphContributesTheWorkflowExecutorDeployment() {
+        Vertx vertx = Vertx.vertx();
+        try {
+            var component = buildComponentWithoutServiceModule(vertx);
+
+            var executor = component.verticleDeployments().stream()
+                    .filter(deployment -> deployment.name().equals("workflow-executor"))
+                    .toList();
+
+            org.junit.jupiter.api.Assertions.assertEquals(1, executor.size(), "one workflow-executor deployment");
+            org.junit.jupiter.api.Assertions.assertEquals(
+                    dev.vertique.core.lifecycle.LifecyclePhase.SERVICES,
+                    executor.get(0).phase());
+            org.junit.jupiter.api.Assertions.assertEquals(100, executor.get(0).priority());
+            org.junit.jupiter.api.Assertions.assertEquals(
+                    1, executor.get(0).options().getInstances());
         } finally {
             vertx.close();
         }

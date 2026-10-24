@@ -127,6 +127,7 @@ public class DocumentDefinitionEndToEndYamlIT {
 
     static Pool pool;
     static WorkflowOperations engine;
+    static dev.vertique.workflow.ops.WorkflowExecutionProbe probe;
     static WorkflowDefinitionService definitionService;
     static VertiqueApplicationHandle<?> application;
 
@@ -414,6 +415,7 @@ public class DocumentDefinitionEndToEndYamlIT {
                     }
                     application = started.result();
                     engine = component.workflowOperations();
+                    probe = component.executionProbe();
                     definitionService = component.definitionService();
                     ctx.completeNow();
                 });
@@ -464,6 +466,9 @@ public class DocumentDefinitionEndToEndYamlIT {
                 null);
 
         engine.start(cmd)
+                // The start only records: the signals need the instance to have reached its first wait
+                .compose(started -> probe.awaitIdle(started, java.time.Duration.ofSeconds(10))
+                        .map(idle -> started))
                 .compose(this::driveToCompletion)
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {

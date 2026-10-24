@@ -75,6 +75,9 @@ class ExecutionLockCoverageIT {
 
     @AfterAll
     static void tearDown() {
+        if (assembly != null) {
+            assembly.stopExecutor();
+        }
         if (pool != null) {
             pool.close();
         }

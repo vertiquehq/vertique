@@ -195,9 +195,12 @@ public class ScopedPinLookupIT {
                 WorkflowMigrationModule.class,
                 ContextRuntimeModule.class,
                 LoggingContextModule.class,
+                ExecutorDeployment.FastPolling.class,
                 ApprovalHostModule.class
             })
     interface ApprovalHost {
+
+        Set<dev.vertique.deploy.VerticleDeployment> verticleDeployments();
 
         WorkflowOperations workflowOperations();
 
@@ -232,6 +235,9 @@ public class ScopedPinLookupIT {
     /** An engine generation and the recovery sweep wired over it. */
     private record Engine(ApprovalHost host, PgWorkflowBranchRecoveryService recovery) {}
 
+    /** The executor of the latest engine generation; an earlier generation's executor would run the later code's work. */
+    private static ExecutorDeployment liveExecutor;
+
     private static Engine newEngine() {
         ApprovalHost host = DaggerScopedPinLookupIT_ApprovalHost.factory().create(pool, Clock.systemUTC());
         DefaultVersionSeed.recordAndActivate(
@@ -248,6 +254,14 @@ public class ScopedPinLookupIT {
                 host.recoveryBridge(),
                 host.workflowRegistry(),
                 Clock.systemUTC());
+        try {
+            if (liveExecutor != null) {
+                await(liveExecutor.undeploy());
+            }
+            liveExecutor = await(ExecutorDeployment.deploy(vertxRef, host.verticleDeployments()));
+        } catch (Exception e) {
+            throw new IllegalStateException("The executor of the engine generation did not deploy", e);
+        }
         return new Engine(host, recovery);
     }
 
@@ -277,7 +291,11 @@ public class ScopedPinLookupIT {
     }
 
     @AfterAll
-    static void tearDown() {
+    static void tearDown() throws Exception {
+        if (liveExecutor != null) {
+            await(liveExecutor.undeploy());
+            liveExecutor = null;
+        }
         if (pool != null) {
             pool.close();
         }

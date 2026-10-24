@@ -80,13 +80,14 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      *
      * <p>Parameters: $1=id, $2=new version, $3=status, $4=current_step_id, $5=wait_type,
      * $6=wait_key, $7=wait_aux_id, $8=state_json, $9=error_type, $10=error_message,
-     * $11=expected (old) version.
+     * $11=expected (old) version, $12=subject_type, $13=subject_id, $14=subject_version. The subject columns are
+     * written with every update because the first segment of a recorded start resolves the subject.
      */
     private final String sqlUpdateOptimistic;
 
     /**
      * The optimistic UPDATE restricted to an instance that already is a counted pin: its persisted status
-     * is running, waiting or compensating. It needs no definition admission. Parameters as for
+     * is pending, running, waiting or compensating. It needs no definition admission. Parameters as for
      * {@link #sqlUpdateOptimistic}.
      */
     private final String sqlUpdateOptimisticLive;
@@ -178,11 +179,13 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 + " SET version = $2, status = $3, current_step_id = $4,"
                 + " wait_type = $5, wait_key = $6, wait_aux_id = $7, state_json = $8::jsonb,"
                 + " error_type = $9, error_message = $10, updated_at = NOW(),"
+                + " subject_type = $12, subject_id = $13, subject_version = $14,"
                 + " completed_at = CASE WHEN $3::varchar IN ('COMPLETED','FAILED','COMPENSATED','CANCELLED','EXPIRED')"
                 + "   THEN NOW() ELSE NULL END"
                 + " WHERE id = $1 AND version = $11";
 
-        this.sqlUpdateOptimisticLive = sqlUpdateOptimistic + " AND status IN ('RUNNING','WAITING','COMPENSATING')";
+        this.sqlUpdateOptimisticLive =
+                sqlUpdateOptimistic + " AND status IN ('PENDING','RUNNING','WAITING','COMPENSATING')";
 
         this.sqlReadPin =
                 "SELECT definition_scope_key, definition_id, definition_version, plan_hash, status, version FROM "
@@ -296,6 +299,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      */
     @Override
     public Future<Integer> updateOptimistic(WorkflowInstance updated, long expectedVersion, SqlClient tx) {
+        WorkflowSubjectRef subject = updated.subjectRef();
         Tuple params = Tuple.of(
                 updated.id().value(),
                 updated.version(),
@@ -307,7 +311,10 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 updated.stateJson(),
                 updated.errorType(),
                 updated.errorMessage(),
-                expectedVersion);
+                expectedVersion,
+                subject != null ? subject.type() : null,
+                subject != null ? subject.id() : null,
+                subject != null ? subject.version() : null);
 
         if (TERMINAL_STATUSES.contains(updated.status())) {
             return executeUpdate(sqlUpdateOptimistic, params, tx);

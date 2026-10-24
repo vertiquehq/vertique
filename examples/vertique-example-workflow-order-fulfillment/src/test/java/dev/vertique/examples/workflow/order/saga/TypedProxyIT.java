@@ -65,9 +65,7 @@ public class TypedProxyIT extends SagaTestBase {
 
     @AfterAll
     static void tearDown() {
-        if (component != null && component.pgInboxOutboxRepository() != null) {
-            component.pgInboxOutboxRepository().pool().close();
-        }
+        closeComponent();
     }
 
     @Test

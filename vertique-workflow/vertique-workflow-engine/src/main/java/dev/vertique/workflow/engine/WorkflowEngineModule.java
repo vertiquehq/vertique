@@ -7,13 +7,19 @@ import dagger.Binds;
 import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
+import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.deploy.VerticleDeployment;
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
+import dev.vertique.workflow.engine.executor.WorkflowExecutor;
+import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
+import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
@@ -26,6 +32,7 @@ import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import io.vertx.core.Vertx;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.util.Optional;
 import java.util.Set;
@@ -108,6 +115,83 @@ public abstract class WorkflowEngineModule {
     static WorkflowExecutionProbe executionProbe(WorkflowCommandRepository<SqlClient> commands, Optional<Vertx> vertx) {
         return vertx.map(instance -> new DefaultWorkflowExecutionProbe(commands, instance))
                 .orElseGet(() -> new DefaultWorkflowExecutionProbe(commands));
+    }
+
+    /**
+     * Provides the engine's side of a segment for the executor.
+     *
+     * @param engine the engine, resolved lazily because the engine reaches the executor control through this graph
+     * @return the segments seam
+     */
+    @Provides
+    @Singleton
+    static WorkflowSegments segments(Provider<WorkflowEngine> engine) {
+        return new WorkflowSegments() {
+            @Override
+            public boolean makeResident(dev.vertique.workflow.engine.spi.CommandHead head) {
+                return engine.get().segments().makeResident(head);
+            }
+
+            @Override
+            public io.vertx.core.Future<Outcome> run(
+                    dev.vertique.workflow.engine.spi.CommandHead head,
+                    dev.vertique.workflow.engine.spi.ClaimedCommand claim,
+                    dev.vertique.workflow.engine.spi.SegmentCommand command,
+                    SqlClient tx) {
+                return engine.get().segments().run(head, claim, command, tx);
+            }
+        };
+    }
+
+    /**
+     * Provides the executor: the description of the {@code workflow-executor} deployment, and the control that
+     * deploys it for an owner that has no deployer.
+     *
+     * @param config   the executor configuration, or empty for the defaults
+     * @param vertx    the optional Vert.x instance
+     * @param commands the command repository
+     * @param runner   the transaction runner segments run through
+     * @param segments the engine's side of a segment
+     * @return the executor
+     */
+    @Provides
+    @Singleton
+    static WorkflowExecutor executor(
+            Optional<WorkflowExecutorConfig> config,
+            Optional<Vertx> vertx,
+            WorkflowCommandRepository<SqlClient> commands,
+            WorkflowTransactionRunner<SqlClient> runner,
+            WorkflowSegments segments) {
+        return new WorkflowExecutor(
+                vertx.orElse(null),
+                config.orElseGet(WorkflowExecutorConfig::defaults),
+                commands,
+                runner,
+                segments,
+                WorkflowExecutor.newNodeId());
+    }
+
+    /**
+     * Binds the executor as the control the engine exposes.
+     *
+     * @param executor the executor
+     * @return the executor as the control
+     */
+    @Binds
+    abstract WorkflowExecutorControl executorControl(WorkflowExecutor executor);
+
+    /**
+     * Contributes the {@code workflow-executor} deployment to the {@code SERVICES} phase, like the outbox relay:
+     * {@code workflow.executor.instances} instances on the event loop at priority 100.
+     *
+     * @param executor the executor
+     * @return a set holding the deployment
+     */
+    @Provides
+    @Singleton
+    @ElementsIntoSet
+    static Set<VerticleDeployment> executorDeployments(WorkflowExecutor executor) {
+        return Set.of(executor.deployment());
     }
 
     /**

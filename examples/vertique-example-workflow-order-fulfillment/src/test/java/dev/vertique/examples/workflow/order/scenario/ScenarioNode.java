@@ -8,6 +8,7 @@ import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.LifecycleOrdered;
 import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.examples.workflow.order.WorkflowExecutorHarness;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
@@ -94,17 +95,28 @@ final class ScenarioNode implements AutoCloseable {
                             .scenarioWiring(wiring)
                             .build();
             Throwable failure = failureOf(runStartupSteps(graph));
-            return new ScenarioNode(graph, failure);
+            WorkflowExecutorHarness executor = null;
+            if (failure == null) {
+                // The graph runs no deployer: only the executor entry is deployed, never a whole phase
+                try {
+                    executor = await(WorkflowExecutorHarness.deploy(vertx, graph.verticleDeployments()));
+                } catch (AssertionError e) {
+                    failure = e;
+                }
+            }
+            return new ScenarioNode(graph, failure, executor);
         }
     }
 
     private final ScenarioGraph graph;
     private final Throwable failure;
+    private final WorkflowExecutorHarness executor;
     private boolean closed;
 
-    private ScenarioNode(ScenarioGraph graph, Throwable failure) {
+    private ScenarioNode(ScenarioGraph graph, Throwable failure, WorkflowExecutorHarness executor) {
         this.graph = graph;
         this.failure = failure;
+        this.executor = executor;
     }
 
     /** Begins a node on the database. */
@@ -130,6 +142,9 @@ final class ScenarioNode implements AutoCloseable {
     public void close() {
         if (closed) return;
         closed = true;
+        if (executor != null) {
+            await(executor.undeploy());
+        }
         await(pool().close());
     }
 
@@ -288,6 +303,7 @@ final class ScenarioNode implements AutoCloseable {
                                 .put("jdbcUrl", database.jdbcUrl())
                                 .put("user", dbConfig.user())
                                 .put("password", dbConfig.password()))
+                .put("workflow", new JsonObject().put("executor", new JsonObject().put("pollIntervalMs", 100)))
                 .put("management", new JsonObject().put("port", 0).put("host", "127.0.0.1"));
     }
 

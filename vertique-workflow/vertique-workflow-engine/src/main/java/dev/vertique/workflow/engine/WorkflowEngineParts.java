@@ -6,6 +6,7 @@ package dev.vertique.workflow.engine;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
@@ -22,6 +23,7 @@ import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerStore;
 import dev.vertique.workflow.types.WorkflowTypeNames;
+import io.vertx.core.Vertx;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import java.time.Clock;
@@ -60,6 +62,8 @@ public final class WorkflowEngineParts {
     private final Optional<BeanValidator> beanValidator;
     private final WorkflowTypeNames typeNames;
     private final Optional<WorkflowStateCompatibility> stateCompatibility;
+    private final WorkflowExecutorConfig executorConfig;
+    private final @Nullable Vertx vertx;
 
     private WorkflowEngineParts(Builder b) {
         this.txRunner = Objects.requireNonNull(b.txRunner, "txRunner");
@@ -82,6 +86,8 @@ public final class WorkflowEngineParts {
         this.beanValidator = b.beanValidator;
         this.typeNames = Objects.requireNonNull(b.typeNames, "typeNames");
         this.stateCompatibility = b.stateCompatibility;
+        this.executorConfig = Objects.requireNonNull(b.executorConfig, "executorConfig");
+        this.vertx = b.vertx;
     }
 
     /**
@@ -199,6 +205,22 @@ public final class WorkflowEngineParts {
         return stateCompatibility;
     }
 
+    /**
+     * The configuration of the engine's executor: instances, concurrency, poll interval and lease;
+     * {@link WorkflowExecutorConfig#defaults()} by default.
+     */
+    public WorkflowExecutorConfig executorConfig() {
+        return executorConfig;
+    }
+
+    /**
+     * The Vert.x instance the executor is deployed on when the owner starts it through
+     * {@link WorkflowEngineHandle#executor()}; {@code null} when none is supplied, in which case that start fails.
+     */
+    public @Nullable Vertx vertx() {
+        return vertx;
+    }
+
     /** Collects the parts; a setter replaces the part it names and returns the builder. */
     public static final class Builder {
         private WorkflowTransactionRunner<SqlClient> txRunner;
@@ -221,6 +243,8 @@ public final class WorkflowEngineParts {
         private Optional<BeanValidator> beanValidator = Optional.empty();
         private WorkflowTypeNames typeNames;
         private Optional<WorkflowStateCompatibility> stateCompatibility = Optional.empty();
+        private WorkflowExecutorConfig executorConfig = WorkflowExecutorConfig.defaults();
+        private @Nullable Vertx vertx;
 
         private Builder() {}
 
@@ -342,6 +366,18 @@ public final class WorkflowEngineParts {
         /** Sets the state compatibility comparison. */
         public Builder stateCompatibility(Optional<WorkflowStateCompatibility> stateCompatibility) {
             this.stateCompatibility = Objects.requireNonNull(stateCompatibility, "stateCompatibility");
+            return this;
+        }
+
+        /** Sets the executor configuration. */
+        public Builder executorConfig(WorkflowExecutorConfig executorConfig) {
+            this.executorConfig = Objects.requireNonNull(executorConfig, "executorConfig");
+            return this;
+        }
+
+        /** Sets the Vert.x instance the executor is deployed on; {@code null} for an engine that never starts one. */
+        public Builder vertx(@Nullable Vertx vertx) {
+            this.vertx = vertx;
             return this;
         }
 

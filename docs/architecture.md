@@ -68,6 +68,10 @@ applications contribute their own the same way. Placement-aware adapters read pl
 optional `DbSchemas` binding and reference no Flyway types, so a runtime component needs no Flyway
 module or configuration.
 
+`vertique-workflow-engine` depends on `vertique-deploy` (`VerticleDeployment`, `LifecyclePhase`) for the
+`workflow-executor` deployment, which it contributes to the `SERVICES` phase like the outbox relay. Among Vertique
+modules `vertique-deploy` depends only on `vertique-core`, so the dependency adds no cycle.
+
 `vertique-workflow-schema` owns the schemas of workflow decision and start payloads. It consumes
 `vertique-workflow-core`, `vertique-json-schema` and `vertique-json-schema-validation`, and plugs
 into definition registration through the core validator set. The workflow engine, tasks,

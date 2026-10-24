@@ -357,35 +357,64 @@ public class PgWorkflowEngineStartPayloadIT {
     }
 
     @Test
-    @DisplayName("an initialState throw stays a definition exception that chains the cause")
-    void initialStateThrowStaysADefinitionException() {
-        // Given: a start whose initial-state function throws for a valid payload
+    @DisplayName("an initialState throw fails the first segment, not the start, and leaves the instance pending")
+    void initialStateThrowFailsTheFirstSegmentAndLeavesTheInstancePending() throws Exception {
+        // Given: a start whose initial-state function throws for a valid payload, and a capture of the warnings
+        logs = CapturedLogs.attach(Level.WARN);
         String key = "idem-" + UUID.randomUUID();
 
-        // When: it is started with a valid payload
-        CompletionException failure = assertThrows(
-                CompletionException.class,
-                () -> start(THROWING_DEFINITION_ID, Map.of("requester", "ann", "seats", 2), key));
+        // When: it is started with a valid payload; the start only records
+        WorkflowInstanceId id = engine.start(new StartCommand(
+                        THROWING_DEFINITION_ID,
+                        contractNameOf(THROWING_DEFINITION_ID),
+                        Map.of("requester", "ann", "seats", 2),
+                        key,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
 
-        // Then: a definition exception (not the new type) naming the definition, not the application text
-        WorkflowDefinitionException definitionFailure = assertInstanceOf(
-                WorkflowDefinitionException.class,
-                failure.getCause(),
-                "an initial-state failure stays a definition failure");
+        // Then: the executor's segment fails and logs the definition failure by class, never the application text
+        ILoggingEvent warning = awaitSegmentWarning();
         assertTrue(
-                definitionFailure.getMessage().contains(THROWING_DEFINITION_ID),
-                "message must name the definition, was: " + definitionFailure.getMessage());
+                warning.getFormattedMessage().contains(WorkflowDefinitionException.class.getName()),
+                "the warning must name the definition failure, was: " + warning.getFormattedMessage());
         assertFalse(
-                definitionFailure.getMessage().contains(INITIALIZER_SENTINEL),
-                "message must not copy the application exception message");
+                warning.getFormattedMessage().contains(INITIALIZER_SENTINEL),
+                "the warning must not copy the application exception message");
 
-        // And: the thrown exception is the cause, and no instance row remains
-        IllegalStateException cause = assertInstanceOf(
-                IllegalStateException.class,
-                definitionFailure.getCause(),
-                "the initializer exception must be chained as the cause");
-        assertTrue(cause.getMessage().contains(INITIALIZER_SENTINEL));
-        assertEquals(0L, instanceRows(THROWING_DEFINITION_ID), "a failed start must not create an instance");
+        // And: nothing of the segment committed, so the instance is still pending without a state
+        assertEquals(
+                "PENDING",
+                pool.preparedQuery("SELECT status FROM workflow_instances WHERE id = $1")
+                        .execute(Tuple.of(id.value()))
+                        .map(rs -> rs.iterator().next().getString("status"))
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .join());
+        assertEquals(
+                0L,
+                count(
+                        "SELECT count(*) FROM workflow_instances WHERE id = $1 AND state_json IS NOT NULL",
+                        Tuple.of(id.value())));
+    }
+
+    /** Waits for the warning that the executor logs when a segment fails and rolls back. */
+    private ILoggingEvent awaitSegmentWarning() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            for (ILoggingEvent event : logs.events()) {
+                if (event.getFormattedMessage().contains("failed and rolled back")) {
+                    return event;
+                }
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("The failed segment was not logged");
     }
 
     @Test
