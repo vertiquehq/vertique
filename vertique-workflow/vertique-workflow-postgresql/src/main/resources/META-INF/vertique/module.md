@@ -401,6 +401,29 @@ Add optional modules based on behavior:
 
 A segment runs through `PgWorkflowTransactionRunner`'s deadline overload, so the work's client is the `vertique-db` deadline-guarded connection. It is a `SqlConnection` that delegates `transaction()`, so the engine's check of a pending Vert.x transaction accepts it, and it refuses every statement executed after the deadline. `prepare()`, `begin()` and `close()` always fail on it, so `Query.stream(...)` is unavailable in a segment.
 
+### Executor wake-up
+
+A command that becomes `PENDING` or `DEFERRED` wakes the node's executor instances at commit, through the `pg_notify` trigger
+on the channel `vertique_workflow_commands` (payload: `available_at` in epoch milliseconds, no instance id). The node has one
+`CommandNotificationListener` (public, `dev.vertique.workflow.postgresql.executor`), shared by every `workflow-executor`
+instance of the node, whether deployed by the deployer or started with `WorkflowExecutorControl.start()`:
+
+- **One connection per node.** The first instance to start opens a dedicated connection outside the pool with the pool's
+  `PgConnectOptions` (TLS and credentials), issues `LISTEN vertique_workflow_commands` and nothing else, and never begins a
+  transaction. The last instance to stop closes it. The channel is database-wide: an instance may be woken for a command another
+  node or engine owns, peeks and finds nothing.
+- **The payload is a hint.** Only digits are read, as the command's available time; anything else wakes the instances to peek
+  now. Each registered instance is woken with `runOnContext` on its own verticle context, never on the connection's context.
+- **Loss degrades to polling.** A connection that cannot be opened or is lost leaves the instances polling every
+  `pollIntervalMs`. The listener logs one warning for the outage, with the exception class only and no connection details, and
+  tries again once per `pollIntervalMs`. There is no liveness check and no restart logic.
+- **Queue usage.** While at least one `WorkflowExecutorObserver` is bound, the listener reads `pg_notification_queue_usage()` on
+  a pooled connection every five seconds, outside any transaction, and reports it as `QueueSnapshot.notificationQueueUsage`
+  (a value from 0 to 1). The other fields of that snapshot are zero; the executor instances report the queue counts. A usage
+  near 1 means a session that listens is not consuming notifications, and new notifications then fail at commit.
+- **Factory-built engines** construct the listener with the Vert.x instance, the pool's connect options, the pool, the observers
+  and the two intervals, and pass it to `WorkflowEngineParts.Builder.commandWakeups`.
+
 ### Execution probe
 
 `WorkflowExecutionProbe` completes when an instance (or every instance) has no command in flight and none an executor could claim now. `PgWorkflowCommandRepository` answers it with plain pooled reads of `workflow_commands`: it opens no transaction on a caller's connection and takes no lock, and it judges time with the database clock (`now()`). `CommandEligibilitySql` is the one SQL rendering of the eligibility rule, composed by every reader: a command is claimable when it is at the head of its instance's queue (no earlier `PENDING`, `DEFERRED` or `CLAIMED` command blocks, where a timer before its `fire_at` and a held-back timer block nothing), is not held back, is available, and is `PENDING`, `DEFERRED`, or `CLAIMED` under an expired lease. `PARKED`, `DEAD` and settled commands block nothing. A due-date or reminder timer is held back while its task is `COMPLETING`, including under a dead-lettered completion. A `CLAIMED` command under a live lease counts as in flight. The report lists `DEFERRED` commands that are not claimable, `PARKED` commands, and the other `PENDING` and `CLAIMED` commands that are not claimable, ordered by instance id then sequence; `stuck` lists every `DEAD` command and every `PENDING`, `DEFERRED`, `CLAIMED` or `PARKED` command whose first availability (`fire_at` for a timer, `recorded_at` otherwise, never the moving `available_at`) is older than `workflow.executor.stuckAfterSeconds`; a command may be in `stuck` and in its state list. Each list holds at most 1000 commands. The hold-back of a timeout timer by an earlier signal or completion is not rendered yet.
@@ -418,6 +441,7 @@ Tests that run no engine build a probe from a pool with `PgExecutionProbeSupport
 | `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository`, `PgTaskStore`, `PgTimerStore`, `PgWorkflowDefinitionRegistryStore`, `PgWorkflowRetentionRepository` | Singleton | Nine explicit providers, each built from `Optional<DbSchemas>`: placed in the schema mapped to `workflow` when the component supplies `DbSchemas` (a component that installs `DbModule` gets it from `db.schemas.workflow`), unqualified when it does not |
 | The five repository SPIs, `TaskStore<SqlClient>`, `TimerStore<SqlClient>` | Singleton | Aliases of the concrete instances above, so a concrete lookup and an SPI lookup return the same instance |
 | `WorkflowTransactionRunner<SqlClient>` | Singleton | The PostgreSQL transaction seam |
+| `CommandWakeups` | Singleton | The node's `CommandNotificationListener` (see [Executor wake-up](#executor-wake-up)), built from the optional `Vertx`, the optional `PgConnectOptions` that `DbPostgresqlModule` supplies, the `Pool`, the `Set<WorkflowExecutorObserver>` and the optional `WorkflowExecutorConfig` (its `pollIntervalMs` is the reconnect interval); a graph without `Vertx` or connect options binds a source that never wakes anyone, and its executors poll |
 | `PgWorkflowCommandRepository`, `WorkflowCommandRepository<SqlClient>` | Singleton | The command repository (reads, execution lock, queue sequence), built from `Optional<DbSchemas>` like the stores and from the optional `WorkflowRecordingConfig` (default lock timeout 5000 ms); the engine module builds the `WorkflowExecutionProbe` and the executor from it |
 | `WorkflowInstanceQueryService`, `WorkflowRetentionService` | Singleton | Services over the same scoped instances (as is the branch query service), so queries, archive and purge follow the placement |
 | `Set<MigrationDefinition>` | `@IntoSet` | The `workflow` declaration from `WorkflowMigrationsModule`: location `classpath:db/migration/workflow`, no dependencies |

@@ -8,6 +8,7 @@ import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
@@ -65,6 +66,7 @@ public final class WorkflowEngineParts {
     private final Optional<WorkflowStateCompatibility> stateCompatibility;
     private final WorkflowExecutorConfig executorConfig;
     private final Set<WorkflowExecutorObserver> executorObservers;
+    private final CommandWakeups commandWakeups;
     private final @Nullable Vertx vertx;
 
     private WorkflowEngineParts(Builder b) {
@@ -90,6 +92,7 @@ public final class WorkflowEngineParts {
         this.stateCompatibility = b.stateCompatibility;
         this.executorConfig = Objects.requireNonNull(b.executorConfig, "executorConfig");
         this.executorObservers = Set.copyOf(b.executorObservers);
+        this.commandWakeups = Objects.requireNonNull(b.commandWakeups, "commandWakeups");
         this.vertx = b.vertx;
     }
 
@@ -216,6 +219,11 @@ public final class WorkflowEngineParts {
         return executorConfig;
     }
 
+    /** The source that wakes the executor's instances when a command becomes pending or deferred; none by default. */
+    public CommandWakeups commandWakeups() {
+        return commandWakeups;
+    }
+
     /** The observers the executor reports its events to; empty by default. */
     public Set<WorkflowExecutorObserver> executorObservers() {
         return executorObservers;
@@ -253,6 +261,7 @@ public final class WorkflowEngineParts {
         private Optional<WorkflowStateCompatibility> stateCompatibility = Optional.empty();
         private WorkflowExecutorConfig executorConfig = WorkflowExecutorConfig.defaults();
         private Set<WorkflowExecutorObserver> executorObservers = Set.of();
+        private CommandWakeups commandWakeups = CommandWakeups.none();
         private @Nullable Vertx vertx;
 
         private Builder() {}
@@ -381,6 +390,12 @@ public final class WorkflowEngineParts {
         /** Sets the executor configuration. */
         public Builder executorConfig(WorkflowExecutorConfig executorConfig) {
             this.executorConfig = Objects.requireNonNull(executorConfig, "executorConfig");
+            return this;
+        }
+
+        /** Sets the source that wakes the executor's instances; the default never wakes them. */
+        public Builder commandWakeups(CommandWakeups commandWakeups) {
+            this.commandWakeups = Objects.requireNonNull(commandWakeups, "commandWakeups");
             return this;
         }
 

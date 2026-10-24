@@ -234,10 +234,10 @@ and returns the engine as a `WorkflowEngineHandle`.
 release can add a part without breaking a caller. One setter per part, named like its accessor: `txRunner`, `registry`,
 `definitionStore`, `instances`, `history`, `dedup`, `branchTokens`, `joinStates`, `timerStore`, `taskStore`, `commands`, `clock`,
 `recorders`, `optionalIntentKinds`, `migrationRegistry`, `propagator`, `inboundContextInitializers`, `beanValidator`,
-`typeNames`, `stateCompatibility`, `executorConfig`, `executorObservers` and `vertx`. `build()` throws a `NullPointerException` that names the first required part
+`typeNames`, `stateCompatibility`, `executorConfig`, `executorObservers`, `commandWakeups` and `vertx`. `build()` throws a `NullPointerException` that names the first required part
 that is missing. Required: the repositories and stores (including the command repository, `commands`), the registry, the **definition store**, the type-name index and the
 clock. Defaulted: `recorders` and `inboundContextInitializers` to empty sets, `optionalIntentKinds` to
-`DEFAULT_OPTIONAL_INTENT_KINDS`, `executorConfig` to `WorkflowExecutorConfig.defaults()`, `executorObservers` to an empty set (the observers of the executor's events, see the executor observer in `vertique-workflow-core`), and `migrationRegistry`,
+`DEFAULT_OPTIONAL_INTENT_KINDS`, `executorConfig` to `WorkflowExecutorConfig.defaults()`, `executorObservers` to an empty set (the observers of the executor's events, see the executor observer in `vertique-workflow-core`), `commandWakeups` to `CommandWakeups.none()` (the source that wakes the executor's instances, see Executor), and `migrationRegistry`,
 `beanValidator` and `stateCompatibility` to empty. `vertx` may be `null`; the executor of such an engine cannot be started. The
 `propagator` may be `null`. The `typeNames` index is the one the registry fills (`DefaultWorkflowRegistry#typeNames()`);
 with a different index a decision payload name resolves as a binary class name only. An empty `beanValidator` leaves
@@ -704,6 +704,16 @@ factory-built engine's `executor().start()` deploys the same supplier and option
 back by its own deadline, which is normally within the lease and is extended by a statement stuck in the database. An
 application that never starts its executor leaves every start `PENDING`.
 
+**Wake-up.** An instance polls every `pollIntervalMs` and is also woken when a command becomes pending or deferred.
+`CommandWakeups` (`engine.spi`) is the seam: each instance calls `register(context, sink)` when it starts and closes the
+registration when it stops, and the source calls the sink on that instance's own context with the command's available time
+in epoch milliseconds (a time in the past means peek now). A wake-up only asks for a pass; it never claims, and repeated
+wake-ups coalesce. After a pass that claimed nothing the instance reads the commands that are not yet available and keeps one
+timer, replaced on every refresh, for the earliest pending or deferred one, so a command that becomes available needs no poll;
+a hint with an earlier future time moves that timer earlier. The default source, `CommandWakeups.none()`, never wakes anyone, so
+an engine without a source polls alone. The PostgreSQL module binds the source (`@BindsOptionalOf CommandWakeups` here) and sets
+`commandWakeups` on a Dagger graph; a factory-built engine passes one to `WorkflowEngineParts.Builder.commandWakeups`.
+
 Each verticle instance runs on the event loop only (no worker threading, no blocking call). It claims commands as the instance
 id `<node id>-<n>`, where the node id is the host name plus a random suffix and `n` counts the verticle instances of the
 deployment. One pass is one one-shot timer: it peeks the commands that could be claimed (the head of their instance's queue,
@@ -752,8 +762,10 @@ text that names only the kind, the cap or the counts); exception text and payloa
 
 **Observers.** The executor reports `CommandSettled`, `TransientRetry`, `LeaseExpired` and `QueueSnapshot` events to the
 `Set<WorkflowExecutorObserver>` it is built with (empty unless contributed; see `vertique-workflow-core`). Each observer runs in its
-own `try`, and a throwing observer is logged at warn level and affects nothing. A `QueueSnapshot` is read at most once per second
-per executor instance and only while an observer is registered.
+own `try`, and a throwing observer is logged at warn level and affects nothing. A `QueueSnapshot` with the queue counts is read at most once per second
+per executor instance and only while an observer is registered. The PostgreSQL wake-up source also reports the notification
+queue usage as `QueueSnapshot.notificationQueueUsage` (the other fields of that snapshot are zero); the executor's own snapshots
+carry usage `0`.
 
 The deployment has no supervision and no liveness check: a crashed process leaves its claims to lease recovery, and process
 health comes from the platform's database liveness check and the runtime's restart policy.

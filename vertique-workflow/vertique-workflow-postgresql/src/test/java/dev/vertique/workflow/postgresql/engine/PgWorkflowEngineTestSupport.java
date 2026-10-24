@@ -11,6 +11,7 @@ import dev.vertique.workflow.engine.WorkflowEngineFactory;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.engine.WorkflowEngineParts;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
@@ -568,6 +569,7 @@ public final class PgWorkflowEngineTestSupport {
         private WorkflowExecutorConfig executorConfig = WorkflowExecutorConfig.defaults();
         private DurableContextPropagator propagator;
         private Set<WorkflowExecutorObserver> executorObservers = Set.of();
+        private CommandWakeups commandWakeups = CommandWakeups.none();
         private UnaryOperator<WorkflowTransactionRunner<SqlClient>> runnerDecorator = UnaryOperator.identity();
         private UnaryOperator<WorkflowCommandRepository<SqlClient>> commandsDecorator = UnaryOperator.identity();
 
@@ -592,6 +594,12 @@ public final class PgWorkflowEngineTestSupport {
         /** The observers the engine's executor reports its events to. */
         public ExecutorEngine executorObservers(Set<WorkflowExecutorObserver> executorObservers) {
             this.executorObservers = executorObservers;
+            return this;
+        }
+
+        /** The wake-up source the engine's executor instances register with; none by default. */
+        public ExecutorEngine commandWakeups(CommandWakeups commandWakeups) {
+            this.commandWakeups = commandWakeups;
             return this;
         }
 
@@ -642,6 +650,7 @@ public final class PgWorkflowEngineTestSupport {
                     .vertx(vertx)
                     .executorConfig(executorConfig)
                     .executorObservers(executorObservers)
+                    .commandWakeups(commandWakeups)
                     .build());
         }
     }

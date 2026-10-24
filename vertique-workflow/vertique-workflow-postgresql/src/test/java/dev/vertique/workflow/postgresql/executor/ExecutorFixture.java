@@ -21,12 +21,14 @@ import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.IsolationLevel;
 import dev.vertique.db.exception.TransactionDeadlineExceededException;
+import dev.vertique.db.postgresql.PgConnectOptionsFactory;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
@@ -338,6 +340,9 @@ final class ExecutorFixture implements AutoCloseable {
         private int maxStepsPerSegment = 1000;
         private long stuckAfterSeconds = 300;
         private Set<WorkflowExecutorObserver> observers = Set.of();
+        private boolean listening;
+        private long queueUsageIntervalMs = 1000;
+        private UnaryOperator<CommandWakeups> wakeupsDecorator = UnaryOperator.identity();
         private UnaryOperator<WorkflowTransactionRunner<SqlClient>> runnerDecorator = UnaryOperator.identity();
         private UnaryOperator<WorkflowCommandRepository<SqlClient>> commandsDecorator = UnaryOperator.identity();
 
@@ -438,6 +443,30 @@ final class ExecutorFixture implements AutoCloseable {
             return this;
         }
 
+        /**
+         * The engine's executor instances register with a node-level {@link CommandNotificationListener} built from
+         * the fixture's connect options, the engine's pool, the engine's observers, the poll interval as reconnect
+         * interval and the queue-usage interval.
+         */
+        NodeSpec listening() {
+            this.listening = true;
+            return this;
+        }
+
+        /** The time between two reads of the notification queue usage; implies {@link #listening()}. */
+        NodeSpec queueUsageIntervalMs(long queueUsageIntervalMs) {
+            this.listening = true;
+            this.queueUsageIntervalMs = queueUsageIntervalMs;
+            return this;
+        }
+
+        /** The wake-up source the executor instances register with is wrapped by the decorator. */
+        NodeSpec wakeups(UnaryOperator<CommandWakeups> decorator) {
+            this.listening = true;
+            this.wakeupsDecorator = decorator;
+            return this;
+        }
+
         /** The one place that builds the executor configuration of a node. */
         private WorkflowExecutorConfig executorConfig() {
             return new WorkflowExecutorConfig(
@@ -463,6 +492,12 @@ final class ExecutorFixture implements AutoCloseable {
                     .executorConfig(executorConfig())
                     .executorObservers(observers)
                     .commandsDecorator(commandsDecorator);
+            CommandNotificationListener listener = null;
+            if (listening) {
+                listener = new CommandNotificationListener(
+                        nodeVertx, connectOptions(), pool, observers, pollIntervalMs, queueUsageIntervalMs);
+                engine.commandWakeups(wakeupsDecorator.apply(listener));
+            }
             if (carryContext) {
                 engine.propagator(propagator);
             }
@@ -475,7 +510,7 @@ final class ExecutorFixture implements AutoCloseable {
                 engine.runnerDecorator(runnerDecorator);
             }
             WorkflowEngineHandle handle = engine.build();
-            Node node = new Node(name, nodeVertx, ownVertx, pool, handle, runnerRef[0]);
+            Node node = new Node(name, nodeVertx, ownVertx, pool, handle, runnerRef[0], listener);
             nodes.add(node);
             return node;
         }
@@ -488,6 +523,10 @@ final class ExecutorFixture implements AutoCloseable {
         final Pool pool;
         final WorkflowEngineHandle engine;
         final DeadlineRecordingRunner runner;
+
+        @Nullable
+        final CommandNotificationListener listener;
+
         private final boolean ownsVertx;
 
         private Node(
@@ -496,8 +535,10 @@ final class ExecutorFixture implements AutoCloseable {
                 boolean ownsVertx,
                 Pool pool,
                 WorkflowEngineHandle engine,
-                DeadlineRecordingRunner runner) {
+                DeadlineRecordingRunner runner,
+                @Nullable CommandNotificationListener listener) {
             this.name = name;
+            this.listener = listener;
             this.vertx = vertx;
             this.ownsVertx = ownsVertx;
             this.pool = pool;
@@ -538,6 +579,69 @@ final class ExecutorFixture implements AutoCloseable {
             }
             nodes.remove(this);
         }
+    }
+
+    // --- Wake-up ---
+
+    /** The connect options of the fixture's database, as the application's pool is configured. */
+    PgConnectOptions connectOptions() {
+        return PgConnectOptionsFactory.create(db);
+    }
+
+    /**
+     * The backends that listen on the command channel and sit idle after their {@code LISTEN}, in no particular order.
+     * A backend that runs {@code LISTEN} on the channel is not one of the test's own connections.
+     */
+    List<Integer> listenBackends() {
+        List<Integer> pids = new ArrayList<>();
+        for (Row row : await(observer.query("SELECT pid FROM pg_stat_activity WHERE datname = current_database()"
+                        + " AND pid <> pg_backend_pid() AND state = 'idle'"
+                        + " AND query ILIKE 'LISTEN%vertique_workflow_commands%'")
+                .execute())) {
+            pids.add(row.getInteger("pid"));
+        }
+        return pids;
+    }
+
+    /** Whether the backend has an open transaction, by the database. */
+    boolean inTransaction(int pid) {
+        return await(observer.preparedQuery("SELECT xact_start IS NOT NULL OR state LIKE 'idle in transaction%'"
+                                + " FROM pg_stat_activity WHERE pid = $1")
+                        .execute(Tuple.of(pid)))
+                .iterator()
+                .next()
+                .getBoolean(0);
+    }
+
+    /** Terminates the backend and returns whether the database knew it. */
+    boolean terminateBackend(int pid) {
+        return await(observer.preparedQuery("SELECT pg_terminate_backend($1)").execute(Tuple.of(pid)))
+                .iterator()
+                .next()
+                .getBoolean(0);
+    }
+
+    /**
+     * Records a start in a transaction of the test, moves its command's availability {@code delay} ahead of the
+     * database clock before the transaction commits, and commits.
+     */
+    WorkflowInstanceId recordAvailableIn(Node node, StartCommand command, Duration delay) {
+        return await(
+                node.pool.withTransaction(tx -> node.engine.start(command, tx).compose(id -> tx.preparedQuery(
+                                "UPDATE workflow_commands SET available_at = now() + ($2::bigint *"
+                                        + " interval '1 millisecond') WHERE workflow_id = $1")
+                        .execute(Tuple.of(id.value(), delay.toMillis()))
+                        .map(id))));
+    }
+
+    /** The command's availability as the database's notification payload expression renders it. */
+    String notificationPayloadOf(WorkflowInstanceId id) {
+        return await(observer.preparedQuery("SELECT (extract(epoch from available_at) * 1000)::bigint::text"
+                                + " FROM workflow_commands WHERE workflow_id = $1")
+                        .execute(Tuple.of(id.value())))
+                .iterator()
+                .next()
+                .getString(0);
     }
 
     // --- Starting ---

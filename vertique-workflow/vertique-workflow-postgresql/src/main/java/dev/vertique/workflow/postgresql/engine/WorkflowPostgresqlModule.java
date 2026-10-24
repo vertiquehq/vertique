@@ -4,21 +4,26 @@
 package dev.vertique.workflow.postgresql.engine;
 
 import dagger.Binds;
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dev.vertique.db.DbSchemas;
 import dev.vertique.db.DbSchemasModule;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.logging.LoggingContextModule;
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.WorkflowEngineModule;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.postgresql.executor.CommandNotificationListener;
 import dev.vertique.workflow.postgresql.executor.PgWorkflowCommandRepository;
 import dev.vertique.workflow.postgresql.query.PgWorkflowInstanceQueryService;
 import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
@@ -37,10 +42,13 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.retention.WorkflowRetentionService;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerStore;
+import io.vertx.core.Vertx;
+import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.inject.Singleton;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Dagger module for the workflow-postgresql (dialect) layer.
@@ -83,6 +91,53 @@ import java.util.Optional;
             DbSchemasModule.class
         })
 public abstract class WorkflowPostgresqlModule {
+
+    /** The time between two reads of the notification queue usage, in milliseconds. */
+    private static final long QUEUE_USAGE_INTERVAL_MS = 5_000;
+
+    // --- Executor wake-up ---
+
+    /**
+     * Provides the node's wake-up source: one {@link CommandNotificationListener} shared by the node's executor
+     * instances, which opens its connection with the pool's connect options when the first instance starts. A graph
+     * without a Vert.x instance, or without connect options, has no listening connection to open and gets a source
+     * that never wakes anyone, so its executors poll.
+     *
+     * @param vertx          the optional Vert.x instance
+     * @param connectOptions the pool's connect options, when bound
+     * @param pool           the PostgreSQL connection pool
+     * @param observers      the executor observers the notification queue usage is reported to
+     * @param config         the executor configuration, or empty for the defaults; its poll interval is the
+     *                       reconnect interval
+     * @return the wake-up source
+     */
+    @Provides
+    @Singleton
+    static CommandWakeups commandWakeups(
+            Optional<Vertx> vertx,
+            Optional<PgConnectOptions> connectOptions,
+            Pool pool,
+            Set<WorkflowExecutorObserver> observers,
+            Optional<WorkflowExecutorConfig> config) {
+        if (vertx.isEmpty() || connectOptions.isEmpty()) {
+            return CommandWakeups.none();
+        }
+        return new CommandNotificationListener(
+                vertx.get(),
+                connectOptions.get(),
+                pool,
+                observers,
+                config.orElseGet(WorkflowExecutorConfig::defaults).pollIntervalMs(),
+                QUEUE_USAGE_INTERVAL_MS);
+    }
+
+    /**
+     * Declares the pool's connect options as an optional binding; {@code DbPostgresqlModule} supplies them.
+     *
+     * @return the optional connect options declaration
+     */
+    @BindsOptionalOf
+    abstract PgConnectOptions optionalPgConnectOptions();
 
     // --- Scoped PostgreSQL implementations ---
 

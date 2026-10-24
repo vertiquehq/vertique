@@ -179,7 +179,8 @@ public final class WorkflowEngineFactory {
                 txRunner,
                 engine.segments(),
                 WorkflowExecutor.newNodeId(),
-                parts.executorObservers());
+                parts.executorObservers(),
+                parts.commandWakeups());
         return engine;
     }
 

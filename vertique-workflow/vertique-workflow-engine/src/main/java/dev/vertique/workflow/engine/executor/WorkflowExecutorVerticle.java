@@ -4,6 +4,7 @@
 package dev.vertique.workflow.engine.executor;
 
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
+import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
@@ -25,6 +26,9 @@ import org.slf4j.LoggerFactory;
  * Instances share the engine's singletons and coordinate only through PostgreSQL. The verticle runs on the event
  * loop only: it uses no worker threading and makes no blocking call.
  *
+ * <p>The instance registers with the wake-up source when it starts and closes the registration when it stops; a
+ * wake-up runs on the instance's own context and only asks for a pass.
+ *
  * <p>There is no supervision and no liveness check: work held by an instance that died is recovered when its lease
  * expires.
  */
@@ -39,7 +43,10 @@ public final class WorkflowExecutorVerticle extends AbstractVerticle {
     private final String instanceId;
     private final Set<WorkflowExecutorObserver> observers;
 
+    private final CommandWakeups wakeups;
+
     private ExecutorLoop loop;
+    private CommandWakeups.Registration registration;
 
     /**
      * Creates one executor instance.
@@ -76,6 +83,29 @@ public final class WorkflowExecutorVerticle extends AbstractVerticle {
             WorkflowSegments segments,
             String instanceId,
             Set<WorkflowExecutorObserver> observers) {
+        this(config, commands, runner, segments, instanceId, observers, CommandWakeups.none());
+    }
+
+    /**
+     * Creates one executor instance that reports its events to observers and is woken by a command source.
+     *
+     * @param config     the executor configuration
+     * @param commands   the command repository
+     * @param runner     the transaction runner segments run through
+     * @param segments   the engine's side of a segment
+     * @param instanceId the id this instance claims commands as
+     * @param observers  the observers of the executor's events; may be empty
+     * @param wakeups    the source that wakes the instance when a command becomes pending or deferred
+     */
+    public WorkflowExecutorVerticle(
+            WorkflowExecutorConfig config,
+            WorkflowCommandRepository<SqlClient> commands,
+            WorkflowTransactionRunner<SqlClient> runner,
+            WorkflowSegments segments,
+            String instanceId,
+            Set<WorkflowExecutorObserver> observers,
+            CommandWakeups wakeups) {
+        this.wakeups = Objects.requireNonNull(wakeups, "wakeups");
         this.observers = Set.copyOf(observers);
         this.config = Objects.requireNonNull(config, "config");
         this.commands = Objects.requireNonNull(commands, "commands");
@@ -100,6 +130,15 @@ public final class WorkflowExecutorVerticle extends AbstractVerticle {
                 events,
                 new StuckReporter(commands, config.stuckAfterSeconds(), events));
         loop.start();
+        try {
+            registration = wakeups.register(root, loop::wake);
+        } catch (RuntimeException e) {
+            // the instance polls alone
+            log.warn(
+                    "Workflow executor {} could not register for wake-ups: {}",
+                    instanceId,
+                    e.getClass().getName());
+        }
         log.info("Workflow executor {} started", instanceId);
         startPromise.complete();
     }
@@ -109,6 +148,10 @@ public final class WorkflowExecutorVerticle extends AbstractVerticle {
         if (loop == null) {
             stopPromise.complete();
             return;
+        }
+        if (registration != null) {
+            registration.close();
+            registration = null;
         }
         loop.stop().onComplete(result -> {
             log.info("Workflow executor {} stopped", instanceId);

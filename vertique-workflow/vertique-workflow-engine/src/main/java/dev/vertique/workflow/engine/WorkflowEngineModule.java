@@ -18,6 +18,7 @@ import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
 import dev.vertique.workflow.engine.executor.WorkflowExecutor;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
+import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
@@ -180,6 +181,7 @@ public abstract class WorkflowEngineModule {
      * @param runner   the transaction runner segments run through
      * @param segments the engine's side of a segment
      * @param observers the observers of the executor's events; empty unless the application contributes some
+     * @param wakeups   the optional source that wakes the instances on a commit; absent means polling alone
      * @return the executor
      */
     @Provides
@@ -190,7 +192,8 @@ public abstract class WorkflowEngineModule {
             WorkflowCommandRepository<SqlClient> commands,
             WorkflowTransactionRunner<SqlClient> runner,
             WorkflowSegments segments,
-            Set<WorkflowExecutorObserver> observers) {
+            Set<WorkflowExecutorObserver> observers,
+            Optional<CommandWakeups> wakeups) {
         return new WorkflowExecutor(
                 vertx.orElse(null),
                 config.orElseGet(WorkflowExecutorConfig::defaults),
@@ -198,7 +201,8 @@ public abstract class WorkflowEngineModule {
                 runner,
                 segments,
                 WorkflowExecutor.newNodeId(),
-                observers);
+                observers,
+                wakeups.orElseGet(CommandWakeups::none));
     }
 
     /**
@@ -223,6 +227,15 @@ public abstract class WorkflowEngineModule {
     static Set<VerticleDeployment> executorDeployments(WorkflowExecutor executor) {
         return Set.of(executor.deployment());
     }
+
+    /**
+     * Declares the wake-up source as an optional binding; the PostgreSQL module binds the listener, and a graph that
+     * binds none polls alone.
+     *
+     * @return the optional wake-up source declaration
+     */
+    @BindsOptionalOf
+    abstract CommandWakeups optionalCommandWakeups();
 
     /**
      * Declares the Vert.x instance as an optional binding, so a graph that binds none still provides the probe.
