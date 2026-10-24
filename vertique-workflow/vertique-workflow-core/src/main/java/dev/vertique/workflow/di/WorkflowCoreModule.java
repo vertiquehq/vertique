@@ -14,6 +14,7 @@ import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.RaceSafetyTargetContributor;
 import dev.vertique.workflow.plan.RaceSafetyTargetRegistry;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowContributor;
@@ -58,6 +59,13 @@ public abstract class WorkflowCoreModule {
 
     @BindsOptionalOf
     abstract WorkflowDefinitionsConfig definitionsConfig();
+
+    /**
+     * Declares the optional schema producer; the schema module binds it. Without it definition rows are written
+     * without a start schema and without declared signal names.
+     */
+    @BindsOptionalOf
+    abstract WorkflowPlanSchemaProducer planSchemaProducer();
 
     @Multibinds
     abstract Set<PersistedDefinitionLoader> persistedDefinitionLoaders();

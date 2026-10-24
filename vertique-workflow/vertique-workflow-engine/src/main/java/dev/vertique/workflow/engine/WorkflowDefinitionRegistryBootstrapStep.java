@@ -14,8 +14,10 @@ import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reas
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DeclaredSignalNames;
 import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionFailure.Rule;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
@@ -100,6 +102,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     private final DefinitionActivations activations;
     private final WorkflowTypeNames typeNames;
     private final FailingDefinitions failing;
+    private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
 
     @Inject
     WorkflowDefinitionRegistryBootstrapStep(
@@ -112,7 +115,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             DefaultWorkflowDefinitionRegistryView view,
             DefinitionActivations activations,
             WorkflowTypeNames typeNames,
-            FailingDefinitions failing) {
+            FailingDefinitions failing,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+        this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
         this.failing = failing;
         this.typeNames = typeNames;
         this.activations = activations;
@@ -209,9 +214,10 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         registry.get().nameBinding(origin.key()),
                         null);
                 return store.find(origin.key()).compose(previous -> {
-                    WorkflowDefinitionRecord bound = applyStoredBinding(source, previous);
+                    WorkflowDefinitionRecord bound = withSchemas(applyStoredBinding(source, previous));
                     return store.upsertDocument(bound, origin.document(), !optedOut.contains(origin.key()))
-                            .compose(outcome -> reconcileResult(bound, previous, outcome));
+                            .compose(outcome -> reconcileResult(bound, previous, outcome))
+                            .compose(done -> fillSchemas(bound, previous));
                 });
             }));
         }
@@ -259,12 +265,13 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         definition.nameBinding(),
                         null);
                 return store.find(key).compose(previous -> {
-                    WorkflowDefinitionRecord bound = applyStoredBinding(source, previous);
+                    WorkflowDefinitionRecord bound = withSchemas(applyStoredBinding(source, previous));
                     return store.upsertCode(
                                     bound,
                                     definition.definition() == null
                                             || definition.definition().activateOnDeploy())
-                            .compose(outcome -> reconcileResult(bound, previous, outcome));
+                            .compose(outcome -> reconcileResult(bound, previous, outcome))
+                            .compose(done -> fillSchemas(bound, previous));
                 });
             }));
         }
@@ -310,6 +317,47 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 source.statusChangedAt(),
                 stored.nameBinding(),
                 null);
+    }
+
+    /**
+     * Gives the record the signal names and the start schema of the plan this node registered under its key, so the
+     * store writes them with the plan hash. Without a producer, or without a registered plan, the record is returned
+     * as it is and the columns stay null.
+     */
+    private WorkflowDefinitionRecord withSchemas(WorkflowDefinitionRecord record) {
+        if (schemaProducer.isEmpty() || record.signalNames() != null) return record;
+        Optional<RuntimeWorkflow> plan = registry.get().find(record.key());
+        if (plan.isEmpty()) return record;
+        return withSchemas(record, plan.get());
+    }
+
+    private WorkflowDefinitionRecord withSchemas(WorkflowDefinitionRecord record, RuntimeWorkflow plan) {
+        return new WorkflowDefinitionRecord(
+                record.key(),
+                record.kind(),
+                record.contractName(),
+                record.stateTypeName(),
+                record.planHash(),
+                record.status(),
+                record.provenance(),
+                record.documentFormat(),
+                record.createdAt(),
+                record.statusChangedAt(),
+                record.nameBinding(),
+                record.failure(),
+                DeclaredSignalNames.of(plan),
+                schemaProducer.orElseThrow().startSchema(plan));
+    }
+
+    /**
+     * Fills the columns of a row that was recorded before they were stored, when this node holds the plan whose hash
+     * the row holds. A row that was just inserted or rehashed already carries them.
+     */
+    private Future<Void> fillSchemas(WorkflowDefinitionRecord reconciled, Optional<WorkflowDefinitionRecord> previous) {
+        if (previous.isEmpty() || previous.get().signalNames() != null || reconciled.signalNames() == null)
+            return Future.succeededFuture();
+        if (!previous.get().planHash().equals(reconciled.planHash())) return Future.succeededFuture();
+        return store.fillSignalSchemas(reconciled.key(), reconciled.signalNames(), reconciled.startSchema());
     }
 
     private void requireBoundNamesResolve(WorkflowDefinitionRecord row) {
@@ -575,8 +623,19 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             return store.findDocument(key)
                     .compose(document -> work(() -> restored(local, loader, record, document)))
                     .compose(restored -> recordEvaluation(record, restored.failure())
+                            .compose(ignored -> fillRestored(local, record, restored))
                             .map(ignored -> Optional.ofNullable(restored.verified())));
         });
+    }
+
+    /** Fills the columns of a restored row that was written before they were stored, from the plan this node holds. */
+    private Future<Void> fillRestored(WorkflowRegistry local, WorkflowDefinitionRecord record, Restored restored) {
+        if (schemaProducer.isEmpty() || record.signalNames() != null || restored.verified() == null)
+            return Future.succeededFuture();
+        RuntimeWorkflow held = held(local, record.key());
+        if (held == null || !record.planHash().equals(held.plan().planHash())) return Future.succeededFuture();
+        WorkflowDefinitionRecord filled = withSchemas(record, held);
+        return store.fillSignalSchemas(record.key(), filled.signalNames(), filled.startSchema());
     }
 
     /**

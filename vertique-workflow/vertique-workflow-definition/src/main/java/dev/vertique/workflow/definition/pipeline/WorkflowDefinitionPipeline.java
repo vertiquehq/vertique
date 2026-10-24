@@ -16,6 +16,7 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.plan.WorkflowPlan;
+import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.inject.Inject;
@@ -219,6 +220,36 @@ public final class WorkflowDefinitionPipeline {
      */
     public Map<String, String> nameBinding(WorkflowDefinition<?, ?> definition) {
         return WorkflowBuilder.nameBindingOf(definition, typeNames);
+    }
+
+    /**
+     * INTERNAL framework seam — used by the definition service when it records a candidate; not an
+     * application contract and outside the maturity promise.
+     *
+     * <p>Builds the runtime of a compiled definition on a fresh {@link WorkflowBuilder} under this pipeline's
+     * type-name index, in the default scope, without registering it anywhere. It exists so that the schemas of a
+     * candidate can be derived before the candidate is published.
+     *
+     * @param compiled the compiled definition; must not be {@code null}
+     * @return the runtime workflow; never {@code null}
+     * @throws WorkflowDefinitionException if the build fails
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    public RuntimeWorkflow runtime(CompiledDefinition compiled) {
+        Objects.requireNonNull(compiled, "compiled");
+        WorkflowDefinition<?, ?> definition = compiled.definition();
+        WorkflowBuilder builder = new WorkflowBuilder<>(typeNames);
+        definition.define(builder);
+        WorkflowPlan plan = builder.build(
+                definition.definitionId(), definition.definitionVersion(), typeNames.nameOf(definition.stateType()));
+        return RuntimeWorkflow.of(
+                plan,
+                compiled.contractName(),
+                definition.stateType(),
+                builder.startPayloadType(),
+                builder.initialState(),
+                builder.signalPayloadTypes(),
+                builder.callbackRegistry());
     }
 
     // --- Private helpers ---

@@ -4,6 +4,7 @@
 package dev.vertique.workflow.registry.store;
 
 import io.vertx.core.Future;
+import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;
@@ -233,4 +234,21 @@ public interface WorkflowDefinitionRegistryStore {
      * @return a future completed after the store-owned transaction commits
      */
     Future<Void> recordFailure(DefinitionKey key, @Nullable DefinitionFailure failure);
+
+    /**
+     * Writes the declared signal names and the start schema of a row that has neither, as a node that builds the
+     * row's plan at startup does for a row written before they were stored. A row that already holds signal names,
+     * and a row that does not exist, are left unchanged. The plan hash is never touched.
+     *
+     * <p>The default implementation does nothing, for a store that keeps no such columns.
+     *
+     * @param key the key of the row
+     * @param signalNames the signal names the row's plan declares
+     * @param startSchema the schema of the row's start payload, or {@code null} when the plan declares none
+     * @return a future completed after the statement ran
+     */
+    default Future<Void> fillSignalSchemas(
+            DefinitionKey key, JsonObject signalNames, @Nullable JsonObject startSchema) {
+        return Future.succeededFuture();
+    }
 }

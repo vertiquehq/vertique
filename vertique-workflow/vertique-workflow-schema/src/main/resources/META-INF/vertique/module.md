@@ -75,6 +75,12 @@ once whether the supplement is enabled.
 
 ---
 
+## Schemas Stored On Definition Rows
+
+`WorkflowSchemaModule` also binds the internal `WorkflowPlanSchemaProducer`. A node that installs the module stores, with the plan hash of every definition row it writes, the signal names the version declares and the JSON Schema of its start payload. The producer reads the schemas the registration validator cached, so the start schema equals the one `validateStart` checks against; a payload type that is not cached yet, as for a document candidate that is loaded but not published, is described by the same generator under the same profile. A version without a start payload has no start schema. A node without the module still starts and writes both row columns as null.
+
+---
+
 ## State Type Comparison
 
 `WorkflowSchemaModule` also binds `WorkflowStateCompatibility`, which the workflow registry and the engine use to decide

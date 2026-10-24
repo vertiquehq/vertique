@@ -332,6 +332,8 @@ record rules and the guard that refuses to deprecate or retire the default scope
 
 ### Document Publication And Startup Restoration
 
+When a `WorkflowPlanSchemaProducer` is bound (`WorkflowSchemaModule`), startup reconciliation gives each code and packaged document record the signal names and start schema of the plan this node registered, and the store writes them in the same statement as the plan hash (insert and rehash). A row with an unchanged hash keeps its columns. A row whose two columns are null, written before they were stored, is filled by a short statement guarded by the null column, after reconciliation for code and packaged documents and after restoration for stored documents, from the plan whose hash the row holds; the hash is never changed by the fill. Without a producer nothing is written and startup behaves as before.
+
 The engine orchestrates `WorkflowDefinitionLifecycle.publish` through the required SQL-free registry
 store and format-specific loaders. Parsing remains in the loader module. Publication claims a durable
 candidate, recompiles its stored source, verifies its key and plan hash, registers it locally, and

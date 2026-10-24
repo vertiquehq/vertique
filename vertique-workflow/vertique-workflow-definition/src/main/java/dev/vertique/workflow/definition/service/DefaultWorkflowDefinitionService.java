@@ -9,7 +9,10 @@ import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
+import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DeclaredSignalNames;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -24,6 +27,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
@@ -52,9 +56,12 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     private final WorkflowDefinitionRegistryStore durable;
     private final WorkflowDefinitionLifecycle lifecycle;
     private final WorkflowDefinitionsConfig config;
+    private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
 
-    /** Constructs the facade over the durable registry, its lifecycle and the typed policy. */
-    @Inject
+    /**
+     * Constructs the facade over the durable registry, its lifecycle and the typed policy, for a node that does not
+     * store signal names and start schemas with a candidate.
+     */
     public DefaultWorkflowDefinitionService(
             WorkflowDefinitionPipeline pipeline,
             WorkflowDefinitionStore store,
@@ -62,6 +69,23 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
             WorkflowDefinitionRegistryStore durable,
             WorkflowDefinitionLifecycle lifecycle,
             Optional<WorkflowDefinitionsConfig> config) {
+        this(pipeline, store, registryProvider, durable, lifecycle, config, Optional.empty());
+    }
+
+    /**
+     * Constructs the facade over the durable registry, its lifecycle and the typed policy. When a schema producer is
+     * bound, a loaded candidate is stored with the signal names and start schema its plan declares.
+     */
+    @Inject
+    public DefaultWorkflowDefinitionService(
+            WorkflowDefinitionPipeline pipeline,
+            WorkflowDefinitionStore store,
+            Provider<WorkflowRegistry> registryProvider,
+            WorkflowDefinitionRegistryStore durable,
+            WorkflowDefinitionLifecycle lifecycle,
+            Optional<WorkflowDefinitionsConfig> config,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+        this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
         this.pipeline = Objects.requireNonNull(pipeline, "pipeline");
         this.store = Objects.requireNonNull(store, "store");
         this.registryProvider = Objects.requireNonNull(registryProvider, "registryProvider");
@@ -92,12 +116,26 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                                 compiled.definition().definitionVersion());
                         WorkflowDefinitionDocument text =
                                 DefinitionSourceText.decode(key, resource.content(), format, config);
+                        RuntimeWorkflow plan = schemaProducer.isPresent() ? pipeline.runtime(compiled) : null;
                         return new Candidate(
-                                key, compiled, text, format.name(), pipeline.nameBinding(compiled.definition()));
+                                key,
+                                compiled,
+                                text,
+                                format.name(),
+                                pipeline.nameBinding(compiled.definition()),
+                                plan == null ? null : DeclaredSignalNames.of(plan),
+                                plan == null
+                                        ? null
+                                        : schemaProducer.orElseThrow().startSchema(plan));
                     })
                     .compose(candidate -> {
                         WorkflowDefinitionRecord record = record(
-                                candidate.key(), candidate.compiled(), candidate.format(), candidate.nameBinding());
+                                candidate.key(),
+                                candidate.compiled(),
+                                candidate.format(),
+                                candidate.nameBinding(),
+                                candidate.signalNames(),
+                                candidate.startSchema());
                         return durable.insertCandidate(record, candidate.document())
                                 .map(ignored -> {
                                     store.storeCandidate(candidate.key(), candidate.compiled());
@@ -215,6 +253,16 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
 
     static WorkflowDefinitionRecord record(
             DefinitionKey key, CompiledDefinition compiled, String format, Map<String, String> nameBinding) {
+        return record(key, compiled, format, nameBinding, null, null);
+    }
+
+    static WorkflowDefinitionRecord record(
+            DefinitionKey key,
+            CompiledDefinition compiled,
+            String format,
+            Map<String, String> nameBinding,
+            @Nullable JsonObject signalNames,
+            @Nullable JsonObject startSchema) {
         Instant now = Instant.now();
         return new WorkflowDefinitionRecord(
                 key,
@@ -228,7 +276,9 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                 now,
                 now,
                 nameBinding,
-                null);
+                null,
+                signalNames,
+                startSchema);
     }
 
     private static CompiledDefinitionRef reference(CompiledDefinition compiled) {
@@ -263,5 +313,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
             CompiledDefinition compiled,
             WorkflowDefinitionDocument document,
             String format,
-            Map<String, String> nameBinding) {}
+            Map<String, String> nameBinding,
+            @Nullable JsonObject signalNames,
+            @Nullable JsonObject startSchema) {}
 }

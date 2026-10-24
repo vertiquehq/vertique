@@ -70,7 +70,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
     private static final String COLUMNS =
             "scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, name_binding, status, document_format, "
-                    + "source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, created_at, status_changed_at, failure_reason";
+                    + "source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, created_at, status_changed_at, failure_reason, signal_names_json, start_schema_json";
     private static final String LOCKED_COLUMNS = COLUMNS + ", document_digest";
     private static final String KEY = "scope_key = $1 AND definition_id = $2 AND definition_version = $3";
 
@@ -85,6 +85,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private final String sqlUpdateCodeProvenance;
     private final String sqlRehashCode;
     private final String sqlRecordFailure;
+    private final String sqlFillSignalSchemas;
     private final String sqlResetStale;
     private final String sqlUpdateProvenance;
     private final String sqlClaim;
@@ -156,19 +157,24 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " ORDER BY definition_id, scope_key, definition_version";
 
         this.sqlInsert = "INSERT INTO " + definitions
-                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)";
+                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding, signal_names_json, start_schema_json) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb,$19::jsonb)";
 
         this.sqlInsertCode = "INSERT INTO " + definitions
-                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding) VALUES ($1,$2,$3,'CODE',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)";
+                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding, signal_names_json, start_schema_json) VALUES ($1,$2,$3,'CODE',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb)";
 
         this.sqlUpdateCodeProvenance = "UPDATE " + definitions
                 + " SET source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$9, contract_name=$10, state_type_name=$11 WHERE "
                 + KEY + " AND kind='CODE'";
 
-        // The only statement that replaces a stored plan hash; it replaces the name binding with it.
+        // The only statement that replaces a stored plan hash; it replaces the name binding, the signal names and the
+        // start schema with it.
         this.sqlRehashCode = "UPDATE " + definitions
-                + " SET plan_hash=$4, name_binding=$5::jsonb, source_type=$6, source_uri=$7, source_revision=$8, source_author=$9, source_upload_id=$10, loaded_at=$11, contract_name=$12, state_type_name=$13 WHERE "
+                + " SET plan_hash=$4, name_binding=$5::jsonb, source_type=$6, source_uri=$7, source_revision=$8, source_author=$9, source_upload_id=$10, loaded_at=$11, contract_name=$12, state_type_name=$13, signal_names_json=$14::jsonb, start_schema_json=$15::jsonb WHERE "
                 + KEY + " AND kind='CODE'";
+
+        this.sqlFillSignalSchemas = "UPDATE " + definitions
+                + " SET signal_names_json=$4::jsonb, start_schema_json=$5::jsonb WHERE " + KEY
+                + " AND signal_names_json IS NULL";
 
         this.sqlRecordFailure = "UPDATE " + definitions + " SET failure_reason=$4 WHERE " + KEY
                 + " AND kind='DOCUMENT' AND scope_key <> 'default'";
@@ -577,6 +583,19 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
+    public Future<Void> fillSignalSchemas(DefinitionKey key, JsonObject signalNames, @Nullable JsonObject startSchema) {
+        return attempt(() -> {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(signalNames, "signalNames");
+            // Guarded by the null column, so a row another node has filled meanwhile, or whose hash changed, is
+            // left as it is; the plan hash is never written here.
+            return mutate(key, (tx, rows) -> tx.preparedQuery(sqlFillSignalSchemas)
+                    .execute(parameters(key).addValue(signalNames).addValue(startSchema))
+                    .mapEmpty());
+        });
+    }
+
+    @Override
     public Future<List<DefinitionActivation>> listActivations(@Nullable String scopeKey) {
         return attempt(() -> {
             if (scopeKey != null) new DefinitionKey(scopeKey, WorkflowScopes.DEFAULT, 1);
@@ -707,7 +726,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .addString(p.author())
                         .addString(p.uploadId())
                         .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC))
-                        .addValue(bindingValue(record)))
+                        .addValue(bindingValue(record))
+                        .addValue(record.signalNames())
+                        .addValue(record.startSchema()))
                 .mapEmpty();
     }
 
@@ -741,7 +762,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .addString(p.uploadId())
                         .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC))
                         .addString(record.contractName())
-                        .addString(record.stateTypeName()))
+                        .addString(record.stateTypeName())
+                        .addValue(record.signalNames())
+                        .addValue(record.startSchema()))
                 .mapEmpty();
     }
 
@@ -818,7 +841,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .addString(p.author())
                         .addString(p.uploadId())
                         .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC))
-                        .addValue(bindingValue(record)))
+                        .addValue(bindingValue(record))
+                        .addValue(record.signalNames())
+                        .addValue(record.startSchema()))
                 .mapEmpty();
     }
 
@@ -908,7 +933,18 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 r.getOffsetDateTime("created_at").toInstant(),
                 r.getOffsetDateTime("status_changed_at").toInstant(),
                 storedBinding(r),
-                storedFailure(r));
+                storedFailure(r),
+                storedObject(r, "signal_names_json"),
+                storedObject(r, "start_schema_json"));
+    }
+
+    /** Reads a stored JSON object column; a value that is not an object reads as absent and is never echoed. */
+    private static @Nullable JsonObject storedObject(Row r, String column) {
+        try {
+            return r.getJsonObject(column);
+        } catch (ClassCastException notAnObject) {
+            return null;
+        }
     }
 
     /** The failure the row is marked with; a reason this release does not know reads as no failure. */
