@@ -428,6 +428,37 @@ The runtime that binds this context, and the `CorrelationIdGenerator` SPI it use
 `dev.vertique:vertique-correlation`. An application overrides ID generation by binding its own
 `CorrelationIdGenerator` — that module declares the binding as optional.
 
+### `UUIDV7`
+
+Time-ordered identifiers (RFC 9562 `UUIDv7`) as plain `java.util.UUID` values, for keys that should
+sort by creation time — for example database primary keys that append to the index instead of
+scattering across it.
+
+```java
+UUID id = UUIDV7.randomUUID();           // drop-in for UUID.randomUUID()
+long createdAt = UUIDV7.timestampMillis(id);   // embedded Unix epoch milliseconds
+```
+
+#### Invariants & Gotchas
+
+- **Same layout as PostgreSQL `uuidv7()` and Hibernate's version 7 generator.** The 12 `rand_a`
+  bits hold the fraction of the millisecond in 1/4096 steps (about 244 ns) and the 62 `rand_b` bits
+  are random, so database-generated and application-generated keys sort together.
+- **Monotonic per JVM.** Every call returns a UUID strictly greater than all earlier results from
+  the same JVM, including within one millisecond and across clock regressions. `UUID.compareTo` and
+  the string form sort identically.
+- **No cross-process guarantee.** Different processes or hosts order by their clocks, then by
+  random bits where the clocks give the same instant.
+- **Not a secret.** The UUID discloses its creation time and carries fewer random bits than a
+  version 4 UUID. Do not use it as a token or session secret; keep `UUID.randomUUID()` for those.
+- **The embedded timestamp can run ahead of the clock** after a backwards clock step, by as much as
+  the step, or during a sustained burst above about four million identifiers per second, until the
+  clock catches up. It never runs behind the last issued value.
+- **Thread-safe, short lock.** Callers contend only for a brief critical section, so it is safe to
+  call from an event-loop thread.
+- `timestampMillis` throws `IllegalArgumentException` for any UUID that is not version 7, variant 2,
+  and `randomUUID` throws `IllegalStateException` if the system clock is outside the 48-bit range.
+
 ### `PayloadSource` and `PayloadSources`
 
 Transport-agnostic description of a request or response body, used where a module must inspect a
