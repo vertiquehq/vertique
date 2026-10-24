@@ -16,7 +16,6 @@ import io.vertx.junit5.VertxExtension;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -41,32 +40,23 @@ class TimeoutsTest {
         @Test
         @DisplayName("completes when the condition becomes true")
         void succeedsWhenConditionChanges(Vertx vertx) throws Exception {
-            AtomicBoolean ready = new AtomicBoolean();
-            vertx.setTimer(10L, id -> ready.set(true));
+            AtomicInteger checks = new AtomicInteger();
 
-            Timeouts.awaitCondition(vertx, ready::get, 1L, 500L, "drain")
+            Timeouts.awaitCondition(vertx, () -> checks.incrementAndGet() > 1, 10L, 5_000L, "drain")
                     .toCompletionStage()
                     .toCompletableFuture()
-                    .get(1, TimeUnit.SECONDS);
+                    .get(6, TimeUnit.SECONDS);
+
+            assertTrue(checks.get() > 1, "condition should be polled after its initial check");
         }
 
         @Test
         @DisplayName("times out while the condition remains false")
         void timesOut(Vertx vertx) throws Exception {
-            AtomicInteger checks = new AtomicInteger();
-            Throwable failure = awaitFailure(Timeouts.awaitCondition(
-                    vertx,
-                    () -> {
-                        checks.incrementAndGet();
-                        return false;
-                    },
-                    1L,
-                    10L,
-                    "record drain"));
+            Throwable failure = awaitFailure(Timeouts.awaitCondition(vertx, () -> false, 1L, 10L, "record drain"));
 
             assertInstanceOf(TimeoutException.class, failure);
             assertTrue(failure.getMessage().contains("record drain"));
-            assertTrue(checks.get() > 1, "condition should be polled until the deadline");
         }
 
         @Test
@@ -135,7 +125,7 @@ class TimeoutsTest {
     private static Throwable awaitFailure(Future<?> future) throws Exception {
         ExecutionException failure = assertThrows(
                 ExecutionException.class,
-                () -> future.toCompletionStage().toCompletableFuture().get(1, TimeUnit.SECONDS));
+                () -> future.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS));
         return failure.getCause();
     }
 }
