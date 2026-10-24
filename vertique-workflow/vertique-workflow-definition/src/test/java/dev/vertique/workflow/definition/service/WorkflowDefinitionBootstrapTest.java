@@ -36,6 +36,7 @@ import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.definition.validator.Violation;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentValidator;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadException;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -166,7 +167,8 @@ class WorkflowDefinitionBootstrapTest {
     }
 
     private WorkflowDefinitionBootstrap bootstrap(Set<WorkflowDefinitionSource> sources) {
-        return new WorkflowDefinitionBootstrap(pipeline, store, sources);
+        return new WorkflowDefinitionBootstrap(
+                pipeline, store, sources, new InMemoryWorkflowDefinitionRegistryStore(), Optional.empty());
     }
 
     private DefaultWorkflowRegistry freshRegistry() {
@@ -216,7 +218,13 @@ class WorkflowDefinitionBootstrapTest {
         // When: the bootstrap contributes the valid document
         WorkflowDefinitionStore acceptingStore = new WorkflowDefinitionStore();
         DefaultWorkflowRegistry accepting = freshRegistry();
-        new WorkflowDefinitionBootstrap(strict, acceptingStore, Set.of(() -> List.of(valid))).contribute(accepting);
+        new WorkflowDefinitionBootstrap(
+                        strict,
+                        acceptingStore,
+                        Set.of(() -> List.of(valid)),
+                        new InMemoryWorkflowDefinitionRegistryStore(),
+                        Optional.empty())
+                .contribute(accepting);
 
         // Then: it is registered under the default scope and under no other
         assertThat(accepting.find(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L)))
@@ -227,8 +235,12 @@ class WorkflowDefinitionBootstrapTest {
         // When: the bootstrap contributes the document that carries a scope field
         WorkflowDefinitionStore rejectingStore = new WorkflowDefinitionStore();
         DefaultWorkflowRegistry rejecting = freshRegistry();
-        WorkflowDefinitionBootstrap withScope =
-                new WorkflowDefinitionBootstrap(strict, rejectingStore, Set.of(() -> List.of(scoped)));
+        WorkflowDefinitionBootstrap withScope = new WorkflowDefinitionBootstrap(
+                strict,
+                rejectingStore,
+                Set.of(() -> List.of(scoped)),
+                new InMemoryWorkflowDefinitionRegistryStore(),
+                Optional.empty());
 
         // Then: it fails as a parse failure attributed to the resource, and nothing is registered or stored
         assertThatThrownBy(() -> withScope.contribute(rejecting))
@@ -335,7 +347,9 @@ class WorkflowDefinitionBootstrapTest {
         WorkflowDefinitionBootstrap withRepeat = new WorkflowDefinitionBootstrap(
                 pipeline,
                 new WorkflowDefinitionStore(),
-                Set.of(() -> List.of(first, variant), () -> List.of(repeated)));
+                Set.of(() -> List.of(first, variant), () -> List.of(repeated)),
+                new InMemoryWorkflowDefinitionRegistryStore(),
+                Optional.empty());
 
         // Then: exactly one violation is reported, the duplicate (id, version), and nothing is registered
         assertThatThrownBy(() -> withRepeat.contribute(other))
@@ -464,44 +478,24 @@ class WorkflowDefinitionBootstrapTest {
 
         private static final String SECOND_URI = "test://second-over-bound";
 
-        private final Optional<WorkflowDefinitionRegistryStore> absent = Optional.empty();
-        private final Optional<WorkflowDefinitionRegistryStore> present =
-                Optional.of(Mockito.mock(WorkflowDefinitionRegistryStore.class));
+        private final WorkflowDefinitionRegistryStore durable = new InMemoryWorkflowDefinitionRegistryStore();
 
         @Test
-        @DisplayName("300-code-point revision, no durable store: failure names the second URI, nothing registered")
-        void overLongRevisionWithoutStore() {
-            assertAttributedAtomicFailure(absent, secondWithRevision("r".repeat(300)));
-        }
-
-        @Test
-        @DisplayName("300-code-point revision, durable store: failure names the second URI, nothing registered")
+        @DisplayName("300-code-point revision: failure names the second URI, nothing registered")
         void overLongRevisionWithStore() {
-            assertAttributedAtomicFailure(present, secondWithRevision("r".repeat(300)));
+            assertAttributedAtomicFailure(durable, secondWithRevision("r".repeat(300)));
         }
 
         @Test
-        @DisplayName("70-code-point sourceType, no durable store: failure names the second URI, nothing registered")
-        void overLongSourceTypeWithoutStore() {
-            assertAttributedAtomicFailure(absent, secondWithSourceType("s".repeat(70)));
-        }
-
-        @Test
-        @DisplayName("70-code-point sourceType, durable store: failure names the second URI, nothing registered")
+        @DisplayName("70-code-point sourceType: failure names the second URI, nothing registered")
         void overLongSourceTypeWithStore() {
-            assertAttributedAtomicFailure(present, secondWithSourceType("s".repeat(70)));
+            assertAttributedAtomicFailure(durable, secondWithSourceType("s".repeat(70)));
         }
 
         @Test
-        @DisplayName("256-code-point definition id, no durable store: failure names the second URI, nothing registered")
-        void overLongDefinitionIdWithoutStore() {
-            assertAttributedAtomicFailure(absent, secondWithOverLongId());
-        }
-
-        @Test
-        @DisplayName("256-code-point definition id, durable store: failure names the second URI, nothing registered")
+        @DisplayName("256-code-point definition id: failure names the second URI, nothing registered")
         void overLongDefinitionIdWithStore() {
-            assertAttributedAtomicFailure(present, secondWithOverLongId());
+            assertAttributedAtomicFailure(durable, secondWithOverLongId());
         }
 
         private DefinitionResource secondWithRevision(String revision) {
@@ -521,7 +515,7 @@ class WorkflowDefinitionBootstrapTest {
         }
 
         private void assertAttributedAtomicFailure(
-                Optional<WorkflowDefinitionRegistryStore> durable, DefinitionResource invalidSecond) {
+                WorkflowDefinitionRegistryStore durable, DefinitionResource invalidSecond) {
             // Given a valid first resource followed by a resource with an over-bound value
             DefinitionResource valid = resourceFor("boot-alpha", 1, BootAlphaV1Contract.class);
             WorkflowDefinitionBootstrap bs = new WorkflowDefinitionBootstrap(

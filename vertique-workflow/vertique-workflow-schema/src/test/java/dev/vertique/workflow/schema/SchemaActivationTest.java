@@ -21,13 +21,19 @@ import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.di.WorkflowCoreModule;
+import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.engine.testsupport.NoOpWorkflowDefinitionLifecycle;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.Payloads;
 import dev.vertique.workflow.schema.fixtures.ReviewNoteWorkflowV1;
@@ -37,12 +43,14 @@ import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
 import io.vertx.core.Future;
+import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -113,11 +121,73 @@ class SchemaActivationTest {
         }
     }
 
+    /**
+     * Binds an in-memory registry store and a lifecycle that publishes the way the engine's lifecycle does: it claims
+     * the stored candidate, restores its definition through the loader, registers it, and completes the claim, or
+     * releases the claim when registration fails.
+     */
+    @Module
+    static final class RegistryModule {
+
+        private RegistryModule() {}
+
+        @Provides
+        @Singleton
+        static WorkflowDefinitionRegistryStore registryStore() {
+            return new InMemoryWorkflowDefinitionRegistryStore();
+        }
+
+        @Provides
+        @Singleton
+        static WorkflowDefinitionLifecycle lifecycle(
+                WorkflowDefinitionRegistryStore store,
+                Set<PersistedDefinitionLoader> loaders,
+                Provider<WorkflowRegistry> registry) {
+            return new RegisteringLifecycle(store, loaders, registry);
+        }
+    }
+
+    /** Publishes a stored candidate into the registry, which runs the registration validators. */
+    private static final class RegisteringLifecycle extends NoOpWorkflowDefinitionLifecycle {
+        private final WorkflowDefinitionRegistryStore store;
+        private final Set<PersistedDefinitionLoader> loaders;
+        private final Provider<WorkflowRegistry> registry;
+
+        RegisteringLifecycle(
+                WorkflowDefinitionRegistryStore store,
+                Set<PersistedDefinitionLoader> loaders,
+                Provider<WorkflowRegistry> registry) {
+            this.store = store;
+            this.loaders = loaders;
+            this.registry = registry;
+        }
+
+        @Override
+        public Future<Void> publish(DefinitionKey key) {
+            return store.claim(key).compose(claim -> store.find(key)
+                    .compose(row -> store.findDocument(key).compose(document -> {
+                        try {
+                            WorkflowDefinition<?, ?> definition = loaders.stream()
+                                    .filter(loader ->
+                                            loader.supports(row.orElseThrow().documentFormat()))
+                                    .findFirst()
+                                    .orElseThrow()
+                                    .load(row.orElseThrow(), document.orElseThrow());
+                            registry.get().register(key.scopeKey(), definition);
+                        } catch (RuntimeException failure) {
+                            return store.release(claim).<Void>transform(released -> Future.failedFuture(failure));
+                        }
+                        return store.complete(claim);
+                    })));
+        }
+    }
+
     @Singleton
     @Component(
             modules = {
                 WorkflowCoreModule.class,
                 WorkflowDefinitionModule.class,
+                RegistryModule.class,
                 WorkflowSchemaModule.class,
                 ApplicationModule.class
             })

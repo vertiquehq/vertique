@@ -27,6 +27,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
@@ -175,21 +176,24 @@ class WorkflowLiveSignalContextTest {
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
 
-        WorkflowEngineHandle handle = WorkflowEngineFactory.create(
-                txRunner,
-                workflowRegistry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                Set.<WorkflowSideEffectRecorder<SqlClient>>of(),
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.empty(),
-                propagator);
+        WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(workflowRegistry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.empty())
+                .propagator(propagator)
+                .typeNames(WorkflowEngineFactory.registryTypeNames(workflowRegistry))
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(workflowRegistry))
+                .build());
         return new Harness(handle, instances, dedup, workflowRegistry, holder, correlationFactory);
     }
 

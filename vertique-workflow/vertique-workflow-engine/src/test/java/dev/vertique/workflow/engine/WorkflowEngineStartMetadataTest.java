@@ -20,6 +20,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.ops.StartCommand;
@@ -129,8 +130,6 @@ class WorkflowEngineStartMetadataTest {
 
         RuntimeWorkflow rw = minimalRuntimeWorkflow();
         DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
-        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
-        when(registry.isDeployed(currentKey)).thenReturn(true);
         when(registry.resolve(currentKey)).thenReturn(rw);
 
         UUID winningId = UUID.randomUUID();
@@ -145,21 +144,24 @@ class WorkflowEngineStartMetadataTest {
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
 
-        WorkflowEngineHandle handle = WorkflowEngineFactory.create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                Set.<WorkflowSideEffectRecorder<SqlClient>>of(),
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.empty(),
-                propagator);
+        WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.empty())
+                .propagator(propagator)
+                .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCode(rw))
+                .build());
         return new Harness(handle, instances, history, dedup, registry, propagator);
     }
 

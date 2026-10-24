@@ -939,7 +939,7 @@ class DefinitionPropagationPassTest {
 
         World(Optional<WorkflowDefinitionsConfig> config) {
             pass = new DefinitionPropagationPass(
-                    Optional.of(store),
+                    store,
                     () -> registry,
                     Set.of(loader),
                     new DefinitionApplyQueue(),

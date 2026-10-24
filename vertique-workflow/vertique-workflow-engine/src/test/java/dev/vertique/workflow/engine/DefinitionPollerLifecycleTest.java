@@ -7,7 +7,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -51,10 +50,7 @@ class DefinitionPollerLifecycleTest {
         RecordingTimer timer = new RecordingTimer();
         PendingPasses passes = new PendingPasses();
         WorkflowDefinitionPropagationPoller poller = new WorkflowDefinitionPropagationPoller(
-                Optional.of(mock(WorkflowDefinitionRegistryStore.class)),
-                timer.vertx(),
-                Optional.empty(),
-                passes::start);
+                mock(WorkflowDefinitionRegistryStore.class), timer.vertx(), Optional.empty(), passes::start);
         ApplicationStartupStep startup = poller.startupStep();
         ApplicationShutdownStep shutdown = poller.shutdownStep();
 
@@ -100,29 +96,6 @@ class DefinitionPollerLifecycleTest {
     }
 
     @Test
-    @DisplayName("a node without a durable store schedules no timer, runs no pass, and shuts down at once")
-    void schedulesNothingWithoutAStore() {
-        // Given a node without a durable store
-        RecordingTimer timer = new RecordingTimer();
-        PendingPasses passes = new PendingPasses();
-        WorkflowDefinitionPropagationPoller poller = new WorkflowDefinitionPropagationPoller(
-                Optional.empty(), timer.vertx(), Optional.empty(), passes::start);
-
-        // When it starts and then stops
-        Future<Void> started = poller.startupStep().start();
-        Future<Void> stopped = poller.shutdownStep().stop();
-
-        // Then both complete, no timer was armed or cancelled, and no pass ran
-        assertThat(started.succeeded()).isTrue();
-        assertThat(stopped.succeeded()).isTrue();
-        assertThat(timer.armed()).isZero();
-        verify(timer.vertx(), never()).setPeriodic(anyLong(), ArgumentMatchers.<Handler<Long>>any());
-        verify(timer.vertx(), never()).setPeriodic(anyLong(), anyLong(), ArgumentMatchers.<Handler<Long>>any());
-        verify(timer.vertx(), never()).cancelTimer(anyLong());
-        assertThat(passes.started()).isZero();
-    }
-
-    @Test
     @DisplayName("the timer period is the configured staleness bound, thirty seconds when nothing is configured")
     void armsTheTimerAtTheConfiguredCadence() {
         // Given one node with a configured bound of five seconds and one with no configuration
@@ -130,12 +103,12 @@ class DefinitionPollerLifecycleTest {
         RecordingTimer defaultTimer = new RecordingTimer();
         WorkflowDefinitionRegistryStore store = mock(WorkflowDefinitionRegistryStore.class);
         WorkflowDefinitionPropagationPoller configured = new WorkflowDefinitionPropagationPoller(
-                Optional.of(store),
+                store,
                 configuredTimer.vertx(),
                 Optional.of(new WorkflowDefinitionsConfig(5, 1024)),
                 new PendingPasses()::start);
         WorkflowDefinitionPropagationPoller defaulted = new WorkflowDefinitionPropagationPoller(
-                Optional.of(store), defaultTimer.vertx(), Optional.empty(), new PendingPasses()::start);
+                store, defaultTimer.vertx(), Optional.empty(), new PendingPasses()::start);
 
         // When both start
         assertThat(configured.startupStep().start().succeeded()).isTrue();
@@ -153,10 +126,7 @@ class DefinitionPollerLifecycleTest {
         RecordingTimer timer = new RecordingTimer();
         PendingPasses passes = new PendingPasses();
         WorkflowDefinitionPropagationPoller poller = new WorkflowDefinitionPropagationPoller(
-                Optional.of(mock(WorkflowDefinitionRegistryStore.class)),
-                timer.vertx(),
-                Optional.empty(),
-                passes::start);
+                mock(WorkflowDefinitionRegistryStore.class), timer.vertx(), Optional.empty(), passes::start);
         assertThat(poller.startupStep().start().succeeded()).isTrue();
         timer.tick();
         assertThat(passes.started()).isEqualTo(1);

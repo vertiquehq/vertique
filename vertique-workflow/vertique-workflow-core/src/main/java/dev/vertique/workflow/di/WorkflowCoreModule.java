@@ -20,8 +20,6 @@ import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
-import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
-import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
@@ -51,13 +49,6 @@ import java.util.Set;
  */
 @Module
 public abstract class WorkflowCoreModule {
-    /** Optional persistence and lifecycle bindings keep standalone definition graphs usable. */
-    @BindsOptionalOf
-    abstract WorkflowDefinitionRegistryStore definitionRegistryStore();
-
-    @BindsOptionalOf
-    abstract WorkflowDefinitionLifecycle definitionLifecycle();
-
     /**
      * Declares the optional state comparison; the schema module binds it. Without it the registry refuses
      * differing state classes of a scope-owned and a default definition of one id and contract.

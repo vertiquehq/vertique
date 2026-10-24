@@ -42,6 +42,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
@@ -89,7 +90,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             .thenComparing(record -> record.key().scopeKey())
             .thenComparingLong(record -> record.key().definitionVersion());
 
-    private final Optional<WorkflowDefinitionRegistryStore> store;
+    private final WorkflowDefinitionRegistryStore store;
     private final Provider<WorkflowRegistry> registry;
     private final Set<PersistedDefinitionLoader> loaders;
     private final DefinitionApplyQueue queue;
@@ -102,7 +103,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
 
     @Inject
     WorkflowDefinitionRegistryBootstrapStep(
-            Optional<WorkflowDefinitionRegistryStore> store,
+            WorkflowDefinitionRegistryStore store,
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
             DefinitionApplyQueue queue,
@@ -116,7 +117,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         this.typeNames = typeNames;
         this.activations = activations;
         this.view = view;
-        this.store = store;
+        this.store = Objects.requireNonNull(store, "store");
         this.registry = registry;
         this.loaders = loaders;
         this.queue = queue;
@@ -136,7 +137,6 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
 
     @Override
     public Future<Void> start() {
-        if (store.isEmpty()) return Future.succeededFuture();
         // Registry construction invokes static contributors; keep their parsing off the event loop.
         return work(this::prepare).compose(prepared -> {
             WorkflowRegistry local = prepared.registry();
@@ -183,8 +183,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     }
 
     private Future<List<WorkflowDefinitionRecord>> listAll() {
-        return store.orElseThrow()
-                .list(new DefinitionFilter(null, null, null))
+        return store.list(new DefinitionFilter(null, null, null))
                 .map(records -> records.stream().sorted(LISTING_ORDER).toList());
     }
 
@@ -209,10 +208,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         origin.provenance().loadedAt(),
                         registry.get().nameBinding(origin.key()),
                         null);
-                return store.orElseThrow().find(origin.key()).compose(previous -> {
+                return store.find(origin.key()).compose(previous -> {
                     WorkflowDefinitionRecord bound = applyStoredBinding(source, previous);
-                    return store.orElseThrow()
-                            .upsertDocument(bound, origin.document(), !optedOut.contains(origin.key()))
+                    return store.upsertDocument(bound, origin.document(), !optedOut.contains(origin.key()))
                             .compose(outcome -> reconcileResult(bound, previous, outcome));
                 });
             }));
@@ -260,10 +258,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         startedAt,
                         definition.nameBinding(),
                         null);
-                return store.orElseThrow().find(key).compose(previous -> {
+                return store.find(key).compose(previous -> {
                     WorkflowDefinitionRecord bound = applyStoredBinding(source, previous);
-                    return store.orElseThrow()
-                            .upsertCode(
+                    return store.upsertCode(
                                     bound,
                                     definition.definition() == null
                                             || definition.definition().activateOnDeploy())
@@ -321,7 +318,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
 
     /** Records every durable activation record in the node's view, whether or not this node has the code it names. */
     private Future<Void> restoreActivations() {
-        return store.orElseThrow().listActivations(null).map(records -> {
+        return store.listActivations(null).map(records -> {
             records.forEach(activations::put);
             return (Void) null;
         });
@@ -425,8 +422,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             if (!LIVE.contains(row.status())) {
                 // A row that is not evaluated any more keeps no mark of an earlier startup.
                 if (row.failure() != null)
-                    chain = chain.compose(ignored -> queue.submit(
-                            row.key().definitionId(), () -> store.orElseThrow().recordFailure(row.key(), null)));
+                    chain = chain.compose(ignored ->
+                            queue.submit(row.key().definitionId(), () -> store.recordFailure(row.key(), null)));
                 continue;
             }
             chain = chain.compose(ignored -> queue.submit(row.key().definitionId(), () -> restore(local, row.key()))
@@ -515,9 +512,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 .map(row -> row.key().definitionId())
                 .collect(Collectors.toCollection(TreeSet::new));
         Future<Void> chain = Future.succeededFuture();
-        for (String id : ids)
-            chain = chain.compose(
-                    ignored -> queue.submit(id, () -> store.orElseThrow().resetStalePublishing(id)));
+        for (String id : ids) chain = chain.compose(ignored -> queue.submit(id, () -> store.resetStalePublishing(id)));
         return chain;
     }
 
@@ -529,8 +524,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         Future<Void> chain = Future.succeededFuture();
         for (VerifiedDocument restored : verified) {
             DefinitionKey key = restored.record().key();
-            chain = chain.compose(ignored -> queue.submit(
-                    key.definitionId(), () -> store.orElseThrow().find(key).compose(found -> {
+            chain = chain.compose(ignored ->
+                    queue.submit(key.definitionId(), () -> store.find(key).compose(found -> {
                         WorkflowDefinitionRecord record = found.orElseThrow(
                                 () -> failure(Reason.INVALID_TRANSITION, key, "DOCUMENT row disappeared"));
                         if (record.kind() != DefinitionKind.DOCUMENT
@@ -560,7 +555,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     }
 
     private Future<Optional<VerifiedDocument>> restore(WorkflowRegistry local, DefinitionKey key) {
-        return store.orElseThrow().find(key).compose(found -> {
+        return store.find(key).compose(found -> {
             WorkflowDefinitionRecord record =
                     found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "DOCUMENT row disappeared"));
             if (record.kind() != DefinitionKind.DOCUMENT)
@@ -577,8 +572,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         "DOCUMENT format " + record.documentFormat() + " requires exactly one loader; found "
                                 + matches.size());
             PersistedDefinitionLoader loader = matches.getFirst();
-            return store.orElseThrow()
-                    .findDocument(key)
+            return store.findDocument(key)
                     .compose(document -> work(() -> restored(local, loader, record, document)))
                     .compose(restored -> recordEvaluation(record, restored.failure())
                             .map(ignored -> Optional.ofNullable(restored.verified())));
@@ -687,7 +681,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         else failing.mark(key, evaluated, record.contractName());
         DefinitionFailure stored = record.failure();
         boolean unchanged = evaluated == null ? stored == null : stored != null && stored.rule() == evaluated.rule();
-        return unchanged ? Future.succeededFuture() : store.orElseThrow().recordFailure(key, evaluated);
+        return unchanged ? Future.succeededFuture() : store.recordFailure(key, evaluated);
     }
 
     /** The key in a form that is safe to log: bounded and without control characters. */

@@ -19,6 +19,7 @@ import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.di.WorkflowCoreModule;
+import dev.vertique.workflow.engine.testsupport.InMemoryDefinitionRegistryModule;
 import dev.vertique.workflow.exception.WorkflowTypeNameConflictException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -230,6 +231,7 @@ class TypeCatalogStartupTest {
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 AcmeMapperModule.class,
                 AcmeStateCatalogModule.class,
@@ -244,6 +246,7 @@ class TypeCatalogStartupTest {
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 FirstOrderCatalogModule.class,
                 SecondOrderCatalogModule.class
@@ -254,7 +257,13 @@ class TypeCatalogStartupTest {
     }
 
     @Singleton
-    @Component(modules = {WorkflowDefinitionModule.class, WorkflowCoreModule.class, SharedNameCatalogModule.class})
+    @Component(
+            modules = {
+                WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
+                WorkflowCoreModule.class,
+                SharedNameCatalogModule.class
+            })
     interface SharedNameComponent {
 
         WorkflowRegistry workflowRegistry();
@@ -266,6 +275,7 @@ class TypeCatalogStartupTest {
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 LegacyMapperModule.class,
                 LegacyPackagedSourceModule.class
@@ -281,6 +291,7 @@ class TypeCatalogStartupTest {
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 LegacyMapperModule.class,
                 LegacyContractAndStateCatalogModule.class

@@ -38,6 +38,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -85,7 +86,7 @@ final class DefinitionPropagationPass {
     private static final Logger log = LoggerFactory.getLogger(WorkflowDefinitionPropagationPoller.class.getName());
     private static final Set<DefinitionStatus> LIVE = Set.of(DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED);
 
-    private final Optional<WorkflowDefinitionRegistryStore> store;
+    private final WorkflowDefinitionRegistryStore store;
     private final Provider<WorkflowRegistry> registry;
     private final Set<PersistedDefinitionLoader> loaders;
     private final DefinitionApplyQueue queue;
@@ -103,7 +104,7 @@ final class DefinitionPropagationPass {
 
     /** Constructs a pass over a node view of activations that nothing else reads. */
     DefinitionPropagationPass(
-            Optional<WorkflowDefinitionRegistryStore> store,
+            WorkflowDefinitionRegistryStore store,
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
             DefinitionApplyQueue queue,
@@ -128,7 +129,7 @@ final class DefinitionPropagationPass {
 
     @Inject
     DefinitionPropagationPass(
-            Optional<WorkflowDefinitionRegistryStore> store,
+            WorkflowDefinitionRegistryStore store,
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
             DefinitionApplyQueue queue,
@@ -150,7 +151,7 @@ final class DefinitionPropagationPass {
             deadlineMs = Long.MAX_VALUE;
         }
         this.rowDeadlineMs = deadlineMs;
-        this.store = store;
+        this.store = Objects.requireNonNull(store, "store");
         this.registry = registry;
         this.loaders = loaders;
         this.queue = queue;
@@ -164,8 +165,7 @@ final class DefinitionPropagationPass {
      * is counted in the view instead.
      */
     Future<Void> run() {
-        if (store.isEmpty()) return Future.succeededFuture();
-        return store.orElseThrow().list(new DefinitionFilter(null, null, null)).compose(rows -> {
+        return store.list(new DefinitionFilter(null, null, null)).compose(rows -> {
             Set<DefinitionKey> listed = new HashSet<>();
             for (WorkflowDefinitionRecord row : rows) listed.add(row.key());
             Future<Void> chain = Future.succeededFuture();
@@ -190,7 +190,7 @@ final class DefinitionPropagationPass {
      */
     private Future<Void> refreshActivations() {
         long mark = activations.mark();
-        return store.orElseThrow().listActivations(null).compose(records -> {
+        return store.listActivations(null).compose(records -> {
             Map<String, List<DefinitionActivation>> byId = new LinkedHashMap<>();
             for (DefinitionActivation record : records)
                 byId.computeIfAbsent(record.definitionId(), id -> new ArrayList<>())
@@ -215,8 +215,7 @@ final class DefinitionPropagationPass {
         if (settled(listedRow)) return Future.succeededFuture();
         Future<Boolean> applied = queue.submit(
                 key.definitionId(),
-                () -> safely(() -> store.orElseThrow()
-                        .find(key)
+                () -> safely(() -> store.find(key)
                         .recover(error -> Future.failedFuture(fatal(error) ? error : new TableUnreadable(error)))
                         .compose(found -> {
                             if (found.isEmpty()) {
@@ -473,8 +472,7 @@ final class DefinitionPropagationPass {
         DefinitionKey key = record.key();
         boolean scoped = !WorkflowScopes.DEFAULT.equals(key.scopeKey());
         PersistedDefinitionLoader loader = DefinitionPublication.loaderFor(loaders, record);
-        return store.orElseThrow()
-                .findDocument(key)
+        return store.findDocument(key)
                 .compose(document -> work(() -> {
                     WorkflowDefinitionDocument source = document.orElseThrow(() ->
                             DefinitionPublication.failure(Reason.LOADER_MISSING, key, "DOCUMENT source is missing"));
@@ -528,7 +526,7 @@ final class DefinitionPropagationPass {
         else failing.mark(key, evaluated, record.contractName());
         DefinitionFailure stored = record.failure();
         boolean unchanged = evaluated == null ? stored == null : stored != null && stored.rule() == evaluated.rule();
-        return unchanged ? Future.succeededFuture() : store.orElseThrow().recordFailure(key, evaluated);
+        return unchanged ? Future.succeededFuture() : store.recordFailure(key, evaluated);
     }
 
     /**

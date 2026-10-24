@@ -86,8 +86,8 @@ import java.util.Set;
  * restarted rather than attempting recovery from JVM-level {@code Error}s.
  *
  * <p>Runtime publication through
- * {@link dev.vertique.workflow.definition.service.WorkflowDefinitionService} uses a local CAS in
- * standalone graphs and delegates durable publication to the engine's per-id publication queue.
+ * {@link dev.vertique.workflow.definition.service.WorkflowDefinitionService} delegates to the engine's per-id
+ * publication queue.
  *
  * <h2>Parse failure attribution</h2>
  * <p>{@link WorkflowDefinitionParseException} extends {@link WorkflowDefinitionException}, so
@@ -116,7 +116,6 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
     private final WorkflowDefinitionStore store;
     private final Set<WorkflowDefinitionSource> sources;
 
-    private final boolean durable;
     private final WorkflowDefinitionsConfig config;
 
     /** The one type-name index the packaged documents' classes join; {@code null} when none was given. */
@@ -131,33 +130,20 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
     // --- Construction ---
 
     /**
-     * Constructs the bootstrap with all required collaborators.
-     *
-     * @param pipeline the parse → validate → compile pipeline; must not be {@code null}
-     * @param store the candidate/available store used to persist and publish compiled definitions;
-     *     must not be {@code null}
-     * @param sources the set of all registered definition sources; must not be {@code null}
-     */
-    public WorkflowDefinitionBootstrap(
-            WorkflowDefinitionPipeline pipeline, WorkflowDefinitionStore store, Set<WorkflowDefinitionSource> sources) {
-        this(pipeline, store, sources, Optional.empty(), Optional.empty());
-    }
-
-    /**
-     * Constructs bootstrap with optional durable source retention and early typed policy validation.
+     * Constructs bootstrap with durable source retention and early typed policy validation.
      * No type-name index is given, so packaged documents add no classes to an index.
      *
      * @param pipeline the parse → validate → compile pipeline; must not be {@code null}
      * @param store the candidate/active store; must not be {@code null}
      * @param sources the set of all registered definition sources; must not be {@code null}
-     * @param durable the durable registry store, when one is configured
+     * @param durable the durable registry store; must not be {@code null}
      * @param config the typed definition policy, when one is configured
      */
     public WorkflowDefinitionBootstrap(
             WorkflowDefinitionPipeline pipeline,
             WorkflowDefinitionStore store,
             Set<WorkflowDefinitionSource> sources,
-            Optional<WorkflowDefinitionRegistryStore> durable,
+            WorkflowDefinitionRegistryStore durable,
             Optional<WorkflowDefinitionsConfig> config) {
         this(pipeline, store, sources, durable, config, null);
     }
@@ -170,7 +156,7 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
      * @param pipeline the parse → validate → compile pipeline; must not be {@code null}
      * @param store the candidate/active store; must not be {@code null}
      * @param sources the set of all registered definition sources; must not be {@code null}
-     * @param durable the durable registry store, when one is configured
+     * @param durable the durable registry store; must not be {@code null}
      * @param config the typed definition policy, when one is configured
      * @param typeNames the type-name index that the classes of packaged documents join; may be
      *     {@code null} to add none
@@ -180,12 +166,21 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
             WorkflowDefinitionPipeline pipeline,
             WorkflowDefinitionStore store,
             Set<WorkflowDefinitionSource> sources,
-            Optional<WorkflowDefinitionRegistryStore> durable,
+            WorkflowDefinitionRegistryStore durable,
             Optional<WorkflowDefinitionsConfig> config,
             DefaultWorkflowTypeNames typeNames) {
+        this(pipeline, store, sources, config.orElseGet(WorkflowDefinitionsConfig::defaults), typeNames);
+        Objects.requireNonNull(durable, "durable");
+    }
+
+    private WorkflowDefinitionBootstrap(
+            WorkflowDefinitionPipeline pipeline,
+            WorkflowDefinitionStore store,
+            Set<WorkflowDefinitionSource> sources,
+            WorkflowDefinitionsConfig config,
+            DefaultWorkflowTypeNames typeNames) {
         this.typeNames = typeNames;
-        this.durable = durable.isPresent();
-        this.config = config.orElseGet(WorkflowDefinitionsConfig::defaults);
+        this.config = config;
         this.pipeline = Objects.requireNonNull(pipeline, "pipeline");
         this.store = Objects.requireNonNull(store, "store");
         this.sources = Objects.requireNonNull(sources, "sources");
@@ -248,16 +243,14 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
                             compiled.definition().definitionVersion());
                     WorkflowDefinitionRecord record = DefaultWorkflowDefinitionService.record(
                             key, compiled, resource.format().name(), pipeline.nameBinding(compiled.definition()));
-                    if (durable) {
-                        var document = DefinitionSourceText.decode(key, resource.content(), resource.format(), config);
-                        loadedOrigins.add(new DocumentOrigin(
-                                key,
-                                document,
-                                record.provenance(),
-                                compiled.planHash(),
-                                compiled.contractName(),
-                                compiled.stateTypeName()));
-                    }
+                    var document = DefinitionSourceText.decode(key, resource.content(), resource.format(), config);
+                    loadedOrigins.add(new DocumentOrigin(
+                            key,
+                            document,
+                            record.provenance(),
+                            compiled.planHash(),
+                            compiled.contractName(),
+                            compiled.stateTypeName()));
                     records.put(compiled, record);
                     successes.add(compiled);
                     indexReleases.addAll(documentReleases);

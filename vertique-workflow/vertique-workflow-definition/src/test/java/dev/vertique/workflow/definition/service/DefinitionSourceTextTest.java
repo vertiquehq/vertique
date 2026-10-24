@@ -25,6 +25,8 @@ import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.di.WorkflowCoreModule;
+import dev.vertique.workflow.engine.testsupport.InMemoryDefinitionRegistryModule;
+import dev.vertique.workflow.engine.testsupport.NoOpWorkflowDefinitionLifecycle;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
@@ -32,6 +34,7 @@ import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
@@ -72,12 +75,6 @@ public class DefinitionSourceTextTest {
 
     @WorkflowContract
     interface StaticYamlV1 {}
-
-    @WorkflowContract
-    interface StaticJsonV1 {}
-
-    @WorkflowContract
-    interface StaticJsonLargeV1 {}
 
     @WorkflowContract
     interface StaticTrailingJsonV1 {}
@@ -142,6 +139,7 @@ public class DefinitionSourceTextTest {
                 VertxModule.class,
                 WorkflowCoreModule.class,
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 TestSupportModule.class,
                 SourceModule.class
             })
@@ -212,9 +210,6 @@ public class DefinitionSourceTextTest {
                     new WorkflowTypeCatalogEntry(Kind.TYPE, ReaderState.class.getName(), ReaderState.class),
                     new WorkflowTypeCatalogEntry(Kind.TYPE, ReaderStart.class.getName(), ReaderStart.class),
                     new WorkflowTypeCatalogEntry(Kind.CONTRACT, StaticYamlV1.class.getName(), StaticYamlV1.class),
-                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, StaticJsonV1.class.getName(), StaticJsonV1.class),
-                    new WorkflowTypeCatalogEntry(
-                            Kind.CONTRACT, StaticJsonLargeV1.class.getName(), StaticJsonLargeV1.class),
                     new WorkflowTypeCatalogEntry(
                             Kind.CONTRACT, StaticTrailingJsonV1.class.getName(), StaticTrailingJsonV1.class),
                     new WorkflowTypeCatalogEntry(
@@ -284,6 +279,12 @@ public class DefinitionSourceTextTest {
 
         @Provides
         @Singleton
+        WorkflowDefinitionLifecycle definitionLifecycle() {
+            return new NoOpWorkflowDefinitionLifecycle();
+        }
+
+        @Provides
+        @Singleton
         WorkflowDefinitionsConfig workflowDefinitionsConfig() {
             return config;
         }
@@ -310,19 +311,12 @@ public class DefinitionSourceTextTest {
     }
 
     @Test
-    @DisplayName(
-            "real readers preserve supported encodings while raw admission and no-store sources keep their contracts")
+    @DisplayName("real readers preserve supported encodings while raw admission keeps its contract")
     void preservesReaderCharactersAndRawAdmission(Vertx vertx, VertxTestContext context) throws java.io.IOException {
-        ReaderGraph graph =
-                graph(vertx, List.of(staticYaml(), staticLargeJson(), malformedTailJson(), validTrailingJson()));
+        ReaderGraph graph = graph(vertx, List.of(staticYaml(), validTrailingJson()));
         String json = json("reader-encoding-😀", 1, ReaderEncodingUnicodeV1.class);
 
         assertThat(graph.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-static-yaml", 1)))
-                .isNotNull();
-        assertThat(graph.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-static-json", 1)))
-                .isNotNull();
-        assertThat(graph.workflowRegistry()
-                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-static-json-large", 1)))
                 .isNotNull();
         assertThat(graph.workflowRegistry()
                         .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-valid-trailing-json", 1)))
@@ -571,25 +565,9 @@ public class DefinitionSourceTextTest {
         byte[] bytes = padded.getBytes(StandardCharsets.UTF_8);
         if (bytes.length <= DEFAULT_LIMIT || padded.codePointCount(0, padded.length()) > DEFAULT_LIMIT) {
             throw new AssertionError(
-                    "The no-store YAML fixture must exceed L in bytes but remain within L code points");
+                    "The packaged YAML fixture must exceed L in bytes but remain within L code points");
         }
         return new DefinitionResource(bytes, DocumentFormat.YAML, metadata("static-yaml"));
-    }
-
-    private static DefinitionResource malformedTailJson() {
-        byte[] valid = json("reader-static-json", 1, StaticJsonV1.class).getBytes(StandardCharsets.UTF_8);
-        byte[] bytes = java.util.Arrays.copyOf(valid, valid.length + 1);
-        bytes[bytes.length - 1] = (byte) 0xff;
-        return new DefinitionResource(bytes, DocumentFormat.JSON, metadata("static-json"));
-    }
-
-    private static DefinitionResource staticLargeJson() {
-        String document = json("reader-static-json-large", 1, StaticJsonLargeV1.class) + " ".repeat(DEFAULT_LIMIT);
-        byte[] bytes = document.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length <= DEFAULT_LIMIT) {
-            throw new AssertionError("The no-store JSON fixture must exceed the raw byte limit");
-        }
-        return new DefinitionResource(bytes, DocumentFormat.JSON, metadata("static-json-large"));
     }
 
     private static DefinitionResource validTrailingJson() {

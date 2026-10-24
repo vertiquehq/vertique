@@ -18,6 +18,7 @@ import dev.vertique.workflow.definition.pipeline.CompiledDefinition;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.engine.testsupport.InMemoryDefinitionRegistryModule;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -79,7 +80,13 @@ class DocumentRestorePlanHashTest {
     }
 
     @Singleton
-    @Component(modules = {WorkflowDefinitionModule.class, WorkflowCoreModule.class, CatalogModule.class})
+    @Component(
+            modules = {
+                WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
+                WorkflowCoreModule.class,
+                CatalogModule.class
+            })
     interface RestoreComponent {
 
         WorkflowDefinitionService workflowDefinitionService();

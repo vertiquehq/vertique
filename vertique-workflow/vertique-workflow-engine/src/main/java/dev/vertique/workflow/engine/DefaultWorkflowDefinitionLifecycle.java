@@ -5,7 +5,6 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition;
-import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -20,7 +19,6 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
@@ -59,7 +57,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private static final Set<DefinitionStatus> REGISTERED =
             Set.of(DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED);
 
-    private final Optional<WorkflowDefinitionRegistryStore> store;
+    private final WorkflowDefinitionRegistryStore store;
     private final Provider<WorkflowRegistry> registry;
     private final Set<PersistedDefinitionLoader> loaders;
     private final DefinitionApplyQueue queue;
@@ -81,7 +79,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
      * the attributions shared with the startup step.
      */
     DefaultWorkflowDefinitionLifecycle(
-            Optional<WorkflowDefinitionRegistryStore> store,
+            WorkflowDefinitionRegistryStore store,
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
             DefinitionApplyQueue queue) {
@@ -90,7 +88,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /** Constructs a lifecycle over the given attributions and an empty code catalog, for unit tests only. */
     DefaultWorkflowDefinitionLifecycle(
-            Optional<WorkflowDefinitionRegistryStore> store,
+            WorkflowDefinitionRegistryStore store,
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
             DefinitionApplyQueue queue,
@@ -100,7 +98,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /** Constructs a lifecycle that does not feed a node view, for unit tests only. */
     DefaultWorkflowDefinitionLifecycle(
-            Optional<WorkflowDefinitionRegistryStore> store,
+            WorkflowDefinitionRegistryStore store,
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
             DefinitionApplyQueue queue,
@@ -111,7 +109,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /** Constructs a lifecycle with its own private activation view, for unit tests only. */
     DefaultWorkflowDefinitionLifecycle(
-            Optional<WorkflowDefinitionRegistryStore> store,
+            WorkflowDefinitionRegistryStore store,
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
             DefinitionApplyQueue queue,
@@ -126,13 +124,13 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                 registrations,
                 catalog,
                 view,
-                new DefinitionActivations(),
+                new DefinitionActivations(store),
                 new FailingDefinitions());
     }
 
     @Inject
     DefaultWorkflowDefinitionLifecycle(
-            Optional<WorkflowDefinitionRegistryStore> store,
+            WorkflowDefinitionRegistryStore store,
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
             DefinitionApplyQueue queue,
@@ -144,7 +142,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         this.activations = activations;
         this.failing = failing;
         this.view = view;
-        this.store = store;
+        this.store = Objects.requireNonNull(store, "store");
         this.registry = registry;
         this.loaders = loaders;
         this.queue = queue;
@@ -156,8 +154,6 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<Void> publish(DefinitionKey key) {
         try {
             Objects.requireNonNull(key, "key");
-            if (store.isEmpty())
-                return Future.failedFuture(failure(Reason.INVALID_TRANSITION, key, "durable registry is unavailable"));
             return queue.submit(key.definitionId(), () -> publishQueued(key));
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
@@ -168,8 +164,6 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<Void> deprecate(DefinitionKey key) {
         try {
             Objects.requireNonNull(key, "key");
-            if (store.isEmpty())
-                return Future.failedFuture(failure(Reason.INVALID_TRANSITION, key, "durable registry is unavailable"));
             // Commit the durable status first; only a committed status is projected onto the local registry.
             return queue.submit(key.definitionId(), () -> {
                 // A registration this lifecycle did not publish is refused before the durable status changes.
@@ -188,8 +182,6 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<Void> retire(DefinitionKey key) {
         try {
             Objects.requireNonNull(key, "key");
-            if (store.isEmpty())
-                return Future.failedFuture(failure(Reason.INVALID_TRANSITION, key, "durable registry is unavailable"));
             return queue.submit(key.definitionId(), () -> retireQueued(key));
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
@@ -200,8 +192,6 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<Void> reinstate(DefinitionKey key) {
         try {
             Objects.requireNonNull(key, "key");
-            if (store.isEmpty())
-                return Future.failedFuture(failure(Reason.INVALID_TRANSITION, key, "durable registry is unavailable"));
             return queue.submit(key.definitionId(), () -> reinstateQueued(key));
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
@@ -213,10 +203,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         try {
             DefinitionActivation activation =
                     new DefinitionActivation(scopeKey, definitionId, targetScopeKey, version, Instant.now());
-            if (store.isEmpty()) return activateInView(activation);
-            WorkflowDefinitionRegistryStore durable = store.orElseThrow();
             // The view follows the commit, so a refused or failed write leaves it as it was.
-            return queue.submit(definitionId, () -> durable.putActivation(activation)
+            return queue.submit(definitionId, () -> store.putActivation(activation)
                     .onSuccess(committed -> activations.put(activation)));
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
@@ -250,61 +238,15 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<List<DefinitionActivation>> activations(@Nullable String scopeKey) {
         try {
             if (scopeKey != null) new DefinitionKey(scopeKey, WorkflowScopes.DEFAULT, 1);
-            if (store.isEmpty()) return Future.succeededFuture(activations.list(registry.get(), scopeKey));
-            return store.orElseThrow().listActivations(scopeKey);
+            return store.listActivations(scopeKey);
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
     }
 
-    /**
-     * Writes a record into the node view alone, as without a durable registry. The target must be registered here
-     * and not deprecated, which is the most this node can check.
-     */
-    private Future<Void> activateInView(DefinitionActivation activation) {
-        DefinitionKey target =
-                new DefinitionKey(activation.targetScopeKey(), activation.definitionId(), activation.version());
-        WorkflowRegistry local = registry.get();
-        if (local.find(target).isEmpty() || local.isDeprecated(target))
-            return Future.failedFuture(failure(
-                    Reason.INVALID_TRANSITION,
-                    target,
-                    "cannot activate a version that is not registered and available"));
-        WorkflowDefinitionContractMismatchException refusal = defaultContractRefusal(local, activation, target);
-        if (refusal != null) return Future.failedFuture(refusal);
-        activations.put(activation);
-        return Future.succeededFuture();
-    }
-
-    /**
-     * The refusal for pointing a scope at a default-scope version of another contract than the scope's own
-     * versions of the id, judged from the registrations of this node.
-     */
-    private static @Nullable WorkflowDefinitionContractMismatchException defaultContractRefusal(
-            WorkflowRegistry local, DefinitionActivation activation, DefinitionKey target) {
-        if (WorkflowScopes.DEFAULT.equals(activation.scopeKey())
-                || !WorkflowScopes.DEFAULT.equals(activation.targetScopeKey())) return null;
-        String own = local.contractOf(activation.scopeKey(), activation.definitionId())
-                .orElse(null);
-        String targetContract = local.contractOf(WorkflowScopes.DEFAULT, activation.definitionId())
-                .orElse(null);
-        if (own == null || own.equals(targetContract)) return null;
-        return new WorkflowDefinitionContractMismatchException(
-                target,
-                "Scope '" + activation.scopeKey() + "' holds '" + activation.definitionId() + "' under contract '"
-                        + EchoedNames.bounded(own)
-                        + "', so it cannot follow the default scope's version, which implements contract '"
-                        + EchoedNames.bounded(String.valueOf(targetContract)) + "'");
-    }
-
-    /** Removes a record from the store and then from the node view, or from the view alone without a store. */
+    /** Removes a record from the store and then from the node view. */
     private Future<Void> removeRecord(String scopeKey, String definitionId) {
-        if (store.isEmpty()) {
-            activations.remove(scopeKey, definitionId);
-            return Future.succeededFuture();
-        }
-        WorkflowDefinitionRegistryStore durable = store.orElseThrow();
-        return queue.submit(definitionId, () -> durable.removeActivation(scopeKey, definitionId)
+        return queue.submit(definitionId, () -> store.removeActivation(scopeKey, definitionId)
                 .onSuccess(committed -> activations.remove(scopeKey, definitionId)));
     }
 
@@ -320,9 +262,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
      * to the key and carry the row's plan hash. The same hand-off then runs as after a first success.
      */
     private Future<Void> reinstateQueued(DefinitionKey key) {
-        WorkflowDefinitionRegistryStore durable = store.orElseThrow();
         Reinstatement attempt = new Reinstatement(key);
-        return durable.find(key)
+        return store.find(key)
                 .compose(found -> {
                     attempt.record =
                             found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
@@ -402,7 +343,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             throw failure(
                     Reason.INVALID_TRANSITION,
                     key,
-                    "the registered runtime was not published by the durable lifecycle for this definition");
+                    "the registered runtime was not published by the store lifecycle for this definition");
         // A remembered publication that is no longer the held instance is stale and is forgotten.
         RuntimeWorkflow remembered = unresolvedReinstatements.get(key);
         if (remembered != null && remembered != held) {
@@ -431,8 +372,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                 publishCode(attempt, local);
                 return (Void) null;
             });
-        return store.orElseThrow()
-                .findDocument(key)
+        return store.findDocument(key)
                 .compose(source -> work(() -> {
                     var text =
                             source.orElseThrow(() -> failure(Reason.LOADER_MISSING, key, "stored source is missing"));
@@ -481,16 +421,15 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
      * remembered, for a retry to adopt or to remove.
      */
     private Future<Void> commitReinstatement(Reinstatement attempt) {
-        WorkflowDefinitionRegistryStore durable = store.orElseThrow();
         Future<Void> transition;
         try {
-            transition = durable.transition(attempt.key, attempt.record.status(), DefinitionStatus.AVAILABLE);
+            transition = store.transition(attempt.key, attempt.record.status(), DefinitionStatus.AVAILABLE);
         } catch (RuntimeException failure) {
             transition = Future.failedFuture(failure);
         }
         return transition.recover(original -> {
             if (original instanceof Error) return Future.failedFuture(original);
-            return durable.find(attempt.key).transform(read -> {
+            return store.find(attempt.key).transform(read -> {
                 if (read.failed()) {
                     if (read.cause() != original) original.addSuppressed(read.cause());
                     if (attempt.publication != null) unresolvedReinstatements.put(attempt.key, attempt.publication);
@@ -531,7 +470,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             unresolvedReinstatements.remove(attempt.key);
             return refreshView(attempt.key);
         }
-        return store.orElseThrow().find(attempt.key).map(found -> {
+        return store.find(attempt.key).map(found -> {
             WorkflowDefinitionRecord current =
                     found.orElseThrow(() -> failure(Reason.STALE_CLAIM, attempt.key, "reinstated row disappeared"));
             if (view != null) view.applied(current);
@@ -571,11 +510,10 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
      */
     private Future<Void> retireQueued(DefinitionKey key) {
         preflight(key);
-        WorkflowDefinitionRegistryStore durable = store.orElseThrow();
-        return durable.retire(key)
+        return store.retire(key)
                 .recover(original -> {
                     if (original instanceof Error) return Future.failedFuture(original);
-                    return durable.find(key).transform(read -> {
+                    return store.find(key).transform(read -> {
                         boolean retired = read.succeeded()
                                 && read.result()
                                         .map(WorkflowDefinitionRecord::status)
@@ -618,7 +556,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             throw failure(
                     Reason.INVALID_TRANSITION,
                     key,
-                    "the registered runtime was not published by the durable lifecycle for this definition");
+                    "the registered runtime was not published by the store lifecycle for this definition");
         return standing;
     }
 
@@ -638,18 +576,17 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /** Reads the current status, then moves an available row to deprecated; already deprecated is accepted. */
     private Future<Void> commitDeprecation(DefinitionKey key, boolean retryOnConflict) {
-        WorkflowDefinitionRegistryStore durable = store.orElseThrow();
-        return durable.find(key).compose(found -> {
+        return store.find(key).compose(found -> {
             WorkflowDefinitionRecord record =
                     found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
             DefinitionStatus status = record.status();
             if (status == DefinitionStatus.DEPRECATED) return Future.<Void>succeededFuture();
             if (status != DefinitionStatus.AVAILABLE)
                 throw failure(Reason.INVALID_TRANSITION, key, "cannot deprecate status " + status);
-            return durable.transition(key, status, DefinitionStatus.DEPRECATED).recover(original -> {
+            return store.transition(key, status, DefinitionStatus.DEPRECATED).recover(original -> {
                 if (original instanceof Error) return Future.failedFuture(original);
                 // A failed transition may still have committed, so re-read before deciding.
-                return durable.find(key).transform(read -> {
+                return store.find(key).transform(read -> {
                     if (read.failed()) {
                         if (read.cause() != original) original.addSuppressed(read.cause());
                         return Future.<Void>failedFuture(original);
@@ -670,9 +607,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     }
 
     private Future<Void> publishQueued(DefinitionKey key) {
-        WorkflowDefinitionRegistryStore durable = store.orElseThrow();
         Attempt attempt = new Attempt(key);
-        Future<Void> publication = durable.find(key)
+        Future<Void> publication = store.find(key)
                 .<Void>compose(found -> {
                     WorkflowDefinitionRecord record =
                             found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
@@ -683,10 +619,10 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     if (record.kind() != DefinitionKind.DOCUMENT)
                         throw failure(
                                 Reason.INVALID_TRANSITION, key, "CODE definitions register from deployed sources");
-                    return durable.claim(key)
+                    return store.claim(key)
                             .compose(claim -> {
                                 attempt.claim = claim;
-                                return durable.find(key);
+                                return store.find(key);
                             })
                             .compose(current -> {
                                 attempt.record = current.orElseThrow(
@@ -701,7 +637,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                                             "expected one loader for " + attempt.record.documentFormat() + ", found "
                                                     + matches.size());
                                 attempt.loader = matches.getFirst();
-                                return durable.findDocument(key);
+                                return store.findDocument(key);
                             })
                             .compose(document -> work(() -> {
                                 var source = document.orElseThrow(
@@ -746,7 +682,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         // Hook failures fail the operation, but cannot undo a committed publication.
         return publication.compose(ignored -> {
             if (attempt.definition == null) return Future.succeededFuture();
-            return durable.find(key).map(found -> {
+            return store.find(key).map(found -> {
                 WorkflowDefinitionRecord current =
                         found.orElseThrow(() -> failure(Reason.STALE_CLAIM, key, "completed row disappeared"));
                 if (view != null) view.applied(current);
@@ -761,8 +697,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         if (original == attempt.definitiveCompletionFailure) return compensate(attempt, original);
         // Without a publication nothing can have been committed, so no reread is needed to decide.
         if (attempt.publication == null) return compensate(attempt, original);
-        WorkflowDefinitionRegistryStore durable = store.orElseThrow();
-        return durable.find(attempt.key).transform(read -> {
+        return store.find(attempt.key).transform(read -> {
             if (read.failed()) {
                 if (read.cause() != original) original.addSuppressed(read.cause());
                 // The commit outcome remains unknown: preserve the publication for reconciliation, and
@@ -787,7 +722,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private Future<Void> complete(Attempt attempt) {
         Future<Void> completion;
         try {
-            completion = store.orElseThrow().complete(attempt.claim).mapEmpty();
+            completion = store.complete(attempt.claim).mapEmpty();
         } catch (RuntimeException failure) {
             completion = Future.failedFuture(failure);
         }
@@ -803,7 +738,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private Future<Void> compensate(Attempt attempt, Throwable original) {
         Future<Void> release;
         try {
-            release = store.orElseThrow().release(attempt.claim);
+            release = store.release(attempt.claim);
         } catch (RuntimeException failure) {
             release = Future.failedFuture(failure);
         }
@@ -836,8 +771,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private Future<Void> refreshView(DefinitionKey key) {
         if (view == null) return Future.succeededFuture();
         try {
-            return store.orElseThrow()
-                    .find(key)
+            return store.find(key)
                     .<Void>map(found -> {
                         WorkflowRegistry local = registry.get();
                         boolean own = registrations.classify(

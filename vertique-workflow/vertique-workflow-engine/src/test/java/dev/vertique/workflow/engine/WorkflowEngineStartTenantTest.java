@@ -23,6 +23,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.ops.StartCommand;
@@ -32,6 +33,7 @@ import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
@@ -155,6 +157,9 @@ class WorkflowEngineStartTenantTest {
         BranchCompensationOrchestrator branchCompensation =
                 new BranchCompensationOrchestrator(history, recorderRouter, FIXED_CLOCK);
 
+        DefinitionActivations activations = new DefinitionActivations(new InMemoryWorkflowDefinitionRegistryStore());
+        activations.put(new DefinitionActivation(
+                WorkflowScopes.DEFAULT, DEFINITION_ID, WorkflowScopes.DEFAULT, 1, FIXED_CLOCK.instant()));
         WorkflowEngine engine = new WorkflowEngine(
                 txRunner,
                 registry,
@@ -177,7 +182,11 @@ class WorkflowEngineStartTenantTest {
                 reminderScheduler,
                 compensationService,
                 inboundExecScope,
-                new PayloadConstraintCheck(Optional.empty()));
+                new PayloadConstraintCheck(Optional.empty()),
+                WorkflowEngineFactory.registryTypeNames(registry),
+                activations,
+                Optional.empty(),
+                new FailingDefinitions());
         return new Rig(engine, instances, history, taskStore);
     }
 

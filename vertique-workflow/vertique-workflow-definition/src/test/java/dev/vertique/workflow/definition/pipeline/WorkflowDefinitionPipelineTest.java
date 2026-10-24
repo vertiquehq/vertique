@@ -37,6 +37,7 @@ import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.validator.Violation;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentValidator;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadException;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
@@ -364,7 +365,7 @@ class WorkflowDefinitionPipelineTest {
                 indexed,
                 new WorkflowDefinitionStore(),
                 Set.of(() -> List.of(packaged)),
-                Optional.empty(),
+                new InMemoryWorkflowDefinitionRegistryStore(),
                 Optional.empty(),
                 index);
         assertThatThrownBy(() -> bootstrap.contribute(new DefaultWorkflowRegistry()))

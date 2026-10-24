@@ -6,13 +6,11 @@ package dev.vertique.workflow.engine;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
-import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -24,9 +22,7 @@ class DefinitionActivationsChangeSequenceTest {
 
     private static final String ID = "order";
     private static final Instant AT = Instant.parse("2026-10-21T12:00:00Z");
-    private final WorkflowRegistry registry = mock(WorkflowRegistry.class);
-    private final DefinitionActivations view =
-            new DefinitionActivations(Optional.of(mock(WorkflowDefinitionRegistryStore.class)));
+    private final DefinitionActivations view = new DefinitionActivations(mock(WorkflowDefinitionRegistryStore.class));
 
     @Test
     @DisplayName("a record written after the mark survives a refresh from stale committed records")
@@ -85,9 +81,7 @@ class DefinitionActivationsChangeSequenceTest {
     }
 
     private List<Long> versions() {
-        return view.list(registry, null).stream()
-                .map(DefinitionActivation::version)
-                .toList();
+        return view.list(null).stream().map(DefinitionActivation::version).toList();
     }
 
     private static DefinitionActivation record(long version) {

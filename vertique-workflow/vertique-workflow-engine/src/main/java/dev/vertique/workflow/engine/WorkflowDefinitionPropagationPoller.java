@@ -14,6 +14,7 @@ import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.util.Objects;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,7 +33,7 @@ import org.slf4j.LoggerFactory;
  * which version a start selects here within the same bound. A start never reads the activation table.
  *
  * <p>At most one pass runs at a time. A trigger that arrives while a pass runs, from the timer or from
- * {@link #pollNow()}, joins that pass. A node without a durable definition store schedules nothing.
+ * {@link #pollNow()}, joins that pass.
  *
  * <p>The timer is armed after every verticle has deployed, so the first pass runs one period after startup; the
  * startup reconciliation has already applied the table by then. On shutdown the timer is cancelled at once and
@@ -48,7 +49,6 @@ public final class WorkflowDefinitionPropagationPoller {
         Future<Void> run();
     }
 
-    private final Optional<WorkflowDefinitionRegistryStore> store;
     private final Vertx vertx;
     private final WorkflowDefinitionsConfig config;
     private final Pass pass;
@@ -60,7 +60,7 @@ public final class WorkflowDefinitionPropagationPoller {
 
     @Inject
     WorkflowDefinitionPropagationPoller(
-            Optional<WorkflowDefinitionRegistryStore> store,
+            WorkflowDefinitionRegistryStore store,
             Vertx vertx,
             Optional<WorkflowDefinitionsConfig> config,
             DefinitionPropagationPass pass) {
@@ -68,11 +68,8 @@ public final class WorkflowDefinitionPropagationPoller {
     }
 
     WorkflowDefinitionPropagationPoller(
-            Optional<WorkflowDefinitionRegistryStore> store,
-            Vertx vertx,
-            Optional<WorkflowDefinitionsConfig> config,
-            Pass pass) {
-        this.store = store;
+            WorkflowDefinitionRegistryStore store, Vertx vertx, Optional<WorkflowDefinitionsConfig> config, Pass pass) {
+        Objects.requireNonNull(store, "store");
         this.vertx = vertx;
         this.config = config.orElseGet(WorkflowDefinitionsConfig::defaults);
         this.pass = pass;
@@ -84,14 +81,13 @@ public final class WorkflowDefinitionPropagationPoller {
      * <p>The call joins the pass that is running, if any, and returns that pass's future. The future succeeds
      * when every row was handled, including when some rows failed to apply; those are reflected in
      * {@link WorkflowDefinitionRegistryView#applyFailures()}. It fails only when the table could not be read.
-     * Without a durable store, and after shutdown has begun, the returned future is already complete and no pass
-     * runs. A caller that joins a running pass receives that pass, which may have read the table before the caller's
-     * own change was committed; such a change can need one more pass.
+     * After shutdown has begun, the returned future is already complete and no pass runs. A caller that joins a
+     * running pass receives that pass, which may have read the table before the caller's own change was committed;
+     * such a change can need one more pass.
      *
      * @return a future that completes when the pass has finished
      */
     public Future<Void> pollNow() {
-        if (store.isEmpty()) return Future.succeededFuture();
         Promise<Void> started = Promise.promise();
         Future<Void> running;
         synchronized (lock) {
@@ -141,7 +137,6 @@ public final class WorkflowDefinitionPropagationPoller {
 
         @Override
         public Future<Void> start() {
-            if (store.isEmpty()) return Future.succeededFuture();
             long periodMs;
             try {
                 periodMs = Math.multiplyExact(config.maxStalenessSeconds(), 1000L);

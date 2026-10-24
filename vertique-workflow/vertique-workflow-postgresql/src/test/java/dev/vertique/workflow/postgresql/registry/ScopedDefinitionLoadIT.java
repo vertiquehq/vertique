@@ -16,19 +16,14 @@ import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParseException;
 import dev.vertique.workflow.definition.service.ActivationStatus;
 import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
-import dev.vertique.workflow.definition.service.DefaultWorkflowDefinitionService;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
-import dev.vertique.workflow.definition.service.WorkflowDefinitionStore;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Stored;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
-import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
-import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
-import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
@@ -100,20 +95,7 @@ public class ScopedDefinitionLoadIT {
             assertThat(rejected).isInstanceOf(WorkflowDefinitionParseException.class);
             assertThat(scenario.rowCount(scopeFieldId)).isZero();
 
-            // When the first document is loaded with scope acme through a service that has no store
-            DefaultWorkflowDefinitionService storeLess = new DefaultWorkflowDefinitionService(
-                    node.app().definitionPipeline(), new WorkflowDefinitionStore(), DefaultWorkflowRegistry::new);
-            await(storeLess.load("acme", prefixed, DocumentFormat.YAML, source("prefixed", LOADED_AT)));
-
-            // Then its listing for scope acme returns the same key, and the other scopes list nothing
-            List<WorkflowDefinitionRecord> inAcme = await(storeLess.list(new DefinitionFilter("acme", null, null)));
-            assertThat(inAcme).extracting(WorkflowDefinitionRecord::key).containsExactly(key(prefixedId, "acme", 1));
-            assertThat(await(storeLess.list(new DefinitionFilter("globex", null, null))))
-                    .isEmpty();
-            assertThat(await(storeLess.list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))))
-                    .isEmpty();
-
-            // And the durable component holds no registration for the loaded candidate
+            // Then the durable component holds no registration for the loaded candidate
             assertThat(node.app().workflowRegistry().allRegistered())
                     .noneMatch(runtime -> runtime.plan().definitionId().equals(prefixedId));
         }

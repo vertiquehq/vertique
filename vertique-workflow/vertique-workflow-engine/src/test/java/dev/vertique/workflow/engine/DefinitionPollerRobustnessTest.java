@@ -131,7 +131,7 @@ class DefinitionPollerRobustnessTest {
     private static WorkflowDefinitionPropagationPoller poller(
             Vertx vertx, Optional<WorkflowDefinitionsConfig> config, WorkflowDefinitionPropagationPoller.Pass pass) {
         return new WorkflowDefinitionPropagationPoller(
-                Optional.of(mock(WorkflowDefinitionRegistryStore.class)), vertx, config, pass);
+                mock(WorkflowDefinitionRegistryStore.class), vertx, config, pass);
     }
 
     private static Vertx timerDouble() {

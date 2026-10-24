@@ -17,6 +17,7 @@ import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.di.WorkflowCoreModule;
+import dev.vertique.workflow.engine.testsupport.InMemoryDefinitionRegistryModule;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -107,7 +108,12 @@ class CatalogOnlyDocumentLoadTest {
 
     @Singleton
     @Component(
-            modules = {WorkflowDefinitionModule.class, WorkflowCoreModule.class, CatalogModule.class, MapperModule.class
+            modules = {
+                WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
+                WorkflowCoreModule.class,
+                CatalogModule.class,
+                MapperModule.class
             })
     interface DocumentLoadComponent {
 

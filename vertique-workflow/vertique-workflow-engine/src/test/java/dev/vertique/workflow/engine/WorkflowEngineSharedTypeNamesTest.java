@@ -9,7 +9,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
@@ -21,6 +20,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
@@ -48,8 +48,6 @@ import io.vertx.core.internal.ContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.sqlclient.SqlClient;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -262,53 +260,23 @@ class WorkflowEngineSharedTypeNamesTest {
             TimerStore<SqlClient> timerStore,
             TaskStore<SqlClient> taskStore,
             WorkflowTypeNames names) {
-        Set<WorkflowSideEffectRecorder<SqlClient>> recorders = Set.of();
-        Object[] leading = {
-            txRunner,
-            registry,
-            instances,
-            history,
-            dedup,
-            branchTokens,
-            joinStates,
-            timerStore,
-            taskStore,
-            FIXED_CLOCK,
-            recorders,
-            WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-            Optional.empty(),
-            (DurableContextPropagator) null,
-            Set.of(),
-            Optional.empty()
-        };
-        for (Method method : WorkflowEngineFactory.class.getMethods()) {
-            Class<?>[] parameters = method.getParameterTypes();
-            if (method.getName().equals("create")
-                    && parameters.length == leading.length + 1
-                    && parameters[parameters.length - 1] == WorkflowTypeNames.class) {
-                Object[] arguments = java.util.Arrays.copyOf(leading, leading.length + 1);
-                arguments[leading.length] = names;
-                try {
-                    return (WorkflowEngineHandle) method.invoke(null, arguments);
-                } catch (InvocationTargetException | IllegalAccessException e) {
-                    throw new AssertionError("the factory overload that takes the index failed", e);
-                }
-            }
-        }
-        return WorkflowEngineFactory.create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                recorders,
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.empty(),
-                null);
+        return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.empty())
+                .propagator(null)
+                .typeNames(names)
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                .build());
     }
 }

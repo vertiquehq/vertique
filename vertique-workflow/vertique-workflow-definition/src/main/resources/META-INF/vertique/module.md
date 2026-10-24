@@ -213,7 +213,7 @@ A well-formed definition is one that passes both parsing and semantic validation
 - Named callbacks must resolve through the registered callback registries.
 - Decision expressions must parse through the expression profile.
 - Step ids must be unique, reachable from `initialStep`, and all step references must point to existing steps.
-- The compiled plan is registered through the normal `WorkflowRegistry` path, so core plan validation still applies. Publishing a loaded definition through the in-memory service registers it under the scope of its key, so a definition loaded into one scope is not found under the default scope. Documents packaged with the application are still registered in the default scope.
+- The compiled plan is registered through the normal `WorkflowRegistry` path, so core plan validation still applies. Publishing a loaded definition through the service registers it under the scope of its key, so a definition loaded into one scope is not found under the default scope. Documents packaged with the application are still registered in the default scope.
 
 There is currently no separate published JSON Schema or YAML Schema file for workflow definitions. The authoritative validation is strict Jackson mapping plus `WorkflowDefinitionDocumentValidator`.
 
@@ -276,16 +276,17 @@ scope's first `purchase-approval` is version 1 beside the default scope's own ve
 a failed load leaves every published version untouched. A document status is `CANDIDATE` after the load, `PUBLISHING` while a
 node holds the publication claim, `AVAILABLE` once published, and later `DEPRECATED` or `RETIRED`. Publishing one version
 changes no other: any number of versions and scopes of one id are available at once, and publishing an available version again is
-accepted without a change. Which version starts when none is named is selected separately from the status. With PostgreSQL installed, source and
-metadata are durable and publication recompiles the stored text rather than trusting a local cache.
+accepted without a change. Which version starts when none is named is selected separately from the status. Source and
+metadata are durable (a graph that includes this module binds a `WorkflowDefinitionRegistryStore` and a
+`WorkflowDefinitionLifecycle`, normally PostgreSQL and the engine) and publication recompiles the stored text rather than
+trusting a local cache.
 The managed application lifecycle restores available and deprecated documents of every scope before any BOOTSTRAP verticle
 deploys. After source verification, it rereads committed status and
 provenance and delivers fresh metadata to each already-verified registration through `onRestored`; the
 cache therefore reflects the committed statuses before traffic starts. The callback is
 idempotent and a failure aborts startup. A missing loader or stored/compiled hash mismatch also aborts
 startup. All nodes sharing live documents must have the appropriate loader and application callback/type
-catalog. Source URIs are never fetched. Without a store, these operations retain their in-memory outcomes
-through the asynchronous signatures.
+catalog. Source URIs are never fetched.
 
 `deprecate(DefinitionKey)` moves an AVAILABLE version to DEPRECATED durably, marks it in the
 local registry and reports DEPRECATED in service metadata and lists. New starts of that version and
@@ -312,7 +313,7 @@ definitionId)` removes a non-default scope's record so it follows the default ag
 the default scope's record (an absent record is accepted), and `activations(scopeKey)` lists the records of a scope or, with
 `null`, of every scope. The default scope's current version cannot be deprecated or retired until another version is activated
 or `deactivateDefault` clears the record; to decommission an id call `deactivateDefault`, `deprecate`, and `retire` after the
-cooling window. Without a durable registry these operations act on the node's in-memory view and are lost on restart. Like
+cooling window. Like
 `load`, they take any scope, so restrict them to authorized callers. A deactivation is not durable across a release: when a
 later release deploys a higher version whose header does not set `activateOnDeploy: false`, that version becomes the
 default scope's current version again on its first publication. Ship such a version with `activateOnDeploy: false` to keep
@@ -343,13 +344,13 @@ same id and version fails startup, so bump the version of a changed document; a 
 A listed `WorkflowDefinitionRecord` of a scope row that newly deployed code conflicts with carries `failure()`, a
 `DefinitionFailure` naming the rule (`STATE_TYPE_NOT_EXTENDED` or `NAME_BINDING_UNRESOLVED`); `list(new DefinitionFilter(scope,
 id, null))` shows it in every status, and it is `null` for a row that is not failing. New starts on such a version are
-refused with `WorkflowDefinitionFailingException` (see the engine reference); the in-memory store only carries the field.
+refused with `WorkflowDefinitionFailingException` (see the engine reference).
 
 `sourceMetadata(DefinitionKey)` reads attribution without fetching source text. Lists contain immutable,
-key-bearing metadata. With a store bound, `list` and `sourceMetadata` read the durable table and have no
+key-bearing metadata. `list` and `sourceMetadata` read the durable table and have no
 in-memory fallback, so metadata of packaged documents and code definitions appears only after the managed
 BOOTSTRAP step has recorded it. Definition id and scope key (255), source type (64), URI (2048) and revision,
-author and upload id (255) code-point limits apply in every mode, including when no store is installed. NUL and
+author and upload id (255) code-point limits apply in every mode. NUL and
 unpaired surrogates are rejected in every text field, ISO control characters in ids and scope keys, and a
 version must be positive. Over-limit input is rejected before anything is registered. Invalid asynchronous
 arguments are failed Futures. Previously started instances keep their pinned version. Coexisting versions of one document id name the same contract class, and a version that names another contract than the id's registered versions is refused at registration. A load into a scope other than the default one is refused with `WorkflowDefinitionContractMismatchException` when the default scope holds the id, in any status including candidate, under another contract, unless the scope already holds the id; the in-memory store applies the same rule, and a default-scope load of an id that a scope holds under another contract is accepted.
@@ -364,9 +365,8 @@ expression limits, and collection-alias settings remain independent.
 
 | Source path | Admission |
 |---|---|
-| Runtime `load`, with or without a store | Original input at most L bytes, checked before parsing |
-| Static source without a store | Existing byte parser; YAML code-point guard L, no added JSON byte cap or source decoder |
-| Static source with a store | Existing pipeline first, then strict whole-source conversion and stored-text envelope; no runtime raw-byte cap |
+| Runtime `load` | Original input at most L bytes, checked before parsing |
+| Static source | Existing pipeline first, then strict whole-source conversion and stored-text envelope; no runtime raw-byte cap |
 | Durable restore | Guarded stored text, at most floor(3L/2) UTF-8 bytes and L Unicode code points; no raw-L restore cap |
 
 Durable storage preserves decoded source characters, comments, whitespace, and line endings, rather
@@ -375,8 +375,8 @@ support and consumes its recognized leading encoding marker; YAML remains UTF-8 
 reader's leading marker character. Strict conversion checks the whole durable source after the
 ordinary pipeline succeeds: malformed encoding, actual decoded NUL, and unpaired surrogates fail
 before persistence. Escaped source sequences remain source text. No additional trailing-token policy
-is enabled, so this representation check can reject malformed trailing bytes that a no-store parser
-previously ignored.
+is enabled, so this representation check can reject malformed trailing bytes that the byte parser alone
+ignores.
 
 PostgreSQL DOCUMENT bodies require server encoding UTF8. All nodes sharing the table use the same
 limits. Raise L everywhere before admitting larger sources; increased limits increase memory and
@@ -425,6 +425,8 @@ public interface AppComponent {
     WorkflowOperations workflowOperations();
 }
 ```
+
+The component must bind a `WorkflowDefinitionRegistryStore` and a `WorkflowDefinitionLifecycle`: `WorkflowPostgresqlModule` binds the store and the engine module (installed through it) the lifecycle. There is no store-less mode; a component without them fails to build. `DefaultWorkflowDefinitionService` takes both and `WorkflowDefinitionBootstrap` takes the store through their constructors; the 0.3.0 constructors without them were removed.
 
 Applications must also contribute at least one `WorkflowDefinitionSource` for bootstrap-loaded definitions, or call `WorkflowDefinitionService` from their own management surface. Add the generated `GeneratedWorkflowTypeCatalogModule` of each module that declares the contracts and types such documents use.
 

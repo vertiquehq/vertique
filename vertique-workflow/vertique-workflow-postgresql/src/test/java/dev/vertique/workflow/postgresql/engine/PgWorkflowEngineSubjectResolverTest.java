@@ -483,7 +483,7 @@ class PgWorkflowEngineSubjectResolverTest {
                 "spy-caller-wins-key-1",
                 null,
                 callerRef,
-                null,
+                1L,
                 null,
                 null);
 

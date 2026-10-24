@@ -472,8 +472,7 @@ staleness bound return to CANDIDATE). `WorkflowRegistry.registeredDefinition(key
 hook that the default registry fills with the source definition it registered; it is empty after `unregister`.
 `WorkflowRegistry.isDeployed(key)` is a second internal hook, `true` by default: the default registry answers `true` for a
 version registered through `register(definition)`, which is how deployed code and packaged documents register, and `false`
-for one registered through `register(scopeKey, definition)`, which publishes at run time. An engine without a durable store
-uses it to compute the default scope's current versions.
+for one registered through `register(scopeKey, definition)`, which publishes at run time.
 Three more internal hooks serve the durable registry's type-name bindings and are not called by applications: `register(scopeKey, definition, nameBinding)` (default throws `UnsupportedOperationException`) registers a version under the type names its plan hash was first computed with, `nameBinding(key)` (default empty map) returns the binding of a registered version, and `rebind(key, nameBinding, requiredPlanHash)` (default empty) replaces a registered runtime with one built under a binding when that plan has the required hash. `ScopeKeyRules` (`dev.vertique.workflow.types`) is an internal validator shared by the workflow modules so every entry point applies one scope key rule; it is not an application contract.
 Rows of different scopes and versions of one id coexist and do not conflict: a claim, completion or static reconciliation
 looks only at its own row.
@@ -491,8 +490,8 @@ definition row. The lifecycle and the definition service add `activate(scopeKey,
 which replaces the scope's record, `deactivateDefault(definitionId)`, which clears the default scope's record (an absent
 record is accepted, no definition row changes, other scopes' records stay), `follow(scopeKey, definitionId)`, which removes a
 non-default scope's record (`follow` on the default scope fails with `IllegalArgumentException`), and
-`activations(scopeKey)`. Without a durable store the same operations act on the node's in-memory view and are lost on
-restart; there `activate` checks that the target version is registered on the node and not deprecated.
+`activations(scopeKey)`. The records are durable: every operation goes through the registry store, and the engine
+requires one.
 
 **Auto-activation.** `WorkflowDefinition.activateOnDeploy()` (default `true`) decides whether a version becomes the default
 scope's current version when it is first published at deployment. With a durable store, a code version or packaged document
@@ -520,8 +519,10 @@ retired. Decommissioning an id is therefore `deactivateDefault`, `deprecate`, wa
 version that only a non-default scope's record names can be deprecated, and that scope's starts then fail as deprecated
 until it is activated elsewhere or follows. `reinstate` returns a version to `AVAILABLE` and never makes it current.
 `WorkflowCoreModule` declares optional
-store, lifecycle, and configuration bindings plus the loader multibinding. Without persistence, the
-standalone definition graph needs neither a database nor a configuration parser. `WorkflowRegistry.unregister(DefinitionKey)`
+state-compatibility and configuration bindings plus the loader multibinding. It does not declare the registry store
+or the lifecycle optional: a graph whose consumers (the engine, the definition service) request them must bind both,
+the PostgreSQL module binds the store and the engine module the lifecycle, and a graph without them fails to build.
+A definition graph needs no configuration parser. `WorkflowRegistry.unregister(DefinitionKey)`
 removes a version; third-party registries must implement it to support durable
 publication compensation. Its default throws explicitly.
 

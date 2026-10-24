@@ -22,6 +22,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.migration.MigrationContext;
@@ -263,21 +264,24 @@ class DeprecatedVersionAdmissionTest {
             }
         };
 
-        WorkflowEngineHandle engine = WorkflowEngineFactory.create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                Set.<WorkflowSideEffectRecorder<SqlClient>>of(),
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.of(migrations),
-                null);
+        WorkflowEngineHandle engine = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.of(migrations))
+                .propagator(null)
+                .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCode(version1))
+                .build());
         return new Harness(
                 engine, instances, dedup, history, tx, pinnedToDeprecated, onVersion1, toVersion2, toVersion3);
     }

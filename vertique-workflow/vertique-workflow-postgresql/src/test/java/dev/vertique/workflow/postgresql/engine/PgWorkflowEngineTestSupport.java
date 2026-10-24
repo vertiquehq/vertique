@@ -7,12 +7,14 @@ import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.workflow.engine.WorkflowEngineFactory;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.engine.WorkflowEngineParts;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
@@ -21,11 +23,20 @@ import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
+import io.vertx.core.Future;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.time.Clock;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import org.mockito.Answers;
+import org.mockito.Mockito;
+import org.mockito.invocation.InvocationOnMock;
 
 /**
  * Test-scope factory for constructing {@link WorkflowEngineHandle} instances directly from a
@@ -205,21 +216,24 @@ final class PgWorkflowEngineTestSupport {
             JoinStateRepository<SqlClient> joinStates,
             DurableContextPropagator propagator,
             Optional<WorkflowMigrationRegistry> migrationRegistryOpt) {
-        return WorkflowEngineFactory.create(
-                runnerFor(pool),
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                clock,
-                recorders,
-                optionalIntentKinds,
-                migrationRegistryOpt,
-                propagator);
+        return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(runnerFor(pool))
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(standIn(branchTokens, BranchTokenRepository.class))
+                .joinStates(standIn(joinStates, JoinStateRepository.class))
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .clock(clock)
+                .recorders(recorders)
+                .optionalIntentKinds(optionalIntentKinds)
+                .migrationRegistry(migrationRegistryOpt)
+                .propagator(propagator)
+                .typeNames(typeNamesOf(registry))
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                .build());
     }
 
     /**
@@ -260,23 +274,26 @@ final class PgWorkflowEngineTestSupport {
             DurableContextPropagator propagator,
             Optional<WorkflowMigrationRegistry> migrationRegistryOpt,
             Optional<BeanValidator> beanValidator) {
-        return WorkflowEngineFactory.create(
-                runnerFor(pool),
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                clock,
-                recorders,
-                optionalIntentKinds,
-                migrationRegistryOpt,
-                propagator,
-                Set.of(),
-                beanValidator);
+        return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(runnerFor(pool))
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(standIn(branchTokens, BranchTokenRepository.class))
+                .joinStates(standIn(joinStates, JoinStateRepository.class))
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .clock(clock)
+                .recorders(recorders)
+                .optionalIntentKinds(optionalIntentKinds)
+                .migrationRegistry(migrationRegistryOpt)
+                .propagator(propagator)
+                .inboundContextInitializers(Set.of())
+                .beanValidator(beanValidator)
+                .typeNames(typeNamesOf(registry))
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                .build());
     }
 
     /**
@@ -294,25 +311,62 @@ final class PgWorkflowEngineTestSupport {
             Clock clock,
             WorkflowMigrationRegistry migrationRegistry,
             Optional<WorkflowStateCompatibility> stateCompatibility) {
-        return WorkflowEngineFactory.create(
-                runnerFor(pool),
-                registry,
-                instances,
-                history,
-                dedup,
-                null,
-                null,
-                timerStore,
-                taskStore,
-                clock,
-                Set.of(),
-                Set.of(IntentKind.WORKFLOW_EVENT),
-                Optional.of(migrationRegistry),
-                null,
-                Set.of(),
-                Optional.empty(),
-                ((DefaultWorkflowRegistry) registry).typeNames(),
-                stateCompatibility);
+        return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(runnerFor(pool))
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(standIn(null, BranchTokenRepository.class))
+                .joinStates(standIn(null, JoinStateRepository.class))
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .clock(clock)
+                .recorders(Set.of())
+                .optionalIntentKinds(Set.of(IntentKind.WORKFLOW_EVENT))
+                .migrationRegistry(Optional.of(migrationRegistry))
+                .propagator(null)
+                .inboundContextInitializers(Set.of())
+                .beanValidator(Optional.empty())
+                .typeNames(((DefaultWorkflowRegistry) registry).typeNames())
+                .stateCompatibility(stateCompatibility)
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                .build());
+    }
+
+    /**
+     * The repository the caller supplied, or a stand-in that answers every read with nothing, so a test that never
+     * forks or joins does not have to build the fork and join repositories the engine requires.
+     */
+    private static <T> T standIn(T supplied, Class<?> type) {
+        if (supplied != null) return supplied;
+        @SuppressWarnings("unchecked")
+        T standIn = (T) Mockito.mock(type, PgWorkflowEngineTestSupport::answerNothing);
+        return standIn;
+    }
+
+    /** Answers a call that returns a future with a completed future that holds the empty value of its result. */
+    private static Object answerNothing(InvocationOnMock invocation) throws Throwable {
+        if (!Future.class.isAssignableFrom(invocation.getMethod().getReturnType())) {
+            return Answers.RETURNS_DEFAULTS.answer(invocation);
+        }
+        Type result = invocation.getMethod().getGenericReturnType() instanceof ParameterizedType parameterized
+                ? parameterized.getActualTypeArguments()[0]
+                : Object.class;
+        Class<?> raw = result instanceof ParameterizedType nested ? (Class<?>) nested.getRawType() : (Class<?>) result;
+        if (List.class.isAssignableFrom(raw)) return Future.succeededFuture(List.of());
+        if (Optional.class.isAssignableFrom(raw)) return Future.succeededFuture(Optional.empty());
+        if (raw == Integer.class) return Future.succeededFuture(0);
+        if (raw == Long.class) return Future.succeededFuture(0L);
+        if (raw == Boolean.class) return Future.succeededFuture(false);
+        return Future.succeededFuture();
+    }
+
+    /** The type-name index of a default registry, and an empty index for any other registry. */
+    private static WorkflowTypeNames typeNamesOf(WorkflowRegistry registry) {
+        return registry instanceof DefaultWorkflowRegistry defaultRegistry
+                ? defaultRegistry.typeNames()
+                : new DefaultWorkflowTypeNames();
     }
 
     // --- dialect-specific runner construction (stays in postgresql) ---

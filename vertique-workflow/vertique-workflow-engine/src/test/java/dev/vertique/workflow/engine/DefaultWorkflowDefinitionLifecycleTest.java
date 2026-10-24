@@ -44,7 +44,6 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
-import org.assertj.core.groups.Tuple;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -519,61 +518,6 @@ class DefaultWorkflowDefinitionLifecycleTest {
         assertThat(scenario.events).isEmpty();
     }
 
-    @Test
-    @DisplayName("without a durable store deprecation fails the returned future and marks nothing")
-    void failsFutureWithoutStore() {
-        // Given a lifecycle without a durable store
-        List<String> events = new ArrayList<>();
-        WorkflowRegistry registry = recordingRegistry(events);
-        DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
-                Optional.empty(), () -> registry, Set.of(), new DefinitionApplyQueue());
-
-        // When the definition is deprecated
-        Future<Void> result = lifecycle.deprecate(KEY);
-
-        // Then the future fails as an invalid transition and nothing is marked
-        assertInvalidTransition(result);
-        assertThat(events).isEmpty();
-    }
-
-    @Test
-    @DisplayName("activate and follow without a store update the local view while deprecate stays store-only")
-    void activateAndFollowWithoutStoreUpdateTheLocalView() {
-        // Given a lifecycle without a durable store and versions 1 and 2 registered in the default scope
-        WorkflowRegistry registry = Mockito.mock(WorkflowRegistry.class);
-        for (long version = 1; version <= 2; version++) {
-            DefinitionKey registered = new DefinitionKey(WorkflowScopes.DEFAULT, "wf", version);
-            RuntimeWorkflow runtime = Mockito.mock(RuntimeWorkflow.class);
-            Mockito.when(registry.find(registered)).thenReturn(Optional.of(runtime));
-            Mockito.when(registry.resolve(registered)).thenReturn(runtime);
-        }
-        DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
-                Optional.empty(), () -> registry, Set.of(), new DefinitionApplyQueue());
-
-        // When qa activates the default's version 2, its records are listed, qa follows, and its records are listed
-        Future<Void> activated = lifecycle.activate("qa", "wf", WorkflowScopes.DEFAULT, 2);
-        Future<List<DefinitionActivation>> afterActivate = lifecycle.activations("qa");
-        Future<Void> followed = lifecycle.follow("qa", "wf");
-        Future<List<DefinitionActivation>> afterFollow = lifecycle.activations("qa");
-
-        // Then the first listing holds one record targeting version 2 and the second is empty
-        assertThat(activated.succeeded()).as("activate: %s", activated.cause()).isTrue();
-        assertThat(afterActivate.succeeded()).isTrue();
-        assertThat(afterActivate.result())
-                .extracting(
-                        DefinitionActivation::scopeKey,
-                        DefinitionActivation::definitionId,
-                        DefinitionActivation::targetScopeKey,
-                        DefinitionActivation::version)
-                .containsExactly(Tuple.tuple("qa", "wf", WorkflowScopes.DEFAULT, 2L));
-        assertThat(followed.succeeded()).as("follow: %s", followed.cause()).isTrue();
-        assertThat(afterFollow.succeeded()).isTrue();
-        assertThat(afterFollow.result()).isEmpty();
-
-        // And deprecation stays store-only
-        assertInvalidTransition(lifecycle.deprecate(KEY));
-    }
-
     private static void assertInvalidTransition(Future<Void> result) {
         assertThat(result.failed()).isTrue();
         assertThat(result.cause()).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
@@ -661,17 +605,13 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         DefaultWorkflowDefinitionLifecycle lifecycle() {
             return new DefaultWorkflowDefinitionLifecycle(
-                    Optional.of(new ScriptedStore(this)), () -> registry, Set.of(), new DefinitionApplyQueue());
+                    new ScriptedStore(this), () -> registry, Set.of(), new DefinitionApplyQueue());
         }
 
         /** Builds the lifecycle over the given attributions, so a test decides who published the registration. */
         DefaultWorkflowDefinitionLifecycle lifecycle(ManagedRegistrations registrations) {
             return new DefaultWorkflowDefinitionLifecycle(
-                    Optional.of(new ScriptedStore(this)),
-                    () -> registry,
-                    Set.of(),
-                    new DefinitionApplyQueue(),
-                    registrations);
+                    new ScriptedStore(this), () -> registry, Set.of(), new DefinitionApplyQueue(), registrations);
         }
 
         /** Makes the registry hold the given runtime for the test key, as a published or direct registration. */
@@ -789,7 +729,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         store.completions.add(Future.succeededFuture());
         RecordingRegistry registry = new RecordingRegistry();
         DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
-                Optional.of(store), () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
+                store, () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
 
         Future<Void> first = lifecycle.publish(KEY);
 
@@ -826,7 +766,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         registry.register(foreignDefinition);
         RuntimeWorkflow foreign = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
         DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
-                Optional.of(store), () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
+                store, () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
 
         // When the key is activated
         Future<Void> result = lifecycle.publish(KEY);
@@ -848,7 +788,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         store.completions.add(Future.succeededFuture());
         RecordingRegistry registry = new RecordingRegistry();
         DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
-                Optional.of(store), () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
+                store, () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
         assertThat(lifecycle.publish(KEY).succeeded()).isTrue();
         RuntimeWorkflow published = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
 
@@ -1222,7 +1162,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         ReinstateWorld(ReinstateStore store) {
             lifecycle = new DefaultWorkflowDefinitionLifecycle(
-                    Optional.of(store), () -> registry, Set.of(loader), new DefinitionApplyQueue(), registrations);
+                    store, () -> registry, Set.of(loader), new DefinitionApplyQueue(), registrations);
         }
     }
 
@@ -1449,8 +1389,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
     private static DefaultWorkflowDefinitionLifecycle lifecycle(
             FakeStore store, Set<PersistedDefinitionLoader> loaders, WorkflowRegistry registry) {
-        return new DefaultWorkflowDefinitionLifecycle(
-                Optional.of(store), () -> registry, loaders, new DefinitionApplyQueue());
+        return new DefaultWorkflowDefinitionLifecycle(store, () -> registry, loaders, new DefinitionApplyQueue());
     }
 
     private static PersistedDefinitionLoader publishingLoader() {

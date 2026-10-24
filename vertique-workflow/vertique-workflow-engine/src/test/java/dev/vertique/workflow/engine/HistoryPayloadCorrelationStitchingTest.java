@@ -26,6 +26,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
@@ -238,21 +239,24 @@ class HistoryPayloadCorrelationStitchingTest {
                 .when(instances.updateOptimistic(any(), anyLong(), any()))
                 .thenReturn(Future.succeededFuture(1));
 
-        WorkflowEngineHandle handle = WorkflowEngineFactory.create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                Set.<WorkflowSideEffectRecorder<SqlClient>>of(),
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.empty(),
-                propagator);
+        WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.empty())
+                .propagator(propagator)
+                .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                .build());
         return new Harness(
                 handle,
                 handle,
@@ -435,21 +439,24 @@ class HistoryPayloadCorrelationStitchingTest {
         when(migrationRegistry.find("default", DEFINITION_ID, 1L, "default", 2L))
                 .thenReturn(Optional.of(handler));
 
-        WorkflowEngineHandle handle = WorkflowEngineFactory.create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                Set.<WorkflowSideEffectRecorder<SqlClient>>of(),
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.of(migrationRegistry),
-                propagator);
+        WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.of(migrationRegistry))
+                .propagator(propagator)
+                .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                .build());
 
         runOnDuplicated(vertx, v -> {
             ContextValues.bind(CorrelationContext.class, correlation("corr-F"));

@@ -138,7 +138,7 @@ class WorkflowEngineReplayStoredContractTest {
                 null,
                 new PayloadConstraintCheck(Optional.empty()),
                 WorkflowEngineFactory.registryTypeNames(registry),
-                new DefinitionActivations(Optional.of(store)),
+                new DefinitionActivations(store),
                 Optional.<WorkflowStateCompatibility>empty(),
                 new FailingDefinitions());
     }

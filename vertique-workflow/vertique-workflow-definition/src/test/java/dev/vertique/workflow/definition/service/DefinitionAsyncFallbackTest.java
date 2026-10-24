@@ -17,6 +17,8 @@ import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParseException;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.di.WorkflowCoreModule;
+import dev.vertique.workflow.engine.testsupport.InMemoryDefinitionRegistryModule;
+import dev.vertique.workflow.engine.testsupport.NoOpWorkflowDefinitionLifecycle;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
@@ -24,9 +26,7 @@ import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
-import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
-import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
@@ -56,16 +56,20 @@ class DefinitionAsyncFallbackTest {
     interface FallbackOrderV2 {}
 
     @Singleton
-    @Component(modules = {WorkflowCoreModule.class, WorkflowDefinitionModule.class, TestSupportModule.class})
-    interface NoStoreComponent {
+    @Component(
+            modules = {
+                WorkflowCoreModule.class,
+                WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
+                TestSupportModule.class
+            })
+    interface InMemoryStoreComponent {
 
         WorkflowDefinitionService definitionService();
 
         WorkflowRegistry workflowRegistry();
 
-        Optional<WorkflowDefinitionRegistryStore> registryStore();
-
-        Optional<WorkflowDefinitionLifecycle> definitionLifecycle();
+        NoOpWorkflowDefinitionLifecycle definitionLifecycle();
 
         Optional<WorkflowDefinitionsConfig> definitionsConfig();
     }
@@ -100,16 +104,14 @@ class DefinitionAsyncFallbackTest {
     }
 
     @Test
-    @DisplayName("load, activate, list and source metadata retain outcomes without a durable store")
-    void preservesNoStoreOutcomes() {
-        NoStoreComponent component = DaggerDefinitionAsyncFallbackTest_NoStoreComponent.create();
+    @DisplayName("load, publish, list and source metadata keep their outcomes over the store and the lifecycle")
+    void preservesOutcomesOverTheStore() {
+        InMemoryStoreComponent component = DaggerDefinitionAsyncFallbackTest_InMemoryStoreComponent.create();
         WorkflowDefinitionService service = component.definitionService();
         DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, "fallback-order", 1);
         SourceMetadata provenance =
                 new SourceMetadata("test", "opaque:source", "rev-1", "author", "upload", Instant.now());
 
-        assertThat(component.registryStore()).isEmpty();
-        assertThat(component.definitionLifecycle()).isEmpty();
         assertThat(component.definitionsConfig()).isEmpty();
 
         CompiledDefinitionRef loaded = ServiceTestHelpers.await(service.load(
@@ -121,18 +123,13 @@ class DefinitionAsyncFallbackTest {
         assertThat(component.workflowRegistry().allRegistered()).isEmpty();
 
         ServiceTestHelpers.await(service.publish(key));
-        assertThat(component
-                        .workflowRegistry()
-                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "fallback-order", 1L))
-                        .plan()
-                        .definitionVersion())
-                .isEqualTo(1);
+        assertThat(component.definitionLifecycle().calls()).containsExactly("publish(" + key + ")");
 
         DefinitionFilter global = new DefinitionFilter(WorkflowScopes.DEFAULT, null, null);
         java.util.List<WorkflowDefinitionRecord> records = ServiceTestHelpers.await(service.list(global));
         assertThat(records).hasSize(1);
         assertThat(records.get(0).key()).isEqualTo(key);
-        assertThat(records.get(0).status()).isEqualTo(DefinitionStatus.AVAILABLE);
+        assertThat(records.get(0).status()).isEqualTo(DefinitionStatus.CANDIDATE);
         assertThat(ServiceTestHelpers.await(service.sourceMetadata(key))).contains(provenance);
         assertThatThrownBy(records::clear).isInstanceOf(UnsupportedOperationException.class);
         ServiceTestHelpers.await(service.load(
@@ -168,19 +165,13 @@ class DefinitionAsyncFallbackTest {
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidFilter)).isInstanceOf(RuntimeException.class);
         Future<Optional<SourceMetadata>> invalidKey = service.sourceMetadata(null);
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidKey)).isInstanceOf(RuntimeException.class);
-        assertThat(component
-                        .workflowRegistry()
-                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "fallback-order", 1L))
-                        .plan()
-                        .definitionVersion())
-                .isEqualTo(1);
     }
 
     @Test
-    @DisplayName("without a durable store a 300-code-point revision fails the load and registers nothing")
+    @DisplayName("a 300-code-point revision fails the load and registers nothing")
     void rejectsOverLongProvenanceBeforeAnyState() {
-        // Given a no-store service and metadata whose revision exceeds the 255 code point bound
-        NoStoreComponent component = DaggerDefinitionAsyncFallbackTest_NoStoreComponent.create();
+        // Given a service over an in-memory store and metadata whose revision exceeds the 255 code point bound
+        InMemoryStoreComponent component = DaggerDefinitionAsyncFallbackTest_InMemoryStoreComponent.create();
         WorkflowDefinitionService service = component.definitionService();
         SourceMetadata overLong =
                 new SourceMetadata("test", "opaque:source", "r".repeat(300), null, null, Instant.now());
@@ -200,10 +191,10 @@ class DefinitionAsyncFallbackTest {
     }
 
     @Test
-    @DisplayName("without a durable store a 2049-code-point uri fails the load and registers nothing")
+    @DisplayName("a 2049-code-point uri fails the load and registers nothing")
     void rejectsOverLongUriBeforeAnyState() {
-        // Given a no-store service and metadata whose uri exceeds the 2048 code point bound
-        NoStoreComponent component = DaggerDefinitionAsyncFallbackTest_NoStoreComponent.create();
+        // Given a service over an in-memory store and metadata whose uri exceeds the 2048 code point bound
+        InMemoryStoreComponent component = DaggerDefinitionAsyncFallbackTest_InMemoryStoreComponent.create();
         WorkflowDefinitionService service = component.definitionService();
         SourceMetadata overLong = new SourceMetadata("test", "u".repeat(2049), "rev-1", null, null, Instant.now());
 
@@ -222,10 +213,10 @@ class DefinitionAsyncFallbackTest {
     }
 
     @Test
-    @DisplayName("without a durable store a 2048-code-point uri loads as a candidate")
+    @DisplayName("a 2048-code-point uri loads as a candidate")
     void acceptsUriAtTheBound() {
-        // Given a no-store service and metadata whose uri is exactly 2048 supplementary characters
-        NoStoreComponent component = DaggerDefinitionAsyncFallbackTest_NoStoreComponent.create();
+        // Given a service over an in-memory store and metadata whose uri is exactly 2048 supplementary characters
+        InMemoryStoreComponent component = DaggerDefinitionAsyncFallbackTest_InMemoryStoreComponent.create();
         WorkflowDefinitionService service = component.definitionService();
         String atBound = "\uD83D\uDE00".repeat(2048);
         SourceMetadata provenance = new SourceMetadata("test", atBound, "rev-1", null, null, Instant.now());

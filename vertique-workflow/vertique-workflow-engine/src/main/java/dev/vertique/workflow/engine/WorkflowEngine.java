@@ -274,62 +274,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Assembles the engine like the constructor that takes the type-name index, using the index of
-     * the registry when it is a {@code DefaultWorkflowRegistry} and an empty index otherwise.
-     */
-    WorkflowEngine(
-            WorkflowTransactionRunner<SqlClient> txRunner,
-            WorkflowRegistry registry,
-            WorkflowInstanceRepository<SqlClient> instances,
-            WorkflowHistoryRepository<SqlClient> history,
-            WorkflowDedupRepository<SqlClient> dedup,
-            RecorderRouter recorders,
-            TimerStore<SqlClient> timerStore,
-            TaskStore<SqlClient> taskStore,
-            FingerprintCanonicalizer fingerprintCanonicalizer,
-            Clock clock,
-            BranchTokenRepository<SqlClient> branchTokens,
-            JoinStateRepository<SqlClient> joinStates,
-            BranchTransitionEngine branchEngine,
-            BranchCompensationOrchestrator branchCompensation,
-            @Nullable DurableContextPropagator propagator,
-            Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
-            WorkflowEventEmitter eventEmitter,
-            WorkflowHistoryRecorder historyRecorder,
-            ReminderScheduler reminderScheduler,
-            CompensationService compensationService,
-            @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
-            PayloadConstraintCheck payloadConstraintCheck) {
-        this(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                recorders,
-                timerStore,
-                taskStore,
-                fingerprintCanonicalizer,
-                clock,
-                branchTokens,
-                joinStates,
-                branchEngine,
-                branchCompensation,
-                propagator,
-                migrationRegistryOpt,
-                eventEmitter,
-                historyRecorder,
-                reminderScheduler,
-                compensationService,
-                inboundExecScope,
-                payloadConstraintCheck,
-                WorkflowEngineFactory.registryTypeNames(registry),
-                new DefinitionActivations(),
-                Optional.empty(),
-                new FailingDefinitions());
-    }
-
-    /**
      * Shared field-assignment + driver/coordinator-construction path used by the
      * {@link WorkflowEngineFactory} assembly seam. The transition driver, the fork/join coordinator,
      * the task-lifecycle service, and the timer-lifecycle service are built here (not passed in) so
@@ -354,10 +298,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * <p>The {@code inboundExecScope} parameter is the substrate lifecycle helper backing the
      * binder-row {@link WorkflowContextBinder} (factory initializer parity, see
-     * {@link WorkflowEngineFactory#create(WorkflowTransactionRunner, WorkflowRegistry,
-     * WorkflowInstanceRepository, WorkflowHistoryRepository, WorkflowDedupRepository,
-     * BranchTokenRepository, JoinStateRepository, TimerStore, TaskStore, Clock, java.util.Set,
-     * java.util.Set, Optional, DurableContextPropagator, java.util.Set)}): production Dagger wiring
+     * {@link WorkflowEngineFactory#create(WorkflowEngineParts)}): production Dagger wiring
      * runs every registered {@code InboundContextInitializer} (e.g. correlation seeding) on a bound
      * drive, and this constructor lets the factory assembly seam do the same. The factory builds
      * exactly one {@link dev.vertique.context.InboundExecutionContextScope} from the propagator and
@@ -736,10 +677,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * the existing instance. A start that names a version, and possibly a target scope, must name the definition
      * the existing instance is pinned to; any other pin fails as an idempotency conflict. A replay never changes
      * a pin. When this node has no plan for the pin, the contract the durable registry stores for the pinned
-     * definition stands in for it, read through the given transaction. With a durable registry and no stored row the
-     * start fails with {@link WorkflowVersionNotRunnableException}. An engine without a durable registry uses the
-     * contract of another registered version of the same id in the scope, and fails the same way when there is
-     * none, because it cannot compare the contracts.
+     * definition stands in for it, read through the given transaction. With no stored row the start fails with
+     * {@link WorkflowVersionNotRunnableException}.
      */
     private Future<WorkflowInstanceId> replayedStart(StartCommand cmd, WorkflowInstanceId existing, SqlClient tx) {
         return instances.findById(existing, tx).compose(found -> {
@@ -751,17 +690,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowInstance pinned = found.get();
             // The pinned version's own plan names the contract. On a node without that plan, the contract stored for
             // the pinned definition does, read through the start transaction so that no second connection is taken;
-            // with a durable registry and no stored row the node refuses. Only an engine without a durable registry
-            // falls back to another registered version of the same id in the scope. A node that knows none of them
-            // cannot vouch for the caller's contract and refuses, like a contract-checked query does.
+            // with no stored row the node cannot vouch for the caller's contract and refuses, like a
+            // contract-checked query does.
             DefinitionKey pin =
                     new DefinitionKey(pinned.definitionScopeKey(), pinned.definitionId(), pinned.definitionVersion());
             Optional<String> local = registry.find(pin).map(RuntimeWorkflow::contractName);
-            Future<Optional<String>> contractOfPin = local.isPresent()
-                    ? Future.succeededFuture(local)
-                    : activations.hasDurableRegistry()
-                            ? instances.findDefinitionContract(pin, tx)
-                            : Future.succeededFuture(registry.contractOf(pin.scopeKey(), pin.definitionId()));
+            Future<Optional<String>> contractOfPin =
+                    local.isPresent() ? Future.succeededFuture(local) : instances.findDefinitionContract(pin, tx);
             return contractOfPin.compose(pinnedContract -> checkReplay(cmd, existing, pinned, pin, pinnedContract));
         });
     }

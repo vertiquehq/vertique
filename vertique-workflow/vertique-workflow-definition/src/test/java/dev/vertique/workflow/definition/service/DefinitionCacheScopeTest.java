@@ -36,6 +36,8 @@ import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentValidator;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.engine.testsupport.NoOpWorkflowDefinitionLifecycle;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
@@ -282,8 +284,14 @@ class DefinitionCacheScopeTest {
         // When the service loads the same document globally and for two tenants with distinct provenance
         WorkflowDefinitionStore serviceCache = new WorkflowDefinitionStore();
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
-        DefaultWorkflowDefinitionService service =
-                new DefaultWorkflowDefinitionService(buildPipeline(), serviceCache, () -> registry);
+        NoOpWorkflowDefinitionLifecycle lifecycle = new NoOpWorkflowDefinitionLifecycle();
+        DefaultWorkflowDefinitionService service = new DefaultWorkflowDefinitionService(
+                buildPipeline(),
+                serviceCache,
+                () -> registry,
+                new InMemoryWorkflowDefinitionRegistryStore(),
+                lifecycle,
+                Optional.empty());
         byte[] document = yamlFor(ID, 1, ScopeOrderV1.class);
         ServiceTestHelpers.await(service.load(WorkflowScopes.DEFAULT, document, DocumentFormat.YAML, GLOBAL_SOURCE));
         ServiceTestHelpers.await(service.load("tenant-a", document, DocumentFormat.YAML, TENANT_A_SOURCE));
@@ -313,16 +321,15 @@ class DefinitionCacheScopeTest {
                 .extracting(WorkflowDefinitionRecord::key)
                 .containsExactlyInAnyOrder(GLOBAL_V1, TENANT_A_V1, TENANT_B_V1);
 
-        // When one tenant activates through the service
+        // When one tenant publishes through the service
         ServiceTestHelpers.await(service.publish(TENANT_A_V1));
 
-        // Then only that tenant's cache entry becomes active
-        assertThat(serviceCache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.AVAILABLE);
+        // Then the lifecycle received exactly that key and the service changed no cache entry or registration itself
+        assertThat(lifecycle.calls()).containsExactly("publish(" + TENANT_A_V1 + ")");
+        assertThat(serviceCache.currentStatus(TENANT_A_V1)).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(serviceCache.currentStatus(ID, 1)).isEqualTo(ActivationStatus.CANDIDATE);
         assertThat(serviceCache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.CANDIDATE);
-        assertThat(serviceCache.list()).singleElement().satisfies(ref -> assertThat(ref.status())
-                .isEqualTo(ActivationStatus.CANDIDATE));
-        assertThat(registry.allRegistered()).hasSize(1);
+        assertThat(registry.allRegistered()).isEmpty();
     }
 
     private static List<DefinitionKey> records(

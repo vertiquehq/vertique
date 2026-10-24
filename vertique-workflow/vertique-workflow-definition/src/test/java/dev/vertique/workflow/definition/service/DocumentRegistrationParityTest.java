@@ -46,6 +46,8 @@ import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentVali
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.engine.testsupport.InMemoryDefinitionRegistryModule;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
@@ -355,6 +357,7 @@ class DocumentRegistrationParityTest {
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 ParityModule.class,
                 LogicalPackagedSourceModule.class
@@ -365,6 +368,7 @@ class DocumentRegistrationParityTest {
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 ParityModule.class,
                 BinaryPackagedSourceModule.class
@@ -373,7 +377,13 @@ class DocumentRegistrationParityTest {
 
     /** A component with no packaged source: documents reach it through the service or the durable store. */
     @Singleton
-    @Component(modules = {WorkflowDefinitionModule.class, WorkflowCoreModule.class, ParityModule.class})
+    @Component(
+            modules = {
+                WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
+                WorkflowCoreModule.class,
+                ParityModule.class
+            })
     interface ServiceComponent {
 
         WorkflowDefinitionService workflowDefinitionService();
@@ -389,6 +399,7 @@ class DocumentRegistrationParityTest {
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 LegacyModule.class,
                 LegacyPackagedSourceModule.class
@@ -399,7 +410,13 @@ class DocumentRegistrationParityTest {
     }
 
     @Singleton
-    @Component(modules = {WorkflowDefinitionModule.class, WorkflowCoreModule.class, LegacyModule.class})
+    @Component(
+            modules = {
+                WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
+                WorkflowCoreModule.class,
+                LegacyModule.class
+            })
     interface LegacyServiceComponent {
 
         WorkflowDefinitionService workflowDefinitionService();
@@ -467,7 +484,12 @@ class DocumentRegistrationParityTest {
         void bootstrap(WorkflowDefinitionStore store, DefinitionResource... resources) {
             WorkflowDefinitionSource source = () -> List.of(resources);
             new WorkflowDefinitionBootstrap(
-                            pipeline, store, Set.of(source), Optional.empty(), Optional.empty(), typeNames)
+                            pipeline,
+                            store,
+                            Set.of(source),
+                            new InMemoryWorkflowDefinitionRegistryStore(),
+                            Optional.empty(),
+                            typeNames)
                     .contribute(registry);
         }
     }

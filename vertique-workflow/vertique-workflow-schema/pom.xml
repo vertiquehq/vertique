@@ -75,6 +75,22 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
 
         <!-- Test -->
+        <!--
+          Test-scope only: the engine's test-jar supplies the in-memory definition registry store and the
+          lifecycle stub that graphs including the definition module bind, because the engine requires both.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-workflow-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-workflow-engine</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
