@@ -50,6 +50,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -69,6 +70,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class ScopedStartIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_scoped_start_test")
@@ -118,7 +121,9 @@ public class ScopedStartIT {
 
         // When: one start without a scope and one in acme
         WorkflowInstanceId defaultId = await(unscoped.start("k-default", null, new StartPurchase("a")));
+        await(harness.engine().executionProbe().awaitIdle(defaultId, IDLE_TIMEOUT));
         WorkflowInstanceId acmeId = await(inAcme.start("k-acme", null, new StartPurchase("b")));
+        await(harness.engine().executionProbe().awaitIdle(acmeId, IDLE_TIMEOUT));
 
         // Then: the first instance has the default start scope and the second the acme start scope
         WorkflowInstance defaultRow = instance(harness, defaultId);
@@ -134,7 +139,9 @@ public class ScopedStartIT {
 
         // When: the engine starts a command with a null start scope and one with the default scope, both with K0
         WorkflowInstanceId fromNull = await(harness.engine().start(command("K0", null, null, null, null)));
+        await(harness.engine().executionProbe().awaitIdle(fromNull, IDLE_TIMEOUT));
         WorkflowInstanceId fromDefault = await(harness.engine().start(command("K0", null, null, DEFAULT, null)));
+        await(harness.engine().executionProbe().awaitIdle(fromDefault, IDLE_TIMEOUT));
 
         // Then: both are the same start, and one start dedup row exists for K0, in the default scope
         assertThat(fromDefault).isEqualTo(fromNull);
@@ -156,7 +163,9 @@ public class ScopedStartIT {
 
         // When: business key PO-42 starts in acme, then in globex
         WorkflowInstanceId acmeId = await(inAcme.start("k-1", "PO-42", new StartPurchase("a")));
+        await(harness.engine().executionProbe().awaitIdle(acmeId, IDLE_TIMEOUT));
         WorkflowInstanceId globexId = await(inGlobex.start("k-2", "PO-42", new StartPurchase("b")));
+        await(harness.engine().executionProbe().awaitIdle(globexId, IDLE_TIMEOUT));
 
         // Then: both start, as different instances
         assertThat(globexId).isNotEqualTo(acmeId);
@@ -187,8 +196,11 @@ public class ScopedStartIT {
 
         // When: idempotency key K starts in acme, in globex, and again in acme
         WorkflowInstanceId firstAcme = await(inAcme.start("K", null, new StartPurchase("a")));
+        await(harness.engine().executionProbe().awaitIdle(firstAcme, IDLE_TIMEOUT));
         WorkflowInstanceId globex = await(inGlobex.start("K", null, new StartPurchase("b")));
+        await(harness.engine().executionProbe().awaitIdle(globex, IDLE_TIMEOUT));
         WorkflowInstanceId secondAcme = await(inAcme.start("K", null, new StartPurchase("c")));
+        await(harness.engine().executionProbe().awaitIdle(secondAcme, IDLE_TIMEOUT));
 
         // Then: acme and globex are two instances, and the second acme start is the first acme instance
         assertThat(globex).isNotEqualTo(firstAcme);
@@ -225,10 +237,15 @@ public class ScopedStartIT {
                 .scope(ACME)
                 .version(DEFAULT, 1)
                 .create();
-        WorkflowInstance fromAcme = instance(harness, await(acmeOwn.start("k-1", null, new StartPurchase("a"))));
-        WorkflowInstance fromGlobex = instance(harness, await(globexOwn.start("k-2", null, new StartPurchase("b"))));
-        WorkflowInstance fromAcmeNamingDefault =
-                instance(harness, await(acmeNamingDefault.start("k-3", null, new StartPurchase("c"))));
+        WorkflowInstanceId acmeOwnId = await(acmeOwn.start("k-1", null, new StartPurchase("a")));
+        await(harness.engine().executionProbe().awaitIdle(acmeOwnId, IDLE_TIMEOUT));
+        WorkflowInstance fromAcme = instance(harness, acmeOwnId);
+        WorkflowInstanceId globexOwnId = await(globexOwn.start("k-2", null, new StartPurchase("b")));
+        await(harness.engine().executionProbe().awaitIdle(globexOwnId, IDLE_TIMEOUT));
+        WorkflowInstance fromGlobex = instance(harness, globexOwnId);
+        WorkflowInstanceId acmeNamingDefaultId = await(acmeNamingDefault.start("k-3", null, new StartPurchase("c")));
+        await(harness.engine().executionProbe().awaitIdle(acmeNamingDefaultId, IDLE_TIMEOUT));
+        WorkflowInstance fromAcmeNamingDefault = instance(harness, acmeNamingDefaultId);
 
         // Then: the pins are (start scope owns it, acme), (default, default) and (default, default), with their plans
         assertThat(fromAcme.scopeKey()).isEqualTo(ACME);
@@ -353,6 +370,7 @@ public class ScopedStartIT {
 
         // When: the definition's own client starts it with the same idempotency key and business key
         WorkflowInstanceId id = await(own.start("k-foreign", "bk-1", new StartPurchase("a")));
+        await(harness.engine().executionProbe().awaitIdle(id, IDLE_TIMEOUT));
 
         // Then: the start succeeds, so the refused start had claimed neither key
         assertThat(instance(harness, id).businessKey()).isEqualTo("bk-1");

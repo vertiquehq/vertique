@@ -51,6 +51,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -77,6 +78,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith(DatabaseExtension.class)
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class CrossScopeMigrationIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_cross_scope_migrate_test")
@@ -332,6 +335,7 @@ public class CrossScopeMigrationIT {
         StartCommand start = new StartCommand(
                 ID, "cm-c", new StartPayload("i-1"), "cm-" + UUID.randomUUID(), null, null, 1L, null, null);
         WorkflowInstanceId id = await(harness.engine().start(start));
+        await(harness.engine().executionProbe().awaitIdle(id, IDLE_TIMEOUT));
         ScopedApprovalFixture.stampScope(harness.pool(), id, definitionScope, startScope, planHash);
         return id;
     }
@@ -376,6 +380,7 @@ public class CrossScopeMigrationIT {
 
             // When: I1 migrates to acme version 1 and I2 migrates to default version 2
             await(harness.engine().migrate(i1, ACME, 1L));
+            await(harness.engine().executionProbe().awaitIdle(i1, IDLE_TIMEOUT));
             Throwable refusal = failureOf(() -> harness.engine().migrate(i2, DEFAULT, 2L));
 
             // Then: I1 is pinned to acme version 1 with the plan hash of the acme definition

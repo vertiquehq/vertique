@@ -45,6 +45,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
@@ -77,6 +78,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineBranchVersionStabilityIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_vsa_test")
@@ -229,7 +232,12 @@ public class PgWorkflowEngineBranchVersionStabilityIT {
                 null,
                 null,
                 null);
-        return engine.start(cmd).toCompletionStage().toCompletableFuture().join();
+        return engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(r -> started))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
     }
 
     private UUID findBranchATask(WorkflowInstanceId workflowId) {
@@ -291,6 +299,9 @@ public class PgWorkflowEngineBranchVersionStabilityIT {
         TaskCompletionCommand cmd = new TaskCompletionCommand(
                 taskId, "approve", null, "idem-match-1", new WorkflowActor.User("alice"), "v3");
         TaskMutationResult result = pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                .compose(applied -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> applied))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();

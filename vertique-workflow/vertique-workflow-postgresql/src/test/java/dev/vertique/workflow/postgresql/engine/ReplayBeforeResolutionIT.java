@@ -33,6 +33,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Transaction;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -50,6 +51,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class ReplayBeforeResolutionIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_replay_before_resolution_test")
@@ -128,11 +131,13 @@ public class ReplayBeforeResolutionIT {
         harness.registry().register(ACME, new Purchase(ID, 1L, "done-acme"));
         harness.registry().register(new Purchase(ID, 2L, "done-default-2"));
         WorkflowInstanceId original = await(harness.engine().start(command("K", 1L, ACME, null)));
+        await(harness.engine().executionProbe().awaitIdle(original, IDLE_TIMEOUT));
 
         // When: K replays in acme with version 2, with version 1 of the default scope, and with version 1 of acme
         Throwable otherVersion = failureOf(() -> harness.engine().start(command("K", 2L, ACME, null)));
         Throwable otherScope = failureOf(() -> harness.engine().start(command("K", 1L, ACME, DEFAULT)));
         WorkflowInstanceId samePin = await(harness.engine().start(command("K", 1L, ACME, ACME)));
+        await(harness.engine().executionProbe().awaitIdle(samePin, IDLE_TIMEOUT));
 
         // Then: the first two conflict as a start, and the third returns the original instance
         assertStartConflict(otherVersion, "K");
@@ -162,9 +167,11 @@ public class ReplayBeforeResolutionIT {
                 .version(DEFAULT, 1)
                 .create();
         WorkflowInstanceId original = await(sameVersion.start("K", null, new StartPurchase("a")));
+        await(harness.engine().executionProbe().awaitIdle(original, IDLE_TIMEOUT));
 
         // When: the replay names version 1 of acme through a client, and version 1 of the default scope
         WorkflowInstanceId replayed = await(sameVersion.start("K", null, new StartPurchase("a")));
+        await(harness.engine().executionProbe().awaitIdle(replayed, IDLE_TIMEOUT));
         Throwable conflict = failureOf(() -> defaultVersion.start("K", null, new StartPurchase("a")));
 
         // Then: the first returns the original, and the second conflicts as a start
@@ -194,6 +201,7 @@ public class ReplayBeforeResolutionIT {
 
             // Then: B returns A's instance id
             assertThat(await(b)).isEqualTo(a);
+            await(harness.engine().executionProbe().awaitIdle(a, IDLE_TIMEOUT));
 
             // and: exactly one instance row and one start dedup row exist
             assertThat(instanceRows(pool)).isEqualTo(1L);
@@ -218,7 +226,9 @@ public class ReplayBeforeResolutionIT {
 
     /** Starts in the default scope with the key, naming the version when it is given. */
     private static WorkflowInstanceId startWith(Harness harness, String idempotencyKey, Long version) throws Exception {
-        return await(harness.engine().start(command(idempotencyKey, version, null, null)));
+        WorkflowInstanceId started = await(harness.engine().start(command(idempotencyKey, version, null, null)));
+        await(harness.engine().executionProbe().awaitIdle(started, IDLE_TIMEOUT));
+        return started;
     }
 
     private static void deprecate(Harness harness, long version) {

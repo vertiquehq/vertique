@@ -74,6 +74,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineBranchFanoutCreationIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_fanout_create_test")
             .withMigration("classpath:db/migration/workflow");
@@ -347,6 +349,9 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
                 long timeoutTimers) {}
 
         engine.start(cmd)
+                .compose(workflowId -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> workflowId))
                 .compose(workflowId -> branchWaitStateAsync(workflowId, "branch-a")
                         .compose(a -> branchWaitStateAsync(workflowId, "branch-b")
                                 .compose(b -> branchWaitStateAsync(workflowId, "branch-c")
@@ -418,6 +423,9 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
         record Outcome(long firedCount, long reminderTimers) {}
 
         engine.start(cmd)
+                .compose(workflowId -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> workflowId))
                 .compose(workflowId -> firstTimerIdAsync(
                                 workflowId, dev.vertique.workflow.timer.TimerPurpose.TASK_REMINDER, "branch-a")
                         .compose(reminderId -> {
@@ -436,6 +444,8 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
                                                 row.getOffsetDateTime("fire_at").toInstant();
                                         return pool.withTransaction(tx -> engine.taskReminderFired(
                                                         workflowId, taskId, reminderId, fireAt, tx))
+                                                .compose(v ->
+                                                        engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
                                                 .compose(v -> pool.preparedQuery("SELECT COUNT(*) FROM workflow_history"
                                                                 + " WHERE workflow_id = $1 AND entry_type = $2")
                                                         .execute(Tuple.of(

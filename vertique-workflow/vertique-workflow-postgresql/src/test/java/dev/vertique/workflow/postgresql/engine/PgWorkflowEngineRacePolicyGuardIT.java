@@ -35,6 +35,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
@@ -61,6 +62,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineRacePolicyGuardIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_race_guard_test")
@@ -196,6 +199,8 @@ public class PgWorkflowEngineRacePolicyGuardIT {
                 null,
                 null);
         engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(idle -> id))
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "engine.start should succeed under FIRST_SUCCESS: " + ar.cause());

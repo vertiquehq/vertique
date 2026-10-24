@@ -39,6 +39,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -65,6 +66,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineMissingPinResumeIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers ---
 
@@ -221,6 +224,8 @@ public class PgWorkflowEngineMissingPinResumeIT {
 
         // Engine A starts the instance — ends up WAITING for "go".
         engineA.start(cmd)
+                .compose(id ->
+                        engineA.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(idle -> id))
                 .compose(id -> engineA.query(id).map(view -> {
                     assertEquals(WorkflowStatus.WAITING, view.instance().status(), "must be WAITING before signal");
                     return id;
@@ -297,6 +302,8 @@ public class PgWorkflowEngineMissingPinResumeIT {
                 null);
 
         engineA.start(cmd)
+                .compose(id ->
+                        engineA.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(idle -> id))
                 .compose(id -> {
                     // Hand-poke the DB row to reference a non-existent version (99).
                     return pool.preparedQuery("UPDATE workflow_instances SET definition_version = 99 WHERE id = $1")

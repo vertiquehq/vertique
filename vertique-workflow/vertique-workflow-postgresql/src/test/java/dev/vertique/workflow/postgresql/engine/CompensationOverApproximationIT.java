@@ -38,6 +38,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -86,6 +87,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class CompensationOverApproximationIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -273,9 +276,12 @@ public class CompensationOverApproximationIT {
 
         engine.start(cmd)
                 .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
+                .compose(id ->
                         // Deliver sig-a: engine advances past wait-a → dispatch-b → fail → compensation.
                         engine.signal(id, "sig-a", new SigA("data"), "dedup-sig-a")
-                                .map(v -> id))
+                                .compose(v -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                                .map(r -> id))
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "saga must complete end-to-end, got: " + ar.cause());

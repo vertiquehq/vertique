@@ -44,6 +44,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -66,6 +67,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class SignalByPinIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("signal_by_pin_test")
@@ -276,7 +279,9 @@ public class SignalByPinIT {
         // When: the client sends approve to the v1 instance and escalate to the v2 instance
         ApprovalContract client = harness.factory().create(ApprovalContract.class, "purchase-approval");
         await(client.approve(pinnedToV1, new ApprovalSignal("v1-decision")));
+        await(harness.engine().executionProbe().awaitIdle(pinnedToV1, IDLE_TIMEOUT));
         await(client.escalate(pinnedToV2, new ApprovalSignal("v2-decision")));
+        await(harness.engine().executionProbe().awaitIdle(pinnedToV2, IDLE_TIMEOUT));
 
         // Then: both instances completed and each history records its signal
         WorkflowView v1 = await(harness.engine().query(pinnedToV1));
@@ -317,6 +322,7 @@ public class SignalByPinIT {
         // When: the instance's own client queries and then signals it
         WorkflowView viaOwnClient = await(own.view(id));
         await(own.approve(id, new ApprovalSignal("own-decision")));
+        await(harness.engine().executionProbe().awaitIdle(id, IDLE_TIMEOUT));
 
         // Then: both succeed
         assertThat(viaOwnClient.instance().id()).isEqualTo(id);
@@ -374,6 +380,7 @@ public class SignalByPinIT {
         StartCommand command = new StartCommand(
                 definitionId, contractName, payload, payload.idempotencyKey(), null, null, version, null, null);
         WorkflowInstanceId id = await(harness.engine().start(command));
+        await(harness.engine().executionProbe().awaitIdle(id, IDLE_TIMEOUT));
         assertThat(snapshot(harness, id).status()).isEqualTo(WorkflowStatus.WAITING);
         return id;
     }

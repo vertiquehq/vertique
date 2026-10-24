@@ -76,6 +76,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineTimerFiringFailedIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     // --- Testcontainers setup ---
 
     static final PostgresContainer db = new PostgresContainer()
@@ -263,11 +265,16 @@ public class PgWorkflowEngineTimerFiringFailedIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     assertNotNull(timerId, "timerId must be set");
                     return pool.withTransaction(tx -> engine.timerFiringFailed(
                                     wfId, timerId, "EXECUTOR_ERROR", "Job failed after max retries", tx))
+                            .compose(failed -> engine.executionProbe()
+                                    .awaitIdle(wfId, IDLE_TIMEOUT)
+                                    .map(idle -> failed))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(
                                         TimerFiringResult.APPLIED, result, "timerFiringFailed must return APPLIED"));
@@ -337,6 +344,9 @@ public class PgWorkflowEngineTimerFiringFailedIT {
         WorkflowInstanceId fakeWfId = new WorkflowInstanceId(UUID.randomUUID());
 
         pool.withTransaction(tx -> engine.timerFiringFailed(fakeWfId, timerId, "EXEC_ERROR", "failed", tx))
+                .compose(failed -> engine.executionProbe()
+                        .awaitIdle(fakeWfId, IDLE_TIMEOUT)
+                        .map(idle -> failed))
                 .map(result -> {
                     ctx.verify(() -> assertEquals(
                             TimerFiringResult.STALE_NOOP,
@@ -375,6 +385,8 @@ public class PgWorkflowEngineTimerFiringFailedIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(wfId -> {
                     // The instance is WAITING on lastTimerId. Insert a DIFFERENT timer.
                     UUID otherTimerId = UUID.randomUUID();
@@ -399,6 +411,9 @@ public class PgWorkflowEngineTimerFiringFailedIT {
                     return pool.withTransaction(tx -> timerStore.insertScheduled(otherRecord, tx))
                             .compose(v -> pool.withTransaction(
                                     tx -> engine.timerFiringFailed(wfId, otherTimerId, "EXEC_ERROR", "failed", tx)))
+                            .compose(failed -> engine.executionProbe()
+                                    .awaitIdle(wfId, IDLE_TIMEOUT)
+                                    .map(idle -> failed))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(
                                         TimerFiringResult.STALE_NOOP,
@@ -470,12 +485,17 @@ public class PgWorkflowEngineTimerFiringFailedIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     // Cancel the timer manually to put it in a terminal state
                     return pool.withTransaction(tx -> timerStore.markCancelled(timerId, Instant.now(), tx))
                             .compose(v -> pool.withTransaction(
                                     tx -> engine.timerFiringFailed(wfId, timerId, "EXEC_ERROR", "failed", tx)))
+                            .compose(failed -> engine.executionProbe()
+                                    .awaitIdle(wfId, IDLE_TIMEOUT)
+                                    .map(idle -> failed))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(
                                         TimerFiringResult.STALE_NOOP,

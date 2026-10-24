@@ -37,6 +37,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -58,6 +59,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class WorkflowVersionPinUnavailableIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -220,6 +223,9 @@ public class WorkflowVersionPinUnavailableIT {
 
         // Engine A starts the instance; it will be WAITING for signal "go".
         engineA.start(startCmd)
+                .compose(started -> engineA.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> {
                     String dedupKey = "dedup-" + UUID.randomUUID();
                     // Engine B attempts to signal — must fail since it doesn't know v1.
@@ -261,6 +267,9 @@ public class WorkflowVersionPinUnavailableIT {
                 null);
 
         engineA.start(startCmd)
+                .compose(started -> engineA.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> engineB.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "engineB.query must read without the pinned code: " + ar.cause());
@@ -290,6 +299,9 @@ public class WorkflowVersionPinUnavailableIT {
                 null);
 
         engineA.start(startCmd)
+                .compose(started -> engineA.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> engineB.query(id, "version-test"))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.failed(), "engineB.query with a contract name must fail without the pinned code");

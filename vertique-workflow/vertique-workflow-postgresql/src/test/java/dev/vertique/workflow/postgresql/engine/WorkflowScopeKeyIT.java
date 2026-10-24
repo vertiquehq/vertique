@@ -38,6 +38,7 @@ import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
@@ -65,6 +66,7 @@ import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -95,6 +97,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class WorkflowScopeKeyIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_scope_key_test")
@@ -376,6 +380,8 @@ public class WorkflowScopeKeyIT {
 
         WorkflowOperations workflowOperations();
 
+        WorkflowExecutionProbe workflowExecutionProbe();
+
         TransactionalTaskCallbacks<SqlClient> taskCallbacks();
 
         WorkflowTransactionRunner<SqlClient> transactionRunner();
@@ -466,6 +472,7 @@ public class WorkflowScopeKeyIT {
                         null,
                         null,
                         null))));
+        await(host.workflowExecutionProbe().awaitIdle(singleUnstamped, IDLE_TIMEOUT));
         WorkflowInstanceId forkUnstamped = await(inContext(
                 "t1",
                 () -> operations.start(new StartCommand(
@@ -478,6 +485,7 @@ public class WorkflowScopeKeyIT {
                         null,
                         null,
                         null))));
+        await(host.workflowExecutionProbe().awaitIdle(forkUnstamped, IDLE_TIMEOUT));
         WorkflowInstanceId singleStamped = await(inContext(
                 "t1",
                 () -> operations.start(new StartCommand(
@@ -490,6 +498,7 @@ public class WorkflowScopeKeyIT {
                         null,
                         null,
                         null))));
+        await(host.workflowExecutionProbe().awaitIdle(singleStamped, IDLE_TIMEOUT));
         WorkflowInstanceId forkStamped = await(inContext(
                 "t1",
                 () -> operations.start(new StartCommand(
@@ -502,6 +511,7 @@ public class WorkflowScopeKeyIT {
                         null,
                         null,
                         null))));
+        await(host.workflowExecutionProbe().awaitIdle(forkStamped, IDLE_TIMEOUT));
 
         // Then the ambient tenant was not taken: every instance row and start task is in the default scope
         for (WorkflowInstanceId started : List.of(singleUnstamped, forkUnstamped, singleStamped, forkStamped)) {
@@ -600,7 +610,9 @@ public class WorkflowScopeKeyIT {
 
         // When the waiting instance is migrated to version 2 and the failed instance is retried
         await(inContext(null, () -> operations.migrate(running, 2L)));
+        await(host.workflowExecutionProbe().awaitIdle(running, IDLE_TIMEOUT));
         await(inContext(null, () -> operations.retry(finished)));
+        await(host.workflowExecutionProbe().awaitIdle(finished, IDLE_TIMEOUT));
 
         // Then the migrated instance moved to version 2 and still carries t1 as its start scope in its row and its
         // record
@@ -656,19 +668,21 @@ public class WorkflowScopeKeyIT {
 
     private static void completeFirstTaskThenSignalGo(WorkflowInstanceId id, String keySuffix) throws Exception {
         UUID firstTask = openTaskId(id);
-        assertThat((TaskMutationResult) await(inContext(
-                        null,
-                        () -> pool.withTransaction(tx -> taskCallbacks.taskCompleted(
-                                new TaskCompletionCommand(
-                                        firstTask,
-                                        "approve",
-                                        null,
-                                        "k-complete-" + keySuffix,
-                                        new WorkflowActor.User("user-1"),
-                                        null),
-                                tx)))))
-                .isEqualTo(TaskMutationResult.APPLIED);
+        TaskMutationResult completed = await(inContext(
+                null,
+                () -> pool.withTransaction(tx -> taskCallbacks.taskCompleted(
+                        new TaskCompletionCommand(
+                                firstTask,
+                                "approve",
+                                null,
+                                "k-complete-" + keySuffix,
+                                new WorkflowActor.User("user-1"),
+                                null),
+                        tx))));
+        await(host.workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
+        assertThat(completed).isEqualTo(TaskMutationResult.APPLIED);
         await(inContext(null, () -> operations.signal(id, "go", "payload", "k-signal-" + keySuffix)));
+        await(host.workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
     }
 
     private static void parkBranchBThenSweep(WorkflowInstanceId id) throws Exception {

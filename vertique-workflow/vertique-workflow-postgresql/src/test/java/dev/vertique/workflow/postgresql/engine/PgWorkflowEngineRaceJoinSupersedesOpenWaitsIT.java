@@ -48,6 +48,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -86,6 +87,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineRaceJoinSupersedesOpenWaitsIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_race_supersede_waits_test")
@@ -297,6 +300,8 @@ public class PgWorkflowEngineRaceJoinSupersedesOpenWaitsIT {
 
         // Phase 1: start the workflow — both branches park at WAITING.
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> {
                     idRef.set(workflowId);
                     // Look up branch-b's token id.
@@ -326,7 +331,15 @@ public class PgWorkflowEngineRaceJoinSupersedesOpenWaitsIT {
                                     // Phase 3: signal branch-a → FIRST_SUCCESS triggers →
                                     // supersedeNonTerminalSiblings runs on branch-b (cancelling its timer+task).
                                     pool.withTransaction(tx -> engine.signal(
-                                            workflowId, "go-a", new GoSignal("ok"), "dedup-go-a", "fork", "a", tx)));
+                                                    workflowId,
+                                                    "go-a",
+                                                    new GoSignal("ok"),
+                                                    "dedup-go-a",
+                                                    "fork",
+                                                    "a",
+                                                    tx))
+                                            .compose(signaled ->
+                                                    engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT)));
                 })
                 // Phase 4: assert outcomes.
                 .compose(v -> pool.preparedQuery("SELECT status FROM workflow_timers WHERE branch_token_id = $1")

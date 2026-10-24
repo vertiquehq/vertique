@@ -45,6 +45,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -76,6 +77,8 @@ import org.slf4j.LoggerFactory;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineStartPayloadIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -453,6 +456,8 @@ public class PgWorkflowEngineStartPayloadIT {
     private static WorkflowInstanceId start(String definitionId, Object payload, String key) {
         return engine.start(new StartCommand(
                         definitionId, contractNameOf(definitionId), payload, key, null, null, null, null, null))
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();

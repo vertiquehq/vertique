@@ -108,6 +108,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class TaskReminderIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     // --- Constants ---
 
     static final String TEST_DESTINATION = "test-reminder-target";
@@ -521,6 +523,7 @@ public class TaskReminderIT {
                     Instant scheduledFireAt = opt.map(r -> r.fireAt()).orElse(Instant.now());
                     return engine.taskReminderFired(workflowId, taskId, timerId, scheduledFireAt, tx);
                 }))
+                .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
                 .compose(v -> pool.withTransaction(
                         tx -> timerStore.markFired(timerId, Instant.now(), tx).mapEmpty()));
     }
@@ -560,6 +563,8 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     // After start, insertedTimerIds has 2 one-shot reminder timer ids
                     assertEquals(2, insertedTimerIds.size(), "2 reminder timers should be scheduled on start");
@@ -659,6 +664,8 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     // After start, 1 recurring reminder timer is scheduled
                     assertEquals(1, insertedTimerIds.size(), "1 recurring reminder timer should be scheduled");
@@ -739,6 +746,8 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     UUID reminderId = insertedTimerIds.get(0);
@@ -757,6 +766,9 @@ public class TaskReminderIT {
                                 null);
 
                         return pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(result -> {
                                     ctx.verify(
                                             () -> assertEquals(TaskMutationResult.APPLIED, result, "must be APPLIED"));
@@ -797,6 +809,8 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     UUID reminderId = insertedTimerIds.get(0);
@@ -842,6 +856,8 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     // insertedTimerIds[0] = due-date timer, insertedTimerIds[1] = reminder timer
                     // (order: handleHumanTaskNode calls scheduleDueDateTimer first, then scheduleReminderTimers)
@@ -858,6 +874,9 @@ public class TaskReminderIT {
                                 .execute(Tuple.of(dueDateTimerId))
                                 .compose(v ->
                                         pool.withTransaction(tx -> engine.timerFired(workflowId, dueDateTimerId, tx)))
+                                .compose(fired -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> fired))
                                 .compose(result -> {
                                     ctx.verify(() -> assertEquals(
                                             dev.vertique.workflow.ops.TimerFiringResult.APPLIED,
@@ -900,6 +919,8 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     UUID reminderId = insertedTimerIds.get(0);
@@ -952,6 +973,8 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     // insertedTimerIds.get(0) is the initial reminder timer — cancel cascade will
@@ -968,6 +991,9 @@ public class TaskReminderIT {
                             null);
 
                     return pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
 
@@ -1056,6 +1082,8 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(2, insertedTimerIds.size(), "2 one-shot timers scheduled");
                     UUID timerId1 = insertedTimerIds.get(0);

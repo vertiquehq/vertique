@@ -38,6 +38,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -69,6 +70,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class MalformedHistoryFailLoudIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -362,10 +365,13 @@ public class MalformedHistoryFailLoudIT {
                 null);
 
         engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose((WorkflowInstanceId id) ->
                         // Deliver sig1: SIGNAL_RECEIVED written, dispatch-b fires, WAITING at wait-sig2.
                         engine.signal(id, "sig1", new SigOne("d"), "dedup-sig1-run1")
-                                .map(v -> id))
+                                .compose(v -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                                .map(r -> id))
                 .compose((WorkflowInstanceId id) -> {
                     // Corrupt the SIGNAL_RECEIVED payload: replace with JSON missing "signalName".
                     String sql = "UPDATE workflow_history"
@@ -432,6 +438,8 @@ public class MalformedHistoryFailLoudIT {
                 null);
 
         engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose((WorkflowInstanceId id) -> {
                     // After start: dispatch-step fired, SIDE_EFFECT_RECORDED written, WAITING at wait-done.
                     // Corrupt the SIDE_EFFECT_RECORDED payload: stepId is an array (wrong type).

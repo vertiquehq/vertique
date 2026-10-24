@@ -44,6 +44,7 @@ import dev.vertique.workflow.events.compose.WorkflowEventsComposeValidator;
 import dev.vertique.workflow.events.di.WorkflowEventsModule;
 import dev.vertique.workflow.events.recorder.WorkflowEventSideEffectRecorder;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
@@ -72,6 +73,7 @@ import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -113,12 +115,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowBranchRecoveryServiceIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_recovery_test")
             .withMigration("classpath:db/migration/workflow");
 
     static Pool pool;
     static WorkflowOperations engine;
+    static WorkflowExecutionProbe probe;
     static PgWorkflowBranchRecoveryService recovery;
     static Vertx vertxRef;
 
@@ -129,6 +134,8 @@ public class PgWorkflowBranchRecoveryServiceIT {
 
     /** Engine handle wired for the AC-2 definition (real outbox + real correlation/tenant context). */
     static WorkflowOperations ac2Engine;
+
+    static WorkflowExecutionProbe ac2Probe;
 
     /** Captures every SERVICE {@link WorkflowSideEffectIntent} routed during an AC-2 test's sweep. */
     static final List<WorkflowSideEffectIntent> ac2CapturedServiceIntents = new ArrayList<>();
@@ -441,6 +448,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 .create(pool, Clock.systemUTC());
 
         engine = component.workflowOperations();
+        probe = component.workflowExecutionProbe();
         DefaultVersionSeed.recordAndActivate(
                 component.pgWorkflowDefinitionRegistryStore(),
                 component.definitionLifecycle(),
@@ -474,6 +482,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
         Ac2TestComponent ac2Component = DaggerPgWorkflowBranchRecoveryServiceIT_Ac2TestComponent.factory()
                 .create(pool, Clock.systemUTC());
         ac2Engine = ac2Component.workflowOperations();
+        ac2Probe = ac2Component.workflowExecutionProbe();
         DefaultVersionSeed.recordAndActivate(
                 ac2Component.pgWorkflowDefinitionRegistryStore(),
                 ac2Component.definitionLifecycle(),
@@ -564,6 +573,8 @@ public class PgWorkflowBranchRecoveryServiceIT {
          * @return workflow operations
          */
         WorkflowOperations workflowOperations();
+
+        WorkflowExecutionProbe workflowExecutionProbe();
 
         /**
          * Returns the transaction runner the recovery service opens its per-branch transactions on.
@@ -796,6 +807,8 @@ public class PgWorkflowBranchRecoveryServiceIT {
 
         WorkflowOperations workflowOperations();
 
+        WorkflowExecutionProbe workflowExecutionProbe();
+
         WorkflowTransactionRunner<SqlClient> transactionRunner();
 
         BranchTokenRepository<SqlClient> branchTokenRepository();
@@ -873,6 +886,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null,
                 null);
         runOnDuplicatedContext(() -> engine.start(cmd)
+                .compose(id -> probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 // Force branch 'a' into stale RUNNING (no retry budget left).
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
                                 + " updated_at = $1, attempt_count = max_attempts - 1 WHERE workflow_id = $2"
@@ -933,6 +947,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null,
                 null);
         runOnDuplicatedContext(() -> engine.start(cmd)
+                .compose(id -> probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
                                 + " current_step_id = 'complete-a', wait_type = NULL, wait_key = NULL,"
                                 + " next_retry_at = $1, version = version + 1"
@@ -1011,6 +1026,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         Instant past = Instant.now().minusSeconds(3600);
         runOnDuplicatedContext(() -> engine.start(cmd)
+                .compose(id -> probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
                                 + " updated_at = $1, attempt_count = 0, max_attempts = 3, version = version + 1"
                                 + " WHERE workflow_id = $2 AND branch_id = 'a'")
@@ -1081,6 +1097,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null,
                 null);
         runOnDuplicatedContext(() -> engine.start(cmd)
+                .compose(id -> probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
                                 + " current_step_id = 'complete-a', wait_type = NULL, wait_key = NULL,"
                                 + " next_retry_at = $1, version = version + 1"
@@ -1137,6 +1154,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null,
                 null);
         runOnDuplicatedContext(() -> engine.start(cmd)
+                .compose(id -> probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
                                 + " updated_at = $1, attempt_count = max_attempts - 1 WHERE workflow_id = $2"
                                 + " AND branch_id = 'a'")
@@ -1323,6 +1341,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         runOnDuplicatedContext(() -> withAc2AmbientTenantAndCorrelation(
                         "T", "IGNORED-AT-START", () -> ac2Engine.start(cmd))
+                .compose(id -> ac2Probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 // Seed a degraded branch token: correlation C only, no tenant — simulating the
                 // §2-gap-1 degraded/pre-feature fork (AC-2's documented test-setup technique).
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET metadata = $1"
@@ -1421,6 +1440,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmd)
+                .compose(id -> ac2Probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose(id -> pool.preparedQuery("UPDATE workflow_instances SET metadata = $1 WHERE id = $2")
                         .execute(Tuple.of(tenantOnlyMetadataCarrier("T-LIVE"), id.value()))
                         .map(id))
@@ -1429,7 +1449,8 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 // drive (including the fork dispatch reached later in the same drive) proceeds.
                 .compose(id -> withAc2AmbientCorrelation(
                                 "LIVE-CORR", () -> ac2Engine.signal(id, "signal-start", "go", "ac2-live-fill-dedup"))
-                        .map(v -> id))
+                        .compose(v -> ac2Probe.awaitIdle(id, IDLE_TIMEOUT))
+                        .map(r -> id))
                 .compose(id -> readAc2OutboxRowsForWorkflow(id.value()))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "live signal fork-drive should succeed: " + ar.cause());
@@ -1473,6 +1494,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmd)
+                .compose(id -> ac2Probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 // Seed the branch token with its OWN carrier (correlation D only) — instance
                 // metadata stays NULL, so the merge must be a pure no-op.
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET metadata = $1"
@@ -1544,7 +1566,9 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmdBad)
-                .compose(badId -> ac2Engine.start(cmdGood).map(goodId -> new WorkflowInstanceId[] {badId, goodId}))
+                .compose(badId -> ac2Probe.awaitIdle(badId, IDLE_TIMEOUT).map(r -> badId))
+                .compose(badId -> ac2Engine.start(cmdGood).compose(goodId -> ac2Probe.awaitIdle(goodId, IDLE_TIMEOUT)
+                        .map(r -> new WorkflowInstanceId[] {badId, goodId})))
                 // Corrupt the "bad" instance's plan_hash so loadEffectiveBaseForBind's later
                 // loadInstanceAndRuntime (inside resumeOne) rejects it via the plan-hash drift
                 // guard — this row's advance fails, but must not abort the sweep's remaining rows.
@@ -1600,6 +1624,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         runOnDuplicatedContext(() -> withAc2AmbientTenantAndCorrelation(
                         "T-DEMOTE", "IGNORED-AT-START", () -> ac2Engine.start(cmd))
+                .compose(id -> ac2Probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 // Seed a degraded branch token: correlation C-DEMOTE only, no tenant — simulating
                 // the §2-gap-1 degraded/pre-feature fork, same technique as the headline AC-2 test.
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET metadata = $1"

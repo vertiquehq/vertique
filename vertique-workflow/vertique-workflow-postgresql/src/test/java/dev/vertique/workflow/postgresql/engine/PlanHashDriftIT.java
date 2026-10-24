@@ -38,6 +38,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -62,6 +63,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PlanHashDriftIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -269,6 +272,9 @@ public class PlanHashDriftIT {
                 null);
 
         engineA.start(cmd)
+                .compose(started -> engineA.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> {
                     String dedupKey = "dedup-" + UUID.randomUUID();
                     // Engine B attempts to signal with its drifted plan.
@@ -313,6 +319,9 @@ public class PlanHashDriftIT {
                 null);
 
         engineA.start(cmd)
+                .compose(started -> engineA.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> engineB.query(id).map(view -> new Object[] {id, view}))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "engineB.query must succeed (plan-independent): " + ar.cause());

@@ -61,6 +61,7 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -104,6 +105,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class WorkflowEventEmissionIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Constants ---
 
@@ -583,6 +586,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readOutboxRowsForWorkflow(workflowId.value())
                         .map(rows -> {
                             ctx.verify(() -> {
@@ -644,6 +649,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readOutboxRowsForWorkflow(workflowId.value())
                         .map(rows -> {
                             ctx.verify(() -> {
@@ -698,6 +705,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> {
                     // Assert instance is WAITING on TASK
                     return pool.withTransaction(tx -> instanceRepo.findById(workflowId, tx))
@@ -767,6 +776,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> {
                     // Read task id from wait_key
                     return pool.withTransaction(tx -> instanceRepo.findById(workflowId, tx))
@@ -781,6 +792,9 @@ public class WorkflowEventEmissionIT {
                                         null);
 
                                 return pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx))
+                                        .compose(applied -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> applied))
                                         .compose(result -> {
                                             ctx.verify(() -> assertEquals(
                                                     dev.vertique.workflow.ops.TaskMutationResult.APPLIED, result));
@@ -844,6 +858,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> engine.cancel(workflowId, "test-cancel-reason")
                         .compose(v -> readOutboxRowsForWorkflow(workflowId.value()))
                         .map(rows -> {
@@ -914,6 +930,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> engine.cancel(workflowId, "test-task-cancel-reason")
                         .compose(v -> readOutboxRowsForWorkflow(workflowId.value())
                                 .compose(outboxRows -> readHistoryRowsForWorkflow(workflowId.value())
@@ -1022,6 +1040,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readOutboxRowsForWorkflow(workflowId.value())
                         .map(rows -> {
                             ctx.verify(() -> assertEquals(
@@ -1050,14 +1070,15 @@ public class WorkflowEventEmissionIT {
 
         // When: the signal advances the instance through the dispatch step to the task, and the task completes
         await(engine.signal(id, "submit", "payload", "k-submit-" + id.value()));
+        await(engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
         UUID taskId = UUID.fromString(await(pool.withTransaction(tx -> instanceRepo.findById(id, tx)))
                 .orElseThrow()
                 .waitKey());
         TaskCompletionCommand completeCmd = new TaskCompletionCommand(
                 taskId, "approve", null, "idem-" + id.value(), new WorkflowActor.User("alice"), null);
-        assertEquals(
-                dev.vertique.workflow.ops.TaskMutationResult.APPLIED,
-                await(pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx))));
+        var completed = await(pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx)));
+        await(engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
+        assertEquals(dev.vertique.workflow.ops.TaskMutationResult.APPLIED, completed);
         List<Row> allRows = await(readOutboxRowsForWorkflow(id.value()));
         List<Row> rowsAfterStamp = allRows.subList(rowsAtStart.size(), allRows.size());
 
@@ -1103,6 +1124,7 @@ public class WorkflowEventEmissionIT {
 
         // When: the signal advances the instance through the dispatch step
         await(engine.signal(id, "submit", "payload", "k-submit-" + id.value()));
+        await(engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
 
         // Then: the one recorded dispatch names the instance's scopes and its definition id
         assertEquals(1, dispatchedIntents.size(), "one dispatch must be recorded");
@@ -1133,7 +1155,9 @@ public class WorkflowEventEmissionIT {
                 null,
                 null,
                 null);
-        return await(engine.start(command));
+        WorkflowInstanceId started = await(engine.start(command));
+        await(engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT));
+        return started;
     }
 
     private static <T> T await(Future<T> future) throws Exception {

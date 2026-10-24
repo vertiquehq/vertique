@@ -31,6 +31,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -56,6 +57,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class WorkflowEventOptionalKindIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup (workflow schema only — no outbox table needed) ---
 
@@ -199,6 +202,8 @@ public class WorkflowEventOptionalKindIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> pool.withTransaction(tx -> instanceRepo.findById(workflowId, tx))
                         .map(optInst -> {
                             ctx.verify(() -> {
@@ -248,7 +253,12 @@ public class WorkflowEventOptionalKindIT {
                 null);
 
         engine.start(cmdA)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(wfA -> engine.start(cmdB)
+                        .compose(started -> engine.executionProbe()
+                                .awaitIdle(started, IDLE_TIMEOUT)
+                                .map(idle -> started))
                         .compose(wfB -> pool.withTransaction(tx -> instanceRepo
                                 .findById(wfA, tx)
                                 .compose(optA -> instanceRepo.findById(wfB, tx).map(optB -> {

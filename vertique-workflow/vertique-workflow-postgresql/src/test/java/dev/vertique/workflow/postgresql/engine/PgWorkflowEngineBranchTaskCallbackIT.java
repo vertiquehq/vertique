@@ -57,6 +57,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -90,6 +91,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineBranchTaskCallbackIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_task_callback_test")
@@ -504,6 +507,9 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
                 String siblingStatus) {}
 
         pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                .compose(result -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> result))
                 .compose(result -> taskStatusAsync(task.taskId()).compose(taskStatus -> countHistoryAsync(
                                 workflowId, WorkflowEntryType.BRANCH_TASK_COMPLETED)
                         .compose(completedEntries -> branchSnapshotAsync(branchA.id())
@@ -592,6 +598,9 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
         record Outcome(TaskMutationResult result, long ignoredCount) {}
 
         pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                .compose(result -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> result))
                 .compose(result -> countHistoryAsync(workflowId, WorkflowEntryType.BRANCH_LATE_CALLBACK_IGNORED)
                         .map(ignoredCount -> new Outcome(result, ignoredCount)))
                 .onComplete(ctx.succeeding(o -> ctx.verify(() -> {
@@ -733,6 +742,9 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
         // Call taskDueFired — the executor routes TASK_DUE timers through this entry point (see
         // WorkflowTimerFireExecutor.dispatchTaskDueFired), not the generic timerFired path.
         pool.withTransaction(tx -> engine.taskDueFired(workflowId, task.taskId(), tx))
+                .compose(result -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> result))
                 .compose(result -> taskStatusAsync(task.taskId())
                         .compose(taskStatus -> timerStatusAsync(reminderTimer.timerId())
                                 .compose(reminderStatus -> countHistoryAsync(

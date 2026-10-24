@@ -45,6 +45,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -70,6 +71,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineTransactionalIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -318,6 +321,10 @@ public class PgWorkflowEngineTransactionalIT {
 
         simpleEngine
                 .start(cmd)
+                .compose(started -> simpleEngine
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> simpleEngine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "engine.start + query must succeed, got: " + ar.cause());
@@ -353,6 +360,10 @@ public class PgWorkflowEngineTransactionalIT {
 
         simpleEngine
                 .start(cmd)
+                .compose(started -> simpleEngine
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> {
                     // Verify all three tables have exactly one row.
                     Future<Long> instanceCount = pool.query("SELECT COUNT(*) AS cnt FROM workflow_instances")
@@ -407,6 +418,10 @@ public class PgWorkflowEngineTransactionalIT {
         // First start the instance (it will be in WAITING state after start).
         signalEngine
                 .start(startCmd)
+                .compose(started -> signalEngine
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> {
                     // Verify it is WAITING.
                     return signalEngine.query(id).compose(view -> {
@@ -478,11 +493,16 @@ public class PgWorkflowEngineTransactionalIT {
 
         signalEngine
                 .start(startCmd)
+                .compose(started -> signalEngine
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> {
                     // Send signal as a raw Map (should be coerced to PaymentCaptured by the engine).
                     return signalEngine
                             .signal(id, "payment.captured", rawPayload, dedupKey)
-                            .compose(v -> signalEngine.query(id));
+                            .compose(v -> signalEngine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                            .compose(idle -> signalEngine.query(id));
                 })
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "start + signal + query must succeed, got: " + ar.cause());
@@ -517,9 +537,14 @@ public class PgWorkflowEngineTransactionalIT {
 
         signalEngine
                 .start(startCmd)
+                .compose(started -> signalEngine
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> signalEngine
                         .signal(id, "payment.captured", new PaymentCaptured("charge-typed"), dedupKey)
-                        .compose(v -> signalEngine.query(id)))
+                        .compose(v -> signalEngine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                        .compose(idle -> signalEngine.query(id)))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "start + signal + query must succeed, got: " + ar.cause());
                     WorkflowView view = ar.result();
@@ -552,7 +577,14 @@ public class PgWorkflowEngineTransactionalIT {
 
         simpleEngine
                 .start(cmd)
-                .compose(id1 -> simpleEngine.start(cmd).map(id2 -> new WorkflowInstanceId[] {id1, id2}))
+                .compose(id1 -> simpleEngine
+                        .executionProbe()
+                        .awaitIdle(id1, IDLE_TIMEOUT)
+                        .map(idle -> id1))
+                .compose(id1 -> simpleEngine.start(cmd).compose(id2 -> simpleEngine
+                        .executionProbe()
+                        .awaitIdle(id2, IDLE_TIMEOUT)
+                        .map(idle -> new WorkflowInstanceId[] {id1, id2})))
                 .compose(ids -> {
                     assertEquals(ids[0].value(), ids[1].value(), "duplicate start must return the same instance id");
                     // Verify only one instance row exists.
@@ -590,6 +622,10 @@ public class PgWorkflowEngineTransactionalIT {
 
         simpleEngine
                 .start(cmd)
+                .compose(started -> simpleEngine
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> simpleEngine.signal(id, "payment.captured", Map.of(), dedupKey))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.failed(), "signal on a COMPLETED instance must fail");
@@ -696,6 +732,10 @@ public class PgWorkflowEngineTransactionalIT {
 
         dispatchEngine
                 .start(cmd)
+                .compose(started -> dispatchEngine
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> dispatchEngine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "start + query must succeed with no-op recorder, got: " + ar.cause());

@@ -85,6 +85,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineHumanTaskIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     // --- Testcontainers setup ---
 
     static final PostgresContainer db = new PostgresContainer()
@@ -482,7 +484,9 @@ public class PgWorkflowEngineHumanTaskIT {
                 null,
                 null,
                 null);
-        return engine.start(cmd);
+        return engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(idle -> id));
     }
 
     /**
@@ -636,6 +640,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                             new WorkflowActor.User("alice"),
                                             null);
                                     return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                            .compose(applied -> engine.executionProbe()
+                                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                    .map(idle -> applied))
                                             .compose(result -> {
                                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
 
@@ -729,6 +736,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                         new WorkflowActor.User("alice"),
                                         null),
                                 tx))
+                        .compose(applied -> engine.executionProbe()
+                                .awaitIdle(wfA, IDLE_TIMEOUT)
+                                .map(idle -> applied))
                         .compose(r -> readTaskJsonbColumn(taskIdA, "completed_by"))
                         .map(json -> {
                             ctx.verify(() -> {
@@ -748,6 +758,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                         new WorkflowActor.Service("scheduler-1"),
                                         null),
                                 tx))
+                        .compose(applied -> engine.executionProbe()
+                                .awaitIdle(wfB, IDLE_TIMEOUT)
+                                .map(idle -> applied))
                         .compose(r -> readTaskJsonbColumn(taskIdB, "completed_by"))
                         .map(json -> {
                             ctx.verify(() -> {
@@ -767,6 +780,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                         new WorkflowActor.System("auto-complete"),
                                         null),
                                 tx))
+                        .compose(applied -> engine.executionProbe()
+                                .awaitIdle(wfC, IDLE_TIMEOUT)
+                                .map(idle -> applied))
                         .compose(r -> readTaskJsonbColumn(taskIdC, "completed_by"))
                         .map(json -> {
                             ctx.verify(() -> {
@@ -807,9 +823,15 @@ public class PgWorkflowEngineHumanTaskIT {
                             taskId, "approve", "approved-payload", idemKey, new WorkflowActor.User("alice"), null);
 
                     return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(firstResult -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, firstResult));
-                                return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx));
+                                return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                        .compose(applied -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> applied));
                             })
                             .compose(secondResult -> {
                                 ctx.verify(() -> assertEquals(
@@ -855,6 +877,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                 taskId, "reject", "p", idemKey, new WorkflowActor.User("alice"), null);
 
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd1, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> pool.withTransaction(tx -> engine.taskCompleted(cmd2, tx)))
                                 .map(r -> {
                                     ctx.verify(() -> ctx.failNow(
@@ -888,6 +913,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                 taskId, "approve", "payload-two", idemKey, new WorkflowActor.User("alice"), null);
 
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd1, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> pool.withTransaction(tx -> engine.taskCompleted(cmd2, tx)))
                                 .map(r -> {
                                     ctx.verify(() -> ctx.failNow(
@@ -917,6 +945,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                 taskId, "approve", "p", idemKey, new WorkflowActor.User("bob"), null);
 
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd1, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> pool.withTransaction(tx -> engine.taskCompleted(cmd2, tx)))
                                 .map(r -> {
                                     ctx.verify(() -> ctx.failNow(
@@ -1125,6 +1156,9 @@ public class PgWorkflowEngineHumanTaskIT {
 
                     return pool.withTransaction(tx -> engine.taskReassigned(reassignCmd, tx))
                             .compose(r -> pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx)))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(r -> Future.all(
                                     readTaskJsonbColumn(taskId, "reassigned_by"),
                                     readTaskJsonbColumn(taskId, "completed_by")))
@@ -1188,6 +1222,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                         .execute(Tuple.of(timerId));
                             })
                             .compose(v -> pool.withTransaction(tx -> engine.timerFired(workflowId, timerId, tx)))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(firingResult -> {
                                 ctx.verify(() -> assertEquals(
                                         dev.vertique.workflow.ops.TimerFiringResult.APPLIED,
@@ -1324,6 +1361,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                                 new WorkflowActor.User("alice"),
                                                 null),
                                         tx))
+                        .compose(applied -> engine.executionProbe()
+                                .awaitIdle(wfApprove, IDLE_TIMEOUT)
+                                .map(idle -> applied))
                         .compose(r -> pool.withTransaction(tx -> instanceRepo.findById(wfApprove, tx)))
                         .map(optInst -> {
                             ctx.verify(() -> {
@@ -1345,6 +1385,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                                 new WorkflowActor.User("alice"),
                                                 null),
                                         tx))
+                        .compose(applied -> engine.executionProbe()
+                                .awaitIdle(wfReject, IDLE_TIMEOUT)
+                                .map(idle -> applied))
                         .compose(r -> pool.withTransaction(tx -> instanceRepo.findById(wfReject, tx)))
                         .map(optInst -> {
                             ctx.verify(() -> {
@@ -1390,14 +1433,17 @@ public class PgWorkflowEngineHumanTaskIT {
                 startWorkflow("human-task-void-decision-test", state)
                         .compose(workflowId -> readTaskId(workflowId)
                                 .compose(taskId -> pool.withTransaction(tx -> engine.taskCompleted(
-                                        new TaskCompletionCommand(
-                                                taskId,
-                                                "approve",
-                                                null,
-                                                "idem-void-null-" + UUID.randomUUID(),
-                                                new WorkflowActor.User("alice"),
-                                                null),
-                                        tx))))
+                                                new TaskCompletionCommand(
+                                                        taskId,
+                                                        "approve",
+                                                        null,
+                                                        "idem-void-null-" + UUID.randomUUID(),
+                                                        new WorkflowActor.User("alice"),
+                                                        null),
+                                                tx))
+                                        .compose(applied -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> applied))))
                         .onSuccess(result -> ctx.verify(() -> {
                             assertEquals(TaskMutationResult.APPLIED, result);
                             ctx.completeNow();
@@ -1476,14 +1522,17 @@ public class PgWorkflowEngineHumanTaskIT {
                 startWorkflow("human-task-string-decision-test", state)
                         .compose(workflowId -> readTaskId(workflowId)
                                 .compose(taskId -> pool.withTransaction(tx -> engine.taskCompleted(
-                                        new TaskCompletionCommand(
-                                                taskId,
-                                                "approve",
-                                                "valid-payload",
-                                                "idem-str-nonnull-" + UUID.randomUUID(),
-                                                new WorkflowActor.User("alice"),
-                                                null),
-                                        tx))))
+                                                new TaskCompletionCommand(
+                                                        taskId,
+                                                        "approve",
+                                                        "valid-payload",
+                                                        "idem-str-nonnull-" + UUID.randomUUID(),
+                                                        new WorkflowActor.User("alice"),
+                                                        null),
+                                                tx))
+                                        .compose(applied -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> applied))))
                         .onSuccess(result -> ctx.verify(() -> {
                             assertEquals(TaskMutationResult.APPLIED, result);
                             ctx.completeNow();
@@ -1580,11 +1629,17 @@ public class PgWorkflowEngineHumanTaskIT {
                                 null);
 
                         return pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> {
                                     ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, r));
                                     // Now invoke taskDueFired directly
                                     return pool.withTransaction(tx -> engine.taskDueFired(workflowId, taskId, tx));
                                 })
+                                .compose(stale -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> stale))
                                 .compose(staleResult -> {
                                     ctx.verify(() -> assertEquals(
                                             TaskMutationResult.STALE_NOOP,
@@ -1671,6 +1726,9 @@ public class PgWorkflowEngineHumanTaskIT {
             startWorkflow("human-task-review-test", state)
                     .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
                                     tx -> engine.taskCompleted(complete(taskId, ORIGINAL), tx))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
                                 return Future.all(readTaskStatus(taskId), readInstanceStatus(workflowId));
@@ -1738,6 +1796,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                 // a fresh completion rather than a replay.
                                 TaskCompletionCommand corrected = complete(taskId, REASSIGNED_TO, idemKey);
                                 return pool.withTransaction(tx -> engine.taskCompleted(corrected, tx))
+                                        .compose(applied -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> applied))
                                         .compose(result -> {
                                             ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
                                             return readInstanceStatus(workflowId);
@@ -1765,6 +1826,9 @@ public class PgWorkflowEngineHumanTaskIT {
                     .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
                                     tx -> engine.taskReassigned(reassign(taskId, REASSIGNED_TO, null), tx))
                             .compose(r -> pool.withTransaction(tx -> engine.taskCompleted(complete(taskId, null), tx)))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
                                 return readInstanceStatus(workflowId);
@@ -1890,11 +1954,17 @@ public class PgWorkflowEngineHumanTaskIT {
             startWorkflow("human-task-review-test", state)
                     .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
                                     tx -> engine.taskCompleted(complete(taskId, ORIGINAL, idemKey), tx))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(first -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, first));
                                 // Same key, decision, payload and actor; only the precondition differs.
                                 return pool.withTransaction(
-                                        tx -> engine.taskCompleted(complete(taskId, OTHER, idemKey), tx));
+                                                tx -> engine.taskCompleted(complete(taskId, OTHER, idemKey), tx))
+                                        .compose(replayed -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> replayed));
                             })
                             .compose(replay -> {
                                 ctx.verify(() -> assertEquals(
@@ -1932,6 +2002,9 @@ public class PgWorkflowEngineHumanTaskIT {
             startWorkflow("human-task-review-test", state)
                     .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
                                     tx -> engine.taskCompleted(complete(taskId, null), tx))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(done -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, done));
                                 // OTHER deliberately mismatches the row; the terminal state must win.

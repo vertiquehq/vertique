@@ -56,6 +56,7 @@ import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
@@ -89,6 +90,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineBranchHumanTaskIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_human_task_test")
@@ -287,7 +290,12 @@ public class PgWorkflowEngineBranchHumanTaskIT {
                 null,
                 null,
                 null);
-        return engine.start(cmd).toCompletionStage().toCompletableFuture().join();
+        return engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(r -> started))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
     }
 
     private String instanceStatus(WorkflowInstanceId id) {
@@ -400,6 +408,11 @@ public class PgWorkflowEngineBranchHumanTaskIT {
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
+        engine.executionProbe()
+                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
         assertEquals(TaskMutationResult.APPLIED, taskResult, "task completion must be APPLIED");
 
         // Parent must still be at JOIN (branch B hasn't completed yet).
@@ -412,6 +425,11 @@ public class PgWorkflowEngineBranchHumanTaskIT {
         // single-path 4-arg signal would reject; use the 7-arg branch-aware overload).
         pool.withTransaction(tx ->
                         engine.signal(workflowId, "my-signal", new Object(), "idem-signal-1", "fork", "branch-b", tx))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+        engine.executionProbe()
+                .awaitIdle(workflowId, IDLE_TIMEOUT)
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();

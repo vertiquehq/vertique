@@ -45,6 +45,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -80,6 +81,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineMigrateIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -339,6 +342,8 @@ public class PgWorkflowEngineMigrateIT {
                 null);
 
         engineV1.start(cmd)
+                .compose(id ->
+                        engineV1.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(idle -> id))
                 .compose(id -> {
                     // The v1 instance must be WAITING for "pause" signal.
                     return engineV1.query(id).map(view -> {
@@ -348,7 +353,10 @@ public class PgWorkflowEngineMigrateIT {
                         return id;
                     });
                 })
-                .compose(id -> engineMigrate.migrate(id, 2L).map(v -> id))
+                .compose(id -> engineMigrate
+                        .migrate(id, 2L)
+                        .compose(v -> engineMigrate.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                        .map(idle -> id))
                 .compose(id -> engineMigrate.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "migrate+query must succeed: " + ar.cause());
@@ -404,7 +412,12 @@ public class PgWorkflowEngineMigrateIT {
                 null);
 
         engineV1.start(cmd)
-                .compose(id -> engineMigrate.migrate(id, 2L).map(v -> id))
+                .compose(id ->
+                        engineV1.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(idle -> id))
+                .compose(id -> engineMigrate
+                        .migrate(id, 2L)
+                        .compose(v -> engineMigrate.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                        .map(idle -> id))
                 .compose(id -> engineMigrate.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "migrate must succeed: " + ar.cause());

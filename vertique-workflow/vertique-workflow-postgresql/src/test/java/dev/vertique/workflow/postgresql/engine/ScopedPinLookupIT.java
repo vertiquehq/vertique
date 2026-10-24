@@ -34,6 +34,7 @@ import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
@@ -69,6 +70,7 @@ import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -98,6 +100,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class ScopedPinLookupIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_scoped_pin_test")
@@ -195,6 +199,8 @@ public class ScopedPinLookupIT {
     interface ApprovalHost {
 
         WorkflowOperations workflowOperations();
+
+        WorkflowExecutionProbe workflowExecutionProbe();
 
         TransactionalTaskCallbacks<SqlClient> taskCallbacks();
 
@@ -348,7 +354,9 @@ public class ScopedPinLookupIT {
         // When: the branch recovery sweep runs, and then D2 and A2 are migrated to version 2
         await(inContext(() -> engine.recovery().sweepOnce(Instant.now(), 10)));
         await(inContext(() -> engine.host().workflowOperations().migrate(defaultMigrating, 2L)));
+        await(engine.host().workflowExecutionProbe().awaitIdle(defaultMigrating, IDLE_TIMEOUT));
         await(inContext(() -> engine.host().workflowOperations().migrate(acmeMigrating, 2L)));
+        await(engine.host().workflowExecutionProbe().awaitIdle(acmeMigrating, IDLE_TIMEOUT));
 
         // Then: D joined into notify-default and A into notify-acme
         WorkflowInstance defaultForkRow = row(engine, defaultFork);
@@ -411,27 +419,35 @@ public class ScopedPinLookupIT {
                 version,
                 null,
                 null);
-        return await(inContext(() -> engine.host().workflowOperations().start(command)));
+        WorkflowInstanceId started =
+                await(inContext(() -> engine.host().workflowOperations().start(command)));
+        await(engine.host().workflowExecutionProbe().awaitIdle(started, IDLE_TIMEOUT));
+        return started;
     }
 
     private static void signal(Engine engine, WorkflowInstanceId id, String signalName, String dedupKey)
             throws Exception {
         await(inContext(() -> engine.host().workflowOperations().signal(id, signalName, "payload", dedupKey)));
+        await(engine.host().workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
     }
 
     private static TaskMutationResult completeTask(Engine engine, UUID taskId, String idempotencyKey) throws Exception {
         TaskCompletionCommand command = new TaskCompletionCommand(
                 taskId, "approve", null, idempotencyKey, new WorkflowActor.User("user-1"), null);
-        return await(inContext(
+        TaskMutationResult completed = await(inContext(
                 () -> pool.withTransaction(tx -> engine.host().taskCallbacks().taskCompleted(command, tx))));
+        await(engine.host().workflowExecutionProbe().awaitAllIdle(IDLE_TIMEOUT));
+        return completed;
     }
 
     private static TimerFiringResult fireTimer(Engine engine, WorkflowInstanceId id) throws Exception {
         WorkflowInstance waiting = row(engine, id);
         assertThat(waiting.waitType()).isEqualTo(WaitType.TIMER);
         UUID timerId = UUID.fromString(waiting.waitKey());
-        return await(inContext(
+        TimerFiringResult fired = await(inContext(
                 () -> pool.withTransaction(tx -> engine.host().timerCallbacks().timerFired(id, timerId, tx))));
+        await(engine.host().workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
+        return fired;
     }
 
     private static String planHash(Engine engine, String scopeKey, String definitionId, long version) {

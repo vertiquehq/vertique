@@ -76,6 +76,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineTimerNodeIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     // --- Testcontainers setup ---
 
     static final PostgresContainer db = new PostgresContainer()
@@ -286,6 +288,8 @@ public class PgWorkflowEngineTimerNodeIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(id -> {
                     // Verify recorder was called exactly once
                     ctx.verify(() -> {
@@ -380,10 +384,15 @@ public class PgWorkflowEngineTimerNodeIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(id -> {
                     UUID timerId = insertedTimerId.get();
                     assertNotNull(timerId, "timerId must be set after start");
                     return pool.withTransaction(tx -> engine.timerFired(id, timerId, tx))
+                            .compose(fired -> engine.executionProbe()
+                                    .awaitIdle(id, IDLE_TIMEOUT)
+                                    .map(idle -> fired))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(
                                         TimerFiringResult.APPLIED, result, "timerFired must return APPLIED"));
@@ -441,11 +450,16 @@ public class PgWorkflowEngineTimerNodeIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(id -> {
                     UUID timerId = insertedTimerId.get();
                     // Cancel the workflow first
                     return engine.cancel(id, "test cancel").compose(v -> {
                         return pool.withTransaction(tx -> engine.timerFired(id, timerId, tx))
+                                .compose(fired -> engine.executionProbe()
+                                        .awaitIdle(id, IDLE_TIMEOUT)
+                                        .map(idle -> fired))
                                 .map(result -> {
                                     ctx.verify(() -> assertEquals(
                                             TimerFiringResult.STALE_NOOP,
@@ -484,9 +498,14 @@ public class PgWorkflowEngineTimerNodeIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(id -> {
                     UUID wrongTimerId = UUID.randomUUID();
                     return pool.withTransaction(tx -> engine.timerFired(id, wrongTimerId, tx))
+                            .compose(fired -> engine.executionProbe()
+                                    .awaitIdle(id, IDLE_TIMEOUT)
+                                    .map(idle -> fired))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(
                                         TimerFiringResult.STALE_NOOP,

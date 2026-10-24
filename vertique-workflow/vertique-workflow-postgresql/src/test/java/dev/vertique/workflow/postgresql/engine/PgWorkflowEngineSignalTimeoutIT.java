@@ -80,6 +80,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineSignalTimeoutIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     // --- Testcontainers setup ---
 
     static final PostgresContainer db = new PostgresContainer()
@@ -355,6 +357,10 @@ public class PgWorkflowEngineSignalTimeoutIT {
 
         engineWithTimeout
                 .start(cmd)
+                .compose(started -> engineWithTimeout
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(wfId -> {
                     ctx.verify(() -> {
                         assertEquals(1, recorderCallCount.get(), "WORKFLOW_TIMER recorder must be called once");
@@ -428,12 +434,17 @@ public class PgWorkflowEngineSignalTimeoutIT {
 
         engineWithTimeout
                 .start(cmd)
+                .compose(started -> engineWithTimeout
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     assertNotNull(timerId, "timerId must be set");
                     String dedupKey = "signal-dedup-" + UUID.randomUUID();
                     return engineWithTimeout
                             .signal(wfId, "ok-signal", new OkSignal("test"), dedupKey)
+                            .compose(v -> engineWithTimeout.executionProbe().awaitIdle(wfId, IDLE_TIMEOUT))
                             .compose(v -> {
                                 // Verify workflow advanced to COMPLETED
                                 return pool.withTransaction(tx -> instanceRepo.findById(wfId, tx))
@@ -524,6 +535,10 @@ public class PgWorkflowEngineSignalTimeoutIT {
 
         engineWithoutTimeout
                 .start(cmd)
+                .compose(started -> engineWithoutTimeout
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(wfId -> {
                     // Recorder should never be called for a no-timeout wait
                     ctx.verify(() -> assertEquals(
@@ -531,6 +546,7 @@ public class PgWorkflowEngineSignalTimeoutIT {
                     String dedupKey = "dedup-" + UUID.randomUUID();
                     return engineWithoutTimeout
                             .signal(wfId, "ok-signal", new OkSignal("plain"), dedupKey)
+                            .compose(v -> engineWithoutTimeout.executionProbe().awaitIdle(wfId, IDLE_TIMEOUT))
                             .compose(v -> {
                                 return pool.withTransaction(
                                                 tx -> tx.query("SELECT COUNT(*) AS cnt FROM workflow_timers")
@@ -578,10 +594,18 @@ public class PgWorkflowEngineSignalTimeoutIT {
 
         engineWithTimeout
                 .start(cmd)
+                .compose(started -> engineWithTimeout
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     assertNotNull(timerId, "timerId must be set");
                     return pool.withTransaction(tx -> engineWithTimeout.timerFired(wfId, timerId, tx))
+                            .compose(fired -> engineWithTimeout
+                                    .executionProbe()
+                                    .awaitIdle(wfId, IDLE_TIMEOUT)
+                                    .map(idle -> fired))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(
                                         TimerFiringResult.APPLIED, result, "timerFired must return APPLIED"));

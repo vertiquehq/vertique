@@ -59,6 +59,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -91,6 +92,8 @@ import org.slf4j.LoggerFactory;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class PgWorkflowEnginePayloadConstraintIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -674,6 +677,10 @@ public class PgWorkflowEnginePayloadConstraintIT {
         return validatingEngine
                 .start(new StartCommand(
                         definitionId, contractNameOf(definitionId), payload, key, null, null, null, null, null))
+                .compose(started -> validatingEngine
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
@@ -707,7 +714,9 @@ public class PgWorkflowEnginePayloadConstraintIT {
             WorkflowEngineHandle engine, UUID taskId, String decision, Object payload, String key) {
         TaskCompletionCommand cmd =
                 new TaskCompletionCommand(taskId, decision, payload, key, new WorkflowActor.User("alice"), null);
-        return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx));
+        return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                .compose(result ->
+                        engine.executionProbe().awaitAllIdle(IDLE_TIMEOUT).map(idle -> result));
     }
 
     /**

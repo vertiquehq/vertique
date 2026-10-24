@@ -73,6 +73,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineCancelTimerIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     // --- Testcontainers setup ---
 
     static final PostgresContainer db = new PostgresContainer()
@@ -324,6 +326,10 @@ public class PgWorkflowEngineCancelTimerIT {
 
         timerEngine
                 .start(cmd)
+                .compose(wfId -> timerEngine
+                        .executionProbe()
+                        .awaitIdle(wfId, IDLE_TIMEOUT)
+                        .map(r -> wfId))
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     assertNotNull(timerId, "timerId must be set");
@@ -396,6 +402,10 @@ public class PgWorkflowEngineCancelTimerIT {
 
         signalTimeoutEngine
                 .start(cmd)
+                .compose(wfId -> signalTimeoutEngine
+                        .executionProbe()
+                        .awaitIdle(wfId, IDLE_TIMEOUT)
+                        .map(r -> wfId))
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     assertNotNull(timerId, "timerId must be set");

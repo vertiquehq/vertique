@@ -42,6 +42,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -75,6 +76,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineMigrateIllegalStateIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers ---
 
@@ -473,7 +476,12 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         engineSimpleV1
                 .start(cmd)
                 .compose(id -> engineSimpleV1
+                        .executionProbe()
+                        .awaitIdle(id, IDLE_TIMEOUT)
+                        .map(idle -> id))
+                .compose(id -> engineSimpleV1
                         .signal(id, "go", "payload", "dedup-" + UUID.randomUUID())
+                        .compose(v -> engineSimpleV1.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
                         .compose(v -> engineSimpleV1.query(id).map(view -> {
                             assertEquals(
                                     WorkflowStatus.COMPLETED,
@@ -518,6 +526,10 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
 
         engineSimpleV1
                 .start(cmd)
+                .compose(id -> engineSimpleV1
+                        .executionProbe()
+                        .awaitIdle(id, IDLE_TIMEOUT)
+                        .map(idle -> id))
                 .compose(id -> engineSimpleV1.cancel(id, "test-cancel").map(v -> id))
                 .compose(id -> engineSimpleV1.query(id).map(view -> {
                     assertEquals(
@@ -560,6 +572,10 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
 
         engineForkV1
                 .start(cmd)
+                .compose(id -> engineForkV1
+                        .executionProbe()
+                        .awaitIdle(id, IDLE_TIMEOUT)
+                        .map(idle -> id))
                 .compose(id -> engineForkV1.query(id).map(view -> {
                     // Instance is parked at the join with waitType=JOIN and status=RUNNING
                     // (handleForkNode does not change status to WAITING — it keeps RUNNING

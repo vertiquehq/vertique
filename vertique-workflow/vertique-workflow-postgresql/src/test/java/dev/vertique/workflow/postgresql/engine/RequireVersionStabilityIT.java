@@ -53,6 +53,7 @@ import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -95,6 +96,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class RequireVersionStabilityIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -421,7 +424,9 @@ public class RequireVersionStabilityIT {
                 null,
                 null,
                 null);
-        return engine.start(cmd);
+        return engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started));
     }
 
     /**
@@ -560,6 +565,9 @@ public class RequireVersionStabilityIT {
                                                 new WorkflowActor.User("alice"),
                                                 "v3");
                                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                                .compose(applied -> engine.executionProbe()
+                                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                        .map(idle -> applied))
                                                 .compose(result -> {
                                                     ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
                                                     // Workflow must now be COMPLETED.
@@ -912,6 +920,9 @@ public class RequireVersionStabilityIT {
                         TaskCompletionCommand cmd = new TaskCompletionCommand(
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), "v99");
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .map(result -> {
                                     ctx.verify(() -> assertEquals(
                                             TaskMutationResult.APPLIED,
@@ -954,6 +965,9 @@ public class RequireVersionStabilityIT {
                         TaskCompletionCommand cmd = new TaskCompletionCommand(
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), "v3");
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> findHistoryPayload(workflowId, WorkflowEntryType.TASK_COMPLETED))
                                 .map(payloadJson -> {
                                     ctx.verify(() -> {
@@ -989,6 +1003,9 @@ public class RequireVersionStabilityIT {
                         TaskCompletionCommand cmd = new TaskCompletionCommand(
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), "v99");
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> findHistoryPayload(workflowId, WorkflowEntryType.TASK_COMPLETED))
                                 .map(payloadJson -> {
                                     ctx.verify(() -> {
@@ -1025,6 +1042,9 @@ public class RequireVersionStabilityIT {
                         TaskCompletionCommand cmd = new TaskCompletionCommand(
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), null);
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> findHistoryPayload(workflowId, WorkflowEntryType.TASK_COMPLETED))
                                 .map(payloadJson -> {
                                     ctx.verify(() -> {
@@ -1073,10 +1093,16 @@ public class RequireVersionStabilityIT {
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), "v3");
 
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(firstResult -> {
                                     ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, firstResult));
                                     // Second call with identical command.
-                                    return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx));
+                                    return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                            .compose(replayed -> engine.executionProbe()
+                                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                    .map(idle -> replayed));
                                 })
                                 .compose(secondResult -> {
                                     ctx.verify(() -> assertEquals(
@@ -1121,6 +1147,9 @@ public class RequireVersionStabilityIT {
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), "v4");
 
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd1, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(firstResult -> {
                                     ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, firstResult));
                                     return pool.withTransaction(tx -> engine.taskCompleted(cmd2, tx));

@@ -25,6 +25,7 @@ import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
@@ -45,6 +46,7 @@ import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -75,12 +77,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class WorkflowDarkModeIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_dark_mode_test")
             .withMigration("classpath:db/migration/workflow");
 
     static Pool pool;
     static WorkflowOperations engine;
+    static WorkflowExecutionProbe probe;
     static PgWorkflowBranchRecoveryService recovery;
     static Vertx vertxRef;
 
@@ -184,6 +189,7 @@ public class WorkflowDarkModeIT {
                 component.workflowRegistry());
 
         engine = component.workflowOperations();
+        probe = component.workflowExecutionProbe();
         recovery = new PgWorkflowBranchRecoveryService(
                 component.transactionRunner(),
                 component.branchTokenRepository(),
@@ -240,6 +246,8 @@ public class WorkflowDarkModeIT {
     interface DarkModeTestComponent {
 
         WorkflowOperations workflowOperations();
+
+        WorkflowExecutionProbe workflowExecutionProbe();
 
         WorkflowTransactionRunner<SqlClient> transactionRunner();
 
@@ -306,6 +314,7 @@ public class WorkflowDarkModeIT {
                 null);
 
         runOnDuplicatedContext(() -> engine.start(cmd)
+                .compose(started -> probe.awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 // Post-start: metadata must be NULL (empty ambient capture per FR-WF-CTX-010).
                 .compose(id -> metadataIsNull(id.value()).compose(isNull -> {
                     assertTrue(
@@ -314,7 +323,8 @@ public class WorkflowDarkModeIT {
                 }))
                 // Live signal: instance-owned binder-row drive (S4) triggers the fork.
                 .compose(id -> engine.signal(id, "signal-start", "go", "dark-mode-dedup-start")
-                        .map(v -> id))
+                        .compose(v -> probe.awaitIdle(id, IDLE_TIMEOUT))
+                        .map(idle -> id))
                 .compose(id -> metadataIsNull(id.value()).compose(isNull -> {
                     assertTrue(isNull, "post-signal workflow_instances.metadata must remain NULL");
                     return io.vertx.core.Future.succeededFuture(id);
@@ -366,8 +376,10 @@ public class WorkflowDarkModeIT {
                 null);
 
         runOnDuplicatedContext(() -> engine.start(cmd)
+                .compose(started -> probe.awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(id -> engine.signal(id, "signal-start", "go", "dark-mode-dedup-adapter")
-                        .map(v -> id))
+                        .compose(v -> probe.awaitIdle(id, IDLE_TIMEOUT))
+                        .map(idle -> id))
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
                                 + " current_step_id = 'complete-a', wait_type = NULL, wait_key = NULL,"
                                 + " next_retry_at = $1, version = version + 1"

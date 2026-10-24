@@ -51,6 +51,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
@@ -80,6 +81,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineBranchTimerCallbackIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_timer_callback_test")
@@ -552,6 +555,9 @@ public class PgWorkflowEngineBranchTimerCallbackIT {
         record Outcome(TimerFiringResult result, BranchSnapshot branchA, String siblingStatus, long firedCount) {}
 
         pool.withTransaction(tx -> engine.timerFired(workflowId, timerId, tx))
+                .compose(result -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> result))
                 .compose(result -> branchSnapshotAsync(branchA.id()).compose(branchASnapshot -> branchStatusAsync(
                                 branchB.id())
                         .compose(siblingStatus -> countHistoryAsync(workflowId, WorkflowEntryType.BRANCH_TIMER_FIRED)
@@ -609,6 +615,9 @@ public class PgWorkflowEngineBranchTimerCallbackIT {
         record Outcome(TimerFiringResult result, BranchSnapshot branchA, String siblingStatus, long timeoutCount) {}
 
         pool.withTransaction(tx -> engine.timerFired(workflowId, timeoutTimerId, tx))
+                .compose(result -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> result))
                 .compose(result -> branchSnapshotAsync(branchA.id())
                         .compose(branchASnapshot -> branchStatusAsync(branchB.id())
                                 .compose(siblingStatus -> countHistoryAsync(
@@ -640,6 +649,9 @@ public class PgWorkflowEngineBranchTimerCallbackIT {
         record Outcome(TimerFiringResult result, long ignoredCount) {}
 
         pool.withTransaction(tx -> engine.timerFired(workflowId, timerId, tx))
+                .compose(result -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> result))
                 .compose(result -> countHistoryAsync(workflowId, WorkflowEntryType.BRANCH_LATE_CALLBACK_IGNORED)
                         .map(ignoredCount -> new Outcome(result, ignoredCount)))
                 .onComplete(ctx.succeeding(o -> ctx.verify(() -> {
