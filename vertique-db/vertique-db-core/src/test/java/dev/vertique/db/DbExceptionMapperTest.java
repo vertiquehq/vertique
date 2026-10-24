@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import dev.vertique.db.exception.DataAccessException;
 import dev.vertique.db.exception.InvalidDataAccessUsageException;
+import dev.vertique.db.exception.TransactionDeadlineExceededException;
+import dev.vertique.db.exception.TransientDataAccessException;
 import dev.vertique.db.exception.UniqueConstraintViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -123,6 +125,15 @@ class DbExceptionMapperTest {
     void existingDataAccessExceptionPassesThrough() {
         DataAccessException dae = new DataAccessException("x");
         assertSame(dae, new DbExceptionMapper().translate(dae, "op"));
+    }
+
+    @Test
+    @DisplayName("passes a TransactionDeadlineExceededException through unchanged and it is not transient")
+    void transactionDeadlineExceededExceptionPassesThroughUntranslated() {
+        var deadline = new TransactionDeadlineExceededException("deadline exceeded");
+
+        assertSame(deadline, new DbExceptionMapper().translate(deadline, "op"));
+        assertFalse(TransientDataAccessException.class.isAssignableFrom(TransactionDeadlineExceededException.class));
     }
 
     @Test

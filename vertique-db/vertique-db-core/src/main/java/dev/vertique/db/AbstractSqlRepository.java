@@ -3,13 +3,18 @@
 
 package dev.vertique.db;
 
+import dev.vertique.db.exception.TransactionDeadlineExceededException;
 import dev.vertique.db.query.OffsetPagedQuery;
 import dev.vertique.db.query.PagedQuery;
 import dev.vertique.db.query.Query;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.SqlConnection;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.function.Function;
 
@@ -113,10 +118,82 @@ public abstract class AbstractSqlRepository implements SqlRepository {
      */
     <T> Future<T> executeTransaction(
             TransactionOptions options, String operationName, Function<SqlConnection, Future<T>> fn) {
+        return executeTransaction(options, operationName, null, fn);
+    }
+
+    /**
+     * Executes a transaction bounded by an optional deadline. Without a deadline this is the plain
+     * transaction path. With one, the work receives a {@link DeadlineGuardedConnection}; if the
+     * work's future has not completed when the deadline passes, the guarded connection is marked
+     * expired and the future handed to {@code pool.withTransaction} fails with
+     * {@link TransactionDeadlineExceededException}, which {@code withTransaction} then rolls back. The
+     * exception is returned untranslated.
+     *
+     * @param options       the transaction options (isolation level, read-only flag)
+     * @param operationName the exception-translation context
+     * @param deadline      the time budget measured from this call, or {@code null} for none
+     * @param fn            the function to execute within the transaction
+     * @param <T>           the result type
+     * @return a future that completes with the function's result on success, or fails with a
+     *         translated exception (or the deadline exception, untranslated) on failure
+     */
+    <T> Future<T> executeTransaction(
+            TransactionOptions options,
+            String operationName,
+            Duration deadline,
+            Function<SqlConnection, Future<T>> fn) {
         Objects.requireNonNull(operationName, "operationName");
-        return pool.withTransaction(
-                        conn -> applyTransactionOptions(conn, options).compose(v -> fn.apply(conn)))
-                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, operationName)));
+        Function<SqlConnection, Future<T>> work;
+        if (deadline != null) {
+            long startNanos = System.nanoTime();
+            long budgetNanos = deadline.toNanos();
+            work = conn -> runWithDeadline(conn, options, startNanos, budgetNanos, fn);
+        } else {
+            work = conn -> applyTransactionOptions(conn, options).compose(v -> fn.apply(conn));
+        }
+        return pool.withTransaction(work::apply).recover(t -> {
+            if (t instanceof TransactionDeadlineExceededException) {
+                return Future.failedFuture(t);
+            }
+            return Future.failedFuture(exceptionMapper.translate(t, operationName));
+        });
+    }
+
+    private <T> Future<T> runWithDeadline(
+            SqlConnection conn,
+            TransactionOptions options,
+            long startNanos,
+            long budgetNanos,
+            Function<SqlConnection, Future<T>> fn) {
+        long remainingNanos = budgetNanos - (System.nanoTime() - startNanos);
+        if (remainingNanos <= 0) {
+            return Future.failedFuture(
+                    new TransactionDeadlineExceededException("Transaction deadline exceeded before the work started"));
+        }
+        Context context = Vertx.currentContext();
+        if (context == null) {
+            return Future.failedFuture(
+                    new IllegalStateException("A deadline-bounded transaction must run on a Vert.x context"));
+        }
+        Vertx vertx = context.owner();
+        DeadlineGuardedConnection guarded = new DeadlineGuardedConnection(conn);
+        Promise<T> result = Promise.promise();
+        long delayMs = Math.max(1L, (remainingNanos + 999_999L) / 1_000_000L);
+        long timerId = vertx.setTimer(delayMs, id -> {
+            if (!result.future().isComplete()) {
+                guarded.expire();
+                result.tryFail(new TransactionDeadlineExceededException("Transaction deadline exceeded"));
+            }
+        });
+        applyTransactionOptions(conn, options).compose(v -> fn.apply(guarded)).onComplete(ar -> {
+            vertx.cancelTimer(timerId);
+            if (ar.succeeded()) {
+                result.tryComplete(ar.result());
+            } else {
+                result.tryFail(ar.cause());
+            }
+        });
+        return result.future();
     }
 
     /**

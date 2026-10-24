@@ -5,6 +5,7 @@ package dev.vertique.db;
 
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlConnection;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.function.Function;
 
@@ -32,13 +33,16 @@ import java.util.function.Function;
  * }</pre>
  *
  * <p>The transaction auto-commits on success and auto-rolls back on failure. Exceptions are
- * translated via the repository's {@link DbExceptionMapper}.
+ * translated via the repository's {@link DbExceptionMapper}, except
+ * {@link dev.vertique.db.exception.TransactionDeadlineExceededException}, which is returned
+ * unchanged.
  */
 public class TransactionBuilder {
 
     private final AbstractSqlRepository repository;
     private IsolationLevel isolationLevel;
     private boolean readOnly;
+    private Duration deadline;
 
     /**
      * Creates a new builder for the given repository. Package-private: only
@@ -91,6 +95,38 @@ public class TransactionBuilder {
     }
 
     /**
+     * Bounds this transaction. The deadline is measured on a monotonic clock from the
+     * {@code execute} call, including any wait for a pooled connection. If the work's future has not
+     * completed by then, the transaction fails with
+     * {@link dev.vertique.db.exception.TransactionDeadlineExceededException} and is rolled back; a
+     * budget already spent before the work starts fails the transaction without running the work.
+     * Work that completed before the deadline commits, even when the commit ends after it.
+     *
+     * <p>The work receives a connection that refuses every statement executed after the deadline
+     * with {@link dev.vertique.db.exception.TransactionDeadlineExceededException}, so a
+     * continuation that resumes late writes nothing, neither in this transaction nor in the pool's
+     * next holder. That connection always refuses {@code prepare()}, {@code begin()} and
+     * {@code close()} with {@link dev.vertique.db.exception.InvalidDataAccessUsageException}; a
+     * consequence is that {@code Query.stream(...)}, which prepares its statement, is unavailable in a
+     * deadline-bounded transaction.
+     *
+     * <p>A statement already running in the database at the deadline finishes or fails first; the
+     * rollback queues behind it. No database timeout is set and no cancel request is sent.
+     *
+     * @param duration the time budget; must be positive
+     * @return this builder
+     * @throws IllegalArgumentException if {@code duration} is zero or negative
+     */
+    public TransactionBuilder deadline(Duration duration) {
+        Objects.requireNonNull(duration, "duration");
+        if (duration.isZero() || duration.isNegative()) {
+            throw new IllegalArgumentException("deadline must be positive: " + duration);
+        }
+        this.deadline = duration;
+        return this;
+    }
+
+    /**
      * Executes the given function within a transaction configured with the options set on this
      * builder. The transaction auto-commits on success and auto-rolls back on failure. Exceptions
      * are translated via the repository's exception mapper with the generic
@@ -104,7 +140,8 @@ public class TransactionBuilder {
      *         but a custom mapper may return any {@link Throwable})
      */
     public <T> Future<T> execute(Function<SqlConnection, Future<T>> fn) {
-        return repository.executeTransaction(new TransactionOptions(isolationLevel, readOnly), fn);
+        return repository.executeTransaction(
+                new TransactionOptions(isolationLevel, readOnly), "Transaction failed", deadline, fn);
     }
 
     /**
@@ -123,6 +160,7 @@ public class TransactionBuilder {
      *         but a custom mapper may return any {@link Throwable})
      */
     public <T> Future<T> execute(String operationName, Function<SqlConnection, Future<T>> fn) {
-        return repository.executeTransaction(new TransactionOptions(isolationLevel, readOnly), operationName, fn);
+        return repository.executeTransaction(
+                new TransactionOptions(isolationLevel, readOnly), operationName, deadline, fn);
     }
 }
