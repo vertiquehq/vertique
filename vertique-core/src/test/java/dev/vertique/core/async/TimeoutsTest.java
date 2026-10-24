@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 @ExtendWith(VertxExtension.class)
-class ShutdownsTest {
+class TimeoutsTest {
 
     @Nested
     @DisplayName("awaitCondition()")
@@ -33,7 +33,7 @@ class ShutdownsTest {
         @Test
         @DisplayName("returns immediately when the condition is already true")
         void succeedsImmediately(Vertx vertx) {
-            Future<Void> result = Shutdowns.awaitCondition(vertx, () -> true, 1L, 20L, "drain");
+            Future<Void> result = Timeouts.awaitCondition(vertx, () -> true, 1L, 20L, "drain");
 
             assertTrue(result.succeeded());
         }
@@ -44,7 +44,7 @@ class ShutdownsTest {
             AtomicBoolean ready = new AtomicBoolean();
             vertx.setTimer(10L, id -> ready.set(true));
 
-            Shutdowns.awaitCondition(vertx, ready::get, 1L, 500L, "drain")
+            Timeouts.awaitCondition(vertx, ready::get, 1L, 500L, "drain")
                     .toCompletionStage()
                     .toCompletableFuture()
                     .get(1, TimeUnit.SECONDS);
@@ -54,7 +54,7 @@ class ShutdownsTest {
         @DisplayName("times out while the condition remains false")
         void timesOut(Vertx vertx) throws Exception {
             AtomicInteger checks = new AtomicInteger();
-            Throwable failure = awaitFailure(Shutdowns.awaitCondition(
+            Throwable failure = awaitFailure(Timeouts.awaitCondition(
                     vertx,
                     () -> {
                         checks.incrementAndGet();
@@ -76,7 +76,7 @@ class ShutdownsTest {
 
             assertSame(
                     cause,
-                    awaitFailure(Shutdowns.awaitCondition(
+                    awaitFailure(Timeouts.awaitCondition(
                             vertx,
                             () -> {
                                 throw cause;
@@ -93,9 +93,9 @@ class ShutdownsTest {
 
         @Test
         @DisplayName("preserves a successful operation result")
-        void preservesSuccess(Vertx vertx) throws Exception {
+        void preservesSuccess() throws Exception {
             Promise<String> operation = Promise.promise();
-            Future<String> result = Shutdowns.withTimeout(vertx, operation.future(), 500L, "close");
+            Future<String> result = Timeouts.withTimeout(operation.future(), 500L, "close");
             operation.complete("closed");
 
             assertEquals(
@@ -104,17 +104,17 @@ class ShutdownsTest {
 
         @Test
         @DisplayName("preserves an operation failure")
-        void preservesFailure(Vertx vertx) throws Exception {
+        void preservesFailure() throws Exception {
             RuntimeException cause = new RuntimeException("close failed");
 
-            assertSame(cause, awaitFailure(Shutdowns.withTimeout(vertx, Future.failedFuture(cause), 500L, "close")));
+            assertSame(cause, awaitFailure(Timeouts.withTimeout(Future.failedFuture(cause), 500L, "close")));
         }
 
         @Test
         @DisplayName("fails when an operation exceeds its deadline and ignores late completion")
-        void timesOutAndIgnoresLateCompletion(Vertx vertx) throws Exception {
+        void timesOutAndIgnoresLateCompletion() throws Exception {
             Promise<Void> operation = Promise.promise();
-            Future<Void> result = Shutdowns.withTimeout(vertx, operation.future(), 10L, "consumer close");
+            Future<Void> result = Timeouts.withTimeout(operation.future(), 10L, "consumer close");
 
             Throwable failure = awaitFailure(result);
             assertInstanceOf(TimeoutException.class, failure);
@@ -126,10 +126,9 @@ class ShutdownsTest {
 
         @Test
         @DisplayName("rejects a non-positive timeout")
-        void rejectsNonPositiveTimeout(Vertx vertx) {
+        void rejectsNonPositiveTimeout() {
             assertThrows(
-                    IllegalArgumentException.class,
-                    () -> Shutdowns.withTimeout(vertx, Future.succeededFuture(), 0L, "close"));
+                    IllegalArgumentException.class, () -> Timeouts.withTimeout(Future.succeededFuture(), 0L, "close"));
         }
     }
 

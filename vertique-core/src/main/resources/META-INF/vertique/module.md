@@ -45,14 +45,14 @@ calls.
 
 ## Core Concepts
 
-### Bounded asynchronous shutdown
+### Asynchronous timeouts
 
-`dev.vertique.core.async.Shutdowns` provides shared timeout boundaries for shutdown work:
+`dev.vertique.core.async.Timeouts` provides shared timeout boundaries for asynchronous work:
 
 - `awaitCondition(vertx, condition, pollIntervalMs, timeoutMs, operation)` polls a condition on a
   Vert.x timer, completing when it becomes true or failing with `TimeoutException` at the deadline.
-- `withTimeout(vertx, future, timeoutMs, description)` returns the future's result or failure,
-  bounded by the deadline.
+- `withTimeout(future, timeoutMs, description)` returns the future's result or failure, bounded by
+  the timeout.
 
 Both timeout values must be positive. A timeout does not cancel the underlying asynchronous
 operation, so the caller still owns cleanup and failure policy. For example, a consumer can report

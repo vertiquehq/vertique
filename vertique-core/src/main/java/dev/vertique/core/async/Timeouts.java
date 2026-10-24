@@ -12,10 +12,10 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 
-/** Shared timeout helpers for asynchronous shutdown work. */
-public final class Shutdowns {
+/** Shared timeout helpers for asynchronous work. */
+public final class Timeouts {
 
-    private Shutdowns() {}
+    private Timeouts() {}
 
     /**
      * Completes when {@code condition} becomes true, polling it on the Vert.x context until the
@@ -25,7 +25,7 @@ public final class Shutdowns {
      * timer is cancelled on success, timeout, or condition failure.
      *
      * @param vertx the Vert.x instance that owns the polling timer
-     * @param condition the condition that signals shutdown work has drained
+     * @param condition the condition that signals the awaited work is complete
      * @param pollIntervalMs time between condition checks; must be positive
      * @param timeoutMs maximum time to wait; must be positive
      * @param operation short description included in timeout failures
@@ -82,43 +82,28 @@ public final class Shutdowns {
 
     /**
      * Returns a future that mirrors {@code operation}, failing with {@link TimeoutException} if it
-     * does not settle within the deadline.
+     * does not settle within the timeout.
      *
      * <p>Timing out does not cancel the underlying operation. It may still settle later, but its
      * result is ignored after the returned future times out.
      *
-     * @param vertx the Vert.x instance that owns the timeout timer
      * @param operation the asynchronous operation to bound
      * @param timeoutMs maximum time to wait; must be positive
      * @param description short description included in timeout failures
      * @param <T> the result type
      * @return a future with the same result or failure, or a timeout failure
      */
-    public static <T> Future<T> withTimeout(Vertx vertx, Future<T> operation, long timeoutMs, String description) {
-        Objects.requireNonNull(vertx, "vertx");
+    public static <T> Future<T> withTimeout(Future<T> operation, long timeoutMs, String description) {
         Objects.requireNonNull(operation, "operation");
         requirePositive(timeoutMs, "timeoutMs");
         Objects.requireNonNull(description, "description");
 
-        Promise<T> promise = Promise.promise();
-        AtomicBoolean settled = new AtomicBoolean();
-        long timeoutTimerId = vertx.setTimer(timeoutMs, id -> {
-            if (settled.compareAndSet(false, true)) {
-                promise.fail(timeout(description, timeoutMs));
+        return operation.timeout(timeoutMs, TimeUnit.MILLISECONDS).recover(cause -> {
+            if (cause instanceof TimeoutException) {
+                return Future.failedFuture(timeout(description, timeoutMs));
             }
+            return Future.failedFuture(cause);
         });
-        operation.onComplete(ar -> {
-            if (!settled.compareAndSet(false, true)) {
-                return;
-            }
-            vertx.cancelTimer(timeoutTimerId);
-            if (ar.succeeded()) {
-                promise.complete(ar.result());
-            } else {
-                promise.fail(ar.cause());
-            }
-        });
-        return promise.future();
     }
 
     private static TimeoutException timeout(String operation, long timeoutMs) {

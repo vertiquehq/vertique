@@ -5,7 +5,7 @@ package dev.vertique.kafka;
 
 import dev.vertique.context.DispatchEnvelopeBuilder;
 import dev.vertique.context.InboundExecutionContextScope;
-import dev.vertique.core.async.Shutdowns;
+import dev.vertique.core.async.Timeouts;
 import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.payload.PayloadSources;
 import dev.vertique.kafka.interceptor.KafkaConsumerCompletedEvent;
@@ -291,7 +291,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                 .onFailure(cause -> log.warn("[{}] Failed to pause partitions during shutdown", entry.name(), cause));
 
         // Reserve time within Vert.x's shutdown deadline for closing the Kafka consumer itself.
-        Shutdowns.awaitCondition(
+        Timeouts.awaitCondition(
                         vertx,
                         () -> inFlight.get() <= 0,
                         100L,
@@ -311,8 +311,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                         errorHandler.retryCounts.clear();
                     }
                     closeRouteSerdes();
-                    Shutdowns.withTimeout(
-                                    vertx,
+                    Timeouts.withTimeout(
                                     consumer.close(),
                                     kafkaCloseTimeoutMs,
                                     "Kafka consumer '" + entry.name() + "' close")

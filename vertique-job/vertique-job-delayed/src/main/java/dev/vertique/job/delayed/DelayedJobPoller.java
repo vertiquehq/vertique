@@ -5,7 +5,7 @@ package dev.vertique.job.delayed;
 
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.async.Combinators;
-import dev.vertique.core.async.Shutdowns;
+import dev.vertique.core.async.Timeouts;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.DeferredExecutionOrigin;
 import dev.vertique.core.context.DispatchBoundary;
@@ -443,8 +443,7 @@ public class DelayedJobPoller extends AbstractVerticle {
         // contain nothing at all.
         Combinators.joinAllSwallow(
                         pending,
-                        resources -> Shutdowns.withTimeout(
-                                vertx,
+                        resources -> Timeouts.withTimeout(
                                 resources.logFlusher().drain(),
                                 shutdownFlushTimeoutMs,
                                 "shutdown job-log flush for queue='" + queue + "'"),
