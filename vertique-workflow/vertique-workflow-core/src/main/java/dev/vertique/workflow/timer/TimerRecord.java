@@ -39,8 +39,7 @@ import java.util.UUID;
  * @param fireAt               the UTC instant at which the timer is scheduled to fire
  * @param status               current lifecycle status of the timer
  * @param delayedJobExecutionId the delayed-job execution id used to schedule and (if needed)
- *     cancel the underlying delayed job; never null — the timer row is not inserted until the
- *     delayed job is successfully scheduled
+ *     cancel the underlying delayed job; null for a timer that is linked to a command instead
  * @param scheduledAt          UTC timestamp when the timer row was inserted
  * @param firedAt              UTC timestamp when the timer was successfully fired; null unless
  *     {@code status == FIRED}
@@ -65,6 +64,8 @@ import java.util.UUID;
  *     was captured at timer-create time. The {@code {"context": {...}}} carrier shape is
  *     persisted in {@code workflow_timers.metadata JSONB} via {@link DurableMetadata#toCarrier()}
  *     and read back via {@link DurableMetadata#fromCarrier(io.vertx.core.json.JsonObject)}.
+ * @param commandId the id of the command this timer row is linked to; null for timers that are not
+ *     linked to a command
  */
 public record TimerRecord(
         UUID timerId,
@@ -72,7 +73,7 @@ public record TimerRecord(
         String stepId,
         Instant fireAt,
         TimerStatus status,
-        UUID delayedJobExecutionId,
+        @Nullable UUID delayedJobExecutionId,
         Instant scheduledAt,
         @Nullable Instant firedAt,
         @Nullable Instant cancelledAt,
@@ -83,7 +84,68 @@ public record TimerRecord(
         @Nullable UUID branchTokenId,
         @Nullable String forkStepId,
         @Nullable String branchId,
-        DurableMetadata metadata) {
+        DurableMetadata metadata,
+        @Nullable Long commandId) {
+
+    /**
+     * Creates a timer record that is not linked to a command.
+     *
+     * @param timerId the timer id
+     * @param workflowId the owning instance
+     * @param stepId the creating step
+     * @param fireAt the scheduled fire instant
+     * @param status the lifecycle status
+     * @param delayedJobExecutionId the delayed-job execution id
+     * @param scheduledAt the insert timestamp
+     * @param firedAt the fire timestamp, or null
+     * @param cancelledAt the cancel timestamp, or null
+     * @param failedAt the failure timestamp, or null
+     * @param failureReason the failure description, or null
+     * @param purpose the timer purpose
+     * @param taskId the task id, or null
+     * @param branchTokenId the branch token id, or null
+     * @param forkStepId the fork step id, or null
+     * @param branchId the branch id, or null
+     * @param metadata the durable metadata
+     */
+    public TimerRecord(
+            UUID timerId,
+            WorkflowInstanceId workflowId,
+            String stepId,
+            Instant fireAt,
+            TimerStatus status,
+            @Nullable UUID delayedJobExecutionId,
+            Instant scheduledAt,
+            @Nullable Instant firedAt,
+            @Nullable Instant cancelledAt,
+            @Nullable Instant failedAt,
+            @Nullable String failureReason,
+            TimerPurpose purpose,
+            @Nullable UUID taskId,
+            @Nullable UUID branchTokenId,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            DurableMetadata metadata) {
+        this(
+                timerId,
+                workflowId,
+                stepId,
+                fireAt,
+                status,
+                delayedJobExecutionId,
+                scheduledAt,
+                firedAt,
+                cancelledAt,
+                failedAt,
+                failureReason,
+                purpose,
+                taskId,
+                branchTokenId,
+                forkStepId,
+                branchId,
+                metadata,
+                null);
+    }
 
     /**
      * Validates {@code purpose} is non-null and that the {@code taskId}-purpose pairing rules

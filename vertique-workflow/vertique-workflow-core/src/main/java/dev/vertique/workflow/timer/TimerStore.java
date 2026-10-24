@@ -27,6 +27,9 @@ public interface TimerStore<TX> {
      * Inserts a new timer row with {@link TimerStatus#SCHEDULED} status within the given
      * transaction.
      *
+     * <p>The record may carry a command link ({@code commandId}) instead of a delayed-job execution
+     * id; both are persisted as given and may be null.
+     *
      * <p>The timer id in {@code record} must be unique. Implementations should propagate any
      * unique-constraint violation as a failed {@link Future}.
      *

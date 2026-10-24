@@ -131,6 +131,7 @@ The two documents are written in one transaction but are **not** interchangeable
 
 ## Operational Notes
 
+- Timer rows written by this module carry no command link (`command_id` is null) and always carry a delayed-job execution id; the timer record accepts a null execution id and a command id for later use, but this module still schedules, tracks and recovers timers only through delayed jobs.
 - The timer row is the source of truth. Delayed jobs are the scheduling mechanism.
 - Transactions that touch both timer rows and workflow instance rows must lock timer rows first to avoid deadlocks with the firing executor.
 - Timer jobs may be retried by delayed-job infrastructure. The executor is idempotent and treats already-closed timers as no-ops.

@@ -16,6 +16,7 @@ package dev.vertique.workflow.state;
  *   <li>{@link #COMPENSATED} — terminal; all compensation intents recorded</li>
  *   <li>{@link #CANCELLED} — terminal; cancelled via management API</li>
  *   <li>{@link #EXPIRED} — terminal; TTL exceeded (cycle 2+)</li>
+ *   <li>{@link #PENDING} — accepted but not yet initialized; not terminal</li>
  * </ul>
  */
 public enum WorkflowStatus {
@@ -41,5 +42,12 @@ public enum WorkflowStatus {
     CANCELLED,
 
     /** Terminal: the workflow exceeded its configured TTL (cycle 2+). */
-    EXPIRED
+    EXPIRED,
+
+    /**
+     * The instance row exists but has not been initialized: it has no state document and no
+     * current step yet. Not terminal; it counts as live for definition retirement and business-key
+     * uniqueness.
+     */
+    PENDING
 }

@@ -190,7 +190,8 @@ public final class WorkflowTimerSideEffectRecorder implements WorkflowSideEffect
                     intent.correlation().branchTokenId(),
                     intent.correlation().forkStepId(),
                     intent.correlation().branchId(),
-                    recoveryMetadata); // recovery-state copy, signed for the workflow-timer carrier
+                    recoveryMetadata, // recovery-state copy, signed for the workflow-timer carrier
+                    null); // no command link: this timer fires through a delayed job
             return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
         });
     }

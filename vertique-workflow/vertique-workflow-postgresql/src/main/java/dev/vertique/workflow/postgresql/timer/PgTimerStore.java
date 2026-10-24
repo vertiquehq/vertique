@@ -104,12 +104,12 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
 
         this.sqlInsert = "INSERT INTO " + timers
                 + " (timer_id, workflow_id, step_id, status, fire_at, delayed_job_execution_id,"
-                + " scheduled_at, purpose, task_id, branch_token_id, fork_step_id, branch_id, metadata)"
-                + " VALUES ($1, $2, $3, 'SCHEDULED', $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)";
+                + " scheduled_at, purpose, task_id, branch_token_id, fork_step_id, branch_id, metadata, command_id)"
+                + " VALUES ($1, $2, $3, 'SCHEDULED', $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)";
 
         this.sqlSelectAllColumns = "SELECT timer_id, workflow_id, step_id, status, fire_at, delayed_job_execution_id,"
                 + " scheduled_at, fired_at, cancelled_at, failed_at, failure_reason,"
-                + " purpose, task_id, branch_token_id, fork_step_id, branch_id, metadata"
+                + " purpose, task_id, branch_token_id, fork_step_id, branch_id, metadata, command_id"
                 + " FROM " + timers;
 
         this.sqlLockForFiring = sqlSelectAllColumns + " WHERE timer_id = $1 FOR UPDATE";
@@ -150,7 +150,8 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
      * <p>Inserts a {@code SCHEDULED} row. Explicitly bound columns are
      * {@code timer_id}, {@code workflow_id}, {@code step_id}, {@code fire_at},
      * {@code delayed_job_execution_id}, {@code scheduled_at}, {@code purpose}, {@code task_id},
-     * {@code branch_token_id}, {@code fork_step_id}, {@code branch_id}, and {@code metadata};
+     * {@code branch_token_id}, {@code fork_step_id}, {@code branch_id}, {@code metadata} and
+     * {@code command_id} (null for timers not linked to a command);
      * {@code status} is the literal {@code 'SCHEDULED'}.
      */
     @Override
@@ -167,7 +168,8 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
                 record.branchTokenId(),
                 record.forkStepId(),
                 record.branchId(),
-                toJsonObject(record.metadata()));
+                toJsonObject(record.metadata()),
+                record.commandId());
         return tx.preparedQuery(sqlInsert)
                 .execute(params)
                 .<Void>mapEmpty()
@@ -398,7 +400,8 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
                 branchTokenId,
                 forkStepId,
                 branchId,
-                metadata);
+                metadata,
+                row.getLong("command_id"));
     }
 
     /**

@@ -28,5 +28,11 @@ public enum TaskStatus {
     CANCELLED,
 
     /** The due-date timer fired before the task was completed. */
-    EXPIRED
+    EXPIRED,
+
+    /**
+     * A decision has been reserved for the task and is being applied. The task is not
+     * reassignable while in this state.
+     */
+    COMPLETING
 }

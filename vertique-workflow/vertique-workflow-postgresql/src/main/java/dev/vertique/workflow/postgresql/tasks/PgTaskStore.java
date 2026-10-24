@@ -237,10 +237,14 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         // natively. Field names match what parseDecisions reads back.
         JsonArray decisionsJson = new JsonArray();
         for (TaskDecisionDescriptor d : record.decisions()) {
-            decisionsJson.add(new JsonObject()
+            JsonObject decision = new JsonObject()
                     .put("name", d.name())
                     .put("payloadTypeName", d.payloadTypeName())
-                    .put("nextStepId", d.nextStepId()));
+                    .put("nextStepId", d.nextStepId());
+            if (d.payloadSchema() != null) {
+                decision.put("payloadSchema", d.payloadSchema());
+            }
+            decisionsJson.add(decision);
         }
 
         TaskAssignment assignment = record.assignment();
@@ -592,7 +596,8 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
             }
             TaskStatus currentStatus = TaskStatus.valueOf(it.next().getString("status"));
             return switch (currentStatus) {
-                case COMPLETED -> TaskTransition.LOST_TO_COMPLETED;
+                // COMPLETING: a decision is already reserved; callers treat LOST_* as "not waiting".
+                case COMPLETED, COMPLETING -> TaskTransition.LOST_TO_COMPLETED;
                 case CANCELLED -> TaskTransition.LOST_TO_CANCELLED;
                 case EXPIRED -> TaskTransition.LOST_TO_EXPIRED;
                 case OPEN ->
@@ -749,7 +754,10 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
             for (int i = 0; i < json.size(); i++) {
                 JsonObject obj = json.getJsonObject(i);
                 out.add(new TaskDecisionDescriptor(
-                        obj.getString("name"), obj.getString("payloadTypeName"), obj.getString("nextStepId")));
+                        obj.getString("name"),
+                        obj.getString("payloadTypeName"),
+                        obj.getString("nextStepId"),
+                        obj.getJsonObject("payloadSchema")));
             }
             return List.copyOf(out);
         } catch (Exception e) {
