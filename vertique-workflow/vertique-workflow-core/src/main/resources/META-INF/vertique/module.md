@@ -167,6 +167,22 @@ Instance state is modeled as a single current snapshot plus an append-only histo
 
 Starts require an idempotency key. `StartCommand` has nine components: `definitionId`, `contractName`, `payload`, `idempotencyKey`, `businessKey`, `subjectRef`, `requestedDefinitionVersion`, `startScope` and `requestedTargetScope`; there is no shorter constructor, so a direct caller passes `null` for the optional components. `contractName` names the contract the caller started through and must not be blank. `requestedDefinitionVersion` may pin a new instance to a specific registered version; when omitted, the current version is used. A non-null `startScope` or `requestedTargetScope` must be nonblank, at most 255 code points and free of control characters and unpaired surrogates, or the constructor throws `IllegalArgumentException` that names the field and never repeats the value. A `null` `startScope` is the default scope. Idempotency and dedup keys are scoped to what they protect — a start key is scoped to the start scope and the definition id and a signal dedup key is scoped to the workflow instance; see `dev.vertique:vertique-workflow-postgresql` for the complete key-scope table across all operations.
 
+### Execution Probe
+
+`WorkflowExecutionProbe` (package `dev.vertique.workflow.ops`) waits until recorded work has run; it is meant for tests and operational probes:
+
+```java
+Future<IdleReport> awaitIdle(WorkflowInstanceId id, Duration timeout);
+Future<IdleReport> awaitAllIdle(Duration timeout);
+
+record IdleReport(List<PendingCommand> deferred, List<PendingCommand> stuck,
+                  List<PendingCommand> parked, List<PendingCommand> notYetAvailable) {}
+```
+
+An instance is idle when it has no command in flight (claimed under a live lease) and no command an executor could claim now: one at the head of its queue, not held back and available. Availability alone is not the rule: a command behind a blocking head, a timer before its fire time, and a due-date or reminder timer whose task is completing do not hold the probe. The probe polls the database at short intervals and reads the database clock, so it observes work recorded by any node. It completes with a report of the commands it stopped on, each list ordered by instance and sequence: `deferred` (deferred commands that cannot be claimed yet), `parked`, and `notYetAvailable` (the other pending and claimed commands that cannot be claimed now). `stuck` is empty until stuck detection exists; until then dead-lettered commands appear in no list, and settled commands never do. `PendingCommand` (package `dev.vertique.workflow.history`) carries the instance id, sequence, kind, state, `availableAt`, `attempts` and a nullable `lastError`; it never carries a payload.
+
+The future fails with `TimeoutException` when the wait elapses; the message names the instance (or "all instances") and the number of runnable commands left. A non-positive timeout is refused with `IllegalArgumentException`. Obtain the probe from `WorkflowEngineHandle.executionProbe()` or from the Dagger graph; both come from `vertique-workflow-engine`. Before anything records commands the probe completes at once with an empty report.
+
 ### Scope Keys on Instances, Tasks And Filters
 
 `WorkflowScopes.DEFAULT` (`"default"`) is the reserved default scope. It is a value, not a stored record: it always exists, needs no registration, and every row written without a scope belongs to it.

@@ -27,6 +27,7 @@ import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegist
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.CompleteNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
@@ -186,7 +187,8 @@ class WorkflowEngineStartTenantTest {
                 WorkflowEngineFactory.registryTypeNames(registry),
                 activations,
                 Optional.empty(),
-                new FailingDefinitions());
+                new FailingDefinitions(),
+                mock(WorkflowExecutionProbe.class));
         return new Rig(engine, instances, history, taskStore);
     }
 

@@ -29,6 +29,7 @@ Install this module when workflows must survive process restarts, run across mor
 | `TaskStore<SqlClient>` | Human task persistence (`PgTaskStore`), one scoped instance built with the placement |
 | `TimerStore<SqlClient>` | Workflow timer persistence (`PgTimerStore`), one scoped instance built with the placement |
 | `WorkflowDefinitionRegistryStore` | Durable definition metadata, TEXT sources, and fenced publication (`PgWorkflowDefinitionRegistryStore`), one scoped instance built with the placement |
+| `WorkflowCommandRepository<SqlClient>` | Reads of the recorded command log for the execution probe (`PgWorkflowCommandRepository`), one scoped instance built with the placement; eligibility is rendered once in `CommandEligibilitySql` |
 | `WorkflowTransactionRunner<SqlClient>` | Pg implementation of the engine's transaction seam |
 | Query services | `PgWorkflowInstanceQueryService` — read model for workflow instances and branch state |
 | Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep; the application drives the batch loop and cadence, there is no built-in scheduler. It archives and purges through the scoped `PgWorkflowRetentionRepository`, so it follows the same placement |
@@ -128,7 +129,7 @@ The migration files live with the module under `db/migration/workflow`. The ship
 
 ### Recorded-execution schema
 
-`V003__recorded_execution.sql` adds the schema for recorded execution. It is schema only: this module's stores do not yet read or write the new columns, tables or states.
+`V003__recorded_execution.sql` adds the schema for recorded execution. The stores do not yet write the command log or the new states; only the execution probe reads the command log (see [Execution probe](#execution-probe)).
 
 - `workflow_commands` has a generated identity `id`, `workflow_id` (a foreign key to `workflow_instances(id)` with `ON DELETE CASCADE`), `seq`, `kind`, `state`, the timer, task and target columns, the claim and lease columns, the attribution columns, the durable context columns, `attempts`, `transient_count`, `deferral_count`, `available_at`, `settled_at` and `last_error TEXT`. `(workflow_id, seq)` is unique. `state` admits `PENDING`, `DEFERRED`, `CLAIMED`, `PARKED`, `DEAD`, `COMPLETE`, `REJECTED`, `STALE`, `FAILED`, `SUPERSEDED` and `CANCELLED`; `kind` admits `START`, `SIGNAL`, `COMPLETION`, `RETRY`, `MIGRATION` and `TIMER`; `timer_kind` is set exactly when `kind` is `TIMER`. Three partial indexes serve the active states (`PENDING`, `DEFERRED`, `CLAIMED`) by `(workflow_id, seq)` and by `available_at`, and the `PARKED` and `DEAD` states by `workflow_id`.
 - `workflow_command_queues` is keyed by `workflow_id` (foreign key with `ON DELETE CASCADE`) and holds `next_seq BIGINT NOT NULL` and `open_signals INT NOT NULL DEFAULT 0`. Deleting an instance deletes its commands and queue row.
@@ -139,7 +140,7 @@ The migration files live with the module under `db/migration/workflow`. The ship
 - `workflow_tasks.status` admits `COMPLETING` (the check `workflow_tasks_status_check` is replaced), and `reservation_command_id BIGINT` and `require_version_stability BOOLEAN` are added, both nullable; existing tasks read null.
 - `workflow_timers.delayed_job_execution_id` becomes nullable and `command_id BIGINT` is added.
 
-The stores read these columns: an instance row with `status = 'PENDING'` and null `state_json` and `current_step_id` reads as a `WorkflowInstance` (it is not terminal); a `COMPLETING` task reads back and `reassign` refuses it as if it were already completed; the decisions snapshot stores `payloadSchema` per decision only when present and reads it back as null when absent; `PgTimerStore` writes and reads `command_id` and still writes and reads `delayed_job_execution_id`, which may be null. No store writes `PENDING`, `COMPLETING` or a timer command link yet.
+The command log is read by `PgWorkflowCommandRepository` for the execution probe ('Execution probe' below); no store writes it yet. The stores read these columns: an instance row with `status = 'PENDING'` and null `state_json` and `current_step_id` reads as a `WorkflowInstance` (it is not terminal); a `COMPLETING` task reads back and `reassign` refuses it as if it were already completed; the decisions snapshot stores `payloadSchema` per decision only when present and reads it back as null when absent; `PgTimerStore` writes and reads `command_id` and still writes and reads `delayed_job_execution_id`, which may be null. No store writes `PENDING`, `COMPLETING` or a timer command link yet.
 
 The script sets `SET LOCAL lock_timeout = '30s'` and takes `ACCESS EXCLUSIVE` locks for the `ALTER`s until the migration commits; every statement is `IF [NOT] EXISTS` or drops before it creates, so a failed run can be repeated. Stop every node of the previous release before the first node of this release applies it. Existing rows keep their values.
 
@@ -385,6 +386,12 @@ Add optional modules based on behavior:
 | YAML/JSON definition loading | `WorkflowDefinitionModule` |
 | In-flight definition migration | `WorkflowMigrationModule` (from `dev.vertique:vertique-workflow-core`; not the schema-migration declaration `WorkflowMigrationsModule`, which this module already includes) |
 
+### Execution probe
+
+`WorkflowExecutionProbe` completes when an instance (or every instance) has no command in flight and none an executor could claim now. `PgWorkflowCommandRepository` answers it with plain pooled reads of `workflow_commands`: it opens no transaction on a caller's connection and takes no lock, and it judges time with the database clock (`now()`). `CommandEligibilitySql` is the one SQL rendering of the eligibility rule, composed by every reader: a command is claimable when it is at the head of its instance's queue (no earlier `PENDING`, `DEFERRED` or `CLAIMED` command blocks, where a timer before its `fire_at` and a held-back timer block nothing), is not held back, is available, and is `PENDING`, `DEFERRED`, or `CLAIMED` under an expired lease. `PARKED`, `DEAD` and settled commands block nothing. A due-date or reminder timer is held back while its task is `COMPLETING`, including under a dead-lettered completion. A `CLAIMED` command under a live lease counts as in flight. The report lists `DEFERRED` commands that are not claimable, `PARKED` commands, and the other `PENDING` and `CLAIMED` commands that are not claimable, ordered by instance id then sequence; `stuck` is always empty and `DEAD` commands appear in no list. The hold-back of a timeout timer by an earlier signal or completion is not rendered yet.
+
+Tests that run no engine build a probe from a pool with `PgExecutionProbeSupport.probe(pool, vertx)` (test sources of this module).
+
 ---
 
 ## Module Dagger Bindings
@@ -396,6 +403,7 @@ Add optional modules based on behavior:
 | `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository`, `PgTaskStore`, `PgTimerStore`, `PgWorkflowDefinitionRegistryStore`, `PgWorkflowRetentionRepository` | Singleton | Nine explicit providers, each built from `Optional<DbSchemas>`: placed in the schema mapped to `workflow` when the component supplies `DbSchemas` (a component that installs `DbModule` gets it from `db.schemas.workflow`), unqualified when it does not |
 | The five repository SPIs, `TaskStore<SqlClient>`, `TimerStore<SqlClient>` | Singleton | Aliases of the concrete instances above, so a concrete lookup and an SPI lookup return the same instance |
 | `WorkflowTransactionRunner<SqlClient>` | Singleton | The PostgreSQL transaction seam |
+| `PgWorkflowCommandRepository`, `WorkflowCommandRepository<SqlClient>` | Singleton | The read members of the command repository, built from `Optional<DbSchemas>` like the stores; the engine module builds the `WorkflowExecutionProbe` from it |
 | `WorkflowInstanceQueryService`, `WorkflowRetentionService` | Singleton | Services over the same scoped instances (as is the branch query service), so queries, archive and purge follow the placement |
 | `Set<MigrationDefinition>` | `@IntoSet` | The `workflow` declaration from `WorkflowMigrationsModule`: location `classpath:db/migration/workflow`, no dependencies |
 
@@ -509,7 +517,7 @@ Before each row's scope opens, the sweep loads the owning `WorkflowInstance` (a 
 
 ## Dependencies
 
-- **workflow-engine** - portable orchestration runtime: `WorkflowEngine`, the 6 internal repository SPIs, `WorkflowTransactionRunner`, `RecorderRouter`, `WorkflowReminderComposeValidator`, `WorkflowEngineModule`. This module includes `WorkflowEngineModule`.
+- **workflow-engine** - portable orchestration runtime: `WorkflowEngine`, the 7 internal repository SPIs, `WorkflowTransactionRunner`, `RecorderRouter`, `WorkflowReminderComposeValidator`, `WorkflowEngineModule`. This module includes `WorkflowEngineModule`.
 - **workflow-core** - public workflow APIs, plans, tasks, timers, and side-effect SPIs.
 - **db-postgresql** - Postgres pool, `PgDbExceptionMapper`, `PgSqlRepository` base, and `PgTableNames`, which qualifies every table reference.
 - **db-core** - `DbSchemas`, `DbSchemasModule` and `MigrationDefinition` (through db-postgresql).

@@ -22,6 +22,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
@@ -280,6 +281,7 @@ class DeprecatedVersionAdmissionTest {
                 .migrationRegistry(Optional.of(migrations))
                 .propagator(null)
                 .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .commands(new EmptyCommandRepository())
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCode(version1))
                 .build());
         return new Harness(

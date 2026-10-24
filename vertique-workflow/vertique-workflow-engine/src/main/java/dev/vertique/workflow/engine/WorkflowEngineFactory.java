@@ -4,12 +4,14 @@
 package dev.vertique.workflow.engine;
 
 import dev.vertique.context.DurableContextPropagator;
+import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
@@ -89,6 +91,7 @@ public final class WorkflowEngineFactory {
         TaskStore<SqlClient> taskStore = parts.taskStore();
         Clock clock = parts.clock();
         DurableContextPropagator propagator = parts.propagator();
+        WorkflowExecutionProbe executionProbe = new DefaultWorkflowExecutionProbe(parts.commands());
         PayloadConstraintCheck payloadConstraintCheck = new PayloadConstraintCheck(parts.beanValidator());
         WorkflowReminderComposeValidator complianceCheck =
                 new WorkflowReminderComposeValidator(registry, parts.recorders());
@@ -153,7 +156,8 @@ public final class WorkflowEngineFactory {
                 parts.typeNames(),
                 activations,
                 parts.stateCompatibility(),
-                new FailingDefinitions());
+                new FailingDefinitions(),
+                executionProbe);
     }
 
     /**

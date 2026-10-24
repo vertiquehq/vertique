@@ -20,6 +20,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -276,6 +277,7 @@ class WorkflowEngineSharedTypeNamesTest {
                 .migrationRegistry(Optional.empty())
                 .propagator(null)
                 .typeNames(names)
+                .commands(new EmptyCommandRepository())
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                 .build());
     }

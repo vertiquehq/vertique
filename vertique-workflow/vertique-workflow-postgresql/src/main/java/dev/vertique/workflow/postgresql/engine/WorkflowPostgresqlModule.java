@@ -13,10 +13,12 @@ import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.workflow.engine.WorkflowEngineModule;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.postgresql.executor.PgWorkflowCommandRepository;
 import dev.vertique.workflow.postgresql.query.PgWorkflowInstanceQueryService;
 import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
@@ -230,6 +232,22 @@ public abstract class WorkflowPostgresqlModule {
         return new PgWorkflowDefinitionRegistryStore(pool, mapper, config, schemas.orElseGet(DbSchemas::empty));
     }
 
+    /**
+     * Provides the {@link PgWorkflowCommandRepository}, applying the schema mapping for the {@code workflow}
+     * instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL command repository
+     */
+    @Provides
+    @Singleton
+    static PgWorkflowCommandRepository pgWorkflowCommandRepository(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgWorkflowCommandRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
     // --- Store SPI bindings ---
 
     /**
@@ -311,6 +329,17 @@ public abstract class WorkflowPostgresqlModule {
     @Binds
     @Singleton
     abstract JoinStateRepository<SqlClient> bindJoinStateRepository(PgJoinStateRepository impl);
+
+    /**
+     * Binds {@link PgWorkflowCommandRepository} as the {@link WorkflowCommandRepository} implementation for the
+     * {@link SqlClient}-typed stack.
+     *
+     * @param impl the command repository singleton
+     * @return the repository as the transaction-handle-generic SPI
+     */
+    @Binds
+    @Singleton
+    abstract WorkflowCommandRepository<SqlClient> bindCommandRepository(PgWorkflowCommandRepository impl);
 
     /**
      * Binds {@link PgWorkflowTransactionRunner} as the {@link WorkflowTransactionRunner}

@@ -8,6 +8,7 @@ import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -49,6 +50,7 @@ public final class WorkflowEngineParts {
     private final JoinStateRepository<SqlClient> joinStates;
     private final TimerStore<SqlClient> timerStore;
     private final TaskStore<SqlClient> taskStore;
+    private final WorkflowCommandRepository<SqlClient> commands;
     private final Clock clock;
     private final Set<WorkflowSideEffectRecorder<SqlClient>> recorders;
     private final Set<IntentKind> optionalIntentKinds;
@@ -70,6 +72,7 @@ public final class WorkflowEngineParts {
         this.joinStates = Objects.requireNonNull(b.joinStates, "joinStates");
         this.timerStore = Objects.requireNonNull(b.timerStore, "timerStore");
         this.taskStore = Objects.requireNonNull(b.taskStore, "taskStore");
+        this.commands = Objects.requireNonNull(b.commands, "commands");
         this.clock = Objects.requireNonNull(b.clock, "clock");
         this.recorders = Set.copyOf(b.recorders);
         this.optionalIntentKinds = Set.copyOf(b.optionalIntentKinds);
@@ -140,6 +143,11 @@ public final class WorkflowEngineParts {
         return taskStore;
     }
 
+    /** The command repository SPI the execution probe reads. */
+    public WorkflowCommandRepository<SqlClient> commands() {
+        return commands;
+    }
+
     /** The clock used to timestamp entries and state transitions. */
     public Clock clock() {
         return clock;
@@ -203,6 +211,7 @@ public final class WorkflowEngineParts {
         private JoinStateRepository<SqlClient> joinStates;
         private TimerStore<SqlClient> timerStore;
         private TaskStore<SqlClient> taskStore;
+        private WorkflowCommandRepository<SqlClient> commands;
         private Clock clock;
         private Set<WorkflowSideEffectRecorder<SqlClient>> recorders = Set.of();
         private Set<IntentKind> optionalIntentKinds = WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS;
@@ -272,6 +281,12 @@ public final class WorkflowEngineParts {
         /** Sets the task store. */
         public Builder taskStore(TaskStore<SqlClient> taskStore) {
             this.taskStore = taskStore;
+            return this;
+        }
+
+        /** Sets the command repository. */
+        public Builder commands(WorkflowCommandRepository<SqlClient> commands) {
+            this.commands = commands;
             return this;
         }
 

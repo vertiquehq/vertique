@@ -25,6 +25,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
@@ -264,6 +265,7 @@ class WorkflowEngineBinderWiringTest {
                 .migrationRegistry(Optional.empty())
                 .propagator(propagator)
                 .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .commands(new EmptyCommandRepository())
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                 .build());
         return new Harness(
@@ -326,6 +328,7 @@ class WorkflowEngineBinderWiringTest {
                 .propagator(propagator)
                 .inboundContextInitializers(initializers)
                 .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .commands(new EmptyCommandRepository())
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                 .build());
         return new Harness(
@@ -671,6 +674,7 @@ class WorkflowEngineBinderWiringTest {
                 .migrationRegistry(Optional.of(migrationRegistry))
                 .propagator(propagator)
                 .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .commands(new EmptyCommandRepository())
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                 .build());
 
@@ -2121,6 +2125,7 @@ class WorkflowEngineBinderWiringTest {
                 .migrationRegistry(Optional.of(migrationRegistry))
                 .propagator(propagator)
                 .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .commands(new EmptyCommandRepository())
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                 .build());
         Harness h = new Harness(

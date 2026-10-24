@@ -13,16 +13,21 @@ import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.workflow.di.WorkflowCoreModule;
+import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
+import io.vertx.core.Vertx;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.inject.Singleton;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -89,6 +94,29 @@ public abstract class WorkflowEngineModule {
     @Binds
     @Singleton
     abstract TransactionalTaskCallbacks<SqlClient> bindTaskCallbacks(WorkflowEngine impl);
+
+    /**
+     * Provides the execution probe over the command repository, pacing its polling with timers of the application's
+     * Vert.x instance when the graph binds one and with a shared daemon thread otherwise.
+     *
+     * @param commands the command repository
+     * @param vertx    the optional Vert.x instance
+     * @return the probe
+     */
+    @Provides
+    @Singleton
+    static WorkflowExecutionProbe executionProbe(WorkflowCommandRepository<SqlClient> commands, Optional<Vertx> vertx) {
+        return vertx.map(instance -> new DefaultWorkflowExecutionProbe(commands, instance))
+                .orElseGet(() -> new DefaultWorkflowExecutionProbe(commands));
+    }
+
+    /**
+     * Declares the Vert.x instance as an optional binding, so a graph that binds none still provides the probe.
+     *
+     * @return the optional Vert.x binding declaration
+     */
+    @BindsOptionalOf
+    abstract Vertx optionalVertx();
 
     /**
      * Binds {@link WorkflowRecoveryBridgeImpl} as the {@link WorkflowRecoveryBridge} SPI used by

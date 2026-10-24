@@ -5,6 +5,7 @@ package dev.vertique.workflow.postgresql.engine;
 
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.workflow.engine.WorkflowEngineFactory;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.engine.WorkflowEngineParts;
@@ -17,6 +18,7 @@ import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
+import dev.vertique.workflow.postgresql.executor.PgWorkflowCommandRepository;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
@@ -75,7 +77,7 @@ import org.mockito.invocation.InvocationOnMock;
  *       optional {@link BeanValidator} that switches payload constraint enforcement on.</li>
  * </ul>
  */
-final class PgWorkflowEngineTestSupport {
+public final class PgWorkflowEngineTestSupport {
 
     private PgWorkflowEngineTestSupport() {
         // static factory holder
@@ -102,7 +104,7 @@ final class PgWorkflowEngineTestSupport {
      * @param clock               the clock
      * @return a fully wired {@link WorkflowEngineHandle}
      */
-    static WorkflowEngineHandle create(
+    public static WorkflowEngineHandle create(
             Pool pool,
             WorkflowRegistry registry,
             WorkflowInstanceRepository<SqlClient> instances,
@@ -218,6 +220,7 @@ final class PgWorkflowEngineTestSupport {
             Optional<WorkflowMigrationRegistry> migrationRegistryOpt) {
         return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
                 .txRunner(runnerFor(pool))
+                .commands(new PgWorkflowCommandRepository(pool, new PgDbExceptionMapper()))
                 .registry(registry)
                 .instances(instances)
                 .history(history)
@@ -276,6 +279,7 @@ final class PgWorkflowEngineTestSupport {
             Optional<BeanValidator> beanValidator) {
         return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
                 .txRunner(runnerFor(pool))
+                .commands(new PgWorkflowCommandRepository(pool, new PgDbExceptionMapper()))
                 .registry(registry)
                 .instances(instances)
                 .history(history)
@@ -313,6 +317,7 @@ final class PgWorkflowEngineTestSupport {
             Optional<WorkflowStateCompatibility> stateCompatibility) {
         return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
                 .txRunner(runnerFor(pool))
+                .commands(new PgWorkflowCommandRepository(pool, new PgDbExceptionMapper()))
                 .registry(registry)
                 .instances(instances)
                 .history(history)

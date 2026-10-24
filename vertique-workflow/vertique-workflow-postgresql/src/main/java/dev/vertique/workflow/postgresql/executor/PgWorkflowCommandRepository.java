@@ -1,0 +1,112 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.workflow.postgresql.executor;
+
+import dev.vertique.db.DbSchemas;
+import dev.vertique.db.postgresql.PgDbExceptionMapper;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
+import dev.vertique.workflow.history.PendingCommand;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
+import io.vertx.core.Future;
+import io.vertx.sqlclient.Pool;
+import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.RowSet;
+import io.vertx.sqlclient.SqlClient;
+import io.vertx.sqlclient.Tuple;
+import jakarta.annotation.Nullable;
+import jakarta.inject.Singleton;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * PostgreSQL implementation of the read members of {@link WorkflowCommandRepository} over
+ * {@code workflow_commands}.
+ *
+ * <p>Each read borrows one pooled connection for one statement and returns it: no transaction is opened on a
+ * caller's connection and no lock is taken. Eligibility is judged by {@link CommandEligibilitySql} on the database
+ * clock.
+ */
+@Singleton
+public final class PgWorkflowCommandRepository implements WorkflowCommandRepository<SqlClient> {
+
+    private final Pool pool;
+    private final PgDbExceptionMapper exceptionMapper;
+    private final PgCommandProbeQueries queries;
+
+    /**
+     * Creates a repository whose tables are not schema-qualified, so they resolve through the connection's default
+     * schema.
+     *
+     * @param pool            the connection pool the reads borrow from
+     * @param exceptionMapper the mapper used to translate SQL errors into typed exceptions
+     */
+    public PgWorkflowCommandRepository(Pool pool, PgDbExceptionMapper exceptionMapper) {
+        this(pool, exceptionMapper, DbSchemas.empty());
+    }
+
+    /**
+     * Creates a repository that qualifies every table with the schema mapped to the {@code workflow} instance.
+     *
+     * @param pool            the connection pool the reads borrow from
+     * @param exceptionMapper the mapper used to translate SQL errors into typed exceptions
+     * @param schemas         the schema placement; an empty mapping leaves table names unqualified
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment identifier
+     */
+    public PgWorkflowCommandRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas) {
+        this.pool = pool;
+        this.exceptionMapper = exceptionMapper;
+        this.queries = new PgCommandProbeQueries(new CommandEligibilitySql(schemas));
+    }
+
+    @Override
+    public Future<Integer> countRunnable(@Nullable WorkflowInstanceId instance) {
+        return pool.preparedQuery(queries.countRunnable)
+                .execute(scope(instance))
+                .map(rows -> Math.toIntExact(rows.iterator().next().getLong(0)))
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands countRunnable")));
+    }
+
+    @Override
+    public Future<List<PendingCommand>> findDeferred(@Nullable WorkflowInstanceId instance) {
+        return read(queries.findDeferred, instance, "findDeferred");
+    }
+
+    @Override
+    public Future<List<PendingCommand>> findParked(@Nullable WorkflowInstanceId instance) {
+        return read(queries.findParked, instance, "findParked");
+    }
+
+    @Override
+    public Future<List<PendingCommand>> findNotYetAvailable(@Nullable WorkflowInstanceId instance) {
+        return read(queries.findNotYetAvailable, instance, "findNotYetAvailable");
+    }
+
+    private Future<List<PendingCommand>> read(String sql, @Nullable WorkflowInstanceId instance, String operation) {
+        return pool.preparedQuery(sql)
+                .execute(scope(instance))
+                .map(PgWorkflowCommandRepository::pendingCommands)
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands " + operation)));
+    }
+
+    private static Tuple scope(@Nullable WorkflowInstanceId instance) {
+        Tuple tuple = Tuple.tuple();
+        tuple.addValue(instance == null ? null : instance.value());
+        return tuple;
+    }
+
+    private static List<PendingCommand> pendingCommands(RowSet<Row> rows) {
+        List<PendingCommand> commands = new ArrayList<>(rows.size());
+        for (Row row : rows) {
+            commands.add(new PendingCommand(
+                    new WorkflowInstanceId(row.getUUID("workflow_id")),
+                    row.getLong("seq"),
+                    row.getString("kind"),
+                    row.getString("state"),
+                    row.getOffsetDateTime("available_at").toInstant(),
+                    row.getInteger("attempts"),
+                    row.getString("last_error")));
+        }
+        return commands;
+    }
+}

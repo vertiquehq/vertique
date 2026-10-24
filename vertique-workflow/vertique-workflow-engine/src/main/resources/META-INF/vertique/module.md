@@ -189,11 +189,13 @@ public interface WorkflowEngineHandle
         extends WorkflowOperations,
                 TransactionalWorkflowOperations<SqlClient>,
                 TransactionalTimerCallbacks<SqlClient>,
-                TransactionalTaskCallbacks<SqlClient> {}
+                TransactionalTaskCallbacks<SqlClient> {
+    WorkflowExecutionProbe executionProbe();
+}
 ```
 
-Public composite handle re-bundling the four already-public engine interfaces into a single type. Adds
-no methods — exists solely as the return type of `WorkflowEngineFactory.create(WorkflowEngineParts)` so callers outside
+Public composite handle re-bundling the four already-public engine interfaces into a single type, plus `executionProbe()`:
+the probe of the same engine, built over the command repository part (see Execution Probe). It is the return type of `WorkflowEngineFactory.create(WorkflowEngineParts)` so callers outside
 the engine package can hold a fully wired engine without depending on the package-private concrete class.
 
 ### WorkflowEngineFactory
@@ -205,10 +207,10 @@ and returns the engine as a `WorkflowEngineHandle`.
 
 `WorkflowEngineParts` is a final class with a builder as its only way in (`WorkflowEngineParts.builder()`), so a later
 release can add a part without breaking a caller. One setter per part, named like its accessor: `txRunner`, `registry`,
-`definitionStore`, `instances`, `history`, `dedup`, `branchTokens`, `joinStates`, `timerStore`, `taskStore`, `clock`,
+`definitionStore`, `instances`, `history`, `dedup`, `branchTokens`, `joinStates`, `timerStore`, `taskStore`, `commands`, `clock`,
 `recorders`, `optionalIntentKinds`, `migrationRegistry`, `propagator`, `inboundContextInitializers`, `beanValidator`,
 `typeNames` and `stateCompatibility`. `build()` throws a `NullPointerException` that names the first required part
-that is missing. Required: the repositories and stores, the registry, the **definition store**, the type-name index and the
+that is missing. Required: the repositories and stores (including the command repository, `commands`), the registry, the **definition store**, the type-name index and the
 clock. Defaulted: `recorders` and `inboundContextInitializers` to empty sets, `optionalIntentKinds` to
 `DEFAULT_OPTIONAL_INTENT_KINDS`, and `migrationRegistry`, `beanValidator` and `stateCompatibility` to empty. The
 `propagator` may be `null`. The `typeNames` index is the one the registry fills (`DefaultWorkflowRegistry#typeNames()`);
@@ -234,7 +236,7 @@ WorkflowEngineHandle engine = WorkflowEngineFactory.create(WorkflowEngineParts.b
         .txRunner(txRunner).registry(registry).definitionStore(definitionStore)
         .instances(instances).history(history).dedup(dedup)
         .branchTokens(branchTokens).joinStates(joinStates)
-        .timerStore(timerStore).taskStore(taskStore)
+        .timerStore(timerStore).taskStore(taskStore).commands(commands)
         .clock(clock).recorders(recorders)
         .typeNames(registry.typeNames())
         .build());
@@ -252,6 +254,8 @@ Dagger module owning the engine-internal bindings:
 - Binds `WorkflowEngine` as `WorkflowOperations`, `TransactionalWorkflowOperations<SqlClient>`,
   `TransactionalTimerCallbacks<SqlClient>`, and `TransactionalTaskCallbacks<SqlClient>`.
 - Binds `WorkflowRecoveryBridgeImpl` as `WorkflowRecoveryBridge`.
+- Provides `WorkflowExecutionProbe` over the `WorkflowCommandRepository<SqlClient>` the adapter binds. The probe paces its
+  polling with the graph's `Vertx` when one is bound (declared `@BindsOptionalOf`) and with a shared daemon thread otherwise.
 - Binds `WorkflowDefinitionLifecycle` for durable document publication and contributes the document registry startup step.
 - Binds `WorkflowDefinitionRegistryView` and contributes the startup and shutdown steps of
   `WorkflowDefinitionPropagationPoller`, which keeps the node's registry in step with the durable table.
@@ -647,6 +651,14 @@ carrier that must win over the branch token for that one transition). Every othe
 History entries appended during a bound drive may additionally record `commandCorrelationId` — see
 `WorkflowMigratedHistoryPayload` and the sibling command-history payloads for the field-level shape.
 
+### Execution Probe
+
+`WorkflowExecutionProbe` (public, in `vertique-workflow-core`) waits until recorded work has run. The engine implements it as
+`DefaultWorkflowExecutionProbe` over the read members of `WorkflowCommandRepository`: it polls the count of runnable
+commands at most every 25 ms until it is zero or the timeout elapses, then reads the report. A factory-built engine exposes
+it as `WorkflowEngineHandle.executionProbe()`; a Dagger graph provides it from `WorkflowEngineModule`. The adapter module must
+bind `WorkflowCommandRepository<SqlClient>`.
+
 ### WorkflowExceptionMapper
 
 Stage-2 (workflow-boundary) exception mapper applied in the Pg runner's outer `recover` after the DB
@@ -683,7 +695,7 @@ validator.
 
 ### Database Adapter SPIs (`dev.vertique.workflow.engine.spi`)
 
-A database adapter implements these six interfaces to provide persistence for the engine. All are
+A database adapter implements these seven interfaces to provide persistence for the engine. All are
 parameterized over `<TX>` (typically `SqlClient`):
 
 | SPI | Responsibility |
@@ -694,6 +706,7 @@ parameterized over `<TX>` (typically `SqlClient`):
 | `BranchTokenRepository<TX>` | Fork/join branch token CRUD, status queries, and recovery queries |
 | `JoinStateRepository<TX>` | Fork/join state insert, read variants, open-for-workflow list, and the optimistic `decide` CAS |
 | `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping |
+| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked and not-yet-available commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock |
 
 The adapter also provides:
 - A `WorkflowRecoveryBridge` is already bound by `WorkflowEngineModule`; no adapter re-binding needed.

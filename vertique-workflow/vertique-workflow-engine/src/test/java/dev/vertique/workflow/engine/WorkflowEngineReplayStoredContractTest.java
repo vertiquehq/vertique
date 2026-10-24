@@ -20,6 +20,7 @@ import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -140,6 +141,7 @@ class WorkflowEngineReplayStoredContractTest {
                 WorkflowEngineFactory.registryTypeNames(registry),
                 new DefinitionActivations(store),
                 Optional.<WorkflowStateCompatibility>empty(),
-                new FailingDefinitions());
+                new FailingDefinitions(),
+                mock(WorkflowExecutionProbe.class));
     }
 }

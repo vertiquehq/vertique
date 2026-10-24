@@ -27,6 +27,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
@@ -192,6 +193,7 @@ class WorkflowLiveSignalContextTest {
                 .migrationRegistry(Optional.empty())
                 .propagator(propagator)
                 .typeNames(WorkflowEngineFactory.registryTypeNames(workflowRegistry))
+                .commands(new EmptyCommandRepository())
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(workflowRegistry))
                 .build());
         return new Harness(handle, instances, dedup, workflowRegistry, holder, correlationFactory);

@@ -36,6 +36,7 @@ import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
 import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowView;
@@ -221,6 +222,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** This node's own evaluation of the scope rows that newly deployed code conflicts with. */
     private final FailingDefinitions failing;
 
+    /** Waits until the recorded commands of an instance, or of every instance, have run. */
+    private final WorkflowExecutionProbe executionProbe;
+
     @Inject
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -246,7 +250,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowContextBinder contextBinder,
             PayloadConstraintCheck payloadConstraintCheck,
             DefinitionActivations activations,
-            FailingDefinitions failing) {
+            FailingDefinitions failing,
+            WorkflowExecutionProbe executionProbe) {
+        this.executionProbe = executionProbe;
         this.activations = activations;
         this.failing = failing;
         this.txRunner = txRunner;
@@ -316,7 +322,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * <p>The {@code typeNames} parameter is the type-name index a decision payload's declared type
      * name resolves through; the factory passes the one index the registry fills. The {@code activations}
      * parameter is this engine's view of the activation records, which the factory builds empty. The
-     * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes.
+     * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes. The {@code executionProbe} parameter is the probe the handle exposes.
      *
      * <p>Package-visible (not {@code private}) so the factory in the same package can invoke it; it
      * is not part of any production API.
@@ -347,7 +353,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowTypeNames typeNames,
             DefinitionActivations activations,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
-            FailingDefinitions failing) {
+            FailingDefinitions failing,
+            WorkflowExecutionProbe executionProbe) {
+        this.executionProbe = executionProbe;
         this.payloadConstraintCheck = payloadConstraintCheck;
         this.activations = activations;
         this.failing = failing;
@@ -476,6 +484,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 builtContextBinder,
                 stateCompatibility,
                 failing);
+    }
+
+    // --- WorkflowEngineHandle ---
+
+    @Override
+    public WorkflowExecutionProbe executionProbe() {
+        return executionProbe;
     }
 
     // --- WorkflowOperations ---
