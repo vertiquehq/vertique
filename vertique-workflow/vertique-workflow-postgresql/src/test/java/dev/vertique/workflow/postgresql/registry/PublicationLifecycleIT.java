@@ -40,6 +40,7 @@ import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Transaction;
 import io.vertx.sqlclient.Tuple;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -58,6 +59,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PublicationLifecycleIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     /** The one contract that every document and code definition of these tests names. */
     @WorkflowContract
@@ -301,6 +304,7 @@ public class PublicationLifecycleIT {
                 await(service.publish(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)));
             }
             WorkflowInstanceId original = await(node.app().workflowOperations().start(start(id, "K", 1, null)));
+            await(node.app().executionProbe().awaitIdle(original, IDLE_TIMEOUT));
             assertThat(scenario.instanceCount(id)).isEqualTo(1);
 
             // And version 1 is deprecated through the lifecycle

@@ -7,6 +7,7 @@ import dev.vertique.application.VertiqueApplicationComponent;
 import dev.vertique.inboxoutbox.postgresql.PgInboxOutboxRepository;
 import dev.vertique.workflow.client.WorkflowClientFactory;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.tasks.TaskService;
@@ -16,6 +17,9 @@ interface ScenarioGraph extends VertiqueApplicationComponent {
 
     /** Returns the workflow operations facade. */
     WorkflowOperations workflowOperations();
+
+    /** Returns the probe that waits until the engine has run the work recorded for an instance. */
+    WorkflowExecutionProbe executionProbe();
 
     /** Returns the factory of typed clients. */
     WorkflowClientFactory workflowClientFactory();

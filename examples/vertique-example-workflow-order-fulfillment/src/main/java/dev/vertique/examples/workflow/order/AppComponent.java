@@ -40,6 +40,7 @@ import dev.vertique.workflow.delayed.compose.WorkflowDelayedComposeValidator;
 import dev.vertique.workflow.delayed.di.WorkflowDelayedModule;
 import dev.vertique.workflow.delayed.job.WorkflowTimerFireExecutor;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
 import dev.vertique.workflow.postgresql.recovery.WorkflowBranchRecoveryModule;
@@ -182,6 +183,15 @@ public interface AppComponent extends VertiqueApplicationComponent {
      * @return transactional workflow operations backed by {@link SqlClient}
      */
     TransactionalWorkflowOperations<SqlClient> txWorkflowOperations();
+
+    /**
+     * Returns the probe that waits until the engine has run the work recorded for an instance.
+     *
+     * <p>Used by integration tests to await an instance after each operation, before asserting.
+     *
+     * @return execution probe
+     */
+    WorkflowExecutionProbe executionProbe();
 
     /**
      * Returns the workflow client factory for creating typed proxies from a definition class.

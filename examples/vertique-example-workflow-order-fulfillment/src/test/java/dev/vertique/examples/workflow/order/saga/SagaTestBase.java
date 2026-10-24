@@ -32,6 +32,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Tuple;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -63,6 +64,8 @@ import org.slf4j.LoggerFactory;
 public abstract class SagaTestBase {
 
     private static final Logger log = LoggerFactory.getLogger(SagaTestBase.class);
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     /** The logical contract name of the linear order-fulfillment workflow. */
     static final String ORDER_CONTRACT = "order-fulfillment";
@@ -309,7 +312,8 @@ public abstract class SagaTestBase {
         return component
                 .workflowOperations()
                 .start(new StartCommand(
-                        "order-fulfillment", ORDER_CONTRACT, cmd, cmd.idempotencyKey(), null, null, null, null, null));
+                        "order-fulfillment", ORDER_CONTRACT, cmd, cmd.idempotencyKey(), null, null, null, null, null))
+                .compose(id -> awaitIdle(id));
     }
 
     /**
@@ -332,7 +336,18 @@ public abstract class SagaTestBase {
                         null,
                         null,
                         null,
-                        null));
+                        null))
+                .compose(id -> awaitIdle(id));
+    }
+
+    /**
+     * Waits until the engine has run the work recorded for the instance.
+     *
+     * @param id the workflow instance to await
+     * @return a Future resolving to the same instance id once the instance is idle
+     */
+    protected static Future<WorkflowInstanceId> awaitIdle(WorkflowInstanceId id) {
+        return component.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(idle -> id);
     }
 
     /**
@@ -536,13 +551,17 @@ public abstract class SagaTestBase {
                             forkStepId,
                             branchId,
                             err.getMessage(),
-                            err));
+                            err))
+                    .compose(applied -> awaitIdle(id))
+                    .mapEmpty();
         }
         return component
                 .workflowOperations()
                 .signal(id, signalName, payload, dedupKey)
                 .onFailure(err ->
-                        log.error("Instance signal failed: signal={} cause={}", signalName, err.getMessage(), err));
+                        log.error("Instance signal failed: signal={} cause={}", signalName, err.getMessage(), err))
+                .compose(applied -> awaitIdle(id))
+                .mapEmpty();
     }
 
     /**

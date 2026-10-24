@@ -39,6 +39,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -55,6 +56,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class ContractAwareLookupIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     /** The contract of the clients that the default scope's code definitions serve. */
     @WorkflowContract("lookup-c")
@@ -343,6 +346,7 @@ public class ContractAwareLookupIT {
             String idempotencyKey) {
         StartCommand command = command(contract, scope, id, version, targetScope, idempotencyKey);
         var instance = await(node.app().workflowOperations().start(command));
+        await(node.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
         Row row = await(database.admin().preparedQuery("""
                                 SELECT scope_key, definition_scope_key, definition_id, definition_version
                                 FROM workflow_instances WHERE id = $1

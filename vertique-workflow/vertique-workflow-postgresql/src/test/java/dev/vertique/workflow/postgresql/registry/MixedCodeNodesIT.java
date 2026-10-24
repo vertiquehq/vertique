@@ -84,6 +84,8 @@ import org.slf4j.LoggerFactory;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class MixedCodeNodesIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     /** The contract of the code definitions of these tests; it declares the signals they wait for. */
     @WorkflowContract("mixed-code-c")
     public interface MixedContract extends OrderDocumentSignals {}
@@ -135,6 +137,7 @@ public class MixedCodeNodesIT {
 
             // And the same start on A creates an instance pinned to version 2
             WorkflowInstanceId started = await(a.app().workflowOperations().start(start(id, "k1")));
+            await(a.app().executionProbe().awaitIdle(started, IDLE_TIMEOUT));
             assertThat(versionOf(database, started)).isEqualTo(2);
         }
     }
@@ -153,6 +156,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             assertThat(versionOf(database, instance)).isEqualTo(2);
             Rows before = Rows.of(database, instance);
             assertThat(before.instance()).contains("WAITING");
@@ -175,6 +179,7 @@ public class MixedCodeNodesIT {
             await(a.app()
                     .workflowOperations()
                     .signal(instance, "inventory.reserved", new InventoryReservedDoc("r1"), "d1"));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             assertThat(database.instanceStatus(instance.value())).isEqualTo("COMPLETED");
         }
     }
@@ -193,6 +198,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             UUID task = openTask(database, instance);
             Rows before = Rows.of(database, instance);
 
@@ -218,6 +224,7 @@ public class MixedCodeNodesIT {
             assertThat(view.instance().status()).isEqualTo(WorkflowStatus.WAITING);
             TaskMutationResult completed = await(
                     a.app().pool().withTransaction(tx -> a.app().taskCallbacks().taskCompleted(completion, tx)));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             assertThat(completed).isEqualTo(TaskMutationResult.APPLIED);
             assertThat(database.instanceStatus(instance.value())).isEqualTo("COMPLETED");
         }
@@ -237,6 +244,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TIMER);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             TimerRow scheduled = onlyTimer(database, instance);
             assertThat(scheduled.status()).isEqualTo("SCHEDULED");
             SteppedClock clock = new SteppedClock(scheduled.fireAt());
@@ -277,6 +285,7 @@ public class MixedCodeNodesIT {
 
             // When A's executor runs the timer
             Throwable fired = fireOn(aExecutor, scheduled.timerId(), instance);
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
 
             // Then the timer is fired and the instance moved past the timer step
             assertThat(fired).as("failure of the executor on A").isNull();
@@ -299,6 +308,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK_WITH_DUE_DATE);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             TimerRow due = timerWithPurpose(database, instance, "TASK_DUE");
             assertThat(due.status()).isEqualTo("SCHEDULED");
             Rows before = Rows.of(database, instance);
@@ -323,6 +333,7 @@ public class MixedCodeNodesIT {
 
             // When A's executor runs the timer
             Throwable firedOnA = fireOn(executor(a, new RecordingFireJob(clock), clock), due.timerId(), instance);
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
 
             // Then the task expired and the workflow moved on
             assertThat(firedOnA).as("failure of the executor on A").isNull();
@@ -349,6 +360,7 @@ public class MixedCodeNodesIT {
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(onDuplicatedContext(
                     vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             TimerRow due = timerWithPurpose(database, instance, "TASK_DUE");
             Rows before = Rows.of(database, instance);
             assertThat(before.tasks()).contains("OPEN");
@@ -371,6 +383,7 @@ public class MixedCodeNodesIT {
             Throwable firedOnA =
                     failureOf(onDuplicatedContext(vertx, () -> executor(a, new RecordingFireJob(clock), clock)
                             .execute(new TimerFirePayload(due.timerId(), instance, null), mock(JobContext.class))));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
 
             // Then the task expired and its branch moved on
             assertThat(firedOnA).as("failure of the executor on A").isNull();
@@ -395,6 +408,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK_WITH_REMINDERS);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             List<TimerRow> reminders = reminderTimers(database, instance);
             assertThat(reminders).hasSize(2);
             TimerRow first = reminders.getFirst();
@@ -420,6 +434,7 @@ public class MixedCodeNodesIT {
 
             // When A's executor runs the first reminder
             Throwable firedOnA = fireOn(executor(a, new RecordingFireJob(clock), clock), first.timerId(), instance);
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
 
             // Then it fired as reminder 1 of 2 and the second reminder is still scheduled
             assertThat(firedOnA).as("failure of the executor on A").isNull();
@@ -447,6 +462,7 @@ public class MixedCodeNodesIT {
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(onDuplicatedContext(
                     vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             TimerRow reminder = timerWithPurpose(database, instance, "TASK_REMINDER");
             Rows before = Rows.of(database, instance);
             assertThat(before.tasks()).endsWith(":OPEN:0");
@@ -473,6 +489,7 @@ public class MixedCodeNodesIT {
             Throwable firedOnA = failureOf(onDuplicatedContext(vertx, () -> executor(
                             a, new RecordingFireJob(clock), clock)
                     .execute(new TimerFirePayload(reminder.timerId(), instance, null), mock(JobContext.class))));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
 
             // Then it fired as reminder 1, and the next one is scheduled an hour after the first
             assertThat(firedOnA).as("failure of the executor on A").isNull();
@@ -498,6 +515,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             Rows before = Rows.of(database, instance);
             StartCommand otherContract = new StartCommand(
                     id, OTHER_CONTRACT_NAME, new PlaceOrderDoc("order-k1"), "k1", null, null, null, DEFAULT, null);
@@ -559,6 +577,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
 
             // and: every connection of B's pool but one is held
             List<SqlConnection> held = new ArrayList<>();
@@ -594,6 +613,7 @@ public class MixedCodeNodesIT {
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(onDuplicatedContext(
                     vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             Rows before = Rows.of(database, instance);
             assertThat(before.branches()).contains(MixedCodeFixtures.FIRST_BRANCH);
 
@@ -613,6 +633,7 @@ public class MixedCodeNodesIT {
 
             // And the same call through A advances the branch
             await(onDuplicatedContext(vertx, () -> branchSignal(a, instance, payload, "d3")));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             assertThat(Rows.of(database, instance).branches()).isNotEqualTo(before.branches());
         }
     }
@@ -644,6 +665,7 @@ public class MixedCodeNodesIT {
             await(first.app()
                     .workflowOperations()
                     .signal(waitingForTimer, "inventory.reserved", new InventoryReservedDoc("r4"), "d-first"));
+            await(first.app().executionProbe().awaitIdle(waitingForTimer, IDLE_TIMEOUT));
             TimerRow timer = onlyTimer(database, waitingForTimer);
             assertThat(timer.status()).isEqualTo("SCHEDULED");
             first.close();
@@ -756,7 +778,7 @@ public class MixedCodeNodesIT {
     }
 
     private static WorkflowInstanceId startInAcme(Boot node, String orderId) {
-        return await(node.app()
+        WorkflowInstanceId instance = await(node.app()
                 .workflowOperations()
                 .start(FailingScopeRowIT.command(
                         FailingScopeRowIT.ACME,
@@ -765,6 +787,8 @@ public class MixedCodeNodesIT {
                         "start-" + UUID.randomUUID(),
                         null,
                         null)));
+        await(node.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+        return instance;
     }
 
     /** A document that waits for a signal, then for a timer, then for a finance decision named by its binary name. */

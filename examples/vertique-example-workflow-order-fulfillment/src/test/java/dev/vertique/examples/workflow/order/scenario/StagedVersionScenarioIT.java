@@ -12,6 +12,7 @@ import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.examples.workflow.order.OrderFulfillmentDefinition;
 import dev.vertique.examples.workflow.order.OrderFulfillmentWorkflow;
 import dev.vertique.examples.workflow.order.scenario.ScenarioNode.Pin;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Vertx;
@@ -99,7 +100,9 @@ class StagedVersionScenarioIT {
                 .client(OrderFulfillmentDefinition.class)
                 .scope(scope)
                 .create();
-        return node.pin(await(client.start(order(orderId))));
+        WorkflowInstanceId instance = await(client.start(order(orderId)));
+        node.awaitIdle(instance);
+        return node.pin(instance);
     }
 
     /** Starts an order in the default scope on the version of the same scope that the start names. */
@@ -109,7 +112,9 @@ class StagedVersionScenarioIT {
                 .client(OrderFulfillmentDefinition.class)
                 .version(version)
                 .create();
-        return node.pin(await(client.start(order(orderId))));
+        WorkflowInstanceId instance = await(client.start(order(orderId)));
+        node.awaitIdle(instance);
+        return node.pin(instance);
     }
 
     /** The pin of an instance that started in the scope on the version of the default scope. */

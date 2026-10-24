@@ -103,6 +103,7 @@ public class TaskReviewSagaIT extends SagaTestBase {
                         null,
                         null,
                         null))
+                .compose(id -> awaitIdle(id))
                 .compose(id -> {
                     // Workflow must be WAITING on a TASK step
                     return component.workflowOperations().query(id).map(view -> {
@@ -118,7 +119,7 @@ public class TaskReviewSagaIT extends SagaTestBase {
                     UUID taskId = (UUID) pair[1];
                     var cmd = new TaskCompletionCommand(
                             taskId, "approve", "needs-fix", idempotencyKey, new WorkflowActor.User("alice"), null);
-                    return component.taskService().complete(cmd).map(v -> id);
+                    return component.taskService().complete(cmd).compose(v -> awaitIdle(id));
                 })
                 .compose(id -> component.workflowOperations().query(id))
                 .onComplete(ar -> ctx.verify(() -> {
@@ -169,6 +170,7 @@ public class TaskReviewSagaIT extends SagaTestBase {
                         null,
                         null,
                         null))
+                .compose(id -> awaitIdle(id))
                 .compose(id -> findTaskId(id).map(taskId -> new Object[] {id, taskId}))
                 .compose(pair -> {
                     WorkflowInstanceId id = (WorkflowInstanceId) pair[0];
@@ -178,23 +180,29 @@ public class TaskReviewSagaIT extends SagaTestBase {
                     var secondCmd = new TaskCompletionCommand(
                             taskId, "approve", "ok", "approve-second-" + testId, new WorkflowActor.User("bob"), null);
                     // First completion transitions the workflow; second must be rejected as stale.
-                    return component.taskService().complete(firstCmd).compose(v -> component
+                    return component
                             .taskService()
-                            .complete(secondCmd)
-                            .transform(ar -> {
-                                // Second call MUST fail with WorkflowTaskNotWaitingException
-                                if (ar.succeeded()) {
-                                    return Future.failedFuture(
-                                            new AssertionError("second complete() must fail but succeeded"));
-                                }
-                                if (!(ar.cause() instanceof WorkflowTaskNotWaitingException)) {
-                                    return Future.failedFuture(
-                                            new AssertionError("expected WorkflowTaskNotWaitingException but got: "
-                                                    + ar.cause().getClass().getName()));
-                                }
-                                // Expected: swallow the expected failure and return success
-                                return Future.<WorkflowInstanceId>succeededFuture(id);
-                            }));
+                            .complete(firstCmd)
+                            .compose(v -> awaitIdle(id))
+                            .compose(idle -> component
+                                    .taskService()
+                                    .complete(secondCmd)
+                                    .transform(ar -> {
+                                        // Second call MUST fail with WorkflowTaskNotWaitingException
+                                        if (ar.succeeded()) {
+                                            return Future.failedFuture(
+                                                    new AssertionError("second complete() must fail but succeeded"));
+                                        }
+                                        if (!(ar.cause() instanceof WorkflowTaskNotWaitingException)) {
+                                            return Future.failedFuture(new AssertionError(
+                                                    "expected WorkflowTaskNotWaitingException but got: "
+                                                            + ar.cause()
+                                                                    .getClass()
+                                                                    .getName()));
+                                        }
+                                        // Expected: swallow the expected failure and return success
+                                        return Future.<WorkflowInstanceId>succeededFuture(id);
+                                    }));
                 })
                 .compose(id -> component.workflowOperations().query(id))
                 .onComplete(ar -> ctx.verify(() -> {

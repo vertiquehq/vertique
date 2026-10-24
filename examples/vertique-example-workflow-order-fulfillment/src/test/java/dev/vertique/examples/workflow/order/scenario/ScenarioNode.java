@@ -18,6 +18,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
 import io.vertx.sqlclient.Tuple;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -32,6 +33,8 @@ import org.flywaydb.core.Flyway;
  * registry. A restart closes the node and starts another on the same database with the code of the next deploy.
  */
 final class ScenarioNode implements AutoCloseable {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     /** Where an instance runs: the scope it started in and the exact definition it is pinned to. */
     record Pin(String startScope, String definitionScope, String definitionId, long version) {}
@@ -216,6 +219,11 @@ final class ScenarioNode implements AutoCloseable {
     }
 
     // --- Waiting ---
+
+    /** Blocks until the engine has run the work recorded for the instance. */
+    void awaitIdle(WorkflowInstanceId instance) {
+        await(graph.executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+    }
 
     /** Blocks for the result of a future; a failure surfaces as the assertion error that carries its cause. */
     static <T> T await(Future<T> future) {

@@ -23,9 +23,13 @@ final class OrderScenarios {
     }
 
     /** Delivers the reservation, payment and shipment signals in the order the saga waits for them. */
-    static void finish(OrderFulfillmentWorkflow client, WorkflowInstanceId instance, String orderId) {
+    static void finish(
+            ScenarioNode node, OrderFulfillmentWorkflow client, WorkflowInstanceId instance, String orderId) {
         await(client.inventoryReserved(instance, new InventoryReserved(orderId, "res-" + orderId)));
+        node.awaitIdle(instance);
         await(client.paymentCaptured(instance, new PaymentCaptured(orderId, "chg-" + orderId)));
+        node.awaitIdle(instance);
         await(client.shipmentCreated(instance, new ShipmentCreated(orderId, "trk-" + orderId)));
+        node.awaitIdle(instance);
     }
 }

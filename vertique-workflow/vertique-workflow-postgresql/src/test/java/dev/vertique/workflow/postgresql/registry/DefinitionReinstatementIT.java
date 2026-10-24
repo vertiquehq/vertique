@@ -50,6 +50,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -66,6 +67,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionReinstatementIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     @WorkflowContract
     public interface ReinstatedCodeV1 {}
@@ -178,6 +181,7 @@ public class DefinitionReinstatementIT {
                             null,
                             null,
                             null)));
+            await(restarted.app().executionProbe().awaitIdle(started, IDLE_TIMEOUT));
             WorkflowView view = await(restarted.app().workflowOperations().query(started));
 
             // Then it ran on the reinstated version to a terminal status, so no instance is pinned afterwards
@@ -595,6 +599,7 @@ public class DefinitionReinstatementIT {
             WorkflowInstanceId admittedId =
                     await(operations.start(startCommand(id, Rollback.class, "gate-v2", 2), admitted.connection()));
             admitted.commit();
+            await(boot.app().executionProbe().awaitIdle(admittedId, IDLE_TIMEOUT));
             assertThat(await(boot.app().workflowOperations().query(admittedId))
                             .instance()
                             .definitionVersion())
@@ -643,6 +648,7 @@ public class DefinitionReinstatementIT {
             WorkflowInstanceId pinned =
                     await(operations.start(startCommand(id, Rollback.class, "after-v3", 3), afterCommit.connection()));
             afterCommit.commit();
+            await(boot.app().executionProbe().awaitIdle(pinned, IDLE_TIMEOUT));
             assertThat(await(boot.app().workflowOperations().query(pinned))
                             .instance()
                             .definitionVersion())

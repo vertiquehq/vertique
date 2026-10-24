@@ -22,6 +22,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,8 @@ import java.util.function.Supplier;
  * the contract interface, so every helper here takes it and none builds a graph.
  */
 final class ActivationFixtures {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final String DEFAULT = WorkflowScopes.DEFAULT;
 
@@ -141,7 +144,9 @@ final class ActivationFixtures {
 
         /** Starts the id in the start scope without a version and returns where the instance is pinned. */
         Pin start(String startScope, String id) {
-            return pin(await(node.app().workflowOperations().start(command(startScope, id))));
+            WorkflowInstanceId instance = await(node.app().workflowOperations().start(command(startScope, id)));
+            await(node.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            return pin(instance);
         }
 
         /** Starts the id in the start scope without a version and returns the failure. */
@@ -152,7 +157,7 @@ final class ActivationFixtures {
         /** Starts the id in the start scope on the explicit version of the default scope and returns the pin. */
         Pin startVersion(String startScope, String id, long version) {
             String key = "start-" + UUID.randomUUID();
-            return pin(await(node.app()
+            WorkflowInstanceId instance = await(node.app()
                     .workflowOperations()
                     .start(new StartCommand(
                             id,
@@ -163,7 +168,9 @@ final class ActivationFixtures {
                             null,
                             version,
                             startScope,
-                            null))));
+                            null)));
+            await(node.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            return pin(instance);
         }
 
         private StartCommand command(String startScope, String id) {

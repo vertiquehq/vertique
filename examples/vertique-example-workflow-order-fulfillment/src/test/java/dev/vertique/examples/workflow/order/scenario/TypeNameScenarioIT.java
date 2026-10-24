@@ -108,6 +108,7 @@ class TypeNameScenarioIT {
             OrderFulfillmentWorkflow client =
                     node.graph().workflowClientFactory().create(OrderFulfillmentWorkflow.class, DEFINITION_ID);
             WorkflowInstanceId versionTwoInstance = await(client.start(order("order-after-annotation")));
+            node.awaitIdle(versionTwoInstance);
             assertEquals(2L, node.pin(versionTwoInstance).version());
 
             // And version 1, with no instance left, can be deprecated and retired
@@ -166,6 +167,7 @@ class TypeNameScenarioIT {
                 new WorkflowActor.User("alice"),
                 null);
         await(node.graph().taskService().complete(approve));
+        node.awaitIdle(instance);
     }
 
     private static WorkflowUnknownTypeNameException causeOf(Throwable failure) {

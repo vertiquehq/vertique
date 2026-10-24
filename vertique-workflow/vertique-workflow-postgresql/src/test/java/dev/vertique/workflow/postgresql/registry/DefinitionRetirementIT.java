@@ -56,6 +56,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayDeque;
@@ -81,6 +82,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionRetirementIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     @WorkflowContract
     public interface PinnedCaseV7 extends OrderDocumentSignals {}
@@ -896,7 +899,7 @@ public class DefinitionRetirementIT {
 
             // When B admits a start while the version is AVAILABLE and leaves its transaction uncommitted
             Tx admitted = fixture.begin(null);
-            await(staleOps.start(
+            WorkflowInstanceId admittedStart = await(staleOps.start(
                     startCommand(pinId, StalePinCaseV1.class, "stale-pin-start", 1), admitted.connection()));
             fixture.awaitAdvisory(pinId, "ShareLock", true, 1);
 
@@ -910,6 +913,7 @@ public class DefinitionRetirementIT {
 
             // When the start commits, the deprecation finishes and cooling elapses
             admitted.commit();
+            await(nodeB.executionProbe().awaitIdle(admittedStart, IDLE_TIMEOUT));
             await(deprecation);
             fixture.ageStatus(pinKey, coolingSeconds + 60);
             Throwable pinned = failureOf(nodeA.definitionService().retire(pinKey));
@@ -1338,8 +1342,10 @@ public class DefinitionRetirementIT {
             Tx second = fixture.begin(null);
 
             // When both starts, with distinct instance and idempotency keys, reach their admission barriers
-            await(ops.start(startCommand(id, ConcurrentCaseV1.class, "concurrent-first", 1), first.connection()));
-            await(ops.start(startCommand(id, ConcurrentCaseV1.class, "concurrent-second", 1), second.connection()));
+            WorkflowInstanceId firstStart = await(
+                    ops.start(startCommand(id, ConcurrentCaseV1.class, "concurrent-first", 1), first.connection()));
+            WorkflowInstanceId secondStart = await(
+                    ops.start(startCommand(id, ConcurrentCaseV1.class, "concurrent-second", 1), second.connection()));
 
             // Then both hold the shared id lock at once, before any exclusive request exists
             fixture.awaitAdvisory(id, "ShareLock", true, 2);
@@ -1352,12 +1358,14 @@ public class DefinitionRetirementIT {
             // Then it waits for both starts, including after the first one has committed
             assertThat(deprecation.isComplete()).isFalse();
             first.commit();
+            await(app.executionProbe().awaitIdle(firstStart, IDLE_TIMEOUT));
             fixture.awaitAdvisory(id, "ShareLock", true, 1);
             assertThat(deprecation.isComplete()).isFalse();
             assertThat(fixture.stored(id, 1).status()).isEqualTo("AVAILABLE");
 
             // When the second start commits, the deprecation finishes and cooling elapses
             second.commit();
+            await(app.executionProbe().awaitIdle(secondStart, IDLE_TIMEOUT));
             await(deprecation);
             fixture.ageStatus(key, coolingSeconds + 60);
             Throwable pinned = failureOf(app.definitionService().retire(key));
@@ -1661,6 +1669,7 @@ public class DefinitionRetirementIT {
                 String dedupKey = "autocommit-" + i;
                 WorkflowInstanceId retried = await(pool.withTransaction(
                         connection -> ops.start(startCommand(id, AutocommitCaseV1.class, dedupKey, 1), connection)));
+                await(app.executionProbe().awaitIdle(retried, IDLE_TIMEOUT));
 
                 // Then a real instance is created and the dedup slot resolves to it
                 assertThat(fixture.instanceExists(retried.value())).isTrue();

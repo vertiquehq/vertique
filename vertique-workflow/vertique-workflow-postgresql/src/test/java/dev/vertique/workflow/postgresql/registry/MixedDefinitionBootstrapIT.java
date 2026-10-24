@@ -63,6 +63,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -81,6 +82,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class MixedDefinitionBootstrapIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     @WorkflowContract
     public interface TextDriftCaseV1 extends OrderDocumentSignals {}
@@ -637,6 +640,7 @@ public class MixedDefinitionBootstrapIT {
                             1L,
                             null,
                             null)));
+            await(first.app().executionProbe().awaitIdle(pinned, IDLE_TIMEOUT));
             CompiledDefinitionRef loadedV2 = await(service.load(
                     WorkflowScopes.DEFAULT,
                     documentBytes(docId, 2, StaleDoc.class),
@@ -773,6 +777,7 @@ public class MixedDefinitionBootstrapIT {
             await(second.app()
                     .workflowOperations()
                     .signal(pinned, "inventory.reserved", new InventoryReservedDoc("reservation-1"), "stale-signal"));
+            await(second.app().executionProbe().awaitIdle(pinned, IDLE_TIMEOUT));
             WorkflowView after = await(second.app().workflowOperations().query(pinned));
             assertThat(after.instance().definitionVersion()).isEqualTo(1);
             assertThat(after.instance().planHash()).isEqualTo(loadedV1.planHash());
@@ -1356,6 +1361,7 @@ public class MixedDefinitionBootstrapIT {
                             1L,
                             null,
                             null)));
+            await(first.app().executionProbe().awaitIdle(pinned, IDLE_TIMEOUT));
 
             // And version 1 deprecated through the service
             await(first.app().definitionService().deprecate(v1));
@@ -1416,6 +1422,7 @@ public class MixedDefinitionBootstrapIT {
                             "inventory.reserved",
                             new InventoryReservedDoc("reservation-1"),
                             "packaged-signal"));
+            await(second.app().executionProbe().awaitIdle(pinned, IDLE_TIMEOUT));
             WorkflowView after = await(second.app().workflowOperations().query(pinned));
             assertThat(after.instance().definitionVersion()).isEqualTo(1);
             assertThat(after.instance().planHash()).isEqualTo(hashV1);

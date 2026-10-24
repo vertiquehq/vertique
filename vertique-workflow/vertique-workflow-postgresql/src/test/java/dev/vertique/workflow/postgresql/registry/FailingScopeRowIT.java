@@ -45,6 +45,7 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -69,6 +70,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class FailingScopeRowIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     /** The contract of the default scope's code and of the scope's documents; it declares the signal they wait for. */
     @WorkflowContract("failing-c")
@@ -133,6 +136,7 @@ public class FailingScopeRowIT {
             await(second.app()
                     .workflowOperations()
                     .signal(waiting, "inventory.reserved", new InventoryReservedDoc("reservation-1"), "approved-1"));
+            await(second.app().executionProbe().awaitIdle(waiting, IDLE_TIMEOUT));
             assertThat(database.instanceStatus(waiting.value())).isEqualTo("COMPLETED");
         }
     }
@@ -785,8 +789,10 @@ public class FailingScopeRowIT {
     }
 
     private static WorkflowInstanceId startInAcme(Boot node, String orderId, String idempotencyKey) {
-        return await(
+        WorkflowInstanceId instance = await(
                 node.app().workflowOperations().start(command(ACME, PURCHASE, orderId, idempotencyKey, null, null)));
+        await(node.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+        return instance;
     }
 
     static StartCommand command(
@@ -819,6 +825,7 @@ public class FailingScopeRowIT {
         String key = "start-" + UUID.randomUUID();
         WorkflowInstanceId instance = await(
                 node.app().workflowOperations().start(command(contract, scope, id, "order-" + key, key, null, null)));
+        await(node.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
         Row row = await(database.admin().preparedQuery("""
                                 SELECT scope_key, definition_scope_key, definition_id, definition_version
                                 FROM workflow_instances WHERE id = $1

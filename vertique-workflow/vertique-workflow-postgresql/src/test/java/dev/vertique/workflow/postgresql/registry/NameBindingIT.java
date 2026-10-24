@@ -23,6 +23,7 @@ import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.IsolatedFixtureCode.Naming;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
@@ -32,6 +33,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Tuple;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -54,6 +56,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class NameBindingIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     /** The contract of the fixture definitions; it is named by its binary name and never moves. */
     @WorkflowContract
@@ -282,19 +286,20 @@ public class NameBindingIT {
             DefinitionKey key = new DefinitionKey(ACME, DOCUMENT_ID, 1);
             await(first.app().definitionService().publish(key));
             await(first.app().definitionService().activate(ACME, DOCUMENT_ID, ACME, 1));
-            UUID instance = await(first.app()
-                            .workflowOperations()
-                            .start(new StartCommand(
-                                    DOCUMENT_ID,
-                                    BindingContract.class.getName(),
-                                    new PlaceOrderDoc("order-doc-1"),
-                                    "start-" + UUID.randomUUID(),
-                                    null,
-                                    null,
-                                    null,
-                                    ACME,
-                                    null)))
-                    .value();
+            WorkflowInstanceId started = await(first.app()
+                    .workflowOperations()
+                    .start(new StartCommand(
+                            DOCUMENT_ID,
+                            BindingContract.class.getName(),
+                            new PlaceOrderDoc("order-doc-1"),
+                            "start-" + UUID.randomUUID(),
+                            null,
+                            null,
+                            null,
+                            ACME,
+                            null)));
+            await(first.app().executionProbe().awaitIdle(started, IDLE_TIMEOUT));
+            UUID instance = started.value();
             StoredRow published = row(database, ACME, DOCUMENT_ID, 1);
             first.close();
 
@@ -467,19 +472,20 @@ public class NameBindingIT {
     }
 
     private static UUID startOrder(Boot node, String orderId) {
-        return await(node.app()
-                        .workflowOperations()
-                        .start(new StartCommand(
-                                DEFINITION_ID,
-                                BindingContract.class.getName(),
-                                new StartOrder(orderId),
-                                "start-" + UUID.randomUUID(),
-                                null,
-                                null,
-                                null,
-                                null,
-                                null)))
-                .value();
+        WorkflowInstanceId started = await(node.app()
+                .workflowOperations()
+                .start(new StartCommand(
+                        DEFINITION_ID,
+                        BindingContract.class.getName(),
+                        new StartOrder(orderId),
+                        "start-" + UUID.randomUUID(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null)));
+        await(node.app().executionProbe().awaitIdle(started, IDLE_TIMEOUT));
+        return started.value();
     }
 
     /** Completes the instance's open task with an approval decision. */
@@ -496,6 +502,7 @@ public class NameBindingIT {
         TaskMutationResult result = await(node.app()
                 .pool()
                 .withTransaction(tx -> node.app().taskCallbacks().taskCompleted(approval, tx)));
+        await(node.app().executionProbe().awaitIdle(new WorkflowInstanceId(instance), IDLE_TIMEOUT));
         assertThat(result).isEqualTo(TaskMutationResult.APPLIED);
     }
 

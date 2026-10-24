@@ -100,6 +100,7 @@ public class TimerSagaIT extends SagaTestBase {
                         null,
                         null,
                         null))
+                .compose(id -> awaitIdle(id))
                 .compose(id -> {
                     // Workflow should be WAITING on the timer step
                     return component.workflowOperations().query(id).map(view -> {
@@ -149,6 +150,7 @@ public class TimerSagaIT extends SagaTestBase {
                         null,
                         null,
                         null))
+                .compose(id -> awaitIdle(id))
                 .compose(id -> {
                     // Workflow should be WAITING on the signal/timeout step
                     return component.workflowOperations().query(id).map(view -> {
@@ -199,13 +201,14 @@ public class TimerSagaIT extends SagaTestBase {
                         null,
                         null,
                         null))
+                .compose(id -> awaitIdle(id))
                 .compose(id -> {
                     // Send the signal immediately — before any timer fires
                     var sig = new TimerWorkflowDefinition.OkSignal(testId);
                     return component
                             .workflowOperations()
                             .signal(id, "ok-signal", sig, testId + ":ok")
-                            .map(v -> id);
+                            .compose(v -> awaitIdle(id));
                 })
                 .compose(id -> component.workflowOperations().query(id))
                 .onComplete(ar -> ctx.verify(() -> {
@@ -252,6 +255,7 @@ public class TimerSagaIT extends SagaTestBase {
                         null,
                         null,
                         null))
+                .compose(id -> awaitIdle(id))
                 .compose(id -> {
                     // Immediately cancel the workflow while it waits on the timer
                     return component
@@ -329,7 +333,7 @@ public class TimerSagaIT extends SagaTestBase {
                 return Future.failedFuture(
                         new AssertionError("No ENQUEUED timer-fire jobs found for workflow " + workflowId.value()));
             }
-            return Future.all(futures).mapEmpty();
+            return Future.all(futures).compose(fired -> awaitIdle(workflowId)).mapEmpty();
         });
     }
 }

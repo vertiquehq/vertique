@@ -71,7 +71,9 @@ class ScopedKeysScenarioIT {
             loadPublishAndActivateAcme(first);
             await(first.graph().definitionService().activate(QA, ORDER_FULFILLMENT, DEFAULT, 2));
             orderInDefault = await(orderClient(first, DEFAULT).start(order("order-default")));
+            first.awaitIdle(orderInDefault);
             orderInQa = await(orderClient(first, QA).start(order("order-qa")));
+            first.awaitIdle(orderInQa);
             acmeEarly = startPurchase(first, ACME, "p-acme", "PO-1");
             globexEarly = startPurchase(first, GLOBEX, "p-globex", "PO-1");
             assertEquals(orderPin(DEFAULT, 1), first.pin(orderInDefault));
@@ -83,11 +85,13 @@ class ScopedKeysScenarioIT {
         // When the component restarts
         try (ScenarioNode second = deploy(vertx)) {
             // Then every instance started before the restart resumes on its own pin and completes
-            finish(orderClient(second, DEFAULT), orderInDefault, "order-default");
-            finish(orderClient(second, QA), orderInQa, "order-qa");
+            finish(second, orderClient(second, DEFAULT), orderInDefault, "order-default");
+            finish(second, orderClient(second, QA), orderInQa, "order-qa");
             approveFinance(second, acmeEarly);
             await(purchaseClient(second, ACME).audited(acmeEarly, new PoAudited("dave"), "audit-early"));
+            second.awaitIdle(acmeEarly);
             await(purchaseClient(second, GLOBEX).approved(globexEarly, new PoApproved("erin"), "approve-early"));
+            second.awaitIdle(globexEarly);
             for (WorkflowInstanceId instance :
                     new WorkflowInstanceId[] {orderInDefault, orderInQa, acmeEarly, globexEarly}) {
                 assertEquals("COMPLETED", second.status(instance));
@@ -122,6 +126,7 @@ class ScopedKeysScenarioIT {
 
             // When the instance is sent the audit that its pin waits for
             await(purchaseClient(second, ACME).audited(acme, new PoAudited("gail"), "a-2"));
+            second.awaitIdle(acme);
 
             // Then it is delivered
             assertEquals("COMPLETED", second.status(acme));
@@ -132,6 +137,7 @@ class ScopedKeysScenarioIT {
             assertRejectedNamingVersionOne(auditToGlobex, "po.audited");
             assertEquals("WAITING", second.status(globex));
             await(purchaseClient(second, GLOBEX).approved(globex, new PoApproved("ines"), "g-2"));
+            second.awaitIdle(globex);
 
             // Then the approval is delivered
             assertEquals("COMPLETED", second.status(globex));

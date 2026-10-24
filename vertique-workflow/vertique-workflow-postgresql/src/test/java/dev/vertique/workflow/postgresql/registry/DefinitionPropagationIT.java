@@ -47,6 +47,7 @@ import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Tuple;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,6 +73,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionPropagationIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     @WorkflowContract
     public interface LifecycleDocV1 extends OrderDocumentSignals {}
@@ -638,6 +641,7 @@ public class DefinitionPropagationIT {
                                 1L,
                                 null,
                                 null)));
+                await(b.app().executionProbe().awaitIdle(started, IDLE_TIMEOUT));
                 WorkflowView view = await(b.app().workflowOperations().query(started));
 
                 // Then it ran on the restored hash to a terminal status, leaving no pinned instance
