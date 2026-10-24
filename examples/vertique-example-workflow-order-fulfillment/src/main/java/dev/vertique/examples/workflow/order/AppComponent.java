@@ -66,10 +66,11 @@ import jakarta.inject.Singleton;
  * phases: this graph includes no JSON runtime module, so no {@code CONFIGURE}-phase step installs a
  * JSON profile as the process codec and JSON runs on Vert.x's raw semantics; the {@code VALIDATE}-phase
  * {@code ComposeValidationStep} forces construction of every {@code ComposeValidator} — including
- * the {@link WorkflowOutboxComposeValidator} (contributed by {@link WorkflowServicesModule}),
- * the {@link WorkflowDelayedComposeValidator} (contributed by {@link WorkflowDelayedModule}), and
- * the {@link WorkflowTasksComposeValidator} (contributed by {@link WorkflowTasksModule}), so the
- * three §3.11/cycle-2/cycle-3 fail-fast startup contracts still run without any hand-written call;
+ * the {@link WorkflowDelayedComposeValidator} (contributed by {@link WorkflowDelayedModule}) and
+ * the {@link WorkflowTasksComposeValidator} (contributed by {@link WorkflowTasksModule}) — so those
+ * fail-fast startup contracts still run without any hand-written call; the
+ * {@link WorkflowOutboxComposeValidator} (contributed by {@link WorkflowServicesModule}) runs as a
+ * per-plan definition validator whenever the workflow registry builds a plan;
  * the {@code MIGRATE}-phase {@code FlywayMigrationStartupStep} contributed by {@link DbFlywayModule}
  * runs schema migrations; then the verticles deploy ({@code INFRA} management verticle, then
  * {@code SERVICES} stub services + signal contributor + timer pollers + outbox relay, the latter

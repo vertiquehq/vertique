@@ -11,7 +11,9 @@ import static org.mockito.Mockito.when;
 
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.RegisteredWorkflowDefinition;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import io.vertx.sqlclient.SqlClient;
@@ -287,7 +289,62 @@ class WorkflowReminderComposeValidatorTest {
         };
     }
 
+    /**
+     * Builds the plan of the definition on a registry of its own and wraps it as the candidate a validator receives.
+     *
+     * @param definition the definition to build
+     * @return the candidate view of the built plan
+     */
+    private static RegisteredWorkflowDefinition candidate(WorkflowDefinition<State, ?> definition) {
+        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
+        registry.register(definition);
+        WorkflowPlan plan = registry.allRegistered().iterator().next().plan();
+        return new RegisteredWorkflowDefinition(plan, State.class);
+    }
+
+    /**
+     * Validates every plan registered on the registry, each alone, with a validator built over the recorders.
+     *
+     * @param registry the registry whose plans are validated
+     * @param recorders the registered recorders
+     */
+    private static void validateAll(
+            DefaultWorkflowRegistry registry, Set<WorkflowSideEffectRecorder<SqlClient>> recorders) {
+        WorkflowReminderComposeValidator validator = new WorkflowReminderComposeValidator(recorders);
+        registry.allRegistered()
+                .forEach(rw -> validator.validate(new RegisteredWorkflowDefinition(rw.plan(), State.class)));
+    }
+
     // --- Tests ---
+
+    @Test
+    @DisplayName("each plan is validated alone: the plan with a reminder is refused, the plan without one passes")
+    void validatesOnePlanAtATime() {
+        // Given a validator built without a registry and no WORKFLOW_EVENT recorder, one plan with a reminder and
+        // one without
+        WorkflowReminderComposeValidator validator = new WorkflowReminderComposeValidator(Set.of());
+        RegisteredWorkflowDefinition clean = candidate(cleanMultiDef("clean-def-single"));
+        RegisteredWorkflowDefinition dirty = candidate(dirtyMultiDef("dirty-def-single"));
+
+        // When each plan is validated alone
+        // Then the plan with the reminder is refused with the offender text
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.validate(dirty));
+        assertTrue(
+                ex.getMessage().contains("(dirty-def-single v1 task-step)"),
+                "Error message must contain the offender in the form (definitionId vN stepId); was: "
+                        + ex.getMessage());
+        assertTrue(
+                ex.getMessage().contains("WORKFLOW_EVENT"),
+                "Error message must mention WORKFLOW_EVENT; was: " + ex.getMessage());
+
+        // And the plan without one passes
+        assertDoesNotThrow(() -> validator.validate(clean));
+
+        // And the plan with the reminder passes once a WORKFLOW_EVENT recorder is present
+        WorkflowReminderComposeValidator withEvents =
+                new WorkflowReminderComposeValidator(Set.of(recorderFor(IntentKind.WORKFLOW_EVENT)));
+        assertDoesNotThrow(() -> withEvents.validate(dirty));
+    }
 
     @Nested
     @DisplayName("empty registry (no plans registered)")
@@ -297,15 +354,14 @@ class WorkflowReminderComposeValidatorTest {
         @DisplayName("empty registry + no recorders: validation passes (nothing to check)")
         void emptyRegistryNoRecordersPassesValidation() {
             DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
-            assertDoesNotThrow(() -> new WorkflowReminderComposeValidator(registry, Set.of()));
+            assertDoesNotThrow(() -> validateAll(registry, Set.of()));
         }
 
         @Test
         @DisplayName("empty registry + WORKFLOW_EVENT recorder: validation passes")
         void emptyRegistryWithEventRecorderPassesValidation() {
             DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
-            assertDoesNotThrow(() ->
-                    new WorkflowReminderComposeValidator(registry, Set.of(recorderFor(IntentKind.WORKFLOW_EVENT))));
+            assertDoesNotThrow(() -> validateAll(registry, Set.of(recorderFor(IntentKind.WORKFLOW_EVENT))));
         }
     }
 
@@ -318,7 +374,7 @@ class WorkflowReminderComposeValidatorTest {
         void taskNodeNullRemindersNoEventRecorderPasses() {
             DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
             registry.register(noReminderDef("no-reminder-def"));
-            assertDoesNotThrow(() -> new WorkflowReminderComposeValidator(registry, Set.of()));
+            assertDoesNotThrow(() -> validateAll(registry, Set.of()));
         }
 
         @Test
@@ -326,7 +382,7 @@ class WorkflowReminderComposeValidatorTest {
         void noTaskNodesNoEventRecorderPasses() {
             DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
             registry.register(noTaskDef("no-task-def"));
-            assertDoesNotThrow(() -> new WorkflowReminderComposeValidator(registry, Set.of()));
+            assertDoesNotThrow(() -> validateAll(registry, Set.of()));
         }
     }
 
@@ -340,7 +396,7 @@ class WorkflowReminderComposeValidatorTest {
             DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
             registry.register(reminderDef("reminder-ok-def"));
             WorkflowSideEffectRecorder<SqlClient> eventRecorder = recorderFor(IntentKind.WORKFLOW_EVENT);
-            assertDoesNotThrow(() -> new WorkflowReminderComposeValidator(registry, Set.of(eventRecorder)));
+            assertDoesNotThrow(() -> validateAll(registry, Set.of(eventRecorder)));
         }
 
         @Test
@@ -350,9 +406,8 @@ class WorkflowReminderComposeValidatorTest {
             registry.register(reminderDef("reminder-bad-def"));
             WorkflowSideEffectRecorder<SqlClient> serviceRecorder = recorderFor(IntentKind.SERVICE);
 
-            IllegalStateException ex = assertThrows(
-                    IllegalStateException.class,
-                    () -> new WorkflowReminderComposeValidator(registry, Set.of(serviceRecorder)));
+            IllegalStateException ex =
+                    assertThrows(IllegalStateException.class, () -> validateAll(registry, Set.of(serviceRecorder)));
 
             assertTrue(
                     ex.getMessage().contains("reminder-bad-def"),
@@ -371,8 +426,7 @@ class WorkflowReminderComposeValidatorTest {
             DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
             registry.register(reminderDef("reminder-no-recorders-def"));
 
-            IllegalStateException ex = assertThrows(
-                    IllegalStateException.class, () -> new WorkflowReminderComposeValidator(registry, Set.of()));
+            IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validateAll(registry, Set.of()));
 
             assertTrue(
                     ex.getMessage().contains("reminder-no-recorders-def"),
@@ -387,8 +441,7 @@ class WorkflowReminderComposeValidatorTest {
             registry.register(cleanMultiDef("clean-def-multi"));
             registry.register(dirtyMultiDef("dirty-def-multi"));
 
-            IllegalStateException ex = assertThrows(
-                    IllegalStateException.class, () -> new WorkflowReminderComposeValidator(registry, Set.of()));
+            IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validateAll(registry, Set.of()));
 
             assertTrue(
                     ex.getMessage().contains("dirty-def-multi"),

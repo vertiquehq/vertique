@@ -685,11 +685,15 @@ surface.
 
 ### WorkflowReminderComposeValidator
 
-Startup composition guard that aborts application boot when any registered workflow plan declares task
-reminders (`HumanTaskNode.reminders() != null`) but no `WORKFLOW_EVENT` `WorkflowSideEffectRecorder` is
-installed. Enforced through the `RecorderRouter` constructor chain: requesting `WorkflowOperations`
-(or any type that depends on `WorkflowEngine`) from the Dagger component forces construction of this
-validator.
+Per-plan composition guard that refuses a workflow plan declaring task reminders
+(`HumanTaskNode.reminders() != null`) when no `WORKFLOW_EVENT` `WorkflowSideEffectRecorder` is
+installed. It is a `WorkflowDefinitionValidator` that `WorkflowEngineModule` contributes into the
+registry's validator set, so the registry runs it once for every plan it builds, at startup and for a
+definition loaded or published later. A code plan that fails the check aborts application boot with an
+`IllegalStateException` naming each `(definitionId vN stepId)` offender; a document that fails it is
+refused at publication with the same text and never becomes resolvable. It is no longer a
+`ComposeValidator`, and `RecorderRouter` no longer takes it as a constructor dependency. Its public
+constructor takes the recorder set only.
 
 ---
 
@@ -744,7 +748,7 @@ static WorkflowSideEffectRecorder<SqlClient> serviceRecorder(WorkflowServiceReco
 
 `IntentKind.WORKFLOW_EVENT` is declared optional by default (`DEFAULT_OPTIONAL_INTENT_KINDS`), so
 applications without a workflow-events module run without it — unless a plan declares reminders, in
-which case `WorkflowReminderComposeValidator` aborts startup.
+which case `WorkflowReminderComposeValidator` refuses the plan (aborting startup for a code plan).
 
 ---
 

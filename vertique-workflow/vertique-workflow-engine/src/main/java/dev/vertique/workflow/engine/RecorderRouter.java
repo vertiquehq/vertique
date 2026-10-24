@@ -30,13 +30,7 @@ import java.util.Set;
  *   <li>If no recorder is registered and the kind is not optional → fails the returned future
  *       with an {@link IllegalStateException} (rolls back the workflow transaction).</li>
  * </ul>
- *
- * <p>The constructor also accepts a {@link WorkflowReminderComposeValidator} as a required
- * dependency whose constructor performs a startup check (reminders-require-events). This follows
- * the forced-construction pattern used by other compose validators: Dagger builds the validator
- * whenever {@code RecorderRouter} is first needed (i.e., when {@code WorkflowEngine} or any
- * consumer that references it is instantiated). The validator is otherwise unused in this class.
- */
+ * */
 @Singleton
 final class RecorderRouter {
 
@@ -46,28 +40,18 @@ final class RecorderRouter {
     /**
      * Constructs a {@code RecorderRouter} from the given set of recorders and optional kinds.
      *
-     * <p>The {@code complianceCheck} parameter is unused after construction. It exists purely so
-     * Dagger constructs {@link WorkflowReminderComposeValidator} (which performs startup checks at
-     * construction time) before {@code RecorderRouter} is created. This mirrors the pattern used by
-     * {@link dev.vertique.workflow.delayed.recorder.WorkflowTimerSideEffectRecorder} and
-     * {@link dev.vertique.workflow.events.recorder.WorkflowEventSideEffectRecorder}.
-     *
      * @param recorders      the set of recorders contributed via the {@code @WorkflowRecorders}
      *                       Dagger multibinding; must not contain two recorders for the same
      *                       {@link IntentKind}
      * @param optionalKinds  the set of intent kinds that are treated as optional — if no recorder
      *                       is registered for an optional kind, routing succeeds silently with an
      *                       empty result
-     * @param complianceCheck the reminder-compose validator; injected for its construction
-     *                        side-effect only (the constructor runs the reminders-require-events
-     *                        check)
      * @throws IllegalStateException if two recorders declare the same {@link IntentKind}
      */
     @Inject
     RecorderRouter(
             @WorkflowRecorders Set<WorkflowSideEffectRecorder<SqlClient>> recorders,
-            @OptionalIntentKinds Set<IntentKind> optionalKinds,
-            WorkflowReminderComposeValidator complianceCheck) {
+            @OptionalIntentKinds Set<IntentKind> optionalKinds) {
         Map<IntentKind, WorkflowSideEffectRecorder<SqlClient>> map = new EnumMap<>(IntentKind.class);
         for (WorkflowSideEffectRecorder<SqlClient> recorder : recorders) {
             WorkflowSideEffectRecorder<SqlClient> prior = map.put(recorder.kind(), recorder);
@@ -82,8 +66,6 @@ final class RecorderRouter {
         }
         this.byKind = Map.copyOf(map);
         this.optionalKinds = Set.copyOf(optionalKinds);
-        // complianceCheck is intentionally unused after construction; injection here forces the
-        // validator's checks to run during Dagger graph instantiation, not opt-in at app boot.
     }
 
     /**

@@ -389,10 +389,14 @@ payload type handed to a validator) are an internal framework seam. They are not
 contract and sit outside this module's maturity promise; sibling framework modules use them to check
 a definition before it is published. Applications should not implement them.
 
-- **Internal wiring.** The `DefaultWorkflowRegistry` constructor that takes a
-  `Set<WorkflowDefinitionValidator>` and the `Set<WorkflowDefinitionValidator>` multibinding declared
-  by `WorkflowCoreModule` are internal for the same reason. The existing constructors delegate with an
-  empty set.
+- **Internal wiring.** The `DefaultWorkflowRegistry` constructors that take a
+  `Set<WorkflowDefinitionValidator>` or a `Provider<Set<WorkflowDefinitionValidator>>` and the
+  `Set<WorkflowDefinitionValidator>` multibinding declared by `WorkflowCoreModule` are internal for the
+  same reason. The existing constructors delegate with an empty set. `WorkflowCoreModule` passes the
+  provider, so the registry resolves the validators on each plan build and not while it is constructed;
+  a validator may therefore depend on recorders and handlers that themselves depend on the registry.
+- **Contributors.** The reminder check of `vertique-workflow-engine` and the service-dispatch checks
+  of `vertique-workflow-services` are contributed validators; they run on every plan the registry builds.
 - **Unordered.** The validator set has no defined order; a validator must not depend on another one
   having run.
 - **Synchronous.** Validators run on the thread that calls `register` or `publish`, so call

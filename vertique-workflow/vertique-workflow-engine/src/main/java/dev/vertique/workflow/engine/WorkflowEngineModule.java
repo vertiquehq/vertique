@@ -10,7 +10,6 @@ import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.context.ContextRuntimeModule;
-import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
@@ -21,6 +20,7 @@ import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
+import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
@@ -188,17 +188,16 @@ public abstract class WorkflowEngineModule {
 
     /**
      * Contributes the {@link WorkflowReminderComposeValidator} into the
-     * {@code Set<ComposeValidator>} multibinding so the framework materializes it in the
-     * {@link dev.vertique.core.lifecycle.LifecyclePhase#VALIDATE VALIDATE} lifecycle phase,
-     * forcing its construction-time validation check with no app code referencing it.
+     * {@code Set<WorkflowDefinitionValidator>} multibinding so the registry runs the
+     * reminders-require-events check on every plan it builds.
      *
-     * @param impl the compose validator, constructed via its {@code @Inject} constructor
-     * @return the validator as a {@link ComposeValidator}
+     * @param impl the validator, constructed via its {@code @Inject} constructor
+     * @return the validator as a {@link WorkflowDefinitionValidator}
      */
     @Provides
     @Singleton
     @IntoSet
-    static ComposeValidator reminderComposeValidator(WorkflowReminderComposeValidator impl) {
+    static WorkflowDefinitionValidator reminderComposeValidator(WorkflowReminderComposeValidator impl) {
         return impl;
     }
     /** Provides durable publication without changing standalone registry construction. */

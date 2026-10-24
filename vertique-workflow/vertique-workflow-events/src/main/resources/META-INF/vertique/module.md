@@ -134,7 +134,7 @@ Applications normally only provide the binding and destination handler.
 
 ## Invariants & Gotchas
 
-- **Reminder-using workflows require this module.** If any registered workflow plan declares task reminders, the startup `WorkflowReminderComposeValidator` (package `dev.vertique.workflow.engine`, module `vertique-workflow-engine`) fails when `WorkflowEventsModule` is not installed. There is no silent reminder drop.
+- **Reminder-using workflows require this module.** If any registered workflow plan declares task reminders, the per-plan `WorkflowReminderComposeValidator` (package `dev.vertique.workflow.engine`, module `vertique-workflow-engine`) refuses that plan, aborting startup for a code plan, when `WorkflowEventsModule` is not installed. There is no silent reminder drop.
 - **Optional intent kind.** When no application installs an event recorder and no plan requires it, `WORKFLOW_EVENT` is treated as an optional intent kind that no-ops cleanly rather than failing transitions.
 - **History stays the engine's ledger.** Events are derived from history but are not a substitute for it. Recovery, retries, and engine decisions read history rows; consumers read the outbox-delivered event stream.
 - **Envelope contract is versioned.** External consumers depend on the v1 event envelope contract; breaking changes require a new envelope version, not field-shape changes in place.

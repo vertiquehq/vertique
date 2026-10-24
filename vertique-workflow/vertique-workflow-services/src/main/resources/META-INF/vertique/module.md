@@ -106,13 +106,12 @@ An app that uses service-dispatch workflows needs the workflow services module p
 })
 public interface AppComponent {
     WorkflowOperations workflowOperations();
-    WorkflowOutboxComposeValidator workflowOutboxComposeValidator();
 }
 ```
 
 `TransactionalMessagingServiceModule` is required for the `SERVICE` outbox destination handler. Without it, service-dispatch intents cannot be delivered after commit.
 
-Expose and call `workflowOutboxComposeValidator()` during application startup if you want fail-fast validation before serving requests. The recorder also enforces the same checks when the workflow graph is constructed.
+`WorkflowOutboxComposeValidator` is a per-plan `WorkflowDefinitionValidator` that `WorkflowServicesModule` contributes into the registry's validator set, so the registry runs it once for every plan it builds, at startup and for a definition loaded or published later. A plan that dispatches to a service (a service-dispatch or compensation step) is refused when no `SERVICE` outbox handler is bound, or when a target id does not resolve or has the wrong shape (`@OneWay`, a return type other than `Future<Void>`, other than one payload parameter). A graph whose plans dispatch to no service starts without a `SERVICE` handler. A code plan that fails a check aborts startup with an `IllegalStateException` naming the definition, step and target; a document that fails one is refused at publication with the same text. The validator is no longer a `ComposeValidator`, no accessor is needed on the component, and `OutboxSideEffectRecorder` no longer takes it as a constructor dependency. Its public constructor takes the outbox destination handlers and the `ServiceTargetResolver`.
 
 ---
 

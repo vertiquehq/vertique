@@ -31,7 +31,7 @@ import java.util.Set;
  * {@link WorkflowEngineParts} (the repository and transaction-runner SPIs, the task/timer stores, the workflow
  * registry, the durable definition store, a {@link Clock}, the side-effect recorders and the other optional parts)
  * and constructs the entire package-private collaborator graph internally — {@link RecorderRouter},
- * {@link WorkflowReminderComposeValidator}, {@link FingerprintCanonicalizer}, the leaf
+ * {@link FingerprintCanonicalizer}, the leaf
  * history/event/reminder/compensation collaborators, the {@link BranchTransitionEngine}, and finally the
  * {@link WorkflowEngine} itself (which in turn wires the {@code WorkflowTransitionDriver} ↔
  * {@link ForkJoinCoordinator} mutual-recursion cycle by hand). It returns the assembled engine as a
@@ -53,8 +53,8 @@ public final class WorkflowEngineFactory {
      *
      * <p>{@link IntentKind#WORKFLOW_EVENT} is optional so that apps without a workflow-events module
      * can still run as long as no registered plan declares reminders (the
-     * {@link WorkflowReminderComposeValidator} enforces the reminder-requires-events rule at startup
-     * for apps that do configure reminders).
+     * {@link WorkflowReminderComposeValidator} enforces the reminder-requires-events rule on each plan
+     * the registry builds, for apps that do configure reminders).
      */
     public static final Set<IntentKind> DEFAULT_OPTIONAL_INTENT_KINDS = Set.of(IntentKind.WORKFLOW_EVENT);
 
@@ -93,10 +93,7 @@ public final class WorkflowEngineFactory {
         DurableContextPropagator propagator = parts.propagator();
         WorkflowExecutionProbe executionProbe = new DefaultWorkflowExecutionProbe(parts.commands());
         PayloadConstraintCheck payloadConstraintCheck = new PayloadConstraintCheck(parts.beanValidator());
-        WorkflowReminderComposeValidator complianceCheck =
-                new WorkflowReminderComposeValidator(registry, parts.recorders());
-        RecorderRouter recorderRouter =
-                new RecorderRouter(parts.recorders(), parts.optionalIntentKinds(), complianceCheck);
+        RecorderRouter recorderRouter = new RecorderRouter(parts.recorders(), parts.optionalIntentKinds());
         FingerprintCanonicalizer fingerprintCanonicalizer = new FingerprintCanonicalizer();
         WorkflowEventEmitter eventEmitter = new WorkflowEventEmitter(recorderRouter, clock);
         WorkflowHistoryRecorder historyRecorder = new WorkflowHistoryRecorder(history, eventEmitter, clock);

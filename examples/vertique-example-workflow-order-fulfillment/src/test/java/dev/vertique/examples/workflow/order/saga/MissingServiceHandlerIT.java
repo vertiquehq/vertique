@@ -21,7 +21,7 @@ import dev.vertique.job.cron.dagger.CronPersistenceModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.services.DispatchModule;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
-import dev.vertique.workflow.services.compose.WorkflowOutboxComposeValidator;
+import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.services.di.WorkflowServicesModule;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -37,8 +37,8 @@ import org.junit.jupiter.api.Timeout;
  * <p>Verifies that an application composed WITHOUT {@link
  * dev.vertique.inboxoutbox.services.TransactionalMessagingServiceModule} passes Dagger component
  * construction (lazy {@code @Singleton}) but throws {@link IllegalStateException} with the
- * documented message when {@link WorkflowOutboxComposeValidator} is first requested via the
- * component accessor.
+ * documented message when the workflow registry is first requested via the component accessor,
+ * because a code plan that dispatches to a service is refused by the per-plan outbox validator.
  *
  * <p>This test uses a separate test-only {@code @Component} ({@link ComponentWithoutServiceModule})
  * that mirrors the production {@link dev.vertique.examples.workflow.order.AppComponent} but omits
@@ -55,7 +55,7 @@ public class MissingServiceHandlerIT {
      *
      * <p>This simulates a misconfigured application. Dagger constructs the component
      * successfully (all bindings are satisfied at graph level), but the
-     * {@link WorkflowOutboxComposeValidator} accessor will throw on first call because no
+     * workflow registry accessor will throw on first call because no
      * {@code SERVICE} {@link dev.vertique.inboxoutbox.OutboxDestinationHandler} is registered.
      */
     @Singleton
@@ -81,13 +81,14 @@ public class MissingServiceHandlerIT {
     interface ComponentWithoutServiceModule {
 
         /**
-         * Returns the composition validator — will throw {@link IllegalStateException} when no
+         * Returns the workflow registry — building it registers the code definitions, which
+         * throws {@link IllegalStateException} when a plan dispatches to a service and no
          * {@code SERVICE} handler is registered.
          *
-         * @return the composition validator
+         * @return the workflow registry
          * @throws IllegalStateException if no SERVICE OutboxDestinationHandler is in the graph
          */
-        WorkflowOutboxComposeValidator workflowComposeValidator();
+        WorkflowRegistry workflowRegistry();
     }
 
     // --- Tests ---
@@ -105,16 +106,16 @@ public class MissingServiceHandlerIT {
     }
 
     @Test
-    @DisplayName("calling workflowComposeValidator() without SERVICE handler throws documented IllegalStateException")
-    void composeValidatorThrowsWithoutServiceHandler() {
+    @DisplayName("building the workflow registry without SERVICE handler throws documented IllegalStateException")
+    void registryThrowsWithoutServiceHandler() {
         Vertx vertx = Vertx.vertx();
         try {
             var component = buildComponentWithoutServiceModule(vertx);
 
             IllegalStateException ex = assertThrows(
                     IllegalStateException.class,
-                    component::workflowComposeValidator,
-                    "validator accessor must throw when no SERVICE handler is registered");
+                    component::workflowRegistry,
+                    "registry accessor must throw when no SERVICE handler is registered");
 
             String msg = ex.getMessage();
             assertNotNull(msg, "exception message must not be null");

@@ -132,9 +132,8 @@ class WorkflowEngineStartTenantTest {
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
 
         Set<WorkflowSideEffectRecorder<SqlClient>> recorders = Set.of();
-        WorkflowReminderComposeValidator complianceCheck = new WorkflowReminderComposeValidator(registry, recorders);
         RecorderRouter recorderRouter =
-                new RecorderRouter(recorders, WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS, complianceCheck);
+                new RecorderRouter(recorders, WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS);
         WorkflowEventEmitter eventEmitter = new WorkflowEventEmitter(recorderRouter, FIXED_CLOCK);
         WorkflowHistoryRecorder historyRecorder = new WorkflowHistoryRecorder(history, eventEmitter, FIXED_CLOCK);
         ReminderScheduler reminderScheduler = new ReminderScheduler(history, recorderRouter, timerStore, FIXED_CLOCK);

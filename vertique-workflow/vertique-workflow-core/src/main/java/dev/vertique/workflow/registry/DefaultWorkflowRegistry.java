@@ -23,6 +23,7 @@ import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
+import jakarta.inject.Provider;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -170,8 +171,8 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /** Optional fork/join semantic validator; null when none is wired (legacy callers). */
     private final WorkflowPlanValidator forkJoinValidator;
 
-    /** Contributed registration-time definition validators; unordered and immutable. */
-    private final Set<WorkflowDefinitionValidator> definitionValidators;
+    /** Resolves the contributed registration-time definition validators for each plan build; unordered. */
+    private final Provider<Set<WorkflowDefinitionValidator>> definitionValidators;
 
     /** The type-name index shared with the engine, the schema module and the document compiler. */
     private final WorkflowTypeNames typeNames;
@@ -269,11 +270,42 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             Set<WorkflowDefinitionValidator> definitionValidators,
             WorkflowTypeNames typeNames,
             Optional<WorkflowStateCompatibility> stateCompatibility) {
-        Objects.requireNonNull(definitionValidators, "definitionValidators");
+        this(forkJoinValidator, fixedValidators(definitionValidators), typeNames, stateCompatibility);
+    }
+
+    /**
+     * INTERNAL framework seam — the framework implementation behind a contract this module
+     * documents; not an application contract and outside the maturity promise.
+     *
+     * <p>Creates a new empty {@code DefaultWorkflowRegistry} that resolves its contributed definition
+     * validators from {@code definitionValidators} each time it builds a plan, instead of holding
+     * them from construction. Validators that themselves depend on the registry graph (recorders,
+     * handlers) are therefore constructed on the first plan build, not while the registry is
+     * constructed, which keeps the dependency graph acyclic.
+     *
+     * @param forkJoinValidator validator to invoke on each registered plan; may be null only in
+     *     test contexts that intentionally skip fork/join semantic checks
+     * @param definitionValidators resolves the validators to invoke on each candidate definition;
+     *     must not be {@code null}
+     * @param typeNames the shared type-name index; must not be {@code null}
+     * @param stateCompatibility the state comparison; must not be {@code null}, may be empty
+     */
+    public DefaultWorkflowRegistry(
+            WorkflowPlanValidator forkJoinValidator,
+            Provider<Set<WorkflowDefinitionValidator>> definitionValidators,
+            WorkflowTypeNames typeNames,
+            Optional<WorkflowStateCompatibility> stateCompatibility) {
         this.forkJoinValidator = forkJoinValidator;
-        this.definitionValidators = Set.copyOf(definitionValidators);
+        this.definitionValidators = Objects.requireNonNull(definitionValidators, "definitionValidators");
         this.typeNames = Objects.requireNonNull(typeNames, "typeNames");
         this.stateCompatibility = Objects.requireNonNull(stateCompatibility, "stateCompatibility");
+    }
+
+    private static Provider<Set<WorkflowDefinitionValidator>> fixedValidators(
+            Set<WorkflowDefinitionValidator> definitionValidators) {
+        Objects.requireNonNull(definitionValidators, "definitionValidators");
+        Set<WorkflowDefinitionValidator> copy = Set.copyOf(definitionValidators);
+        return () -> copy;
     }
 
     /**
@@ -406,7 +438,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             // Contributed definition validators run last, before the publish phase; an exception
             // propagates unchanged and the definition is never published.
             RegisteredWorkflowDefinition candidate = new RegisteredWorkflowDefinition(plan, builder.startPayloadType());
-            for (WorkflowDefinitionValidator validator : definitionValidators) {
+            for (WorkflowDefinitionValidator validator : definitionValidators.get()) {
                 validator.validate(candidate);
             }
             publish(

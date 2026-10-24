@@ -25,6 +25,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeNames;
+import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.util.Optional;
 import java.util.Set;
@@ -79,8 +80,9 @@ public abstract class WorkflowCoreModule {
      *
      * @param contributors the set of all contributed workflow definitions
      * @param forkJoinValidator the plan validator consulted on each registered plan
-     * @param definitionValidators the contributed registration-time definition validators; may be
-     *     empty
+     * @param definitionValidators resolves the contributed registration-time definition validators on
+     *     each plan build, not at registry construction (a validator may depend on recorders that
+     *     depend on the registry); the set may be empty
      * @param typeNames the shared type-name index the registry fills as definitions register
      * @param stateCompatibility the state comparison when the application installs one; empty otherwise
      * @return a fully-populated, immutable-after-build registry
@@ -90,7 +92,7 @@ public abstract class WorkflowCoreModule {
     static WorkflowRegistry registry(
             Set<WorkflowContributor> contributors,
             WorkflowPlanValidator forkJoinValidator,
-            Set<WorkflowDefinitionValidator> definitionValidators,
+            Provider<Set<WorkflowDefinitionValidator>> definitionValidators,
             DefaultWorkflowTypeNames typeNames,
             Optional<WorkflowStateCompatibility> stateCompatibility) {
         DefaultWorkflowRegistry reg =
