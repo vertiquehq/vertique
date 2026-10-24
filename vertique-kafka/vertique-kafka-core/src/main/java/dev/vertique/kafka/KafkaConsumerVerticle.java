@@ -29,6 +29,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
@@ -88,6 +90,12 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     private static final String MDC_PARTITION = "kafka.partition";
     private static final String MDC_OFFSET = "kafka.offset";
     private static final String MDC_CORRELATION_ID = "kafka.correlationId";
+
+    /** Leave time for Kafka consumer and Vert.x shutdown after draining in-flight work. */
+    private static final long SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000L;
+
+    /** Bound Kafka client close while preserving time for the enclosing Vert.x shutdown. */
+    private static final long KAFKA_CLOSE_TIMEOUT_MS = 10_000L;
 
     // --- Dependencies ---
 
@@ -233,8 +241,9 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     }
 
     /**
-     * Stops the consumer verticle. Pauses partition assignment to stop new records, waits up to 30
-     * seconds for in-flight dispatches to drain, then closes the consumer.
+     * Stops the consumer verticle. Pauses partition assignment to stop new records, waits up to
+     * {@value #SHUTDOWN_DRAIN_TIMEOUT_MS} milliseconds for in-flight dispatches to drain, then closes
+     * the consumer for at most {@value #KAFKA_CLOSE_TIMEOUT_MS} milliseconds.
      *
      * @param stopPromise the promise to complete when the verticle has stopped
      */
@@ -250,20 +259,56 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                 .onSuccess(partitions -> consumer.pause(partitions))
                 .onFailure(cause -> log.warn("[{}] Failed to pause partitions during shutdown", entry.name(), cause));
 
-        // Poll until in-flight drains or the timeout elapses (max 30s)
-        long drainTimeoutMs = 30_000L;
-        long startTime = System.currentTimeMillis();
+        // Reserve time within Vert.x's shutdown deadline for closing the Kafka consumer itself.
+        long startTimeNanos = System.nanoTime();
         vertx.setPeriodic(100L, timerId -> {
-            if (inFlight.get() <= 0 || System.currentTimeMillis() - startTime > drainTimeoutMs) {
+            int pending = inFlight.get();
+            boolean drainTimedOut =
+                    System.nanoTime() - startTimeNanos >= TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_DRAIN_TIMEOUT_MS);
+            if (pending <= 0 || drainTimedOut) {
                 vertx.cancelTimer(timerId);
+                if (drainTimedOut && pending > 0) {
+                    log.warn(
+                            "[{}] In-flight records did not drain within {} ms; closing consumer with {} record(s) pending",
+                            entry.name(),
+                            SHUTDOWN_DRAIN_TIMEOUT_MS,
+                            pending);
+                }
                 if (errorHandler != null) {
                     errorHandler.retryCounts.clear();
                 }
                 closeRouteSerdes();
+                AtomicBoolean closeSettled = new AtomicBoolean();
+                long closeTimerId = vertx.setTimer(KAFKA_CLOSE_TIMEOUT_MS, id -> {
+                    if (closeSettled.compareAndSet(false, true)) {
+                        TimeoutException timeout = new TimeoutException("Kafka consumer '" + entry.name()
+                                + "' did not close within " + KAFKA_CLOSE_TIMEOUT_MS + " ms");
+                        log.warn("[{}] {}", entry.name(), timeout.getMessage());
+                        stopPromise.fail(timeout);
+                    }
+                });
                 consumer.close()
                         .onSuccess(v -> log.info("[{}] Kafka consumer closed", entry.name()))
                         .onFailure(cause -> log.warn("[{}] Error closing Kafka consumer", entry.name(), cause))
-                        .onComplete(ar -> stopPromise.complete());
+                        .onComplete(ar -> {
+                            if (!closeSettled.compareAndSet(false, true)) {
+                                return;
+                            }
+                            vertx.cancelTimer(closeTimerId);
+                            if (drainTimedOut && pending > 0) {
+                                TimeoutException timeout = new TimeoutException("Kafka consumer '" + entry.name()
+                                        + "' stopped with " + pending + " in-flight record(s) after "
+                                        + SHUTDOWN_DRAIN_TIMEOUT_MS + " ms");
+                                if (ar.failed()) {
+                                    timeout.addSuppressed(ar.cause());
+                                }
+                                stopPromise.fail(timeout);
+                            } else if (ar.failed()) {
+                                stopPromise.fail(ar.cause());
+                            } else {
+                                stopPromise.complete();
+                            }
+                        });
             }
         });
     }

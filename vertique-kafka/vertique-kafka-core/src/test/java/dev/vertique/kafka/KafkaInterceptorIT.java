@@ -11,7 +11,9 @@ import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.eventbus.LocalMessageCodec;
 import dev.vertique.kafka.config.KafkaConfig;
+import dev.vertique.kafka.interceptor.KafkaConsumerCompletedEvent;
 import dev.vertique.kafka.interceptor.KafkaConsumerInterceptor;
+import dev.vertique.kafka.interceptor.KafkaConsumerRecordView;
 import dev.vertique.kafka.interceptor.KafkaDispatchContext;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import dev.vertique.kafka.test.KafkaTestContainers;
@@ -85,6 +87,9 @@ public class KafkaInterceptorIT {
      */
     static class RecordingInterceptor implements KafkaConsumerInterceptor {
 
+        /** Number of records that reached a terminal disposition. */
+        final AtomicInteger completedRecordCount = new AtomicInteger();
+
         /** Keys ({@code topic:offset}) recorded by {@link #onRecord}. */
         final List<String> onRecordCalls = Collections.synchronizedList(new ArrayList<>());
 
@@ -116,6 +121,11 @@ public class KafkaInterceptorIT {
         public Future<Void> afterDispatch(KafkaDispatchContext<?> ctx) {
             afterDispatchCalls.add(ctx.topic() + ":" + ctx.offset());
             return Future.succeededFuture();
+        }
+
+        @Override
+        public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record) {
+            completedRecordCount.incrementAndGet();
         }
     }
 
@@ -381,6 +391,8 @@ public class KafkaInterceptorIT {
                 KafkaTestSupport.jsonSerdeRegistry());
 
         TestEvent event = new TestEvent("on-record-001", "on-record-test");
+        int receivedBefore = received.size();
+        int completedBefore = recordingInterceptor.completedRecordCount.get();
         byte[] bytes = DatabindCodec.mapper().writeValueAsBytes(event);
         producerFactory
                 .send("it.interceptor.events", "or-key-1", bytes, null)
@@ -388,8 +400,8 @@ public class KafkaInterceptorIT {
                 .toCompletableFuture()
                 .get();
 
-        waitForMessages(received, 1, 10_000);
-        waitFor(() -> !recordingInterceptor.onRecordCalls.isEmpty(), 5_000);
+        waitForMessages(received, receivedBefore + 1, 10_000);
+        waitForRecordCompletions(completedBefore + 1, 10_000);
 
         assertFalse(recordingInterceptor.onRecordCalls.isEmpty(), "onRecord should have been called at least once");
         assertTrue(
@@ -402,6 +414,7 @@ public class KafkaInterceptorIT {
     void shouldCallOnSuccessAfterDispatch(Vertx vertx) throws Exception {
         recordingInterceptor.onSuccessCalls.clear();
         int sizeBefore = received.size();
+        int completedBefore = recordingInterceptor.completedRecordCount.get();
 
         JsonObject config =
                 new JsonObject().put("kafka", new JsonObject().put("bootstrap.servers", kafka.getBootstrapServers()));
@@ -420,7 +433,7 @@ public class KafkaInterceptorIT {
                 .get();
 
         waitForMessages(received, sizeBefore + 1, 10_000);
-        waitFor(() -> !recordingInterceptor.onSuccessCalls.isEmpty(), 5_000);
+        waitForRecordCompletions(completedBefore + 1, 10_000);
 
         assertFalse(recordingInterceptor.onSuccessCalls.isEmpty(), "onSuccess should have been called at least once");
         assertTrue(
@@ -432,6 +445,7 @@ public class KafkaInterceptorIT {
     @DisplayName("should call onError when dispatch fails")
     void shouldCallOnErrorOnFailure(Vertx vertx) throws Exception {
         recordingInterceptor.onErrorCalls.clear();
+        int completedBefore = recordingInterceptor.completedRecordCount.get();
 
         JsonObject config =
                 new JsonObject().put("kafka", new JsonObject().put("bootstrap.servers", kafka.getBootstrapServers()));
@@ -450,7 +464,7 @@ public class KafkaInterceptorIT {
                 .toCompletableFuture()
                 .get();
 
-        waitFor(() -> !recordingInterceptor.onErrorCalls.isEmpty(), 10_000);
+        waitForRecordCompletions(completedBefore + 1, 10_000);
 
         assertFalse(recordingInterceptor.onErrorCalls.isEmpty(), "onError should have been called at least once");
         assertTrue(
@@ -462,6 +476,7 @@ public class KafkaInterceptorIT {
     @DisplayName("should skip record when beforeDispatch sets filtered=true")
     void shouldFilterViaBeforeDispatch(Vertx vertx) throws Exception {
         int sizeBefore = received.size();
+        int completedBefore = recordingInterceptor.completedRecordCount.get();
 
         JsonObject config =
                 new JsonObject().put("kafka", new JsonObject().put("bootstrap.servers", kafka.getBootstrapServers()));
@@ -494,6 +509,7 @@ public class KafkaInterceptorIT {
                 .get();
 
         waitForMessages(received, sizeBefore + 1, 10_000);
+        waitForRecordCompletions(completedBefore + 2, 10_000);
 
         // The skipped event should NOT be in the received list
         assertFalse(
@@ -510,6 +526,7 @@ public class KafkaInterceptorIT {
     void shouldCallAfterDispatchAsync(Vertx vertx) throws Exception {
         recordingInterceptor.afterDispatchCalls.clear();
         int sizeBefore = received.size();
+        int completedBefore = recordingInterceptor.completedRecordCount.get();
 
         JsonObject config =
                 new JsonObject().put("kafka", new JsonObject().put("bootstrap.servers", kafka.getBootstrapServers()));
@@ -528,7 +545,7 @@ public class KafkaInterceptorIT {
                 .get();
 
         waitForMessages(received, sizeBefore + 1, 10_000);
-        waitFor(() -> !recordingInterceptor.afterDispatchCalls.isEmpty(), 5_000);
+        waitForRecordCompletions(completedBefore + 1, 10_000);
 
         assertFalse(
                 recordingInterceptor.afterDispatchCalls.isEmpty(),
@@ -542,6 +559,7 @@ public class KafkaInterceptorIT {
     @DisplayName("should recover error via interceptor recoverError and commit record")
     void shouldRecoverErrorViaInterceptor(Vertx vertx) throws Exception {
         int recoverCountBefore = recoveringInterceptor.recoverCount.get();
+        int completedBefore = recordingInterceptor.completedRecordCount.get();
 
         JsonObject config =
                 new JsonObject().put("kafka", new JsonObject().put("bootstrap.servers", kafka.getBootstrapServers()));
@@ -570,8 +588,7 @@ public class KafkaInterceptorIT {
                 .toCompletableFuture()
                 .get();
 
-        waitFor(() -> recoveringInterceptor.recoverCount.get() > recoverCountBefore, 10_000);
-        waitFor(() -> failReceived.stream().anyMatch(e -> "recover-normal-001".equals(e.id())), 10_000);
+        waitForRecordCompletions(completedBefore + 2, 10_000);
 
         assertTrue(
                 recoveringInterceptor.recoverCount.get() > recoverCountBefore,
@@ -585,6 +602,7 @@ public class KafkaInterceptorIT {
     @DisplayName("should fall through to SKIP strategy when recoverError declines")
     void shouldFallThroughWhenRecoverErrorDeclines(Vertx vertx) throws Exception {
         recordingInterceptor.onErrorCalls.clear();
+        int completedBefore = recordingInterceptor.completedRecordCount.get();
 
         JsonObject config =
                 new JsonObject().put("kafka", new JsonObject().put("bootstrap.servers", kafka.getBootstrapServers()));
@@ -612,8 +630,7 @@ public class KafkaInterceptorIT {
                 .toCompletableFuture()
                 .get();
 
-        waitFor(() -> !recordingInterceptor.onErrorCalls.isEmpty(), 10_000);
-        waitFor(() -> failReceived.stream().anyMatch(e -> "no-recover-normal-002".equals(e.id())), 10_000);
+        waitForRecordCompletions(completedBefore + 2, 10_000);
 
         assertFalse(recordingInterceptor.onErrorCalls.isEmpty(), "onError should be called when recoverError declines");
         assertTrue(
@@ -660,6 +677,23 @@ public class KafkaInterceptorIT {
         while (list.size() < expected && System.currentTimeMillis() < deadline) {
             Thread.sleep(100);
         }
+    }
+
+    /**
+     * Waits until each expected Kafka record has reached its terminal interceptor callback. Unlike
+     * observing a handler side effect, this guarantees the consumer has finished that record before
+     * the test can trigger Vert.x shutdown.
+     *
+     * @param expected  minimum number of completed records
+     * @param timeoutMs maximum wait time in milliseconds
+     * @throws InterruptedException if the polling thread is interrupted
+     */
+    private static void waitForRecordCompletions(int expected, long timeoutMs) throws InterruptedException {
+        waitFor(() -> recordingInterceptor.completedRecordCount.get() >= expected, timeoutMs);
+        assertTrue(
+                recordingInterceptor.completedRecordCount.get() >= expected,
+                "Expected at least " + expected + " terminal Kafka record callbacks, received "
+                        + recordingInterceptor.completedRecordCount.get());
     }
 
     /**
