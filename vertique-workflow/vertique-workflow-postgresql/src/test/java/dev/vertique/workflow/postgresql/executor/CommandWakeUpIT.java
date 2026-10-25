@@ -24,6 +24,7 @@ import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.QueueSnapshot;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.history.PendingCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.CommandRow;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.Node;
@@ -287,6 +288,81 @@ class CommandWakeUpIT {
             // And its listener never opened a transaction
             for (int backend : fixture.listenBackends()) {
                 assertThat(fixture.inTransaction(backend)).isFalse();
+            }
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    @DisplayName("clock skew does not lose scheduling, which stays separate from diagnostic report rows")
+    void clockSkewDoesNotLoseEarliestAvailableWakeup() {
+        for (long absoluteOffsetMs : List.of(-30_000L, 30_000L)) {
+            try (ExecutorFixture fixture = ExecutorFixture.open(db.toPoolConfig())) {
+                // Exercise a genuinely deferred row before any capable node persists this fixture definition.
+                AvailabilityReadRecorder deferredReads = new AvailabilityReadRecorder(absoluteOffsetMs);
+                Node recorder = fixture.node("recorder-" + absoluteOffsetMs).build();
+                Node deferredNode = fixture.node("deferred-" + absoluteOffsetMs)
+                        .withRegistry(fixture.registryWithout(ExecutorFixture.SKELETON))
+                        .pollIntervalMs(FAR_POLL_MS)
+                        .listening()
+                        .commands(deferredReads::decorate)
+                        .wakeups(delegate -> (context, sink) ->
+                                delegate.register(context, availableAt -> sink.wake(availableAt + absoluteOffsetMs)))
+                        .build();
+                deferredNode.startExecutor();
+                awaitCondition(
+                        "the deferred node's listening connection",
+                        WOKEN,
+                        () -> fixture.listenBackends().size() == 1);
+
+                WorkflowInstanceId deferredId = recorder.record(startOf("deferred-db-relative-" + absoluteOffsetMs));
+                awaitCondition("the command to defer", WOKEN, () -> fixture.commandOf(deferredId)
+                        .state()
+                        .equals("DEFERRED"));
+                awaitCondition("the deferred timer to fire", Duration.ofSeconds(10), () -> {
+                    CommandRow deferred = fixture.commandOf(deferredId);
+                    return "DEFERRED".equals(deferred.state()) && deferred.deferralCount() >= 2;
+                });
+                assertThat(deferredReads.delays().stream()
+                                .flatMap(Optional::stream)
+                                .anyMatch(delay -> delay > 0))
+                        .isTrue();
+                assertThat(deferredReads.reportReads()).isZero();
+                await(deferredNode.engine.executionProbe().awaitIdle(deferredId, WOKEN));
+                assertThat(deferredReads.reportReads()).isPositive();
+                deferredNode.stopExecutor();
+
+                // Then exercise a PENDING row on a node whose registry contains its definition.
+                AvailabilityReadRecorder reads = new AvailabilityReadRecorder(absoluteOffsetMs);
+                Node node = fixture.node("engine-" + absoluteOffsetMs)
+                        .pollIntervalMs(FAR_POLL_MS)
+                        .listening()
+                        .commands(reads::decorate)
+                        .wakeups(delegate -> (context, sink) ->
+                                delegate.register(context, availableAt -> sink.wake(availableAt + absoluteOffsetMs)))
+                        .build();
+                node.startExecutor();
+                awaitCondition(
+                        "the listening connection",
+                        WOKEN,
+                        () -> fixture.listenBackends().size() == 1);
+
+                WorkflowInstanceId id = fixture.recordAvailableIn(
+                        node, startOf("db-relative-" + absoluteOffsetMs), Duration.ofMillis(1_500));
+
+                awaitCondition("the delayed command to complete", Duration.ofSeconds(8), () -> fixture.commandOf(id)
+                        .state()
+                        .equals("COMPLETE"));
+                CommandRow command = fixture.commandOf(id);
+                assertThat(command.settledAt()).isAfterOrEqualTo(command.availableAt());
+                assertThat(reads.schedulingReads()).isPositive();
+                assertThat(reads.delays().stream().flatMap(Optional::stream).anyMatch(delay -> delay > 0))
+                        .isTrue();
+
+                // The executor did not load report rows to schedule the timer. Only the probe below does so.
+                assertThat(reads.reportReads()).isZero();
+                await(node.engine.executionProbe().awaitIdle(id, WOKEN));
+                assertThat(reads.reportReads()).isPositive();
             }
         }
     }
@@ -566,6 +642,68 @@ class CommandWakeUpIT {
                 throw new AssertionError("no successful claim was observed for command " + commandId);
             }
             return claimTime;
+        }
+    }
+
+    /** Records scheduler reads while shifting only the absolute timestamps consumed by the diagnostic API. */
+    private static final class AvailabilityReadRecorder {
+        private final long absoluteOffsetMs;
+        private final AtomicInteger schedulingReads = new AtomicInteger();
+        private final AtomicInteger reportReads = new AtomicInteger();
+        private final List<Optional<Long>> delays = new CopyOnWriteArrayList<>();
+
+        AvailabilityReadRecorder(long absoluteOffsetMs) {
+            this.absoluteOffsetMs = absoluteOffsetMs;
+        }
+
+        @SuppressWarnings("unchecked")
+        WorkflowCommandRepository<SqlClient> decorate(WorkflowCommandRepository<SqlClient> delegate) {
+            return (WorkflowCommandRepository<SqlClient>) Proxy.newProxyInstance(
+                    WorkflowCommandRepository.class.getClassLoader(),
+                    new Class<?>[] {WorkflowCommandRepository.class},
+                    (proxy, method, args) -> {
+                        try {
+                            Object result = method.invoke(delegate, args);
+                            if (method.getName().equals("findEarliestAvailabilityDelayMs")
+                                    && result instanceof Future<?>) {
+                                schedulingReads.incrementAndGet();
+                                Future<Optional<Long>> delay = (Future<Optional<Long>>) result;
+                                return delay.map(value -> {
+                                    delays.add(value);
+                                    return value;
+                                });
+                            }
+                            if (method.getName().equals("findNotYetAvailable") && result instanceof Future<?>) {
+                                reportReads.incrementAndGet();
+                                Future<List<PendingCommand>> report = (Future<List<PendingCommand>>) result;
+                                return report.map(commands -> commands.stream()
+                                        .map(command -> new PendingCommand(
+                                                command.instanceId(),
+                                                command.sequence(),
+                                                command.kind(),
+                                                command.state(),
+                                                command.availableAt().plusMillis(absoluteOffsetMs),
+                                                command.attempts(),
+                                                command.lastError()))
+                                        .toList());
+                            }
+                            return result;
+                        } catch (InvocationTargetException e) {
+                            throw e.getCause();
+                        }
+                    });
+        }
+
+        int schedulingReads() {
+            return schedulingReads.get();
+        }
+
+        int reportReads() {
+            return reportReads.get();
+        }
+
+        List<Optional<Long>> delays() {
+            return delays;
         }
     }
 

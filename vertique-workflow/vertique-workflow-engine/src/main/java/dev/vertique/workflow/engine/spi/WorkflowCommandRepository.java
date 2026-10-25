@@ -66,6 +66,17 @@ public interface WorkflowCommandRepository<TX> {
     Future<List<PendingCommand>> findNotYetAvailable(@Nullable WorkflowInstanceId instance);
 
     /**
+     * Reads the database-relative delay to the earliest future availability among pending or deferred commands.
+     * Implementations that do not provide this scheduling hint may return empty; executor polling remains the
+     * fallback. This read is separate from the bounded diagnostic lists returned for {@code IdleReport}.
+     *
+     * @return a {@link Future} containing the nonnegative delay in milliseconds, or empty when no such command exists
+     */
+    default Future<Optional<Long>> findEarliestAvailabilityDelayMs() {
+        return Future.succeededFuture(Optional.empty());
+    }
+
+    /**
      * Lists the commands reported stuck, ordered by instance and sequence: every dead-lettered command, and every
      * unsettled command whose first availability is older than {@code stuckAfterSeconds}. The first availability of a
      * timer command is its fire time and of any other command the time it was recorded, never its current

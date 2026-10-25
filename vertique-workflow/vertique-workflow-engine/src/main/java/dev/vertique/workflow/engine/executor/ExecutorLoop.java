@@ -9,18 +9,17 @@ import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.CommandSettled;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.LeaseExpired;
-import dev.vertique.workflow.history.PendingCommand;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.sqlclient.SqlClient;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,11 +33,10 @@ import org.slf4j.LoggerFactory;
  * payload, and the next pass is scheduled all the same, exactly once per pass, from a {@code finally}. An
  * {@link Error} the loop does not handle propagates after the next pass is scheduled.
  *
- * <p>A wake-up hint from the command source makes the next pass run now and, when the hint names a future available
- * time, keeps one timer for the earliest such time. After a pass that claimed nothing the loop reads the commands that
- * are not yet available and replaces that timer with the earliest pending or deferred one, so a command that becomes
- * available needs no poll. A wake-up never claims; it only asks for a pass, and repeated wake-ups coalesce. Polling
- * every poll interval stays the fallback.
+ * <p>A wake-up hint from the command source makes the next pass run now. On every wake and poll, the loop asks the
+ * repository for the database-relative delay to the earliest pending or deferred command and keeps one monotonic timer
+ * for it. This scheduling read is separate from the bounded diagnostic command list. A wake-up never claims; it only
+ * asks for a pass, and repeated wake-ups coalesce. Polling every poll interval stays the fallback.
  *
  * <p>All state is touched on the instance's event loop. Instances share nothing but the database: the execution lock,
  * the claim token and the lease coordinate them.
@@ -50,10 +48,7 @@ final class ExecutorLoop {
     /** The pause before a pass that follows work, in milliseconds. */
     private static final long IMMEDIATE_MS = 1;
 
-    /** Added to the delay of the earliest-available timer, so that it fires after the command became claimable. */
-    private static final long AVAILABLE_MARGIN_MS = 2;
-
-    private static final long NO_TIME = Long.MAX_VALUE;
+    private static final long NO_DELAY = -1;
 
     private final Vertx vertx;
     private final ContextInternal root;
@@ -75,7 +70,8 @@ final class ExecutorLoop {
 
     // touched on the instance's event loop only
     private long earliestTimerId = -1;
-    private long earliestAt = NO_TIME;
+    private long earliestDelayMs = NO_DELAY;
+    private long earliestScheduledAtNanos;
     private long hints;
     private boolean refreshing;
 
@@ -128,20 +124,18 @@ final class ExecutorLoop {
     }
 
     /**
-     * Takes a wake-up hint: a command became pending or deferred. Asks for a pass now and, when the hint names a
-     * time that has not come, moves the earliest-available timer earlier if that time is earlier. Must be called on
-     * the instance's own context.
+     * Takes a wake-up hint: a command became pending or deferred. Asks for a pass now and refreshes the database-relative
+     * timer. The notification timestamp is not compared with the JVM clock. Must be called on the instance's own
+     * context.
      *
-     * @param availableAtEpochMs the available time of the command in epoch milliseconds; a past time means now
+     * @param availableAtEpochMs the notification's available-time hint in epoch milliseconds
      */
     void wake(long availableAtEpochMs) {
         if (!running) {
             return;
         }
         hints++;
-        if (availableAtEpochMs > System.currentTimeMillis() && availableAtEpochMs < earliestAt) {
-            setEarliest(availableAtEpochMs);
-        }
+        refreshEarliest();
         kick();
     }
 
@@ -200,7 +194,7 @@ final class ExecutorLoop {
                     next = IMMEDIATE_MS;
                 }
                 reporter.sampleIfDue();
-                if (running && (result.failed() || result.result() == 0)) {
+                if (running) {
                     refreshEarliest();
                 }
             } finally {
@@ -212,67 +206,73 @@ final class ExecutorLoop {
 
     // --- Earliest available command ---
 
-    /** Reads the commands that are not yet available and keeps the one timer on the earliest pending or deferred. */
+    /** Reads one database-relative delay and keeps a timer for the earliest pending or deferred availability. */
     private void refreshEarliest() {
         if (refreshing) {
             return;
         }
         refreshing = true;
         long hintsBefore = hints;
-        Future<List<PendingCommand>> read;
+        Future<Optional<Long>> read;
         try {
             read = Objects.requireNonNull(
-                    commands.findNotYetAvailable(null), "findNotYetAvailable returned null instead of a future");
+                    commands.findEarliestAvailabilityDelayMs(),
+                    "findEarliestAvailabilityDelayMs returned null instead of a future");
         } catch (Exception | LinkageError | AssertionError e) {
             read = Future.failedFuture(e);
         }
         read.onComplete(result -> {
             refreshing = false;
             if (result.failed()) {
-                log.debug("Executor {}: the earliest available command could not be read", instanceId, result.cause());
+                log.debug("Executor {}: the earliest availability delay could not be read", instanceId, result.cause());
                 return;
             }
-            if (!running || hints != hintsBefore) {
-                // a hint arrived while reading: its own pass reads again
+            if (!running) {
                 return;
             }
-            long now = System.currentTimeMillis();
-            long earliest = NO_TIME;
-            for (PendingCommand command : result.result()) {
-                if (!"PENDING".equals(command.state()) && !"DEFERRED".equals(command.state())) {
-                    continue;
-                }
-                Instant availableAt = command.availableAt();
-                long at = availableAt.toEpochMilli();
-                if (at > now && at < earliest) {
-                    earliest = at;
-                }
+            if (hints != hintsBefore) {
+                // A notification arrived during the read; refresh against its committed database state.
+                refreshEarliest();
+                return;
             }
-            if (earliest == NO_TIME) {
+            Optional<Long> delay =
+                    Objects.requireNonNull(result.result(), "findEarliestAvailabilityDelayMs completed with null");
+            if (delay.isEmpty()) {
                 cancelEarliest();
-            } else if (earliest != earliestAt) {
-                setEarliest(earliest);
+            } else {
+                setEarliestDelay(delay.get());
             }
         });
     }
 
-    /** Replaces the earliest-available timer: there is at most one per instance. */
-    private void setEarliest(long availableAtEpochMs) {
+    /** Keeps at most one timer, replacing it only when the new monotonic deadline is earlier. */
+    private void setEarliestDelay(long delayMs) {
+        long delay = Math.max(IMMEDIATE_MS, delayMs);
+        long now = System.nanoTime();
+        if (earliestTimerId >= 0 && delay >= remainingEarliestDelayMs(now)) {
+            return;
+        }
         cancelEarliest();
-        long delay = Math.max(IMMEDIATE_MS, availableAtEpochMs - System.currentTimeMillis() + AVAILABLE_MARGIN_MS);
         try {
-            // raw timer: one-shot, replaced on every refresh
+            // The database-relative delay is scheduled against Vert.x's monotonic timer.
             earliestTimerId = vertx.setTimer(delay, id -> {
                 earliestTimerId = -1;
-                earliestAt = NO_TIME;
+                earliestDelayMs = NO_DELAY;
                 if (running) {
                     kick();
                 }
             });
-            earliestAt = availableAtEpochMs;
+            earliestDelayMs = delay;
+            earliestScheduledAtNanos = now;
         } catch (RuntimeException e) {
             log.debug("Executor {}: no wake-up could be scheduled", instanceId, e);
         }
+    }
+
+    private long remainingEarliestDelayMs(long nowNanos) {
+        long elapsedNanos = Math.max(0, nowNanos - earliestScheduledAtNanos);
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(elapsedNanos);
+        return Math.max(0, earliestDelayMs - elapsedMs);
     }
 
     private void cancelEarliest() {
@@ -280,7 +280,7 @@ final class ExecutorLoop {
             vertx.cancelTimer(earliestTimerId);
         }
         earliestTimerId = -1;
-        earliestAt = NO_TIME;
+        earliestDelayMs = NO_DELAY;
     }
 
     /** Peeks, defers and claims; completes with the number of commands claimed or deferred. */

@@ -29,7 +29,7 @@ Install this module when workflows must survive process restarts, run across mor
 | `TaskStore<SqlClient>` | Human task persistence (`PgTaskStore`), one scoped instance built with the placement |
 | `TimerStore<SqlClient>` | Workflow timer persistence (`PgTimerStore`), one scoped instance built with the placement |
 | `WorkflowDefinitionRegistryStore` | Durable definition metadata, TEXT sources, and fenced publication (`PgWorkflowDefinitionRegistryStore`), one scoped instance built with the placement |
-| `WorkflowCommandRepository<SqlClient>` | The recorded command log (`PgWorkflowCommandRepository`), one scoped instance built with the placement: the execution probe's reads, the execution lock and queue sequence, the `START` insert of a recorded start, and the executor's peek, defer, claim, fence, completion and release; eligibility is rendered once in `CommandEligibilitySql` |
+| `WorkflowCommandRepository<SqlClient>` | The recorded command log (`PgWorkflowCommandRepository`), one scoped instance built with the placement: the execution probe's bounded lists, the executor's one-row availability-delay read, the execution lock and queue sequence, the `START` insert of a recorded start, and the executor's peek, defer, claim, fence, completion and release; eligibility is rendered once in `CommandEligibilitySql` |
 | `WorkflowTransactionRunner<SqlClient>` | Pg implementation of the engine's transaction seam, including the deadline overload the executor's segments run through (`TransactionBuilder.deadline`; `TransactionDeadlineExceededException` passes the workflow exception mapping unchanged) |
 | Query services | `PgWorkflowInstanceQueryService` — read model for workflow instances and branch state |
 | Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep; the application drives the batch loop and cadence, there is no built-in scheduler. It archives and purges through the scoped `PgWorkflowRetentionRepository`, so it follows the same placement |
@@ -415,6 +415,11 @@ instance of the node, whether deployed by the deployer or started with `Workflow
   node or engine owns, peeks and finds nothing.
 - **The payload is a hint.** Only digits are read, as the command's available time; anything else wakes the instances to peek
   now. Each registered instance is woken with `runOnContext` on its own verticle context, never on the connection's context.
+- **Scheduling is separate from reports.** The executor reads `findEarliestAvailabilityDelayMs()` through
+  `PgCommandWakeupQueries`, which samples the database clock once and returns the nonnegative delay to the earliest future
+  `PENDING` or `DEFERRED` availability. The executor schedules that delay on a monotonic timer; it does not compare the
+  notification timestamp with the JVM clock. The `findNotYetAvailable` read remains a bounded diagnostic list for
+  `IdleReport` and is not used to schedule the executor.
 - **Loss degrades to polling.** A connection that cannot be opened or is lost leaves the instances polling every
   `pollIntervalMs`. The listener logs one warning for the outage, with the exception class only and no connection details, and
   tries again once per `pollIntervalMs`. There is no liveness check and no restart logic.

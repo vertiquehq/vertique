@@ -60,6 +60,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final Pool pool;
     private final PgDbExceptionMapper exceptionMapper;
     private final PgCommandProbeQueries queries;
+    private final PgCommandWakeupQueries wakeupQueries;
     private final ExecutionLock executionLock;
     private final String insertQueue;
     private final String advanceQueue;
@@ -121,6 +122,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         this.pool = pool;
         this.exceptionMapper = exceptionMapper;
         this.queries = new PgCommandProbeQueries(new CommandEligibilitySql(schemas));
+        this.wakeupQueries = new PgCommandWakeupQueries(new CommandEligibilitySql(schemas));
         this.executionLock = new ExecutionLock(recording.lockTimeoutMs());
         String queues = PgTableNames.qualify(schemas, "workflow", "workflow_command_queues");
         this.insertQueue = "INSERT INTO " + queues
@@ -595,6 +597,15 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     @Override
     public Future<List<PendingCommand>> findNotYetAvailable(@Nullable WorkflowInstanceId instance) {
         return read(queries.findNotYetAvailable, instance, "findNotYetAvailable");
+    }
+
+    @Override
+    public Future<Optional<Long>> findEarliestAvailabilityDelayMs() {
+        return pool.preparedQuery(wakeupQueries.findEarliestAvailabilityDelayMs)
+                .execute()
+                .map(rows -> Optional.ofNullable(rows.iterator().next().getLong("delay_ms")))
+                .recover(t -> Future.failedFuture(
+                        exceptionMapper.translate(t, "workflow_commands findEarliestAvailabilityDelayMs")));
     }
 
     private Future<List<PendingCommand>> read(String sql, @Nullable WorkflowInstanceId instance, String operation) {
