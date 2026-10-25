@@ -8,6 +8,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.executor.Deferral;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DispositionResult;
@@ -67,6 +68,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final String peekHeads;
     private final String claimLookup;
     private final String claimTake;
+    private final String lockForDeferral;
+    private final String deferRow;
     private final String settleEnded;
     private final String deadLetter;
     private final String failCommandRow;
@@ -144,6 +147,13 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " claim_token = gen_random_uuid(),"
                 + " lease_until = clock_timestamp() + ($2::int * interval '1 second'), claimed_by = $3"
                 + " WHERE id = $1 RETURNING claim_token, attempts";
+        this.lockForDeferral = "SELECT c.seq, c.kind, c.deferral_count FROM " + commands + " c JOIN " + instances
+                + " i ON i.id = c.workflow_id WHERE c.id = $1 AND " + eligibility.claimable("c")
+                + " AND i.definition_scope_key = $2 AND i.definition_id = $3 AND i.definition_version = $4"
+                + " AND i.plan_hash IS NOT DISTINCT FROM $5::text FOR UPDATE OF c";
+        this.deferRow = "UPDATE " + commands + " SET state = 'DEFERRED', deferral_count = $2,"
+                + " available_at = clock_timestamp() + ($3::float8 * interval '1 millisecond'), last_error = $4"
+                + " WHERE id = $1";
         this.settleEnded = "UPDATE " + commands + " SET state = 'REJECTED', claim_token = NULL, lease_until = NULL,"
                 + " settled_at = now(), last_error = $2 WHERE id = $1";
         this.deadLetter = "UPDATE " + commands + " SET state = 'DEAD', claim_token = NULL, lease_until = NULL,"
@@ -279,6 +289,56 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                     });
                         }))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands claim")));
+    }
+
+    @Override
+    public Future<Integer> defer(CommandHead head) {
+        return pool.withTransaction(conn -> executionLock
+                        .tryAcquire(head.workflowId(), conn)
+                        .compose(locked -> {
+                            if (!locked) {
+                                return Future.succeededFuture(0);
+                            }
+                            // claimable already requires the command to be available now, so a command deferred into
+                            // the future fails this read as well
+                            return conn.preparedQuery(lockForDeferral)
+                                    .execute(Tuple.of(
+                                            head.commandId(),
+                                            head.definitionScopeKey(),
+                                            head.definitionId(),
+                                            head.definitionVersion(),
+                                            head.planHash()))
+                                    .compose(rows -> {
+                                        if (rows.size() == 0) {
+                                            return Future.succeededFuture(0);
+                                        }
+                                        return deferLocked(head, rows.iterator().next(), conn);
+                                    });
+                        }))
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands defer")));
+    }
+
+    /** The deferral of a command that was locked and found claimable and still pinned as observed. */
+    private Future<Integer> deferLocked(CommandHead head, Row looked, SqlClient conn) {
+        int before = looked.getInteger("deferral_count");
+        String kind = looked.getString("kind");
+        String reason = CommandErrors.notRunnable(kind);
+        return conn.preparedQuery(deferRow)
+                .execute(Tuple.of(head.commandId(), before + 1, (double) Deferral.backoffMs(before), reason))
+                .compose(ignored -> {
+                    if (before > 0) {
+                        return Future.<Void>succeededFuture();
+                    }
+                    JsonObject payload = new JsonObject()
+                            .put("commandId", head.commandId())
+                            .put("seq", looked.getLong("seq"))
+                            .put("kind", kind)
+                            .put("reason", reason);
+                    return appendHistory(
+                                    conn, head.workflowId(), head.commandId(), "COMMAND_DEFERRED", payload, "DEFERRED")
+                            .mapEmpty();
+                })
+                .map(ignored -> before + 1);
     }
 
     /**

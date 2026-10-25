@@ -141,6 +141,11 @@ public abstract class WorkflowEngineModule {
             }
 
             @Override
+            public dev.vertique.workflow.registry.WorkflowRegistry registry() {
+                return engine.get().segments().registry();
+            }
+
+            @Override
             public io.vertx.core.Future<Outcome> run(
                     dev.vertique.workflow.engine.spi.CommandHead head,
                     dev.vertique.workflow.engine.spi.ClaimedCommand claim,

@@ -41,6 +41,7 @@ import dev.vertique.workflow.postgresql.engine.PgWorkflowEngineTestSupport;
 import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
+import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionProvenance;
@@ -183,7 +184,8 @@ final class ExecutorFixture implements AutoCloseable {
             int transientCount,
             @Nullable String lastError,
             OffsetDateTime recordedAt,
-            OffsetDateTime availableAt) {}
+            OffsetDateTime availableAt,
+            int deferralCount) {}
 
     /** A row of {@code workflow_instances}, as the tests read it. */
     record InstanceRow(
@@ -341,6 +343,7 @@ final class ExecutorFixture implements AutoCloseable {
         private long stuckAfterSeconds = 300;
         private Set<WorkflowExecutorObserver> observers = Set.of();
         private boolean listening;
+        private WorkflowRegistry registry;
         private long queueUsageIntervalMs = 1000;
         private UnaryOperator<CommandWakeups> wakeupsDecorator = UnaryOperator.identity();
         private UnaryOperator<WorkflowTransactionRunner<SqlClient>> runnerDecorator = UnaryOperator.identity();
@@ -392,6 +395,12 @@ final class ExecutorFixture implements AutoCloseable {
         /** The engine captures and binds the durable context of the fixture's propagator. */
         NodeSpec carryContext() {
             this.carryContext = true;
+            return this;
+        }
+
+        /** The engine's startup registry, in place of one that holds every fixture workflow. */
+        NodeSpec withRegistry(WorkflowRegistry registry) {
+            this.registry = registry;
             return this;
         }
 
@@ -485,7 +494,7 @@ final class ExecutorFixture implements AutoCloseable {
             Vertx nodeVertx = ownVertx ? Vertx.vertx(new VertxOptions().setEventLoopPoolSize(2)) : vertx;
             Pool pool = pool(nodeVertx, poolSize > 0 ? poolSize : Math.max(20, instances * concurrency + 4));
             DeadlineRecordingRunner[] runnerRef = new DeadlineRecordingRunner[1];
-            DefaultWorkflowRegistry registry = newRegistry();
+            WorkflowRegistry registry = this.registry != null ? this.registry : newRegistry();
             PgWorkflowEngineTestSupport.ExecutorEngine engine = PgWorkflowEngineTestSupport.executorEngine(
                             pool, nodeVertx, registry)
                     .recorders(Set.of(new IntentRecorder(), new EventRecorder()))
@@ -664,8 +673,8 @@ final class ExecutorFixture implements AutoCloseable {
         List<CommandRow> commands = new ArrayList<>();
         for (Row row : await(observer.preparedQuery(
                         "SELECT id, seq, kind, state, attempts, claim_token, claimed_by, lease_until, settled_at,"
-                                + " payload_json, transient_count, last_error, recorded_at, available_at"
-                                + " FROM workflow_commands WHERE workflow_id = $1 ORDER BY seq")
+                                + " payload_json, transient_count, last_error, recorded_at, available_at,"
+                                + " deferral_count FROM workflow_commands WHERE workflow_id = $1 ORDER BY seq")
                 .execute(Tuple.of(id.value())))) {
             commands.add(new CommandRow(
                     row.getLong("id"),
@@ -681,9 +690,45 @@ final class ExecutorFixture implements AutoCloseable {
                     row.getInteger("transient_count"),
                     row.getString("last_error"),
                     row.getOffsetDateTime("recorded_at"),
-                    row.getOffsetDateTime("available_at")));
+                    row.getOffsetDateTime("available_at"),
+                    row.getInteger("deferral_count")));
         }
         return commands;
+    }
+
+    /** Moves the command's availability to the database clock now, as if its backoff had elapsed. */
+    void fastForward(long commandId) {
+        await(observer.preparedQuery("UPDATE workflow_commands SET available_at = clock_timestamp() WHERE id = $1")
+                .execute(Tuple.of(commandId)));
+    }
+
+    /**
+     * Leaves a {@code SIGNAL} command at the end of the instance's queue as an executor that crashed would: claimed
+     * with a token, its lease already ended. Signals are not recorded by any API yet, so the row is written directly.
+     *
+     * @param id the instance
+     * @return the id of the command
+     */
+    long leaveClaimedSignalWithExpiredLease(WorkflowInstanceId id) {
+        return await(observer.withTransaction(connection -> connection
+                .preparedQuery("UPDATE workflow_command_queues SET next_seq = next_seq + 1 WHERE workflow_id = $1")
+                .execute(Tuple.of(id.value()))
+                .compose(ignored -> connection
+                        .preparedQuery("INSERT INTO workflow_commands (workflow_id, seq, kind, state, recorded_at,"
+                                + " available_at, attempts, claim_token, lease_until, claimed_by, target_json)"
+                                + " SELECT $1, COALESCE(MAX(seq), 0) + 1, 'SIGNAL', 'CLAIMED', clock_timestamp(),"
+                                + " clock_timestamp(), 1, gen_random_uuid(),"
+                                + " clock_timestamp() - interval '1 minute', 'crashed-executor',"
+                                + " '{\"name\":\"paid\"}'::jsonb FROM workflow_commands WHERE workflow_id = $1"
+                                + " RETURNING id")
+                        .execute(Tuple.of(id.value())))
+                .map(rows -> rows.iterator().next().getLong("id"))));
+    }
+
+    /** Sets every definition row of the definition to {@code RETIRED}. */
+    void retireDefinitionRows(String definitionId) {
+        await(observer.preparedQuery("UPDATE workflow_definitions SET status = 'RETIRED' WHERE definition_id = $1")
+                .execute(Tuple.of(definitionId)));
     }
 
     /** The only command of the instance. */
@@ -947,12 +992,80 @@ final class ExecutorFixture implements AutoCloseable {
 
     /** A registry that holds the fixture workflows. */
     DefaultWorkflowRegistry newRegistry() {
+        return registryWithout();
+    }
+
+    /**
+     * A registry that holds every fixture workflow except the given ones, as the startup registry of a node whose code
+     * lacks them.
+     *
+     * @param definitionIds the fixture workflows to leave out
+     * @return the registry
+     */
+    DefaultWorkflowRegistry registryWithout(String... definitionIds) {
+        Set<String> left = Set.of(definitionIds);
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
-        registry.register(skeleton());
-        registry.register(late());
-        registry.register(atomic());
-        registry.register(loop());
+        if (!left.contains(SKELETON)) {
+            registry.register(skeleton());
+        }
+        if (!left.contains(LATE)) {
+            registry.register(late());
+        }
+        if (!left.contains(ATOMIC)) {
+            registry.register(atomic());
+        }
+        if (!left.contains(LOOP)) {
+            registry.register(loop());
+        }
         return registry;
+    }
+
+    /**
+     * Counts the plan lookups made through a registry.
+     *
+     * @param registry the registry to observe
+     * @return the registry that forwards every call and counts the lookups per definition key
+     */
+    LookupSpy spyOn(WorkflowRegistry registry) {
+        return new LookupSpy(registry);
+    }
+
+    /** A registry that forwards every call to another and counts its plan lookups per definition key. */
+    static final class LookupSpy {
+        private final Map<DefinitionKey, AtomicInteger> lookups = new java.util.concurrent.ConcurrentHashMap<>();
+        private final WorkflowRegistry registry;
+
+        private LookupSpy(WorkflowRegistry real) {
+            this.registry = (WorkflowRegistry) Proxy.newProxyInstance(
+                    WorkflowRegistry.class.getClassLoader(),
+                    new Class<?>[] {WorkflowRegistry.class},
+                    (proxy, method, arguments) -> {
+                        if ((method.getName().equals("resolve")
+                                        || method.getName().equals("find"))
+                                && arguments != null
+                                && arguments.length == 1
+                                && arguments[0] instanceof DefinitionKey key) {
+                            lookups.computeIfAbsent(key, ignored -> new AtomicInteger())
+                                    .incrementAndGet();
+                        }
+                        try {
+                            return method.invoke(real, arguments);
+                        } catch (InvocationTargetException e) {
+                            throw e.getCause();
+                        }
+                    });
+        }
+
+        /** The registry to give to a node. */
+        WorkflowRegistry registry() {
+            return registry;
+        }
+
+        /** How many plan lookups were made for the key. */
+        int lookupsOf(DefinitionKey key) {
+            AtomicInteger count = lookups.get(key);
+            return count == null ? 0 : count.get();
+        }
     }
 
     /**

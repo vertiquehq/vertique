@@ -99,6 +99,11 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
     }
 
     @Override
+    public Future<Integer> defer(CommandHead head) {
+        return Future.succeededFuture(0);
+    }
+
+    @Override
     public Future<Boolean> release(ClaimedCommand claim) {
         return Future.succeededFuture(false);
     }

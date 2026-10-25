@@ -213,6 +213,22 @@ public interface WorkflowCommandRepository<TX> {
     }
 
     /**
+     * Defers a peeked command that this node cannot run, in one short transaction of its own: tries the instance's
+     * execution lock, locks the command row and checks that the command is still claimable, is not already deferred
+     * into the future, and that the instance is still pinned to the plan the head observed (definition key and plan
+     * hash). Then sets it {@code DEFERRED}, raises its deferral count by one and moves its availability forward by
+     * five seconds doubled once per earlier deferral, at most five minutes. Attempts, token and lease are untouched. The
+     * first deferral of a command (count {@code 0} to {@code 1}) also appends one {@code COMMAND_DEFERRED} history
+     * entry that names the kind and the sequence and never the payload.
+     *
+     * <p>When the lock is busy or a check fails, nothing is written.
+     *
+     * @param head the peeked head, whose pin is the observation to check
+     * @return a {@link Future} containing the new deferral count, or {@code 0} when nothing was written
+     */
+    Future<Integer> defer(CommandHead head);
+
+    /**
      * Locks the claimed command's row and checks, in the segment's transaction, that the claim still stands: the
      * command is {@code CLAIMED} with this token and at the head of its queue. When it does not, nothing is written.
      *

@@ -44,6 +44,7 @@ final class CommandFaults {
             "complete",
             "reject",
             "release",
+            "defer",
             "tryLockInstance",
             "lockInstance",
             "nextQueueSequence",

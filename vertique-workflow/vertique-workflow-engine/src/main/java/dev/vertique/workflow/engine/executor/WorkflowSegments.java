@@ -7,6 +7,7 @@ import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.registry.WorkflowRegistry;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
 
@@ -38,6 +39,14 @@ public interface WorkflowSegments {
      * @return {@code true} when the plan is resident, {@code false} when this node cannot resolve it
      */
     boolean makeResident(CommandHead head);
+
+    /**
+     * The registry of plans this node holds, from which the executor decides whether it can run a peeked command or
+     * must defer it.
+     *
+     * @return the node's registry
+     */
+    WorkflowRegistry registry();
 
     /**
      * Runs the work of a fenced command inside the segment's transaction: computes the initial state of a start and

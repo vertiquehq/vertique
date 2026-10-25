@@ -283,7 +283,7 @@ final class ExecutorLoop {
         earliestAt = NO_TIME;
     }
 
-    /** Peeks and claims; completes with the number of commands claimed. */
+    /** Peeks, defers and claims; completes with the number of commands claimed or deferred. */
     private Future<Integer> pass() {
         if (!running) {
             return Future.succeededFuture(0);
@@ -292,9 +292,9 @@ final class ExecutorLoop {
         if (free <= 0) {
             return Future.succeededFuture(0);
         }
-        return peek.resident(free).compose(heads -> {
+        return peek.resident(free).compose(peeked -> {
             List<Future<Boolean>> claims = new ArrayList<>();
-            for (CommandHead head : heads) {
+            for (CommandHead head : peeked.heads()) {
                 if (!running || inFlight.get() >= config.concurrency()) {
                     break;
                 }
@@ -302,7 +302,8 @@ final class ExecutorLoop {
                 claims.add(claim(head));
             }
             return Future.all(claims).map(ignored -> {
-                int claimed = 0;
+                // a deferral is work too: the next pass runs now and sees the heads behind the deferred ones
+                int claimed = peeked.deferred();
                 for (Future<Boolean> claim : claims) {
                     if (claim.result()) {
                         claimed++;

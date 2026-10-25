@@ -733,7 +733,20 @@ then rolls back and its claim lapses at the end of its lease, so another executo
 stays spent, exactly as after a crash); work that completed before the deadline commits even when the commit ends after it. A
 peek, claim or segment start that throws, returns no future or fails never ends the loop: the failure is logged at
 warn level and the next pass is scheduled. A peeked
-command whose plan this node cannot resolve is skipped and logged at debug level; it is peeked again on the next pass.
+command whose plan this node holds but cannot make resident is skipped and logged at debug level; it is peeked again on the
+next pass.
+
+**Commands this node cannot run.** For a command on a live instance the executor checks, outside any transaction, that its
+registry holds the definition key the instance is pinned to and, when the pin names a plan hash, that the plan held has that
+hash. A command the node cannot run is deferred instead of claimed: one short transaction tries the execution lock, locks
+the row, checks again that it is claimable and that the instance is still pinned as peeked, then sets it `DEFERRED`, raises
+`deferral_count` by one and moves `available_at` forward by 5 s doubled once per earlier deferral, at most 5 min (fixed, not
+configured). Attempts, token and lease are untouched, so a deferral never spends an attempt, and a node that can run the
+plan claims the command as soon as it is available. The first deferral of a command appends one `COMMAND_DEFERRED` history
+entry (kind and sequence, never a payload); each deferral reports `CommandDeferred` to the observers. A busy lock or a
+failed check writes nothing. A deferred command still blocks the later commands of its instance, and a command nobody can run
+is reported by the probe as stuck once it is older than `workflow.executor.stuckAfterSeconds`, measured from when it was
+recorded. A command whose instance has ended is never deferred and no plan is looked up for it: it goes to the claim.
 
 **Failed segments.** The executor reads a failure as the transaction runner returns it, after both of its mapping stages, and
 disposes of it in this order:
@@ -760,7 +773,7 @@ the claim spends an attempt. A peek routes a command whose instance has ended to
 The command's `last_error` is built by `CommandErrors` (`<REASON_CODE>: <message>`, at most 4000 characters, framework-composed
 text that names only the kind, the cap or the counts); exception text and payloads go to the log only.
 
-**Observers.** The executor reports `CommandSettled`, `TransientRetry`, `LeaseExpired` and `QueueSnapshot` events to the
+**Observers.** The executor reports `CommandSettled`, `CommandDeferred`, `TransientRetry`, `LeaseExpired` and `QueueSnapshot` events to the
 `Set<WorkflowExecutorObserver>` it is built with (empty unless contributed; see `vertique-workflow-core`). Each observer runs in its
 own `try`, and a throwing observer is logged at warn level and affects nothing. A `QueueSnapshot` with the queue counts is read at most once per second
 per executor instance and only while an observer is registered. The PostgreSQL wake-up source also reports the notification
@@ -821,7 +834,7 @@ parameterized over `<TX>` (typically `SqlClient`):
 | `BranchTokenRepository<TX>` | Fork/join branch token CRUD, status queries, and recovery queries |
 | `JoinStateRepository<TX>` | Fork/join state insert, read variants, open-for-workflow list, and the optimistic `decide` CAS |
 | `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping. The client it hands the work is a `SqlConnection` whose `transaction()` reports the underlying pending transaction; the deadline-guarded connection of `vertique-db` meets that. Its internal overload `inTransaction(level, deadline, work)` bounds the transaction (the executor's segment deadline) and returns `TransactionDeadlineExceededException` unchanged; the default fails with `UnsupportedOperationException` without running the work |
-| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked, not-yet-available and stuck commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock. The executor's members: `recordStart` inserts a `START` command in the caller's transaction; `peek(limit)` reads the claimable heads without locks; `claim(head, claimedBy, leaseSeconds, maxAttempts)` is one self-contained transaction that tries the lock, locks the row, checks `claimable` again and settles an ended instance's command, dead-letters a command that spent `maxAttempts`, or claims (the three-argument overload never dead-letters); `retryTransient` and `failCommand` are the dispositions of a failed segment (the first locks only the command row, the second tries the execution lock in a transaction of its own); `findStuck` and `countQueue` read the stuck report and the queue snapshot; `fence`, `complete` and `reject` run in the segment's transaction, fenced on the command being `CLAIMED` with the claim's token (`complete` and `reject` return the number of rows updated, and `0` means the claim no longer stands); `release` returns a claim whose segment did not run to `PENDING` with its attempt restored, in one statement that takes no lock |
+| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked, not-yet-available and stuck commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock. The executor's members: `recordStart` inserts a `START` command in the caller's transaction; `peek(limit)` reads the claimable heads without locks; `defer(head)` defers a head the node cannot run in one self-contained transaction and returns the new deferral count, or `0` when it wrote nothing (busy lock, no longer claimable, already deferred into the future, or the instance pinned otherwise than the head observed); `claim(head, claimedBy, leaseSeconds, maxAttempts)` is one self-contained transaction that tries the lock, locks the row, checks `claimable` again and settles an ended instance's command, dead-letters a command that spent `maxAttempts`, or claims (the three-argument overload never dead-letters); `retryTransient` and `failCommand` are the dispositions of a failed segment (the first locks only the command row, the second tries the execution lock in a transaction of its own); `findStuck` and `countQueue` read the stuck report and the queue snapshot; `fence`, `complete` and `reject` run in the segment's transaction, fenced on the command being `CLAIMED` with the claim's token (`complete` and `reject` return the number of rows updated, and `0` means the claim no longer stands); `release` returns a claim whose segment did not run to `PENDING` with its attempt restored, in one statement that takes no lock |
 
 The adapter also provides:
 - A `WorkflowRecoveryBridge` is already bound by `WorkflowEngineModule`; no adapter re-binding needed.

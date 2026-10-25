@@ -1038,6 +1038,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             }
 
             @Override
+            public WorkflowRegistry registry() {
+                return registry;
+            }
+
+            @Override
             public Future<Outcome> run(CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
                 return runSegment(head, claim, command, tx, Integer.MAX_VALUE);
             }

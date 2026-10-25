@@ -35,7 +35,9 @@ public final class CommandErrors {
         /** The command spent every attempt it was allowed. */
         ATTEMPTS_EXHAUSTED,
         /** The command's instance had ended when the command was claimed. */
-        INSTANCE_ENDED
+        INSTANCE_ENDED,
+        /** This node holds no plan for the instance's pin, so the command was deferred. */
+        NOT_RUNNABLE
     }
 
     private CommandErrors() {
@@ -105,6 +107,19 @@ public final class CommandErrors {
                 Reason.INSTANCE_ENDED,
                 token(kind) + " command was settled because its instance had already ended with status "
                         + token(status));
+    }
+
+    /**
+     * The value for a command deferred because this node cannot run the plan its instance is pinned to.
+     *
+     * @param kind the command kind
+     * @return the stored value
+     */
+    public static String notRunnable(String kind) {
+        return format(
+                Reason.NOT_RUNNABLE,
+                token(kind) + " command was deferred: this node holds no runnable plan for the instance's pinned"
+                        + " definition");
     }
 
     /**

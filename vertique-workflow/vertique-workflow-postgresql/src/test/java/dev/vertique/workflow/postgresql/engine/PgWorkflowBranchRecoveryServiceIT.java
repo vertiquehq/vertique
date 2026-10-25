@@ -449,9 +449,15 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // production composition does.
         RecoveryTestComponent component = DaggerPgWorkflowBranchRecoveryServiceIT_RecoveryTestComponent.factory()
                 .create(pool, Clock.systemUTC());
-        // The graphs run no deployer: only their workflow executors are deployed. Each executor skips the commands of
-        // definitions its own registry lacks, so the two graphs do not run each other's work.
-        executor = ExecutorDeployment.deploy(vertx, component.verticleDeployments())
+        // The graphs run no deployer: only their workflow executors are deployed. Each executor peeks only the commands
+        // of definitions its own registry holds, because an executor defers a command it cannot run, and a deferred
+        // start waits out its backoff before the graph that can run it claims it.
+        executor = ExecutorDeployment.deployHoldingOnly(
+                        vertx,
+                        component.commandRepository(),
+                        component.transactionRunner(),
+                        component.workflowSegments(),
+                        component.workflowRegistry())
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
@@ -491,7 +497,12 @@ public class PgWorkflowBranchRecoveryServiceIT {
 
         Ac2TestComponent ac2Component = DaggerPgWorkflowBranchRecoveryServiceIT_Ac2TestComponent.factory()
                 .create(pool, Clock.systemUTC());
-        ac2Executor = ExecutorDeployment.deploy(vertx, ac2Component.verticleDeployments())
+        ac2Executor = ExecutorDeployment.deployHoldingOnly(
+                        vertx,
+                        ac2Component.commandRepository(),
+                        ac2Component.transactionRunner(),
+                        ac2Component.workflowSegments(),
+                        ac2Component.workflowRegistry())
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
@@ -609,6 +620,8 @@ public class PgWorkflowBranchRecoveryServiceIT {
         BranchTokenRepository<SqlClient> branchTokenRepository();
 
         WorkflowCommandRepository<SqlClient> commandRepository();
+
+        dev.vertique.workflow.engine.executor.WorkflowSegments workflowSegments();
 
         /**
          * Returns the instance repository the recovery service resolves parent instances through.
@@ -837,6 +850,8 @@ public class PgWorkflowBranchRecoveryServiceIT {
         BranchTokenRepository<SqlClient> branchTokenRepository();
 
         WorkflowCommandRepository<SqlClient> commandRepository();
+
+        dev.vertique.workflow.engine.executor.WorkflowSegments workflowSegments();
 
         WorkflowInstanceRepository<SqlClient> instanceRepository();
 

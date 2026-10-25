@@ -123,7 +123,7 @@ public final class WorkflowExecutorVerticle extends AbstractVerticle {
                 root,
                 config,
                 instanceId,
-                new CommandPeek(commands, segments),
+                new CommandPeek(commands, segments, new Deferral(commands, events)),
                 commands,
                 new SegmentRunner(vertx, config, commands, runner, segments, events),
                 segments,

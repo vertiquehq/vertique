@@ -47,6 +47,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
+import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
@@ -710,10 +711,19 @@ public class MixedCodeNodesIT {
 
     // --- Nodes ---
 
-    /** Node B: deployed with version 1 of the definition only. */
+    /**
+     * Node B: deployed with version 1 of the definition only. Its command executor polls so rarely that it never looks
+     * at the commands of node A: an executor without the pinned code defers a command it peeks, and these tests are
+     * about what B's other operations do, with A running the instance.
+     */
     private static Boot nodeWithV1Only(DefinitionScenario database, String id) {
+        JsonObject config = new JsonObject()
+                .put("workflow", new JsonObject().put("executor", new JsonObject().put("pollIntervalMs", 3_600_000L)));
         return database.node(
-                none(), unobserved(), List.of(MixedCodeFixtures.code(id, 1, Shape.COMPLETES, MixedContract.class)));
+                none(),
+                unobserved(),
+                List.of(MixedCodeFixtures.code(id, 1, Shape.COMPLETES, MixedContract.class)),
+                config);
     }
 
     /** Node A: deployed with version 1 and a version 2 that stops where the shape says. */
