@@ -124,8 +124,13 @@ component.kafkaConsumerDeploymentManager().deployAll();
 
 `deployAll()` registers local codecs, then deploys every enabled consumer verticle in parallel; if
 any deployment fails the successfully-started consumers are rolled back and the returned future
-fails with the original cause. `undeployAll()` is the counterpart. Consumer verticles are deployed
-in the `SERVICES` lifecycle phase.
+fails with the original cause. On stop, each consumer asks the Kafka client to pause its assigned
+partitions, waits up to 10 seconds for in-flight dispatches to finish (polling every 100 ms), then
+bounds `consumer.close()` at 10 seconds. `stop()` fails when dispatches are still in flight at the
+end of the wait, or when close fails or times out. In-flight handlers keep running after that
+failure, and a close that passed its bound can still finish later. `undeployAll()` joins the
+per-consumer futures (`Future.join`), so it fails if any consumer's stop failed. Consumer
+verticles are deployed in the `SERVICES` lifecycle phase.
 
 ### Model 1 — `@KafkaSource`
 
@@ -439,7 +444,7 @@ the wire and which headers fail a send.
 | Method | Description |
 |---|---|
 | `deployAll()` | Registers codecs, then deploys every enabled consumer verticle in parallel; rolls back on partial failure |
-| `undeployAll()` | Undeploys every consumer verticle |
+| `undeployAll()` | Undeploys every consumer verticle. Joins the per-consumer futures (`Future.join`), so the returned future fails if any consumer's `stop()` failed |
 
 ---
 
