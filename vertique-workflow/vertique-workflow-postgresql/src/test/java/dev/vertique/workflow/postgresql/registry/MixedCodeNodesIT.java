@@ -138,7 +138,7 @@ public class MixedCodeNodesIT {
 
             // And the same start on A creates an instance pinned to version 2
             WorkflowInstanceId started = await(a.app().workflowOperations().start(start(id, "k1")));
-            await(a.app().executionProbe().awaitIdle(started, IDLE_TIMEOUT));
+            awaitInitialExecution(database, started, 0);
             assertThat(versionOf(database, started)).isEqualTo(2);
         }
     }
@@ -157,7 +157,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
-            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            awaitInitialExecution(database, instance, 0);
             assertThat(versionOf(database, instance)).isEqualTo(2);
             Rows before = Rows.of(database, instance);
             assertThat(before.instance()).contains("WAITING");
@@ -199,7 +199,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
-            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            awaitInitialExecution(database, instance, 0);
             UUID task = openTask(database, instance);
             Rows before = Rows.of(database, instance);
 
@@ -245,7 +245,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TIMER);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
-            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            awaitInitialExecution(database, instance, 0);
             TimerRow scheduled = onlyTimer(database, instance);
             assertThat(scheduled.status()).isEqualTo("SCHEDULED");
             SteppedClock clock = new SteppedClock(scheduled.fireAt());
@@ -309,7 +309,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK_WITH_DUE_DATE);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
-            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            awaitInitialExecution(database, instance, 0);
             TimerRow due = timerWithPurpose(database, instance, "TASK_DUE");
             assertThat(due.status()).isEqualTo("SCHEDULED");
             Rows before = Rows.of(database, instance);
@@ -361,7 +361,7 @@ public class MixedCodeNodesIT {
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(onDuplicatedContext(
                     vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
-            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            awaitInitialExecution(database, instance, 2);
             TimerRow due = timerWithPurpose(database, instance, "TASK_DUE");
             Rows before = Rows.of(database, instance);
             assertThat(before.tasks()).contains("OPEN");
@@ -409,7 +409,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK_WITH_REMINDERS);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
-            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            awaitInitialExecution(database, instance, 0);
             List<TimerRow> reminders = reminderTimers(database, instance);
             assertThat(reminders).hasSize(2);
             TimerRow first = reminders.getFirst();
@@ -463,7 +463,7 @@ public class MixedCodeNodesIT {
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(onDuplicatedContext(
                     vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
-            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            awaitInitialExecution(database, instance, 2);
             TimerRow reminder = timerWithPurpose(database, instance, "TASK_REMINDER");
             Rows before = Rows.of(database, instance);
             assertThat(before.tasks()).endsWith(":OPEN:0");
@@ -516,7 +516,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
-            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            awaitInitialExecution(database, instance, 0);
             Rows before = Rows.of(database, instance);
             StartCommand otherContract = new StartCommand(
                     id, OTHER_CONTRACT_NAME, new PlaceOrderDoc("order-k1"), "k1", null, null, null, DEFAULT, null);
@@ -578,7 +578,7 @@ public class MixedCodeNodesIT {
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
-            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            awaitInitialExecution(database, instance, 0);
 
             // and: every connection of B's pool but one is held
             List<SqlConnection> held = new ArrayList<>();
@@ -614,7 +614,7 @@ public class MixedCodeNodesIT {
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(onDuplicatedContext(
                     vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
-            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+            awaitInitialExecution(database, instance, 2);
             Rows before = Rows.of(database, instance);
             assertThat(before.branches()).contains(MixedCodeFixtures.FIRST_BRANCH);
 
@@ -978,6 +978,64 @@ public class MixedCodeNodesIT {
             items.add(row.getString("item"));
         }
         return String.join(",", items);
+    }
+
+    private record StartSnapshot(
+            String commandState,
+            java.time.OffsetDateTime availableAt,
+            Integer deferralCount,
+            Integer attempts,
+            String lastError,
+            String instanceStatus,
+            long branchCount) {}
+
+    /** Waits for the START command and its setup state; awaitIdle only means no command is currently runnable. */
+    private static void awaitInitialExecution(
+            DefinitionScenario database, WorkflowInstanceId instance, long expectedBranchCount) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        StartSnapshot snapshot = null;
+        while (true) {
+            var rows = await(database.admin().preparedQuery("""
+                            SELECT c.state AS command_state, c.available_at, c.deferral_count, c.attempts, c.last_error,
+                                   i.status AS instance_status,
+                                   count(b.branch_id) AS branch_count
+                            FROM workflow_instances i
+                            LEFT JOIN workflow_commands c ON c.workflow_id = i.id AND c.kind = 'START'
+                            LEFT JOIN workflow_branch_tokens b ON b.workflow_id = i.id
+                            WHERE i.id = $1
+                            GROUP BY c.state, c.available_at, c.deferral_count, c.attempts, c.last_error, i.status
+                            """).execute(Tuple.of(instance.value())));
+            if (rows.iterator().hasNext()) {
+                Row row = rows.iterator().next();
+                snapshot = new StartSnapshot(
+                        row.getString("command_state"),
+                        row.getOffsetDateTime("available_at"),
+                        row.getInteger("deferral_count"),
+                        row.getInteger("attempts"),
+                        row.getString("last_error"),
+                        row.getString("instance_status"),
+                        row.getLong("branch_count"));
+                if ("COMPLETE".equals(snapshot.commandState())
+                        && !"PENDING".equals(snapshot.instanceStatus())
+                        && snapshot.branchCount() >= expectedBranchCount) {
+                    return;
+                }
+                if ("FAILED".equals(snapshot.instanceStatus())
+                        || List.of("DEAD", "REJECTED", "FAILED", "CANCELLED").contains(snapshot.commandState())) {
+                    throw new AssertionError("START did not complete successfully for " + instance + ": " + snapshot);
+                }
+            }
+            if (System.nanoTime() >= deadline) {
+                throw new AssertionError("START setup did not reach its expected state for " + instance + ": "
+                        + (snapshot == null ? "instance or START command row is missing" : snapshot));
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted while awaiting START setup for " + instance, e);
+            }
+        }
     }
 
     // --- Fixtures ---

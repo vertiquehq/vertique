@@ -60,6 +60,7 @@ import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
@@ -917,6 +918,72 @@ public class PgWorkflowBranchRecoveryServiceIT {
         dup.runOnContext(unused -> body.run());
     }
 
+    private record StartSnapshot(
+            String commandState,
+            OffsetDateTime availableAt,
+            Integer deferralCount,
+            Integer attempts,
+            String lastError,
+            String instanceStatus,
+            long branchCount) {}
+
+    /** Waits for a settled START and its initial state; awaitIdle alone does not wait for deferred work. */
+    private static Future<WorkflowInstanceId> awaitStartReady(WorkflowInstanceId id, long expectedBranchCount) {
+        Promise<WorkflowInstanceId> result = Promise.promise();
+        long deadline = System.nanoTime() + IDLE_TIMEOUT.multipliedBy(2).toNanos();
+        pollStartReady(id, expectedBranchCount, deadline, result);
+        return result.future();
+    }
+
+    private static void pollStartReady(
+            WorkflowInstanceId id, long expectedBranchCount, long deadline, Promise<WorkflowInstanceId> result) {
+        pool.preparedQuery("""
+                        SELECT c.state AS command_state, c.available_at, c.deferral_count, c.attempts, c.last_error,
+                               i.status AS instance_status,
+                               count(b.branch_id) AS branch_count
+                        FROM workflow_instances i
+                        LEFT JOIN workflow_commands c ON c.workflow_id = i.id AND c.kind = 'START'
+                        LEFT JOIN workflow_branch_tokens b ON b.workflow_id = i.id
+                        WHERE i.id = $1
+                        GROUP BY c.state, c.available_at, c.deferral_count, c.attempts, c.last_error, i.status
+                        """).execute(Tuple.of(id.value())).onComplete(ar -> {
+            if (ar.failed()) {
+                result.fail(ar.cause());
+                return;
+            }
+            StartSnapshot snapshot = null;
+            if (ar.result().iterator().hasNext()) {
+                Row row = ar.result().iterator().next();
+                snapshot = new StartSnapshot(
+                        row.getString("command_state"),
+                        row.getOffsetDateTime("available_at"),
+                        row.getInteger("deferral_count"),
+                        row.getInteger("attempts"),
+                        row.getString("last_error"),
+                        row.getString("instance_status"),
+                        row.getLong("branch_count"));
+                if ("COMPLETE".equals(snapshot.commandState())
+                        && !"PENDING".equals(snapshot.instanceStatus())
+                        && !"FAILED".equals(snapshot.instanceStatus())
+                        && snapshot.branchCount() >= expectedBranchCount) {
+                    result.complete(id);
+                    return;
+                }
+                if ("FAILED".equals(snapshot.instanceStatus())
+                        || List.of("DEAD", "REJECTED", "FAILED", "CANCELLED").contains(snapshot.commandState())) {
+                    result.fail(new AssertionError("START did not complete successfully for " + id + ": " + snapshot));
+                    return;
+                }
+            }
+            if (System.nanoTime() >= deadline) {
+                result.fail(new AssertionError("START setup did not reach its expected state for " + id + ": "
+                        + (snapshot == null ? "instance or START command row is missing" : snapshot)));
+                return;
+            }
+            vertxRef.setTimer(25, ignored -> pollStartReady(id, expectedBranchCount, deadline, result));
+        });
+    }
+
     @Test
     @DisplayName("AC #9 — stale RUNNING branch with no retries left is demoted to FAILED and the join is evaluated")
     void recoverySweepDemotesStaleRunningAndEvaluatesJoin(VertxTestContext ctx) {
@@ -932,7 +999,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null,
                 null);
         runOnDuplicatedContext(() -> engine.start(cmd)
-                .compose(id -> probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
+                .compose(id -> awaitStartReady(id, 2))
                 // Force branch 'a' into stale RUNNING (no retry budget left).
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
                                 + " updated_at = $1, attempt_count = max_attempts - 1 WHERE workflow_id = $2"
@@ -993,7 +1060,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null,
                 null);
         runOnDuplicatedContext(() -> engine.start(cmd)
-                .compose(id -> probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
+                .compose(id -> awaitStartReady(id, 2))
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
                                 + " current_step_id = 'complete-a', wait_type = NULL, wait_key = NULL,"
                                 + " next_retry_at = $1, version = version + 1"
@@ -1072,7 +1139,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         Instant past = Instant.now().minusSeconds(3600);
         runOnDuplicatedContext(() -> engine.start(cmd)
-                .compose(id -> probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
+                .compose(id -> awaitStartReady(id, 2))
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
                                 + " updated_at = $1, attempt_count = 0, max_attempts = 3, version = version + 1"
                                 + " WHERE workflow_id = $2 AND branch_id = 'a'")
@@ -1143,7 +1210,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null,
                 null);
         runOnDuplicatedContext(() -> engine.start(cmd)
-                .compose(id -> probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
+                .compose(id -> awaitStartReady(id, 2))
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
                                 + " current_step_id = 'complete-a', wait_type = NULL, wait_key = NULL,"
                                 + " next_retry_at = $1, version = version + 1"
@@ -1200,7 +1267,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null,
                 null);
         runOnDuplicatedContext(() -> engine.start(cmd)
-                .compose(id -> probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
+                .compose(id -> awaitStartReady(id, 2))
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
                                 + " updated_at = $1, attempt_count = max_attempts - 1 WHERE workflow_id = $2"
                                 + " AND branch_id = 'a'")
@@ -1387,7 +1454,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         runOnDuplicatedContext(() -> withAc2AmbientTenantAndCorrelation(
                         "T", "IGNORED-AT-START", () -> ac2Engine.start(cmd))
-                .compose(id -> ac2Probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
+                .compose(id -> awaitStartReady(id, 1))
                 // Seed a degraded branch token: correlation C only, no tenant — simulating the
                 // §2-gap-1 degraded/pre-feature fork (AC-2's documented test-setup technique).
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET metadata = $1"
@@ -1486,7 +1553,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmd)
-                .compose(id -> ac2Probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
+                .compose(id -> awaitStartReady(id, 0))
                 .compose(id -> pool.preparedQuery("UPDATE workflow_instances SET metadata = $1 WHERE id = $2")
                         .execute(Tuple.of(tenantOnlyMetadataCarrier("T-LIVE"), id.value()))
                         .map(id))
@@ -1540,7 +1607,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmd)
-                .compose(id -> ac2Probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
+                .compose(id -> awaitStartReady(id, 1))
                 // Seed the branch token with its OWN carrier (correlation D only) — instance
                 // metadata stays NULL, so the merge must be a pure no-op.
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET metadata = $1"
@@ -1612,9 +1679,9 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmdBad)
-                .compose(badId -> ac2Probe.awaitIdle(badId, IDLE_TIMEOUT).map(r -> badId))
-                .compose(badId -> ac2Engine.start(cmdGood).compose(goodId -> ac2Probe.awaitIdle(goodId, IDLE_TIMEOUT)
-                        .map(r -> new WorkflowInstanceId[] {badId, goodId})))
+                .compose(badId -> awaitStartReady(badId, 1))
+                .compose(badId -> ac2Engine.start(cmdGood).compose(goodId -> awaitStartReady(goodId, 1)
+                        .map(ignored -> new WorkflowInstanceId[] {badId, goodId})))
                 // Corrupt the "bad" instance's plan_hash so loadEffectiveBaseForBind's later
                 // loadInstanceAndRuntime (inside resumeOne) rejects it via the plan-hash drift
                 // guard — this row's advance fails, but must not abort the sweep's remaining rows.
@@ -1670,7 +1737,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 null);
         runOnDuplicatedContext(() -> withAc2AmbientTenantAndCorrelation(
                         "T-DEMOTE", "IGNORED-AT-START", () -> ac2Engine.start(cmd))
-                .compose(id -> ac2Probe.awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
+                .compose(id -> awaitStartReady(id, 1))
                 // Seed a degraded branch token: correlation C-DEMOTE only, no tenant — simulating
                 // the §2-gap-1 degraded/pre-feature fork, same technique as the headline AC-2 test.
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET metadata = $1"
