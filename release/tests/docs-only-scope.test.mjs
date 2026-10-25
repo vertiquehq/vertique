@@ -129,7 +129,9 @@ describe('detect-docs-only-scope', () => {
   it('keeps the full build for workflow, script, and pom changes', () => {
     for (const [file, name] of [
       ['.github/workflows/ci.yml', 'workflow'],
+      ['.github/workflows/pr-review-aid.yml', 'review-aid-workflow'],
       ['scripts/detect-docs-only-scope.sh', 'script'],
+      ['scripts/pr-review-aid/run.mjs', 'review-aid-script'],
       ['pom.xml', 'pom'],
       ['.mvn/maven.config', 'maven-config'],
     ]) {

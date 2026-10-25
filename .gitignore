@@ -18,3 +18,6 @@ target/**
 # input, and an untracked .claude/ makes this checkout fail the exact-clean
 # check that gates the cross-repository combined build.
 .claude/
+
+# Local output of scripts/pr-review-aid/run.mjs
+pr-review-aid-out/

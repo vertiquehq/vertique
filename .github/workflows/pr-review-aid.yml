@@ -1,0 +1,144 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+#
+# Pull request review aid (advisory).
+#
+# Comments on a pull request with the module-graph and OpenAPI diff against
+# its base. Not a required check: a failure here must not block merge. The
+# job fails only when an OpenAPI diff reports an error-level breaking change,
+# and only after the comment, the job summary and the artifact exist.
+#
+# pull_request_target is deliberately not used, so untrusted pull request
+# code never runs with a write token. Fork pull requests get a read-only
+# token; the comment step treats a refused write as success and still
+# publishes the job summary and artifact.
+#
+# There is no path filter. A later push that drops the last relevant file
+# must still run, so a stale comment can be removed. The job classifies
+# changed paths and skips the builds when nothing relevant changed.
+
+name: PR Review Aid
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-review-aid-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  OASDIFF_VERSION: "1.34.1"
+  OASDIFF_SHA256: "75775f65b0adebd26a8e013af51a799342dfdc6262d89efa9e3b7bdf89657d90"
+
+jobs:
+  review:
+    name: Module and API diff
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+
+      - name: Classify changed paths
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/pr-review-aid/classify.mjs >> "$GITHUB_OUTPUT"
+
+      # The script checks out the merge base of these two commits.
+      - name: Check out the base commit
+        if: ${{ steps.scope.outputs.relevant == 'true' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_DIR: ${{ runner.temp }}/pr-review-aid-base
+        run: bash scripts/pr-review-aid/checkout-base.sh
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        if: ${{ steps.scope.outputs.relevant == 'true' }}
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - id: pom-hash
+        if: ${{ steps.scope.outputs.relevant == 'true' }}
+        run: bash scripts/compute-maven-cache-key.sh >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        if: ${{ steps.scope.outputs.relevant == 'true' }}
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ steps.pom-hash.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            maven-${{ runner.os }}-${{ steps.pom-hash.outputs.value }}-
+            maven-${{ runner.os }}-
+
+      # Install the pinned oasdiff CLI from the GitHub release tarball.
+      # No Action is used, so the oasdiff Action's review upload cannot
+      # happen; specs stay on the runner. The checksum is verified before
+      # the archive is extracted.
+      - name: Install oasdiff
+        if: ${{ steps.scope.outputs.relevant == 'true' }}
+        env:
+          OASDIFF_INSTALL_DIR: ${{ runner.temp }}/oasdiff-bin
+        run: bash scripts/pr-review-aid/install-oasdiff.sh
+
+      - name: Build head
+        if: ${{ steps.scope.outputs.relevant == 'true' }}
+        env:
+          CHECKOUT: ${{ github.workspace }}
+          SPECS_OUT: ${{ github.workspace }}/pr-review-aid-out/head-specs
+        run: bash scripts/pr-review-aid/build-specs.sh
+
+      - name: Build base
+        id: build-base
+        if: ${{ steps.scope.outputs.relevant == 'true' }}
+        continue-on-error: true
+        env:
+          CHECKOUT: ${{ runner.temp }}/pr-review-aid-base
+          SPECS_OUT: ${{ github.workspace }}/pr-review-aid-out/base-specs
+        run: bash scripts/pr-review-aid/build-specs.sh
+
+      - name: Publish the review comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_DIR: ${{ runner.temp }}/pr-review-aid-base
+          HEAD_DIR: ${{ github.workspace }}
+          BASE_SPECS: ${{ github.workspace }}/pr-review-aid-out/base-specs
+          HEAD_SPECS: ${{ github.workspace }}/pr-review-aid-out/head-specs
+          OUT_DIR: ${{ github.workspace }}/pr-review-aid-out
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          RELEVANT: ${{ steps.scope.outputs.relevant }}
+          BASE_BUILD_OUTCOME: ${{ steps.build-base.outcome }}
+          OASDIFF_BIN: ${{ runner.temp }}/oasdiff-bin/oasdiff
+        run: node scripts/pr-review-aid/run.mjs
+
+      - name: Upload review aid output
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review-aid
+          path: pr-review-aid-out/
+          if-no-files-found: ignore
+
+      - name: Fail on breaking API changes
+        if: ${{ always() }}
+        env:
+          OUT_DIR: ${{ github.workspace }}/pr-review-aid-out
+        run: node scripts/pr-review-aid/check-breaking.mjs
