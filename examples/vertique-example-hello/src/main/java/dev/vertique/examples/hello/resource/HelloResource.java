@@ -257,25 +257,6 @@ public class HelloResource {
     }
 
     /**
-     * Liveness probe added to exercise the review aid.
-     *
-     * @return a fixed greeting
-     */
-    @GET
-    @Path("/ping")
-    @Produces(MediaType.APPLICATION_JSON)
-    @PermitAll
-    @Operation(operationId = "ping", summary = "Liveness probe")
-    @ApiResponse(
-            responseCode = "200",
-            description = "Pong",
-            content =
-                    @Content(mediaType = "application/json", schema = @Schema(implementation = GreetingResponse.class)))
-    public Future<GreetingResponse> ping() {
-        return Future.succeededFuture(new GreetingResponse("pong"));
-    }
-
-    /**
      * Team-only endpoint requiring the 'team-lead' role granted by a Vert.x authorization provider.
      *
      * <p>No JWT in this example carries a {@code team-lead} role claim; the role is granted at
