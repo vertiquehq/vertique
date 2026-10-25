@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+openapi: 3.0.3
+info:
+  title: sample
+  version: 1.0.0
+paths: {}

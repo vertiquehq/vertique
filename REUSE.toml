@@ -44,3 +44,13 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Koivisto Capital Oy"
 SPDX-License-Identifier = "EUPL-1.2"
+
+[[annotations]]
+path = [
+  "scripts/pr-review-aid/fixtures/**/*.md",
+  "scripts/pr-review-aid/fixtures/**/*.mmd",
+  "scripts/pr-review-aid/fixtures/**/*.dot",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Koivisto Capital Oy"
+SPDX-License-Identifier = "EUPL-1.2"

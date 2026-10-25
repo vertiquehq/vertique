@@ -1,0 +1,9 @@
+digraph module_graph {
+  rankdir=LR;
+  node [shape=box];
+  "m_dev_example_a" [label="dev.example:a" style=filled fillcolor="#f3f4f6" color="#9ca3af" fontcolor="#6b7280"];
+  "m_dev_example_b" [label="dev.example:b" style=filled fillcolor="#fef9c3" color="#eab308" fontcolor="#713f12"];
+  "m_dev_example_c" [label="dev.example:c" style=filled fillcolor="#f3f4f6" color="#9ca3af" fontcolor="#6b7280"];
+  "m_dev_example_a" -> "m_dev_example_b" [label="compile" color="#9ca3af"];
+  "m_dev_example_b" -> "m_dev_example_c" [label="compile" color="#9ca3af"];
+}

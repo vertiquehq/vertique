@@ -1,0 +1,19 @@
+## Module graph changes
+
+```mermaid
+flowchart LR
+  m_dev_example_a["dev.example:a"]
+  m_dev_example_b["dev.example:b"]
+  m_dev_example_c["dev.example:c"]
+  m_dev_example_a -->|"compile"| m_dev_example_b
+  m_dev_example_b -->|"compile"| m_dev_example_c
+  classDef changed fill:#fef9c3,stroke:#eab308,color:#713f12
+  class m_dev_example_b changed
+  classDef context fill:#f3f4f6,stroke:#9ca3af,color:#6b7280
+  class m_dev_example_a context
+  class m_dev_example_c context
+```
+
+| Module | Change |
+| --- | --- |
+| `dev.example:b` | dependency `org.example:lib` `1.0.0` -> `2.0.0` |

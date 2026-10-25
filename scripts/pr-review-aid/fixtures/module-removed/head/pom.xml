@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+SPDX-License-Identifier: EUPL-1.2
+-->
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>dev.example</groupId>
+  <artifactId>root</artifactId>
+  <version>${revision}</version>
+  <packaging>pom</packaging>
+  <properties>
+    <revision>1.0.0</revision>
+  </properties>
+  <modules>
+    <module>app</module>
+  </modules>
+</project>
