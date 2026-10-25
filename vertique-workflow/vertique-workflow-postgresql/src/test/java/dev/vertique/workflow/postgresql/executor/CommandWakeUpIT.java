@@ -11,12 +11,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
+import dev.vertique.db.IsolationLevel;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.CommandWakeups.Registration;
 import dev.vertique.workflow.engine.spi.CommandWakeups.WakeupSink;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
+import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.QueueSnapshot;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
@@ -24,21 +28,32 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.CommandRow;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.Node;
 import io.vertx.core.Context;
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.pgclient.PgConnection;
+import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Transaction;
+import jakarta.annotation.Nullable;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -68,12 +83,14 @@ class CommandWakeUpIT {
     @DisplayName("an idle executor runs a committed start long before the poll interval")
     void idleExecutorRunsACommittedStartLongBeforeThePollInterval() {
         try (ExecutorFixture fixture = ExecutorFixture.open(db.toPoolConfig())) {
+            ClaimTimeRecorder claimTimes = new ClaimTimeRecorder();
             // Given an executor whose poll is far away and an engine whose pool has two connections
             Node node = fixture.node("engine")
                     .pollIntervalMs(FAR_POLL_MS)
                     .poolSize(2)
                     .concurrency(1)
                     .listening()
+                    .commands(claimTimes::decorate)
                     .build();
             node.startExecutor();
 
@@ -82,28 +99,30 @@ class CommandWakeUpIT {
                     "the listening connection",
                     WOKEN,
                     () -> fixture.listenBackends().size() == 1);
+            Duration databaseClockOffset = databaseClockOffset(fixture);
 
-            // When a start is recorded and committed
-            WorkflowInstanceId id = node.record(startOf("woken"));
+            // When a warm-up start wakes the delayed first pass and leaves the executor idle
+            WorkflowInstanceId warmup = node.record(startOf("wake-up-warmup"));
+            await(node.engine.executionProbe().awaitIdle(warmup, WOKEN));
+            awaitCondition("the warm-up peek", WOKEN, claimTimes::hasPeeked);
+            assertThat(fixture.commandOf(warmup).state()).isEqualTo("COMPLETE");
+            assertThat(fixture.commandOf(warmup).attempts()).isEqualTo(1);
+            assertThat(fixture.instanceOf(warmup).status()).isEqualTo("WAITING");
 
-            // Then the start has run to its first wait within seconds, which only a wake-up can explain
-            await(node.engine.executionProbe().awaitIdle(id, WOKEN));
-            assertThat(fixture.instanceOf(id).status()).isEqualTo("WAITING");
-            CommandRow command = fixture.commandOf(id);
-            assertThat(command.state()).isEqualTo("COMPLETE");
-            assertThat(command.attempts()).isEqualTo(1);
-
-            // And the time from recording to settling is kept as evidence over further starts
+            // Then 50 measured starts run to their first wait within seconds, which only a wake-up can explain
             List<Long> latenciesMs = new ArrayList<>();
-            latenciesMs.add(latencyMs(command));
-            for (int i = 1; i < LATENCY_RUNS; i++) {
+            for (int i = 0; i < LATENCY_RUNS; i++) {
                 WorkflowInstanceId next = node.record(startOf("latency-" + i));
                 await(node.engine.executionProbe().awaitIdle(next, WOKEN));
-                latenciesMs.add(latencyMs(fixture.commandOf(next)));
+                assertThat(fixture.instanceOf(next).status()).isEqualTo("WAITING");
+                CommandRow command = fixture.commandOf(next);
+                assertThat(command.state()).isEqualTo("COMPLETE");
+                assertThat(command.attempts()).isEqualTo(1);
+                latenciesMs.add(latencyMs(command, claimTimes, databaseClockOffset));
             }
             Collections.sort(latenciesMs);
             System.out.printf(
-                    "wake-up latency evidence: recorded-to-settled over %d starts: p50=%d ms p95=%d ms max=%d ms%n",
+                    "wake-up latency evidence: recorded-to-claimed over %d starts: p50=%d ms p95=%d ms max=%d ms%n",
                     latenciesMs.size(),
                     latenciesMs.get(latenciesMs.size() / 2),
                     latenciesMs.get((int) Math.ceil(latenciesMs.size() * 0.95) - 1),
@@ -277,15 +296,29 @@ class CommandWakeUpIT {
     @DisplayName("the notification queue usage reaches the executor observers")
     void reportsNotificationQueueUsageToExecutorObservers() {
         try (ExecutorFixture fixture = ExecutorFixture.open(db.toPoolConfig())) {
-            // Given an engine with a recording observer and a short queue-usage read interval
-            RecordingExecutorObserver recording = new RecordingExecutorObserver();
+            // Given a node with two executor contexts and a recording observer
+            RecordingWakeups wakeups = new RecordingWakeups();
+            WorkflowTransactionContextTracker transactions = new WorkflowTransactionContextTracker();
+            PoolAccessRecorder poolAccess = new PoolAccessRecorder();
+            RecordingExecutorObserver recording = new RecordingExecutorObserver(transactions);
+            RecordingExecutorObserver instrumentedRecording = new RecordingExecutorObserver(transactions, poolAccess);
+            FirstContextIdleCommands commands = new FirstContextIdleCommands(wakeups);
+            Pool listenerPool = fixture.newPool(2);
             Node node = fixture.node("engine")
+                    .instances(2)
+                    .concurrency(1)
+                    .pollIntervalMs(FAR_POLL_MS)
                     .observers(recording)
+                    .wakeups(wakeups::decorate)
                     .queueUsageIntervalMs(200)
+                    .commands(commands::decorate)
+                    .runner(transactions::decorate)
                     .build();
+            assertThat(listenerPool).isNotSameAs(node.pool);
 
             // And a session that listens inside a transaction, so that the notifications sent after it pile up
             PgConnection stalled = await(PgConnection.connect(fixture.vertx(), fixture.connectOptions()));
+            Registration instrumentedListenerRegistration = null;
             try {
                 await(stalled.query("LISTEN queue_usage_probe").execute());
                 await(stalled.query("BEGIN").execute());
@@ -302,21 +335,85 @@ class CommandWakeUpIT {
                                 .getDouble(0))
                         .isGreaterThan(0.0);
 
-                // When the executor runs for two read intervals
+                // When the executor starts, its first context owns the listener and the second processes a start
                 node.startExecutor();
+                awaitCondition("two executor registrations", WOKEN, () -> wakeups.registrations() == 2);
+                Context listenerContext = wakeups.firstRegisteredContext();
+                transactions.listenerContext(listenerContext);
+                awaitCondition(
+                        "the listening connection",
+                        WOKEN,
+                        () -> fixture.listenBackends().size() == 1);
+
+                // And the same listener class has a separately instrumented standalone pool read
+                CommandNotificationListener instrumentedListener = new CommandNotificationListener(
+                        fixture.vertx(),
+                        fixture.connectOptions(),
+                        poolAccess.wrap(listenerPool),
+                        Set.of(instrumentedRecording),
+                        FAR_POLL_MS,
+                        200);
+                instrumentedListenerRegistration = instrumentedListener.register(listenerContext, ignored -> {});
+
+                // And queue usage is reported before workflow work starts
                 awaitCondition("a queue snapshot that reports the usage", WOKEN, () -> recording.snapshots().stream()
                         .anyMatch(snapshot -> snapshot.notificationQueueUsage() > 0));
-                sleep(400);
-                node.stopExecutor();
 
-                // Then every snapshot reports a usage between 0 and 1 inclusive, and the database's usage reached it
+                // And the second executor holds its workflow transaction open after the segment body completes
+                WorkflowInstanceId id = node.record(startOf("queue-usage"));
+                awaitCondition("the workflow transaction to be held", WOKEN, transactions::isHeld);
+                assertThat(transactions.transactionContext()).isNotNull().isNotSameAs(contextKey(listenerContext));
+                int transactionsWhileHeld = transactions.transactionStarts();
+
+                // Then the instrumented listener reports while the workflow transaction remains active
+                awaitCondition(
+                        "queue usage during the workflow transaction",
+                        WOKEN,
+                        () -> recording.observations().stream()
+                                        .anyMatch(observation ->
+                                                observation.snapshot().notificationQueueUsage() > 0
+                                                        && observation.anyWorkflowTransactionActive())
+                                && instrumentedRecording.observations().stream()
+                                        .anyMatch(observation ->
+                                                observation.snapshot().notificationQueueUsage() > 0
+                                                        && observation.anyWorkflowTransactionActive()));
+
+                // And that callback's pool read used no workflow transaction runner call or explicit pool transaction
                 List<QueueSnapshot> snapshots = recording.snapshots();
                 assertThat(snapshots).isNotEmpty();
                 assertThat(snapshots).allSatisfy(snapshot -> assertThat(snapshot.notificationQueueUsage())
                         .isBetween(0.0, 1.0));
                 assertThat(snapshots.stream().anyMatch(snapshot -> snapshot.notificationQueueUsage() > 0))
                         .isTrue();
+                List<ObservedQueueSnapshot> duringWorkflowTransaction = recording.observations().stream()
+                        .filter(observation -> observation.snapshot().notificationQueueUsage() > 0
+                                && observation.anyWorkflowTransactionActive())
+                        .toList();
+                List<ObservedQueueSnapshot> instrumentedDuringWorkflowTransaction =
+                        instrumentedRecording.observations().stream()
+                                .filter(observation -> observation.snapshot().notificationQueueUsage() > 0
+                                        && observation.anyWorkflowTransactionActive())
+                                .toList();
+                assertThat(duringWorkflowTransaction).isNotEmpty();
+                assertThat(instrumentedDuringWorkflowTransaction).isNotEmpty();
+                assertThat(poolAccess.queueUsageReads()).isGreaterThan(0);
+                assertThat(poolAccess.withTransactionCalls()).isZero();
+                assertThat(transactions.transactionStarts()).isEqualTo(transactionsWhileHeld);
+                assertThat(instrumentedDuringWorkflowTransaction).allSatisfy(observation -> {
+                    assertThat(observation.poolQueueUsageReadsAtCallback()).isPositive();
+                    assertThat(observation.workflowRunnerTransactionStartsAtCallback())
+                            .isEqualTo(transactionsWhileHeld);
+                });
+
+                // And the command settles after the held transaction is released
+                transactions.releaseHeldTransaction();
+                await(node.engine.executionProbe().awaitIdle(id, WOKEN));
+                node.stopExecutor();
             } finally {
+                transactions.releaseHeldTransaction();
+                if (instrumentedListenerRegistration != null) {
+                    instrumentedListenerRegistration.close();
+                }
                 await(stalled.query("ROLLBACK").execute());
                 stalled.close();
             }
@@ -354,23 +451,46 @@ class CommandWakeUpIT {
                     WOKEN,
                     () -> fixture.listenBackends().size() == 1);
 
-            // When one start is recorded and committed, which sends one notification
-            WorkflowInstanceId id = node.record(startOf("shared"));
+            // And a raw subscriber can count notifications sent to the shared channel
+            List<String> notifications = new CopyOnWriteArrayList<>();
+            PgConnection raw = await(PgConnection.connect(fixture.vertx(), fixture.connectOptions()));
+            try {
+                raw.notificationHandler(notification -> {
+                    if ("vertique_workflow_commands".equals(notification.getChannel())) {
+                        notifications.add(notification.getPayload());
+                    }
+                });
+                await(raw.query("LISTEN vertique_workflow_commands").execute());
 
-            // Then the start runs to its first wait
-            await(node.engine.executionProbe().awaitIdle(id, WOKEN));
+                // When one start is recorded and committed, which sends one notification
+                WorkflowInstanceId id = node.record(startOf("shared"));
 
-            // And all three instances observed the wake-up, each on its own context
-            awaitCondition("every instance to be woken", WOKEN, wakeups::allWoken);
-            assertThat(wakeups.registeredContexts()).doesNotHaveDuplicates().hasSize(3);
-            assertThat(wakeups.wokenOnRegisteredContext()).isTrue();
+                // Then the start runs to its first wait
+                await(node.engine.executionProbe().awaitIdle(id, WOKEN));
 
-            // And one backend of the node listens on the channel
-            assertThat(fixture.listenBackends()).hasSize(1);
+                // And all three instances observed the wake-up, each on its own context
+                awaitCondition("every instance to be woken", WOKEN, wakeups::allWoken);
+                assertThat(wakeups.registeredContexts()).doesNotHaveDuplicates().hasSize(3);
+                assertThat(wakeups.wokenOnRegisteredContext()).isTrue();
 
-            // And the command was claimed once and the instance entered its initial state once
-            assertThat(fixture.commandOf(id).attempts()).isEqualTo(1);
-            assertThat(fixture.initialStates).containsExactly("shared");
+                // And exactly one raw notification carried the command's available time
+                awaitCondition("the command notification", WOKEN, () -> !notifications.isEmpty());
+                sleep(300);
+                assertThat(notifications).containsExactly(fixture.notificationPayloadOf(id));
+                assertThat(notifications.get(0)).matches("\\d+");
+
+                // And the command was claimed once and the instance entered its initial state once
+                assertThat(fixture.commandOf(id).attempts()).isEqualTo(1);
+                assertThat(fixture.initialStates).containsExactly("shared");
+            } finally {
+                await(raw.close());
+            }
+
+            // And after the raw subscriber closes, one backend of the node still listens on the channel
+            awaitCondition(
+                    "only the node listener to remain",
+                    WOKEN,
+                    () -> fixture.listenBackends().size() == 1);
 
             // And stopping the executor closes the listening connection
             node.stopExecutor();
@@ -379,17 +499,109 @@ class CommandWakeUpIT {
         }
     }
 
-    private static long latencyMs(CommandRow command) {
-        return Duration.between(command.recordedAt(), command.settledAt()).toMillis();
+    private static long latencyMs(CommandRow command, ClaimTimeRecorder claimTimes, Duration databaseClockOffset) {
+        Instant claimedAt = claimTimes.claimedAt(command.id()).plus(databaseClockOffset);
+        return Duration.between(command.recordedAt().toInstant(), claimedAt).toMillis();
     }
 
-    /** Collects the queue snapshots it receives. */
+    /** Samples the offset between the database clock used by {@code recorded_at} and the test JVM clock. */
+    private static Duration databaseClockOffset(ExecutorFixture fixture) {
+        Instant before = Instant.now();
+        Instant databaseNow = await(
+                        fixture.observer().query("SELECT clock_timestamp()").execute())
+                .iterator()
+                .next()
+                .getOffsetDateTime(0)
+                .toInstant();
+        Instant after = Instant.now();
+        Instant midpoint = before.plusNanos(Duration.between(before, after).toNanos() / 2);
+        return Duration.between(midpoint, databaseNow);
+    }
+
+    /** Observes when a successful repository claim completes, without including segment execution or settlement. */
+    private static final class ClaimTimeRecorder {
+        private final Map<Long, Instant> claimedAt = new ConcurrentHashMap<>();
+        private volatile boolean peeked;
+
+        @SuppressWarnings("unchecked")
+        WorkflowCommandRepository<SqlClient> decorate(WorkflowCommandRepository<SqlClient> delegate) {
+            return (WorkflowCommandRepository<SqlClient>) Proxy.newProxyInstance(
+                    WorkflowCommandRepository.class.getClassLoader(),
+                    new Class<?>[] {WorkflowCommandRepository.class},
+                    (proxy, method, args) -> {
+                        try {
+                            Object result = method.invoke(delegate, args);
+                            if (method.getName().equals("peek") && result instanceof Future<?>) {
+                                Future<List<CommandHead>> peek = (Future<List<CommandHead>>) result;
+                                return peek.map(heads -> {
+                                    peeked = true;
+                                    return heads;
+                                });
+                            }
+                            if (!method.getName().equals("claim") || !(result instanceof Future<?>)) {
+                                return result;
+                            }
+
+                            CommandHead head = (CommandHead) args[0];
+                            Future<Optional<ClaimedCommand>> claim = (Future<Optional<ClaimedCommand>>) result;
+                            return claim.map(outcome -> {
+                                if (outcome.isPresent() && outcome.get().result() == ClaimedCommand.Result.CLAIMED) {
+                                    claimedAt.put(head.commandId(), Instant.now());
+                                }
+                                return outcome;
+                            });
+                        } catch (InvocationTargetException e) {
+                            throw e.getCause();
+                        }
+                    });
+        }
+
+        boolean hasPeeked() {
+            return peeked;
+        }
+
+        Instant claimedAt(long commandId) {
+            Instant claimTime = claimedAt.get(commandId);
+            if (claimTime == null) {
+                throw new AssertionError("no successful claim was observed for command " + commandId);
+            }
+            return claimTime;
+        }
+    }
+
+    /** Whether a queue snapshot callback ran while an executor transaction was active. */
+    private record ObservedQueueSnapshot(
+            QueueSnapshot snapshot,
+            boolean anyWorkflowTransactionActive,
+            int poolQueueUsageReadsAtCallback,
+            int workflowRunnerTransactionStartsAtCallback) {}
+
+    /** Collects the queue snapshots and their transaction-context relation. */
     private static final class RecordingExecutorObserver implements WorkflowExecutorObserver {
         private final List<WorkflowExecutorEvent> events = new CopyOnWriteArrayList<>();
+        private final List<ObservedQueueSnapshot> observations = new CopyOnWriteArrayList<>();
+        private final WorkflowTransactionContextTracker transactions;
+        private final PoolAccessRecorder poolAccess;
+
+        RecordingExecutorObserver(WorkflowTransactionContextTracker transactions) {
+            this(transactions, null);
+        }
+
+        RecordingExecutorObserver(WorkflowTransactionContextTracker transactions, PoolAccessRecorder poolAccess) {
+            this.transactions = transactions;
+            this.poolAccess = poolAccess;
+        }
 
         @Override
         public void onEvent(WorkflowExecutorEvent event) {
             events.add(event);
+            if (event instanceof QueueSnapshot snapshot) {
+                observations.add(new ObservedQueueSnapshot(
+                        snapshot,
+                        transactions.hasActiveTransaction(),
+                        poolAccess == null ? -1 : poolAccess.queueUsageReads(),
+                        transactions.transactionStarts()));
+            }
         }
 
         List<QueueSnapshot> snapshots() {
@@ -398,6 +610,194 @@ class CommandWakeUpIT {
                     .map(QueueSnapshot.class::cast)
                     .toList();
         }
+
+        List<ObservedQueueSnapshot> observations() {
+            return observations;
+        }
+    }
+
+    /** Holds one executor segment transaction and records its Vert.x context until the test releases it. */
+    private static final class WorkflowTransactionContextTracker {
+        private final AtomicBoolean holdNextTransaction = new AtomicBoolean(true);
+        private final AtomicBoolean releaseRequested = new AtomicBoolean();
+        private final AtomicInteger transactionStarts = new AtomicInteger();
+        private final Map<Object, AtomicInteger> activeContexts = new ConcurrentHashMap<>();
+        private volatile Object listenerContext;
+        private volatile Object transactionContext;
+        private volatile Promise<Void> release;
+        private volatile boolean held;
+
+        WorkflowTransactionRunner<SqlClient> decorate(WorkflowTransactionRunner<SqlClient> delegate) {
+            return new WorkflowTransactionRunner<>() {
+                @Override
+                public <R> Future<R> inTransaction(
+                        @Nullable IsolationLevel level, Function<SqlClient, Future<R>> work) {
+                    return runTrackedTransaction(work, wrapped -> delegate.inTransaction(level, wrapped));
+                }
+
+                @Override
+                public <R> Future<R> inTransaction(
+                        @Nullable IsolationLevel level, Duration deadline, Function<SqlClient, Future<R>> work) {
+                    return runTrackedTransaction(work, wrapped -> delegate.inTransaction(level, deadline, wrapped));
+                }
+            };
+        }
+
+        void listenerContext(Context context) {
+            listenerContext = contextKey(context);
+        }
+
+        private <R> Future<R> runTrackedTransaction(
+                Function<SqlClient, Future<R>> work, Function<Function<SqlClient, Future<R>>, Future<R>> run) {
+            Object key = contextKey(Vertx.currentContext());
+            transactionStarts.incrementAndGet();
+            boolean hold = key != null && key != listenerContext && holdNextTransaction.compareAndSet(true, false);
+            if (key != null) {
+                activeContexts
+                        .computeIfAbsent(key, ignored -> new AtomicInteger())
+                        .incrementAndGet();
+            }
+            if (hold) {
+                transactionContext = key;
+            }
+            Promise<Void> gate = hold ? ((ContextInternal) Vertx.currentContext()).promise() : null;
+            if (hold) {
+                release = gate;
+                if (releaseRequested.get()) {
+                    gate.tryComplete();
+                }
+            }
+            Function<SqlClient, Future<R>> wrapped = tx -> {
+                Future<R> body;
+                try {
+                    body = work.apply(tx);
+                } catch (RuntimeException | Error failure) {
+                    return Future.failedFuture(failure);
+                }
+                if (!hold) {
+                    return body;
+                }
+                return body.compose(result -> {
+                    held = true;
+                    return gate.future().map(result);
+                });
+            };
+            Future<R> transaction;
+            try {
+                transaction = run.apply(wrapped);
+            } catch (RuntimeException | Error failure) {
+                if (key != null) {
+                    transactionFinished(key);
+                }
+                return Future.failedFuture(failure);
+            }
+            return transaction.onComplete(ignored -> {
+                if (key != null) {
+                    transactionFinished(key);
+                }
+            });
+        }
+
+        private void transactionFinished(Object key) {
+            AtomicInteger active = activeContexts.get(key);
+            if (active != null && active.decrementAndGet() == 0) {
+                activeContexts.remove(key, active);
+            }
+        }
+
+        boolean isHeld() {
+            return held;
+        }
+
+        Object transactionContext() {
+            return transactionContext;
+        }
+
+        boolean hasActiveTransaction() {
+            return activeContexts.values().stream().anyMatch(active -> active.get() > 0);
+        }
+
+        int transactionStarts() {
+            return transactionStarts.get();
+        }
+
+        void releaseHeldTransaction() {
+            releaseRequested.set(true);
+            Promise<Void> gate = release;
+            if (gate != null) {
+                gate.tryComplete();
+            }
+        }
+    }
+
+    /** Observes queue reads made by the node-level listener, separately from the executor's workflow runner. */
+    private static final class PoolAccessRecorder {
+        private static final String QUEUE_USAGE_SQL = "SELECT pg_notification_queue_usage()";
+
+        private final AtomicInteger queueUsageReads = new AtomicInteger();
+        private final AtomicInteger withTransactionCalls = new AtomicInteger();
+
+        Pool wrap(Pool delegate) {
+            return (Pool) Proxy.newProxyInstance(
+                    Pool.class.getClassLoader(), new Class<?>[] {Pool.class}, (proxy, method, args) -> {
+                        if (method.getName().equals("query")
+                                && args != null
+                                && args.length > 0
+                                && QUEUE_USAGE_SQL.equals(args[0])) {
+                            queueUsageReads.incrementAndGet();
+                        }
+                        if (method.getName().equals("withTransaction")) {
+                            withTransactionCalls.incrementAndGet();
+                        }
+                        try {
+                            return method.invoke(delegate, args);
+                        } catch (InvocationTargetException e) {
+                            throw e.getCause();
+                        }
+                    });
+        }
+
+        int queueUsageReads() {
+            return queueUsageReads.get();
+        }
+
+        int withTransactionCalls() {
+            return withTransactionCalls.get();
+        }
+    }
+
+    /** Leaves the executor registered with the listener idle so another executor claims the test start. */
+    private static final class FirstContextIdleCommands {
+        private final RecordingWakeups wakeups;
+
+        FirstContextIdleCommands(RecordingWakeups wakeups) {
+            this.wakeups = wakeups;
+        }
+
+        @SuppressWarnings("unchecked")
+        WorkflowCommandRepository<SqlClient> decorate(WorkflowCommandRepository<SqlClient> delegate) {
+            return (WorkflowCommandRepository<SqlClient>) Proxy.newProxyInstance(
+                    WorkflowCommandRepository.class.getClassLoader(),
+                    new Class<?>[] {WorkflowCommandRepository.class},
+                    (proxy, method, args) -> {
+                        Context context = Vertx.currentContext();
+                        Context listener = wakeups.firstRegisteredContext();
+                        if (method.getName().equals("peek")
+                                && context != null
+                                && contextKey(context) == contextKey(listener)) {
+                            return Future.<List<CommandHead>>succeededFuture(List.of());
+                        }
+                        try {
+                            return method.invoke(delegate, args);
+                        } catch (InvocationTargetException e) {
+                            throw e.getCause();
+                        }
+                    });
+        }
+    }
+
+    private static Object contextKey(Context context) {
+        return context == null ? null : ((ContextInternal) context).unwrap();
     }
 
     /** Wraps a wake-up source and records, for every registration, its context and the contexts it was woken on. */
@@ -418,6 +818,10 @@ class CommandWakeUpIT {
 
         int registrations() {
             return registered.size();
+        }
+
+        Context firstRegisteredContext() {
+            return registered.isEmpty() ? null : registered.get(0).context;
         }
 
         boolean allWoken() {
