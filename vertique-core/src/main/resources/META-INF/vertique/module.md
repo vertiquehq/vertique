@@ -148,7 +148,8 @@ parameter. The holder implementation and the encoder/decoder registries ship in
 `ScopeKey` and `ScopeContext` live in `dev.vertique.core.scope`. Applications use a key to name a
 data or execution partition — a tenant, project, workspace, or organization supplies the meaning.
 The key constructor rejects `null` with `NullPointerException` and other invalid text with
-`IllegalArgumentException`. A valid key has 1–255 Unicode code points, no ISO controls, no unpaired
+`IllegalArgumentException`. The `IllegalArgumentException` message is fixed text that names the
+failed rule. A valid key has 1–255 Unicode code points, no ISO controls, no unpaired
 surrogate, no format character, at least one non-whitespace code point, and no leading or trailing
 whitespace (`Character.isWhitespace` or `Character.isSpaceChar`). Internal whitespace other than
 controls (including U+00A0, U+2028, and U+2029) is accepted. Construction preserves the exact
