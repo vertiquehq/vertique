@@ -15,6 +15,9 @@ import dev.vertique.core.context.DurablePropagationMetadata;
 import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.context.ServiceDispatchContextDecoder;
 import dev.vertique.core.context.ServiceDispatchContextEncoder;
+import dev.vertique.core.scope.ScopeContext;
+import jakarta.inject.Singleton;
+import java.util.HashSet;
 import java.util.Set;
 
 /**
@@ -30,6 +33,8 @@ import java.util.Set;
  *   <li>Empty multibinding sets for all four SPI families (service-dispatch encoders/decoders and
  *       durable encoders/decoders) so modules that do not contribute any SPI can still compile.
  *   <li>Built-in {@link DurablePropagationMetadata} service-dispatch encoder and decoder.
+ *   <li>A default durable {@link ScopeContext} pair when no explicit durable contribution claims
+ *       its type or namespace.
  * </ul>
  *
  * <p>MDC service-dispatch propagation is provided separately by
@@ -83,6 +88,37 @@ public abstract class ContextRuntimeModule {
      */
     @Multibinds
     abstract Set<DurableContextMetadataDecoder<?>> durableContextMetadataDecoders();
+
+    /**
+     * Validates explicit durable contributions before supplying the default scope pair. A claim
+     * on the scope type or namespace in either direction suppresses both defaults; raw contribution
+     * sets remain unchanged.
+     *
+     * @param encoders the explicit durable encoders
+     * @param decoders the explicit durable decoders
+     * @return the singleton effective durable registry
+     * @throws IllegalStateException if explicit contributions violate registry validation
+     */
+    @Provides
+    @Singleton
+    static DurableContextMetadataRegistry durableContextMetadataRegistry(
+            Set<DurableContextMetadataEncoder<?>> encoders, Set<DurableContextMetadataDecoder<?>> decoders) {
+        DurableContextMetadataRegistry explicit = new DurableContextMetadataRegistry(encoders, decoders);
+        boolean scopeClaimed = explicit.encoders().stream()
+                        .anyMatch(
+                                encoder -> encoder.type() == ScopeContext.class || "scope".equals(encoder.namespace()))
+                || explicit.decoders().stream()
+                        .anyMatch(
+                                decoder -> decoder.type() == ScopeContext.class || "scope".equals(decoder.namespace()));
+        if (scopeClaimed) {
+            return explicit;
+        }
+        Set<DurableContextMetadataEncoder<?>> effectiveEncoders = new HashSet<>(explicit.encoders());
+        effectiveEncoders.add(new ScopeContextDurableMetadataEncoder());
+        Set<DurableContextMetadataDecoder<?>> effectiveDecoders = new HashSet<>(explicit.decoders());
+        effectiveDecoders.add(new ScopeContextDurableMetadataDecoder());
+        return new DurableContextMetadataRegistry(effectiveEncoders, effectiveDecoders);
+    }
 
     /**
      * Declares the empty multibinding set for first-ingress context initializers.

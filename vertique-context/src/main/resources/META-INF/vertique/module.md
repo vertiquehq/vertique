@@ -10,9 +10,9 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-context`
 > **Depends on:** `dev.vertique:vertique-core`
 
-Runtime substrate for context propagation. It implements the `ContextHolder` contract declared in `dev.vertique.core.context`, stores typed per-request values in a single Vert.x context-local slot keyed by fully qualified class name, and carries those values across two boundaries: in-process service dispatch (event-bus envelopes) and durable boundaries (Kafka headers, the outbox `metadata` column, delayed jobs, workflow timers).
+Runtime substrate for context propagation. It implements the `ContextHolder` contract declared in `dev.vertique.core.context`, stores typed per-request values in a single Vert.x context-local slot keyed by fully qualified class name, and carries contributed values across in-process service dispatch and durable boundaries according to each codec's boundary policy. The durable boundaries include Kafka headers, the outbox `metadata` column, delayed jobs, and workflow timers.
 
-The substrate contains no feature-specific code. It knows nothing about MDC, security identity, correlation, or localization — each of those is contributed by its own module through the extension points below. Applications interact with it in three ways: reading and binding values through `ContextValues`, constructing outbound envelopes through `DispatchEnvelopeBuilder`, and contributing encoders, decoders, adapters, or initializers for their own context types.
+The substrate is concern-neutral apart from built-in durable support for the core `ScopeContext` value. It knows nothing about MDC, security identity, correlation, or localization — those concerns are contributed through the extension points below. Application code binds and reads values through the core `ContextHolder` contract; framework modules own built-in transport wiring, while application modules may contribute their own codecs through the core SPIs.
 
 ---
 
@@ -214,9 +214,32 @@ If any initializer throws, every scope already opened is closed — initializer 
 
 ### ContextRuntimeModule
 
-The Dagger module that wires the substrate. It binds `ContextHolder` to the substrate implementation, declares the five empty multibinding sets (`ServiceDispatchContextEncoder`, `ServiceDispatchContextDecoder`, `DurableContextMetadataEncoder`, `DurableContextMetadataDecoder`, `InboundContextInitializer`), and contributes the built-in service-dispatch encoder/decoder pair for `DurablePropagationMetadata` so raw durable metadata survives in-process hops without any feature module (FR-CTX-143).
+The Dagger module that wires the substrate. It binds `ContextHolder` to the substrate implementation, declares the five empty multibinding sets (`ServiceDispatchContextEncoder`, `ServiceDispatchContextDecoder`, `DurableContextMetadataEncoder`, `DurableContextMetadataDecoder`, `InboundContextInitializer`), and contributes the built-in service-dispatch encoder/decoder pair for `DurablePropagationMetadata` so raw durable metadata survives in-process hops without any feature module. It also supplies the default durable codec pair for core `ScopeContext` when no explicit durable contribution claims that type or its `scope` namespace.
 
-No feature-specific bindings live here.
+The scope defaults are effective runtime registry entries; they do not enter or replace the raw multibinding sets. If an explicit encoder or decoder claims either `ScopeContext` or the `scope` namespace, both defaults are suppressed so the explicit composition retains its behavior. The module adds no other feature-specific bindings.
+
+### Durable scope propagation
+
+The built-in pair carries a `ScopeContext` that application code has already bound. It does not select a workflow, bind a scope at startup, or authorize access. Its durable metadata contribution is:
+
+```json
+{"scope":{"schemaVersion":1,"scopeKey":"acme"}}
+```
+
+Version 1 requires the integer `schemaVersion` value `1` and a `scopeKey` accepted by the core `ScopeKey` constructor. Invalid or unsupported values produce no decoded scope; warnings use a fixed reason and do not include the supplied key or body. The existing carrier adds its own wrapper where applicable.
+
+| Boundary | Capture bound scope | Decode saved scope |
+| --- | --- | --- |
+| `WORKFLOW` | Yes | Yes |
+| `OUTBOX` | Yes | No |
+| `OUTBOX_SERVICE` | No | Yes |
+| `DELAYED_JOB` | Yes | Yes |
+| `KAFKA` | No | No |
+| Other identifiers | No | No |
+
+Receivers use the existing propagation lifecycle. At authoritative durable ingress, a registered `ScopeContext` absent from the carrier is cleared for the scope's lifetime, and closing the returned holder scope restores the previous binding. Capturing a scope can make a workflow carrier nonempty and open its existing bind gate. On a later workflow drive, the caller's ambient scope or valid explicit scope metadata can override the saved scope for that drive without changing the saved carrier or workflow scope fields; the saved value is not an immutable partition pin. Applications that require one partition for an entire instance must enforce that policy before supplying or accepting context. At Kafka ingress the built-in pair neither captures nor decodes scope, and authoritative ingress still clears a prior ambient binding. An application that needs scope there binds it after ingress.
+
+Relay paths that decode into a service-dispatch map keep their existing omission behavior: a missing map entry does not clear an existing receiver binding. The codec introduces no separate holder, persistence, selection, or authorization mechanism.
 
 ### Framework seams
 
