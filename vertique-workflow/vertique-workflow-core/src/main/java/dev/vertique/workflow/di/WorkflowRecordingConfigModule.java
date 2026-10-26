@@ -12,7 +12,10 @@ import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
-/** Opt-in parsed workflow.recording configuration; requires the canonical ConfigParser binding. */
+/**
+ * Opt-in parsed {@code workflow.recording} lock timeout and payload-size configuration; requires the
+ * canonical {@link ConfigParser} binding. Defaults and bounds are validated by {@link WorkflowRecordingConfig}.
+ */
 @Module
 public abstract class WorkflowRecordingConfigModule {
     private WorkflowRecordingConfigModule() {}

@@ -18,7 +18,7 @@ import jakarta.inject.Singleton;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** Verifies the default and the bound of the time a recording caller waits for an instance's execution lock. */
+/** Verifies recording configuration defaults and the bounds of lock timeouts and encoded payload sizes. */
 class WorkflowRecordingConfigTest {
 
     @Singleton
@@ -59,6 +59,44 @@ class WorkflowRecordingConfigTest {
         assertThatThrownBy(() -> configured(zero))
                 .isInstanceOf(ConfigurationException.class)
                 .hasMessageContaining("workflow.recording.lockTimeoutMs");
+    }
+
+    @Test
+    @DisplayName("defaults to 262144 payload bytes and accepts the minimum of 1024")
+    void defaultsTo262144PayloadBytesAndAcceptsTheMinimumOf1024() {
+        // Given an absent section, a section missing the size key, and an explicit minimum
+        JsonObject absent = new JsonObject();
+        JsonObject missingKey = withLockTimeoutMs(250);
+        JsonObject minimum = withMaxPayloadBytes(1024);
+
+        // When each is parsed through the config module
+        // Then a missing key defaults and an explicit minimum is retained
+        assertThat(configured(absent).maxPayloadBytes()).isEqualTo(262144);
+        assertThat(configured(missingKey).maxPayloadBytes()).isEqualTo(262144);
+        assertThat(WorkflowRecordingConfig.defaults().maxPayloadBytes()).isEqualTo(262144);
+        assertThat(configured(minimum).maxPayloadBytes()).isEqualTo(1024);
+        assertThat(new WorkflowRecordingConfig(5000L, 1024).maxPayloadBytes()).isEqualTo(1024);
+    }
+
+    @Test
+    @DisplayName("rejects 1023 payload bytes with the full recording configuration key")
+    void rejects1023PayloadBytesWithTheFullRecordingConfigurationKey() {
+        // Given a size one byte below the minimum
+        JsonObject belowMinimum = withMaxPayloadBytes(1023);
+
+        // When parsed or directly constructed
+        // Then the typed configuration failure names the full offending key
+        assertThatThrownBy(() -> configured(belowMinimum))
+                .isInstanceOf(ConfigurationException.class)
+                .hasMessageContaining("workflow.recording.maxPayloadBytes");
+        assertThatThrownBy(() -> new WorkflowRecordingConfig(5000L, 1023))
+                .isInstanceOf(ConfigurationException.class)
+                .hasMessageContaining("workflow.recording.maxPayloadBytes");
+    }
+
+    private static JsonObject withMaxPayloadBytes(int value) {
+        return new JsonObject()
+                .put("workflow", new JsonObject().put("recording", new JsonObject().put("maxPayloadBytes", value)));
     }
 
     private static JsonObject withLockTimeoutMs(long value) {

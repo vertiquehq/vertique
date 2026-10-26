@@ -59,6 +59,19 @@ through `WorkflowEngineModule` using `@Binds`. Code outside the package (adapter
 code) never references the concrete class — it uses `WorkflowEngineHandle`, `WorkflowEngineFactory`,
 or the four public ops/callback interfaces.
 
+### Record-Time Payload Bounds
+
+The engine contains a standalone internal validator for encoded JSON payloads. Its byte limit is
+`workflow.recording.maxPayloadBytes` (default `262144`, minimum `1024`); its fixed depth limit is 64,
+counting every object and array as one level. Values exactly at either limit pass. Size is measured
+over UTF-8 JSON bytes, including escaping and structural characters.
+
+The validator walks containers iteratively before encoding, so excessively nested JSON is refused
+without a stack overflow. It performs no I/O, locking, transaction work or schema validation.
+Exceeding either bound throws `WorkflowInvalidPayloadException` naming `maxPayloadBytes` or depth 64;
+messages, violation details and causes expose no submitted values. Production entry points do not yet
+invoke this validator.
+
 ### Transaction Ownership
 
 The engine performs no transaction management of its own. Public operation methods (`start`, `signal`,

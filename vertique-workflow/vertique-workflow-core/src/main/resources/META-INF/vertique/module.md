@@ -575,8 +575,12 @@ Bind `WorkflowRecordingConfig` directly, or install `WorkflowRecordingConfigModu
 | Property | Default | Meaning |
 |---|---|---|
 | `workflow.recording.lockTimeoutMs` | `5000` | How long, in milliseconds, a caller waits to take an instance's execution lock before its transaction fails with a retryable `WorkflowPersistenceException`; at least 1, and a smaller value fails parsing with a `ConfigurationException` naming the key |
+| `workflow.recording.maxPayloadBytes` | `262144` | Maximum encoded UTF-8 JSON payload size in bytes for record-time validation; at least 1024, and a smaller value fails parsing or direct construction with a `ConfigurationException` naming the key |
 
 The timeout bounds only that one acquisition; the caller's own `lock_timeout` is unchanged afterwards.
+The one-argument `WorkflowRecordingConfig(lockTimeoutMs)` constructor uses the default payload-size limit.
+Record-time validation also has a fixed maximum depth of 64, counting each object and array as one level.
+The engine's bounds validator is standalone; production entry points do not yet invoke it.
 
 ### Executor Configuration
 
