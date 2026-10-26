@@ -35,7 +35,6 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.inject.Singleton;
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -91,7 +90,7 @@ class ScopeContextDurableMetadataCodecsTest {
     }
 
     @Test
-    @DisplayName("the runtime pair writes the exact v1 body and preserves every accepted key")
+    @DisplayName("the runtime pair writes the exact unversioned body and preserves every accepted key")
     void encodesExactBodyAndRoundTripsAcceptedKeys(Vertx vertx, VertxTestContext ctx) {
         RuntimeGraph graph = DaggerScopeContextDurableMetadataCodecsTest_RuntimeGraph.create();
         onDuplicate(vertx, ctx, () -> {
@@ -128,7 +127,7 @@ class ScopeContextDurableMetadataCodecsTest {
             assertEquals(
                     new ScopeContext(new ScopeKey("acme")),
                     decoder.decode(
-                                    DurableMetadata.of("scope", body("acme").put("schemaVersion", 1L)),
+                                    DurableMetadata.of("scope", body("acme")),
                                     new DurableDecodeContext(DispatchBoundary.WORKFLOW))
                             .value()
                             .orElseThrow());
@@ -143,25 +142,8 @@ class ScopeContextDurableMetadataCodecsTest {
         RuntimeGraph graph = DaggerScopeContextDurableMetadataCodecsTest_RuntimeGraph.create();
         DurableContextMetadataDecoder<?> decoder = scopeDecoder(graph);
         List<RejectedBody> rejected = List.of(
-                new RejectedBody(
-                        "missing version",
-                        new JsonObject().put("scopeKey", "private-input"),
-                        "unsupported-scope-schema"),
-                new RejectedBody(
-                        "null version", body("private-input").putNull("schemaVersion"), "unsupported-scope-schema"),
-                new RejectedBody(
-                        "string version",
-                        body("private-input").put("schemaVersion", "private-version"),
-                        "unsupported-scope-schema"),
-                new RejectedBody(
-                        "boolean version",
-                        body("private-input").put("schemaVersion", true),
-                        "unsupported-scope-schema"),
-                new RejectedBody(
-                        "future version before invalid key",
-                        body("").put("schemaVersion", 2),
-                        "unsupported-scope-schema"),
-                new RejectedBody("missing key", new JsonObject().put("schemaVersion", 1), "scope-key-required"),
+                new RejectedBody("empty body", new JsonObject(), "scope-key-required"),
+                new RejectedBody("missing key", new JsonObject().put("other", true), "scope-key-required"),
                 new RejectedBody("null key", body("unused").putNull("scopeKey"), "scope-key-required"),
                 new RejectedBody("numeric key", body("unused").put("scopeKey", 42), "scope-key-required"),
                 new RejectedBody("boolean key", body("unused").put("scopeKey", true), "scope-key-required"),
@@ -192,16 +174,15 @@ class ScopeContextDurableMetadataCodecsTest {
                 assertRejected(graph, decoder, input);
             }
             assertEquals(
-                    3, warnings.list.size(), "the propagator must log only one warning per stable rejection reason");
+                    2, warnings.list.size(), "the propagator must log only one warning per stable rejection reason");
             for (ILoggingEvent warning : warnings.list) {
                 assertEquals(Level.WARN, warning.getLevel());
                 assertNull(warning.getThrowableProxy(), "rejected input must not leak through exception text");
                 String message = warning.getFormattedMessage();
                 assertTrue(message.contains("key='scope', value='null'"));
-                assertTrue(Set.of("unsupported-scope-schema", "scope-key-required", "invalid-scope-key").stream()
+                assertTrue(Set.of("scope-key-required", "invalid-scope-key").stream()
                         .anyMatch(reason -> message.contains("reason='" + reason + "'")));
                 assertFalse(message.contains("private"));
-                assertFalse(message.contains("schemaVersion"));
                 assertFalse(message.contains("scopeKey"));
                 assertFalse(message.contains("x".repeat(256)));
             }
@@ -213,44 +194,17 @@ class ScopeContextDurableMetadataCodecsTest {
     }
 
     @Test
-    @DisplayName("floating, decimal, exponent, and out-of-range versions cannot narrow to version one")
-    void rejectsFloatingAndOutOfRangeVersions() {
+    @DisplayName("unknown scope body fields do not change the accepted exact key")
+    void ignoresUnknownScopeBodyFields() {
         RuntimeGraph graph = DaggerScopeContextDurableMetadataCodecsTest_RuntimeGraph.create();
         DurableContextMetadataDecoder<?> decoder = scopeDecoder(graph);
-        for (Object version :
-                List.of(1.0d, 1.0f, new BigDecimal("1.0"), 4294967297L, Long.MIN_VALUE, Long.MAX_VALUE, 0, -1, 2)) {
-            assertRejected(
-                    graph,
-                    decoder,
-                    new RejectedBody(
-                            "version " + version.getClass().getSimpleName() + ": " + version,
-                            body("private-input").put("schemaVersion", version),
-                            "unsupported-scope-schema"));
-        }
-        assertRejected(
-                graph,
-                decoder,
-                new RejectedBody(
-                        "JSON exponent version",
-                        new JsonObject("{\"schemaVersion\":1e0,\"scopeKey\":\"private-input\"}"),
-                        "unsupported-scope-schema"));
-    }
-
-    @Test
-    @DisplayName("unknown v1 fields do not change the accepted exact key")
-    void ignoresUnknownFieldsInVersionOne(Vertx vertx, VertxTestContext ctx) {
-        RuntimeGraph graph = DaggerScopeContextDurableMetadataCodecsTest_RuntimeGraph.create();
-        scopeDecoder(graph);
-        onDuplicate(vertx, ctx, () -> {
-            DurableMetadata metadata =
-                    DurableMetadata.of("scope", body("AcMe").put("futureField", new JsonObject().put("nested", true)));
-            try (ContextHolder.Scope ignored = graph.propagator().bindFrom(metadata, DispatchBoundary.WORKFLOW)) {
-                assertEquals(
-                        new ScopeContext(new ScopeKey("AcMe")),
-                        graph.holder().current(ScopeContext.class).orElseThrow());
-            }
-            assertTrue(graph.holder().current(ScopeContext.class).isEmpty());
-        });
+        DurableMetadata metadata =
+                DurableMetadata.of("scope", body("AcMe").put("futureField", new JsonObject().put("nested", true)));
+        assertEquals(
+                new ScopeContext(new ScopeKey("AcMe")),
+                decoder.decode(metadata, new DurableDecodeContext(DispatchBoundary.WORKFLOW))
+                        .value()
+                        .orElse(null));
     }
 
     @Test
@@ -283,10 +237,8 @@ class ScopeContextDurableMetadataCodecsTest {
                         DispatchBoundary.OUTBOX,
                         "UNKNOWN",
                         DispatchBoundary.SERVICE_DISPATCH)) {
-                    for (DurableMetadata supplied : List.of(
-                            supported,
-                            DurableMetadata.of("scope", new JsonObject().put("schemaVersion", "private-version")),
-                            DurableMetadata.empty())) {
+                    for (DurableMetadata supplied :
+                            List.of(supported, DurableMetadata.of("scope", body("acme")), DurableMetadata.empty())) {
                         assertEquals(
                                 ContextDecodeResult.empty(),
                                 scopeDecoder(graph).decode(supplied, new DurableDecodeContext(boundary)),
@@ -323,7 +275,7 @@ class ScopeContextDurableMetadataCodecsTest {
     }
 
     private static JsonObject body(String key) {
-        return new JsonObject().put("schemaVersion", 1).put("scopeKey", key);
+        return new JsonObject().put("scopeKey", key);
     }
 
     private static DurableContextMetadataDecoder<?> scopeDecoder(RuntimeGraph graph) {

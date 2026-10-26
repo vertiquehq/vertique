@@ -259,7 +259,7 @@ class KafkaDurableScopeContextTest {
     }
 
     private static JsonObject scopeBody() {
-        return new JsonObject().put("schemaVersion", 1).put("scopeKey", "acme");
+        return new JsonObject().put("scopeKey", "acme");
     }
 
     private static DurableMetadata savedScope() {

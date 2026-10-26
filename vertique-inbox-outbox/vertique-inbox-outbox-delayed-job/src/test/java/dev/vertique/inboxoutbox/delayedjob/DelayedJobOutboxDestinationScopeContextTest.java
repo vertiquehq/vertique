@@ -88,7 +88,7 @@ class DelayedJobOutboxDestinationScopeContextTest {
                     graph.holder().bind(ScopeContext.class, new ScopeContext(new ScopeKey("acme")))) {
                 captured = graph.propagator().capture(DispatchBoundary.OUTBOX);
                 assertEquals(
-                        new JsonObject().put("schemaVersion", 1).put("scopeKey", "acme"),
+                        new JsonObject().put("scopeKey", "acme"),
                         captured.body("scope").orElse(null),
                         "OUTBOX must capture the exact scope body before destination forwarding");
             } catch (Throwable failure) {

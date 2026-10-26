@@ -126,7 +126,7 @@ class DelayedJobScopeContextTest {
     }
 
     @Test
-    @DisplayName("the poller decodes an independently seeded outbox v1 body at DELAYED_JOB")
+    @DisplayName("the poller decodes an independently seeded scope body at DELAYED_JOB")
     void decodesPersistedOutboxScopeAtDelayedJobBoundary(Vertx vertx, VertxTestContext ctx) {
         JobRepository repository = mock(JobRepository.class);
         JobGraph graph = graph(repository);
@@ -204,6 +204,6 @@ class DelayedJobScopeContextTest {
     }
 
     private static JsonObject scopeBody() {
-        return new JsonObject().put("schemaVersion", 1).put("scopeKey", "acme");
+        return new JsonObject().put("scopeKey", "acme");
     }
 }

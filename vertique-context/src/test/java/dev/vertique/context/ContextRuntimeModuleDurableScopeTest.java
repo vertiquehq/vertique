@@ -327,11 +327,7 @@ class ContextRuntimeModuleDurableScopeTest {
                                     DurablePropagationMetadata.class,
                                     new DurablePropagationMetadata(
                                             DispatchBoundary.WORKFLOW,
-                                            DurableMetadata.of(
-                                                    "scope",
-                                                    new JsonObject()
-                                                            .put("schemaVersion", 1)
-                                                            .put("scopeKey", "acme"))))) {
+                                            DurableMetadata.of("scope", new JsonObject().put("scopeKey", "acme"))))) {
                 Map<String, Object> caller = Map.of(Other.class.getName(), new Other("caller"));
                 assertEquals(
                         caller,

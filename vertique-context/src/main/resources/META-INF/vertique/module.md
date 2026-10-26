@@ -246,10 +246,10 @@ interface TransportIntegrationComponent { }
 The built-in pair carries a `ScopeContext` that application code has already bound. It does not select a workflow, bind a scope at startup, or authorize access. Its durable metadata contribution is:
 
 ```json
-{"scope":{"schemaVersion":1,"scopeKey":"acme"}}
+{"scope":{"scopeKey":"acme"}}
 ```
 
-Version 1 requires the integer `schemaVersion` value `1` and a `scopeKey` accepted by the core `ScopeKey` constructor. Invalid or unsupported values produce no decoded scope; warnings use a fixed reason and do not include the supplied key or body. The existing carrier adds its own wrapper where applicable.
+The required `scopeKey` string must be accepted by the core `ScopeKey` constructor. Extra fields are ignored. Missing, non-string, or invalid keys produce no decoded scope; warnings use a fixed reason and do not include the supplied key or body. The existing carrier adds its own wrapper where applicable.
 
 | Boundary | Capture bound scope | Decode saved scope |
 | --- | --- | --- |
@@ -396,7 +396,7 @@ Override `acceptsExplicitCarrier()` to return `false` for a namespace that must 
 
 The runtime enforces the explicit-carrier policy through `DurableContextPropagator.sanitizeInboundCarrier(...)`.
 
-Framework modules can use the internal `DurableJsonContextCodecs` helpers for JSON serialization through the Vert.x shared databind mapper:
+Framework modules can use the internal `DurableJsonContextCodecs` helpers for JSON serialization through the Vert.x shared databind mapper. Boundary-aware overloads accept an exact boundary allowlist and filter before mapping or restoring; the existing overloads remain unrestricted. A raw-`JsonObject` decoder overload is available when a value needs domain-specific validation and warning results rather than envelope mapping:
 
 ```java
 @Provides
@@ -418,6 +418,9 @@ static DurableContextMetadataDecoder<?> tenantDurableDecoder() {
             env -> new TenantContext(env.id()));
 }
 ```
+
+`TenantEnvelope` is the serializable JSON shape; `TenantContext` is the live context value. A real
+integration defines the envelope alongside its codec, for example `record TenantEnvelope(String id) {}`.
 
 ### InboundContextInitializer (Dagger multibinding)
 

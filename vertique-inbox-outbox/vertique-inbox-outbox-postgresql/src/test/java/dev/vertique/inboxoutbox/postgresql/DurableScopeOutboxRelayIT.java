@@ -372,7 +372,7 @@ public class DurableScopeOutboxRelayIT {
                     assertEquals(
                             savedScope().toJson(),
                             context,
-                            "the outbox row must contain the exact captured v1 scope body");
+                            "the outbox row must contain the exact captured scope body");
                     return id;
                 }))
                 .compose(this::relay)
@@ -583,8 +583,7 @@ public class DurableScopeOutboxRelayIT {
     }
 
     private static DurableMetadata savedScope() {
-        return DurableMetadata.of(
-                "scope", new JsonObject().put("schemaVersion", 1).put("scopeKey", "acme"));
+        return DurableMetadata.of("scope", new JsonObject().put("scopeKey", "acme"));
     }
 
     private static <T> Future<T> onFreshDuplicate(Supplier<Future<T>> action) {

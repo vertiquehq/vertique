@@ -8,7 +8,10 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
+import dev.vertique.core.context.ContextDecodeResult;
+import dev.vertique.core.context.ContextDecodeWarning;
 import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.DurableContextMetadataDecoder;
 import dev.vertique.core.context.DurableContextMetadataEncoder;
 import dev.vertique.core.context.DurablePropagationMetadata;
@@ -16,8 +19,12 @@ import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.context.ServiceDispatchContextDecoder;
 import dev.vertique.core.context.ServiceDispatchContextEncoder;
 import dev.vertique.core.scope.ScopeContext;
+import dev.vertique.core.scope.ScopeKey;
+import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -114,10 +121,30 @@ public abstract class ContextRuntimeModule {
             return explicit;
         }
         Set<DurableContextMetadataEncoder<?>> effectiveEncoders = new HashSet<>(explicit.encoders());
-        effectiveEncoders.add(new ScopeContextDurableMetadataEncoder());
+        effectiveEncoders.add(DurableJsonContextCodecs.jsonEncoder(
+                ScopeContext.class,
+                "scope",
+                Set.of(DispatchBoundary.WORKFLOW, DispatchBoundary.OUTBOX, DispatchBoundary.DELAYED_JOB),
+                scope -> Map.of("scopeKey", scope.scopeKey().value())));
         Set<DurableContextMetadataDecoder<?>> effectiveDecoders = new HashSet<>(explicit.decoders());
-        effectiveDecoders.add(new ScopeContextDurableMetadataDecoder());
+        effectiveDecoders.add(DurableJsonContextCodecs.jsonDecoder(
+                ScopeContext.class,
+                "scope",
+                Set.of(DispatchBoundary.WORKFLOW, DispatchBoundary.OUTBOX_SERVICE, DispatchBoundary.DELAYED_JOB),
+                ContextRuntimeModule::decodeScopeBody));
         return new DurableContextMetadataRegistry(effectiveEncoders, effectiveDecoders);
+    }
+
+    private static ContextDecodeResult<ScopeContext> decodeScopeBody(JsonObject body) {
+        Object key = body.getValue("scopeKey");
+        if (!(key instanceof String scopeKey)) {
+            return ContextDecodeResult.failure(List.of(new ContextDecodeWarning("scope", null, "scope-key-required")));
+        }
+        try {
+            return ContextDecodeResult.of(new ScopeContext(new ScopeKey(scopeKey)));
+        } catch (IllegalArgumentException ignored) {
+            return ContextDecodeResult.failure(List.of(new ContextDecodeWarning("scope", null, "invalid-scope-key")));
+        }
     }
 
     /**

@@ -497,8 +497,7 @@ public class WorkflowDurableScopeTimerContextIT {
     }
 
     private static DurableMetadata savedScope() {
-        return DurableMetadata.of(
-                "scope", new JsonObject().put("schemaVersion", 1).put("scopeKey", "acme"));
+        return DurableMetadata.of("scope", new JsonObject().put("scopeKey", "acme"));
     }
 
     private static JobExecution deadLetter(UUID id) {

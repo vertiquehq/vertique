@@ -643,8 +643,7 @@ public class WorkflowDurableScopeContextIT {
     }
 
     private static DurableMetadata saved(String key) {
-        return DurableMetadata.of(
-                "scope", new JsonObject().put("schemaVersion", 1).put("scopeKey", key));
+        return DurableMetadata.of("scope", new JsonObject().put("scopeKey", key));
     }
 
     private static <T> Future<T> withScope(ScopeContext value, Supplier<Future<T>> action) {
