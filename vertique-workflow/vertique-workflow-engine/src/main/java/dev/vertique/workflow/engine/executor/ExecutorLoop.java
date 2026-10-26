@@ -38,6 +38,10 @@ import org.slf4j.LoggerFactory;
  * for it. This scheduling read is separate from the bounded diagnostic command list. A wake-up never claims; it only
  * asks for a pass, and repeated wake-ups coalesce. Polling every poll interval stays the fallback.
  *
+ * <p>Hint-driven passes are spaced: a wake-up that arrives within {@link #DEFAULT_HINT_SPACING_MS} of the previous
+ * one that was acted on neither refreshes the earliest delay nor asks for a pass at once. The burst is answered by one
+ * pass at the end of the window, so a flood of notifications costs a bounded number of passes and reads.
+ *
  * <p>All state is touched on the instance's event loop. Instances share nothing but the database: the execution lock,
  * the claim token and the lease coordinate them.
  */
@@ -50,6 +54,9 @@ final class ExecutorLoop {
 
     private static final long NO_DELAY = -1;
 
+    /** The least time between two hint-driven passes of one instance, in milliseconds. */
+    static final long DEFAULT_HINT_SPACING_MS = 50;
+
     private final Vertx vertx;
     private final ContextInternal root;
     private final WorkflowExecutorConfig config;
@@ -60,6 +67,7 @@ final class ExecutorLoop {
     private final WorkflowSegments segments;
     private final ExecutorEvents events;
     private final StuckReporter reporter;
+    private final long hintSpacingMs;
     private final AtomicInteger inFlight = new AtomicInteger();
 
     private volatile boolean running;
@@ -74,6 +82,9 @@ final class ExecutorLoop {
     private long earliestScheduledAtNanos;
     private long hints;
     private boolean refreshing;
+    private long lastHintNanos;
+    private boolean hintActed;
+    private long hintTimerId = -1;
 
     ExecutorLoop(
             Vertx vertx,
@@ -86,6 +97,33 @@ final class ExecutorLoop {
             WorkflowSegments segments,
             ExecutorEvents events,
             StuckReporter reporter) {
+        this(
+                vertx,
+                root,
+                config,
+                instanceId,
+                peek,
+                commands,
+                segmentRunner,
+                segments,
+                events,
+                reporter,
+                DEFAULT_HINT_SPACING_MS);
+    }
+
+    ExecutorLoop(
+            Vertx vertx,
+            ContextInternal root,
+            WorkflowExecutorConfig config,
+            String instanceId,
+            CommandPeek peek,
+            WorkflowCommandRepository<SqlClient> commands,
+            SegmentRunner segmentRunner,
+            WorkflowSegments segments,
+            ExecutorEvents events,
+            StuckReporter reporter,
+            long hintSpacingMs) {
+        this.hintSpacingMs = hintSpacingMs;
         this.vertx = Objects.requireNonNull(vertx, "vertx");
         this.root = Objects.requireNonNull(root, "root");
         this.config = Objects.requireNonNull(config, "config");
@@ -114,6 +152,7 @@ final class ExecutorLoop {
         running = false;
         cancelTimer();
         cancelEarliest();
+        cancelHintTimer();
         Promise<Void> promise = stopped;
         if (promise == null) {
             promise = Promise.promise();
@@ -134,9 +173,48 @@ final class ExecutorLoop {
         if (!running) {
             return;
         }
+        long now = System.nanoTime();
+        if (hintActed) {
+            long remainingMs = hintSpacingMs - TimeUnit.NANOSECONDS.toMillis(Math.max(0, now - lastHintNanos));
+            if (remainingMs > 0) {
+                deferHint(remainingMs);
+                return;
+            }
+        }
+        actOnHint(now);
+    }
+
+    private void actOnHint(long nowNanos) {
+        hintActed = true;
+        lastHintNanos = nowNanos;
         hints++;
         refreshEarliest();
         kick();
+    }
+
+    /** Answers the hints of a burst with one pass when the spacing window ends. */
+    private void deferHint(long delayMs) {
+        if (hintTimerId >= 0) {
+            return;
+        }
+        try {
+            // raw timer: one-shot, at most one pending, ends the spacing window of a burst of hints
+            hintTimerId = vertx.setTimer(delayMs, id -> {
+                hintTimerId = -1;
+                if (running) {
+                    actOnHint(System.nanoTime());
+                }
+            });
+        } catch (RuntimeException e) {
+            log.debug("Executor {}: no hint pass could be scheduled", instanceId, e);
+        }
+    }
+
+    private void cancelHintTimer() {
+        if (hintTimerId >= 0) {
+            vertx.cancelTimer(hintTimerId);
+        }
+        hintTimerId = -1;
     }
 
     // --- Passes ---

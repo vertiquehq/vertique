@@ -9,6 +9,7 @@ import dev.vertique.workflow.executor.WorkflowExecutorEvent.CommandDeferred;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
 import java.util.Objects;
@@ -106,9 +107,9 @@ public final class Deferral {
                 .recover(failure -> {
                     log.warn(
                             "A command could not be deferred: no runnable plan for {} version {} in scope {}: {}",
-                            head.definitionId(),
+                            EchoedNames.bounded(head.definitionId()),
                             head.definitionVersion(),
-                            head.definitionScopeKey(),
+                            EchoedNames.bounded(head.definitionScopeKey()),
                             failure.getClass().getName());
                     log.debug("Deferral failure", failure);
                     return Future.succeededFuture(false);

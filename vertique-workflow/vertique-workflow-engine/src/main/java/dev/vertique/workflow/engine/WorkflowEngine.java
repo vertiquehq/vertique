@@ -1132,13 +1132,17 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
                     || !inst.definitionId().equals(head.definitionId())
                     || inst.definitionVersion() != head.definitionVersion()
-                    || !inst.planHash().equals(head.planHash())) {
+                    || !Objects.equals(inst.planHash(), head.planHash())) {
                 return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
             }
             RuntimeWorkflow rw;
             try {
                 rw = PinnedPlans.resolve(registry, inst);
                 requirePlanHashMatches(inst, rw);
+            } catch (WorkflowVersionNotRunnableException | WorkflowPlanHashDriftException e) {
+                // This node cannot run the pinned plan right now (it left the registry after the peek, or differs
+                // from the recorded one). Another node, or a later pass, may run it: release rather than fail.
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
             } catch (Exception e) {
                 return Future.failedFuture(e);
             }

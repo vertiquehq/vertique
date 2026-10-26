@@ -18,13 +18,16 @@ import java.util.concurrent.TimeoutException;
  * message.
  *
  * <p>An instance is idle when it has no command in flight (claimed under a live lease) and no command an executor
- * could claim now: one at the head of its queue, not held back and available. A command behind a blocking head, or
- * available only later, does not hold the probe. The probe polls the database and reads its clock, so it observes
+ * could claim now: one at the head of its queue, not held back and available. A command behind a blocking head, a
+ * backed-off command (after a deferral or a transient failure) and a future-dated command such as a timer before its
+ * fire time all count as idle: they do not hold the probe, and they are reported as deferred or not yet available.
+ * The probe polls the database and reads its clock, so it observes
  * work recorded by any node.
  *
  * <p>A non-positive timeout is refused with {@link IllegalArgumentException}. A timeout longer than ten minutes is
  * shortened to ten minutes. Each list of the report holds at most 1000 commands, the first ones in instance and sequence
- * order; an instance with more commands in one state than that is not listed in full.
+ * order; an instance with more commands in one state than that is not listed in full. A list is cut at the cap
+ * without a marker.
  */
 public interface WorkflowExecutionProbe {
 
@@ -53,7 +56,9 @@ public interface WorkflowExecutionProbe {
      * What the probe stopped on; each list is ordered by instance and then by sequence.
      *
      * @param deferred       deferred commands that cannot be claimed yet
-     * @param stuck          commands reported stuck; empty until stuck detection exists
+     * @param stuck          dead-lettered commands and unsettled commands that have waited longer than the configured
+     *                       stuck age since they first became available; such a command also appears in the list of its
+     *                       state
      * @param parked         parked commands, which wait for an operator or a later state
      * @param notYetAvailable the other pending and claimed commands that cannot be claimed now: timers before their
      *                       fire time, backed-off commands, commands behind a blocking head and held-back timers

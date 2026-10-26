@@ -172,7 +172,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " SELECT $1::uuid, COALESCE(MAX(sequence), 0) + 1, $2, $3::jsonb, now(), $4::bigint, $5 FROM "
                 + history + " WHERE workflow_id = $1::uuid RETURNING sequence";
         this.lockForTransientRetry = "SELECT transient_count FROM " + commands
-                + " WHERE id = $1 AND state = 'CLAIMED' AND claim_token = $2 FOR UPDATE";
+                + " WHERE id = $1 AND state = 'CLAIMED' AND claim_token = $2 AND lease_until > now() FOR UPDATE";
         this.retryTransientRow = "UPDATE " + commands + " SET state = 'PENDING', attempts = attempts - 1,"
                 + " transient_count = $2, available_at = clock_timestamp() + ($3::float8 * interval '1 millisecond'),"
                 + " claim_token = NULL, lease_until = NULL, last_error = $4 WHERE id = $1";
@@ -189,7 +189,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         this.completeCommand = "UPDATE " + commands + settle;
         this.rejectCommand = completeCommand;
         this.releaseCommand = "UPDATE " + commands + " SET state = 'PENDING', attempts = attempts - 1,"
-                + " claim_token = NULL, lease_until = NULL WHERE id = $1 AND state = 'CLAIMED' AND claim_token = $2";
+                + " claim_token = NULL, lease_until = NULL WHERE id = $1 AND state = 'CLAIMED' AND claim_token = $2"
+                + " AND lease_until > now()";
     }
 
     @Override

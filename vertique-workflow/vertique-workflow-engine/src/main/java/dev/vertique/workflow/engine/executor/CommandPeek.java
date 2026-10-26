@@ -5,6 +5,7 @@ package dev.vertique.workflow.engine.executor;
 
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
 import java.util.ArrayList;
@@ -74,9 +75,9 @@ final class CommandPeek {
                                 "Skipping command {} of instance {}: no plan for {} version {} in scope {}",
                                 head.commandId(),
                                 head.workflowId().value(),
-                                head.definitionId(),
+                                EchoedNames.bounded(head.definitionId()),
                                 head.definitionVersion(),
-                                head.definitionScopeKey());
+                                EchoedNames.bounded(head.definitionScopeKey()));
                     }
                 }
             }

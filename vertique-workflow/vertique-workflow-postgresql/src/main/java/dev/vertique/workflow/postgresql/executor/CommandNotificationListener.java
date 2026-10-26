@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -160,6 +161,7 @@ public final class CommandNotificationListener implements CommandWakeups {
         if (!current(generation)) {
             return;
         }
+        AtomicBoolean closedEarly = new AtomicBoolean();
         PgConnection.connect(vertx, connectOptions)
                 .compose(conn -> {
                     conn.notificationHandler(notification -> {
@@ -167,7 +169,10 @@ public final class CommandNotificationListener implements CommandWakeups {
                             dispatch(parse(notification.getPayload()));
                         }
                     });
-                    conn.closeHandler(v -> lost(generation, conn));
+                    conn.closeHandler(v -> {
+                        closedEarly.set(true);
+                        lost(generation, conn);
+                    });
                     return conn.query("LISTEN " + CHANNEL)
                             .execute()
                             .<PgConnection>map(rows -> conn)
@@ -181,19 +186,42 @@ public final class CommandNotificationListener implements CommandWakeups {
                         failed(generation, result.cause());
                         return;
                     }
-                    PgConnection conn = result.result();
-                    boolean keep;
-                    synchronized (lock) {
-                        keep = active && this.generation == generation && connection == null;
-                        if (keep) {
-                            connection = conn;
-                            warned = false;
-                        }
-                    }
-                    if (!keep) {
-                        conn.close();
-                    }
+                    opened(generation, result.result(), closedEarly);
                 });
+    }
+
+    /**
+     * Keeps a connection that has finished its {@code LISTEN}, unless it is no longer wanted. A connection that closed
+     * before it was stored was missed by the close handler, so it is treated as lost here: otherwise nothing would
+     * ever open a replacement.
+     *
+     * @return whether the connection is kept
+     */
+    boolean opened(int generation, PgConnection conn, AtomicBoolean closedEarly) {
+        boolean keep;
+        synchronized (lock) {
+            keep = active && this.generation == generation && connection == null;
+            if (keep) {
+                connection = conn;
+                warned = false;
+            }
+        }
+        if (!keep) {
+            conn.close();
+            return false;
+        }
+        if (closedEarly.get()) {
+            lost(generation, conn);
+            return false;
+        }
+        return true;
+    }
+
+    /** Whether a listening connection is stored. */
+    boolean connected() {
+        synchronized (lock) {
+            return connection != null;
+        }
     }
 
     private void failed(int generation, Throwable cause) {

@@ -28,7 +28,7 @@ public interface WorkflowSegments {
         APPLIED,
         /** The command no longer applies to its instance; the executor rejects it. */
         STALE,
-        /** The instance is pinned to another plan than the one made resident; the executor releases the claim. */
+        /** This node cannot run the pinned plan now (another plan is pinned, or it no longer resolves); the claim is released. */
         PIN_MISMATCH
     }
 

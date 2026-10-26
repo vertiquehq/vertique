@@ -115,7 +115,7 @@ public class WorkflowExecutionProbeIT {
         }
     }
 
-    // --- TP-001 ---
+    // --- Idle without commands ---
 
     @Test
     @DisplayName("An instance without commands is idle at once")
@@ -135,7 +135,7 @@ public class WorkflowExecutionProbeIT {
         assertThat(all).isEqualTo(new IdleReport(List.of(), List.of(), List.of(), List.of()));
     }
 
-    // --- TP-002 ---
+    // --- Runnable commands and timeouts ---
 
     @Test
     @DisplayName("A runnable command holds the probe until it settles or the timeout")
@@ -200,7 +200,7 @@ public class WorkflowExecutionProbeIT {
         assertThatThrownBy(() -> probe.awaitAllIdle(Duration.ZERO)).isInstanceOf(IllegalArgumentException.class);
     }
 
-    // --- TP-003 ---
+    // --- Report contents and caps ---
 
     @Test
     @DisplayName("The report lists deferred, parked and not-yet-available commands")
@@ -274,7 +274,7 @@ public class WorkflowExecutionProbeIT {
         assertThat(report.parked()).isEmpty();
     }
 
-    // --- TP-004 ---
+    // --- Engine graph ---
 
     @Test
     @DisplayName("The engine graph provides the probe")
@@ -296,7 +296,7 @@ public class WorkflowExecutionProbeIT {
         assertThat(fromHandle).isEqualTo(new IdleReport(List.of(), List.of(), List.of(), List.of()));
     }
 
-    // --- TP-005 ---
+    // --- Successor behind a deferred head ---
 
     @Test
     @DisplayName("A successor behind a deferred head is not runnable")
@@ -333,7 +333,7 @@ public class WorkflowExecutionProbeIT {
                 .hasCauseInstanceOf(TimeoutException.class);
     }
 
-    // --- TP-006 ---
+    // --- Held-back due date ---
 
     @Test
     @DisplayName("A due date held back by a dead-lettered completion's reservation is not runnable")
