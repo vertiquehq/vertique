@@ -3,6 +3,7 @@
 
 package dev.vertique.context;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -15,6 +16,11 @@ import dev.vertique.core.context.DurableDecodeContext;
 import dev.vertique.core.context.DurableEncodeContext;
 import dev.vertique.core.context.DurableMetadata;
 import io.vertx.core.json.JsonObject;
+import java.lang.reflect.Method;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -135,6 +141,116 @@ class DurableJsonContextCodecsTest {
         assertTrue(
                 result.warnings().get(0).reason().contains("Failed to decode JSON envelope"),
                 "warning must mention decode failure");
+    }
+
+    @Test
+    @DisplayName("boundary-aware factories copy allowlists and filter before mapping")
+    @SuppressWarnings("unchecked")
+    void boundaryAwareFactoriesFilterBeforeMapping() throws Exception {
+        Method encoderFactory = assertDoesNotThrow(
+                () -> DurableJsonContextCodecs.class.getMethod(
+                        "jsonEncoder", Class.class, String.class, Set.class, Function.class),
+                "boundary-aware encoder factory overload must exist");
+        Method decoderFactory = assertDoesNotThrow(
+                () -> DurableJsonContextCodecs.class.getMethod(
+                        "jsonDecoder", Class.class, String.class, Class.class, Set.class, Function.class),
+                "boundary-aware envelope decoder factory overload must exist");
+
+        AtomicInteger encoded = new AtomicInteger();
+        Set<String> producerBoundaries = new HashSet<>(Set.of("producer"));
+        DurableContextMetadataEncoder<StringCtx> encoder =
+                (DurableContextMetadataEncoder<StringCtx>) encoderFactory.invoke(
+                        null, StringCtx.class, NAMESPACE, producerBoundaries, (Function<StringCtx, SampleEnvelope>)
+                                value -> {
+                                    encoded.incrementAndGet();
+                                    return new SampleEnvelope(value.value(), 1);
+                                });
+        producerBoundaries.clear();
+        assertEquals(
+                DurableMetadata.empty(), encoder.encode(new StringCtx("blocked"), new DurableEncodeContext("other")));
+        assertEquals(0, encoded.get(), "an excluded boundary must not invoke the mapper");
+        assertEquals(
+                "allowed",
+                encoder.encode(new StringCtx("allowed"), new DurableEncodeContext("producer"))
+                        .body(NAMESPACE)
+                        .orElseThrow()
+                        .getString("name"));
+        assertEquals(1, encoded.get());
+
+        AtomicInteger restored = new AtomicInteger();
+        Set<String> receiverBoundaries = new HashSet<>(Set.of("receiver"));
+        DurableContextMetadataDecoder<StringCtx> decoder =
+                (DurableContextMetadataDecoder<StringCtx>) decoderFactory.invoke(
+                        null, StringCtx.class, NAMESPACE, SampleEnvelope.class, receiverBoundaries, (Function<
+                                        SampleEnvelope, StringCtx>)
+                                envelope -> {
+                                    restored.incrementAndGet();
+                                    return new StringCtx(envelope.name());
+                                });
+        receiverBoundaries.clear();
+        DurableMetadata malformed = DurableMetadata.of(NAMESPACE, new JsonObject().put("n", "not-a-number"));
+        assertEquals(ContextDecodeResult.empty(), decoder.decode(malformed, new DurableDecodeContext("other")));
+        assertEquals(0, restored.get(), "an excluded boundary must not map or restore the body");
+        assertEquals(
+                new StringCtx("allowed"),
+                decoder.decode(
+                                DurableMetadata.of(
+                                        NAMESPACE,
+                                        new JsonObject().put("name", "allowed").put("n", 1)),
+                                new DurableDecodeContext("receiver"))
+                        .value()
+                        .orElseThrow());
+        assertEquals(1, restored.get());
+
+        DurableContextMetadataEncoder<StringCtx> denyAll =
+                (DurableContextMetadataEncoder<StringCtx>) encoderFactory.invoke(
+                        null, StringCtx.class, NAMESPACE, Set.of(), (Function<StringCtx, SampleEnvelope>) value -> {
+                            encoded.incrementAndGet();
+                            return new SampleEnvelope(value.value(), 1);
+                        });
+        assertEquals(
+                DurableMetadata.empty(), denyAll.encode(new StringCtx("no"), new DurableEncodeContext("producer")));
+        assertEquals(1, encoded.get(), "an empty allowlist must deny every boundary before mapping");
+    }
+
+    @Test
+    @DisplayName("raw-object decoder callback runs only for a present body at an allowed boundary")
+    @SuppressWarnings("unchecked")
+    void rawObjectDecoderReturnsCallbackResult() throws Exception {
+        Method decoderFactory = assertDoesNotThrow(
+                () -> DurableJsonContextCodecs.class.getMethod(
+                        "jsonDecoder", Class.class, String.class, Set.class, Function.class),
+                "raw-object decoder factory overload must exist");
+        AtomicInteger calls = new AtomicInteger();
+        DurableContextMetadataDecoder<StringCtx> decoder = (DurableContextMetadataDecoder<StringCtx>)
+                decoderFactory.invoke(null, StringCtx.class, NAMESPACE, Set.of("receiver"), (Function<
+                                JsonObject, ContextDecodeResult<StringCtx>>)
+                        body -> {
+                            calls.incrementAndGet();
+                            return body.getString("name") == null
+                                    ? ContextDecodeResult.failure(java.util.List.of(
+                                            new ContextDecodeWarning(NAMESPACE, null, "name-required")))
+                                    : ContextDecodeResult.of(new StringCtx(body.getString("name")));
+                        });
+
+        DurableMetadata present = DurableMetadata.of(NAMESPACE, new JsonObject().put("name", "raw"));
+        assertEquals(
+                ContextDecodeResult.empty(),
+                decoder.decode(DurableMetadata.empty(), new DurableDecodeContext("receiver")));
+        assertEquals(ContextDecodeResult.empty(), decoder.decode(present, new DurableDecodeContext("other")));
+        assertEquals(0, calls.get(), "absent and excluded inputs must not invoke the callback");
+        assertEquals(
+                new StringCtx("raw"),
+                decoder.decode(present, new DurableDecodeContext("receiver"))
+                        .value()
+                        .orElseThrow());
+        assertEquals(1, calls.get());
+        assertEquals(
+                new ContextDecodeWarning(NAMESPACE, null, "name-required"),
+                decoder.decode(DurableMetadata.of(NAMESPACE, new JsonObject()), new DurableDecodeContext("receiver"))
+                        .warnings()
+                        .getFirst());
+        assertEquals(2, calls.get());
     }
 
     // --- type ---

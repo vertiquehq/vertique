@@ -6,7 +6,6 @@ package dev.vertique.context;
 import dev.vertique.core.context.DurableContextMetadataDecoder;
 import dev.vertique.core.context.DurableContextMetadataEncoder;
 import dev.vertique.core.context.DurableMetadataHeaderCodec;
-import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Collection;
 import java.util.HashMap;
@@ -50,7 +49,6 @@ public final class DurableContextMetadataRegistry {
      * @param decoders the registered durable metadata decoders; must not be {@code null}
      * @throws IllegalStateException if duplicate types or duplicate namespaces are detected
      */
-    @Inject
     public DurableContextMetadataRegistry(
             Set<DurableContextMetadataEncoder<?>> encoders, Set<DurableContextMetadataDecoder<?>> decoders) {
         validateEncoders(encoders);

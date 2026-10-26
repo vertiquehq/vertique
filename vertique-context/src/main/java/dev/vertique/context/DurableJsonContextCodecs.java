@@ -15,6 +15,7 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -26,9 +27,10 @@ import java.util.function.Function;
  * {@link DurableContextMetadataDecoder} implementations that serialise and deserialise an envelope
  * object to and from a single namespace of a {@link DurableMetadata} document via Jackson JSON.
  *
- * <p>Both factory methods use {@link JsonObject#mapFrom(Object)} / {@link JsonObject#mapTo(Class)},
+ * <p>Envelope-based factories use {@link JsonObject#mapFrom(Object)} / {@link JsonObject#mapTo(Class)},
  * which delegate to the Vert.x shared mapper, so codec configuration (modules, feature flags)
- * applied at startup is automatically inherited.
+ * applied at startup is automatically inherited. Boundary-aware overloads filter before invoking
+ * the mapper or callback; the raw-object decoder overload supports domain-specific validation.
  *
  * <p>Typical use:
  * <pre>{@code
@@ -69,7 +71,28 @@ public final class DurableJsonContextCodecs {
         Objects.requireNonNull(type, "type must not be null");
         Objects.requireNonNull(namespace, "namespace must not be null");
         Objects.requireNonNull(envelopeFn, "envelopeFn must not be null");
-        return new JsonEncoder<>(type, namespace, envelopeFn);
+        return new JsonEncoder<>(type, namespace, null, envelopeFn);
+    }
+
+    /**
+     * Returns a boundary-filtered encoder. The allowlist is copied when the factory is called, and
+     * the envelope mapper is not invoked for an excluded boundary.
+     *
+     * @param type the context value type this encoder handles
+     * @param namespace the namespace this encoder owns
+     * @param boundaries exact boundary identifiers where encoding is allowed; empty denies all
+     * @param envelopeFn the function that transforms the live value into the serialisable envelope
+     * @param <T> the context value type
+     * @param <E> the envelope type
+     * @return the encoder; never {@code null}
+     */
+    public static <T extends ContextValue, E> DurableContextMetadataEncoder<T> jsonEncoder(
+            Class<T> type, String namespace, Set<String> boundaries, Function<T, E> envelopeFn) {
+        Objects.requireNonNull(type, "type must not be null");
+        Objects.requireNonNull(namespace, "namespace must not be null");
+        Objects.requireNonNull(boundaries, "boundaries must not be null");
+        Objects.requireNonNull(envelopeFn, "envelopeFn must not be null");
+        return new JsonEncoder<>(type, namespace, Set.copyOf(boundaries), envelopeFn);
     }
 
     // --- JSON decoder ---
@@ -97,7 +120,54 @@ public final class DurableJsonContextCodecs {
         Objects.requireNonNull(namespace, "namespace must not be null");
         Objects.requireNonNull(envelopeType, "envelopeType must not be null");
         Objects.requireNonNull(restoreFn, "restoreFn must not be null");
-        return new JsonDecoder<>(type, namespace, envelopeType, restoreFn);
+        return new JsonDecoder<>(type, namespace, envelopeType, null, restoreFn);
+    }
+
+    /**
+     * Returns a boundary-filtered envelope decoder. The allowlist is copied when the factory is
+     * called, and neither JSON mapping nor {@code restoreFn} runs for an excluded boundary.
+     *
+     * @param type the context value type this decoder produces
+     * @param namespace the namespace this decoder reads
+     * @param envelopeType the class to map the namespace body into
+     * @param boundaries exact boundary identifiers where decoding is allowed; empty denies all
+     * @param restoreFn the function that rebuilds the live value from the envelope
+     * @param <T> the context value type
+     * @param <E> the envelope type
+     * @return the decoder; never {@code null}
+     */
+    public static <T extends ContextValue, E> DurableContextMetadataDecoder<T> jsonDecoder(
+            Class<T> type, String namespace, Class<E> envelopeType, Set<String> boundaries, Function<E, T> restoreFn) {
+        Objects.requireNonNull(type, "type must not be null");
+        Objects.requireNonNull(namespace, "namespace must not be null");
+        Objects.requireNonNull(envelopeType, "envelopeType must not be null");
+        Objects.requireNonNull(boundaries, "boundaries must not be null");
+        Objects.requireNonNull(restoreFn, "restoreFn must not be null");
+        return new JsonDecoder<>(type, namespace, envelopeType, Set.copyOf(boundaries), restoreFn);
+    }
+
+    /**
+     * Returns a boundary-filtered decoder that gives its callback the raw namespace body. The
+     * callback is invoked only when the namespace is present and the boundary is allowed; it owns
+     * domain-specific validation and result/warning construction.
+     *
+     * @param type the context value type this decoder produces
+     * @param namespace the namespace this decoder reads
+     * @param boundaries exact boundary identifiers where decoding is allowed; empty denies all
+     * @param decodeFn function that validates the raw JSON body and returns the decode result
+     * @param <T> the context value type
+     * @return the decoder; never {@code null}
+     */
+    public static <T extends ContextValue> DurableContextMetadataDecoder<T> jsonDecoder(
+            Class<T> type,
+            String namespace,
+            Set<String> boundaries,
+            Function<JsonObject, ContextDecodeResult<T>> decodeFn) {
+        Objects.requireNonNull(type, "type must not be null");
+        Objects.requireNonNull(namespace, "namespace must not be null");
+        Objects.requireNonNull(boundaries, "boundaries must not be null");
+        Objects.requireNonNull(decodeFn, "decodeFn must not be null");
+        return new RawJsonDecoder<>(type, namespace, Set.copyOf(boundaries), decodeFn);
     }
 
     // --- Implementations ---
@@ -107,11 +177,13 @@ public final class DurableJsonContextCodecs {
 
         private final Class<T> type;
         private final String namespace;
+        private final Set<String> boundaries;
         private final Function<T, E> envelopeFn;
 
-        JsonEncoder(Class<T> type, String namespace, Function<T, E> envelopeFn) {
+        JsonEncoder(Class<T> type, String namespace, Set<String> boundaries, Function<T, E> envelopeFn) {
             this.type = type;
             this.namespace = namespace;
+            this.boundaries = boundaries;
             this.envelopeFn = envelopeFn;
         }
 
@@ -127,6 +199,9 @@ public final class DurableJsonContextCodecs {
 
         @Override
         public DurableMetadata encode(T value, DurableEncodeContext context) {
+            if (boundaries != null && !boundaries.contains(context.boundary())) {
+                return DurableMetadata.empty();
+            }
             E envelope = envelopeFn.apply(value);
             return DurableMetadata.of(namespace, JsonObject.mapFrom(envelope));
         }
@@ -138,12 +213,19 @@ public final class DurableJsonContextCodecs {
         private final Class<T> type;
         private final String namespace;
         private final Class<E> envelopeType;
+        private final Set<String> boundaries;
         private final Function<E, T> restoreFn;
 
-        JsonDecoder(Class<T> type, String namespace, Class<E> envelopeType, Function<E, T> restoreFn) {
+        JsonDecoder(
+                Class<T> type,
+                String namespace,
+                Class<E> envelopeType,
+                Set<String> boundaries,
+                Function<E, T> restoreFn) {
             this.type = type;
             this.namespace = namespace;
             this.envelopeType = envelopeType;
+            this.boundaries = boundaries;
             this.restoreFn = restoreFn;
         }
 
@@ -159,6 +241,9 @@ public final class DurableJsonContextCodecs {
 
         @Override
         public ContextDecodeResult<T> decode(DurableMetadata metadata, DurableDecodeContext context) {
+            if (boundaries != null && !boundaries.contains(context.boundary())) {
+                return ContextDecodeResult.empty();
+            }
             Optional<JsonObject> body = metadata.body(namespace);
             if (body.isEmpty()) {
                 return ContextDecodeResult.empty();
@@ -171,6 +256,45 @@ public final class DurableJsonContextCodecs {
                 return ContextDecodeResult.failure(
                         List.of(new ContextDecodeWarning(namespace, body.get().encode(), reason)));
             }
+        }
+    }
+
+    /** Raw JSON decoder implementation. */
+    private static final class RawJsonDecoder<T extends ContextValue> implements DurableContextMetadataDecoder<T> {
+
+        private final Class<T> type;
+        private final String namespace;
+        private final Set<String> boundaries;
+        private final Function<JsonObject, ContextDecodeResult<T>> decodeFn;
+
+        RawJsonDecoder(
+                Class<T> type,
+                String namespace,
+                Set<String> boundaries,
+                Function<JsonObject, ContextDecodeResult<T>> decodeFn) {
+            this.type = type;
+            this.namespace = namespace;
+            this.boundaries = boundaries;
+            this.decodeFn = decodeFn;
+        }
+
+        @Override
+        public Class<T> type() {
+            return type;
+        }
+
+        @Override
+        public String namespace() {
+            return namespace;
+        }
+
+        @Override
+        public ContextDecodeResult<T> decode(DurableMetadata metadata, DurableDecodeContext context) {
+            if (!boundaries.contains(context.boundary())) {
+                return ContextDecodeResult.empty();
+            }
+            Optional<JsonObject> body = metadata.body(namespace);
+            return body.map(decodeFn).orElseGet(ContextDecodeResult::empty);
         }
     }
 }

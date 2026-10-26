@@ -169,11 +169,23 @@ string; equality uses that exact text. `ScopeKey.DEFAULT` equals `new ScopeKey("
 names an ordinary partition — it confers no privilege, fallback, or automatic binding.
 
 `ScopeContext` wraps one non-null `ScopeKey` and implements `ContextValue`, so callers may bind it
-explicitly through the existing holder API. Construction installs no ambient state, codec, or
-adapter; a missing context stays absent. Existing generic snapshots still retain explicitly bound
-immutable values by reference when no adapter is registered — this vocabulary neither suppresses
-that behavior nor adds a propagation seam. Neither type asserts trust or access; key text is not
-neutralized for logging, so consumers encode values for their sink.
+explicitly through the existing holder API. Construction itself installs no ambient state. When the
+application's existing context runtime includes `ContextRuntimeModule` from `vertique-context`, its
+default durable codec pair carries an explicitly bound scope unless an explicit durable contribution
+claims the scope type or namespace. When active, the built-in pair captures at `WORKFLOW`, `OUTBOX`,
+and `DELAYED_JOB`, and decodes at `WORKFLOW`, `OUTBOX_SERVICE`, and `DELAYED_JOB`; it does neither
+at `KAFKA` or any other identifier. The pair does not affect generic snapshots or service-dispatch
+propagation. When the built-in pair is active, a raw scope body already in a Kafka carrier remains
+untyped and is not decoded; the existing authoritative ingress still clears a prior ambient scope for
+its lifetime, and closing its holder scope restores that binding. Applications that need scope at
+Kafka bind it after ingress.
+
+On a later workflow drive, the caller's ambient scope or valid explicit scope metadata can override
+the saved scope for that drive without changing the saved carrier or workflow scope fields. The saved
+value is not an immutable partition pin; applications that require one partition for an entire
+instance must enforce that policy before supplying or accepting context. Neither type asserts trust or
+access, and scope never selects a workflow. Key text is not neutralized for logging, so consumers
+encode values for their sink.
 
 ---
 
@@ -1068,8 +1080,9 @@ public final class RequestLabelDispatchEncoder
 }
 ```
 
-`ScopeContext` is partition vocabulary eligible for the same explicit holder write path; this
-foundation does not register a scope encoder or supply a sample scope codec.
+`ScopeContext` is partition vocabulary eligible for the same explicit holder write path. This core
+foundation does not register a scope encoder; the conditional default durable codec pair is supplied
+by `vertique-context`'s `ContextRuntimeModule`.
 
 Decoders report problems by returning `ContextDecodeResult.failure(warnings)` rather than throwing;
 the record is `(Optional<T> value, List<ContextDecodeWarning> warnings)` with the factories
