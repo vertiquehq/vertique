@@ -25,6 +25,7 @@ import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import io.vertx.core.Future;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -845,7 +846,7 @@ class WorkflowRegistryTest {
                         assertThat(registered.contract()).isEqualTo(ApprovalContract.class);
                     });
         }
-        assertThat(registry.allRegistered()).hasSize(3);
+        assertThat(registry.codeDefinitions()).hasSize(3);
     }
 
     @Test
@@ -869,7 +870,7 @@ class WorkflowRegistryTest {
                         .plan()
                         .definitionVersion())
                 .isEqualTo(1L);
-        assertThat(registry.allRegistered()).hasSize(1);
+        assertThat(registry.codeDefinitions()).hasSize(1);
 
         // and: the refused contract's name is released from the shared index, while the names v1 holds stay
         assertThat(registry.typeNames().findContract("other")).isEmpty();
@@ -895,7 +896,7 @@ class WorkflowRegistryTest {
                 .hasMessageContaining("audit, remind");
 
         // and: nothing is registered
-        assertThat(registry.allRegistered()).isEmpty();
+        assertThat(registry.codeDefinitions()).isEmpty();
         assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "undeclared-waits", 1L)))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
         assertThat(registry.definitionClass(WaitsForUndeclaredSignals.class)).isEmpty();
@@ -920,7 +921,7 @@ class WorkflowRegistryTest {
                 .doesNotContain("sig-8");
 
         // and: nothing is registered
-        assertThat(registry.allRegistered()).isEmpty();
+        assertThat(registry.codeDefinitions()).isEmpty();
     }
 
     @Test
@@ -979,51 +980,17 @@ class WorkflowRegistryTest {
         // and: nothing is registered under the annotation's legacy values
         assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "unused", 99L)))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-        assertThat(registry.allRegistered())
+        assertThat(registry.codeDefinitions())
                 .extracting(registered -> registered.plan().definitionId() + " v"
                         + registered.plan().definitionVersion())
                 .containsExactly("purchase-approval v3");
     }
 
     @Test
-    @DisplayName("a definition class still selects its id and contract after its version is retired")
-    void definitionClassSurvivesRetirementOfItsVersion() {
-        // Given: purchase-approval v1 and v2 registered, and a class of another id registered
-        registry.register(new PurchaseApprovalV1());
-        registry.register(new PurchaseApprovalV2());
-        registry.register(new TravelApprovalV1());
-        DefinitionKey v1 = new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 1L);
-
-        // When: v1 retires
-        registry.unregister(v1);
-
-        // Then: its class still selects the id and the contract
-        assertThat(registry.definitionClass(PurchaseApprovalV1.class)).hasValueSatisfying(registered -> {
-            assertThat(registered.definitionId()).isEqualTo("purchase-approval");
-            assertThat(registered.contractName()).isEqualTo("approval");
-            assertThat(registered.contract()).isEqualTo(ApprovalContract.class);
-        });
-
-        // and: the version is not resolvable and not registered
-        assertThatThrownBy(() -> registry.resolve(v1)).isInstanceOf(WorkflowVersionPinUnavailableException.class);
-        assertThat(registry.find(v1)).isEmpty();
-        assertThat(registry.allRegistered()).hasSize(2);
-
-        // and: after the last version retires the class still selects the id
-        registry.unregister(new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 2L));
-        assertThat(registry.definitionClass(PurchaseApprovalV2.class))
-                .hasValueSatisfying(
-                        registered -> assertThat(registered.definitionId()).isEqualTo("purchase-approval"));
-        assertThat(registry.contractOf(WorkflowScopes.DEFAULT, "purchase-approval"))
-                .isEmpty();
-    }
-
-    @Test
-    @DisplayName("a class that never registered, or whose registration was refused, stays unknown after a retirement")
+    @DisplayName("a class that never registered, or whose registration was refused, stays unknown")
     void unregisteredAndRefusedClassesStayUnknown() {
-        // Given: purchase-approval v1 retired, and a registration refused for undeclared signals
+        // Given: purchase-approval v1 registered, and a registration refused for undeclared signals
         registry.register(new PurchaseApprovalV1());
-        registry.unregister(new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 1L));
         assertThatThrownBy(() -> registry.register(new WaitsForUndeclaredSignals()))
                 .isInstanceOf(WorkflowDefinitionException.class);
 
@@ -1032,153 +999,82 @@ class WorkflowRegistryTest {
         assertThat(registry.definitionClass(WaitsForUndeclaredSignals.class)).isEmpty();
     }
 
-    // --- Scoped registry: tests ---
+    // --- Code definitions and plans of other scopes: tests ---
 
     @Test
-    @DisplayName("definitions are keyed by scope and code registers in the default scope")
-    void definitionsAreKeyedByScopeAndCodeRegistersInTheDefaultScope() {
-        // Given: purchase-approval v1 to v3 registered as code, and a different graph of purchase-approval v1
-        // registered in the acme scope
+    @DisplayName("code registers in the default scope and a plan built for another scope is not held")
+    void codeRegistersInTheDefaultScopeAndOtherScopesHoldNothing() {
+        // Given: purchase-approval v1 to v3 registered as code, and a different graph of purchase-approval v1 built
+        // for the acme scope
         registry.register(new PurchaseApprovalV1());
         registry.register(new PurchaseApprovalV2());
         registry.register(new PurchaseApprovalV3());
-        registry.register("acme", approvalDefinition(1L, "escalate", "approve"));
+        RuntimeWorkflow acmePlan = registry.build("acme", approvalDefinition(1L, "escalate", "approve"), Map.of());
         DefinitionKey acmeV1 = new DefinitionKey("acme", "purchase-approval", 1L);
         DefinitionKey defaultV1 = new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 1L);
-        DefinitionKey defaultV3 = new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 3L);
-        DefinitionKey defaultV4 = new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 4L);
-        DefinitionKey globexV1 = new DefinitionKey("globex", "purchase-approval", 1L);
 
-        // When: the registry is read through every lookup, the acme version is registered again, and default v4
-        // is registered afterwards
-        List<DefinitionKey> keysBefore = registry.keysFor("purchase-approval");
-        RuntimeWorkflow acmeResolved = registry.resolve(acmeV1);
+        // When: the registry is read through every lookup
         RuntimeWorkflow defaultResolved = registry.resolve(defaultV1);
-        Throwable globexRefusal = catchThrowable(() -> registry.resolve(globexV1));
-        Throwable duplicate =
-                catchThrowable(() -> registry.register("acme", approvalDefinition(1L, "approve", "escalate")));
-        registry.register(approvalDefinition(4L, "approve"));
+        Throwable acmeRefusal = catchThrowable(() -> registry.resolve(acmeV1));
 
-        // Then: the listing is ordered by scope, then version, and holds the acme entry beside the default ones
-        assertThat(keysBefore)
-                .containsExactly(
-                        acmeV1,
-                        defaultV1,
-                        new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 2L),
-                        defaultV3);
-
-        // and: each key resolves its own graph, and the graph reports the scope of its key
-        assertThat(acmeResolved.definitionScopeKey()).isEqualTo("acme");
-        assertThat(acmeResolved.plan().definitionVersion()).isEqualTo(1L);
+        // Then: the default key resolves its own graph, which reports the default scope
         assertThat(defaultResolved.definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
         assertThat(defaultResolved.plan().definitionVersion()).isEqualTo(1L);
-        assertThat(acmeResolved.plan().planHash())
-                .isNotEqualTo(defaultResolved.plan().planHash());
-        assertThat(registry.find(acmeV1))
-                .hasValueSatisfying(found -> assertThat(found.plan()).isEqualTo(acmeResolved.plan()));
-        assertThat(registry.find(defaultV1))
-                .hasValueSatisfying(found -> assertThat(found.plan()).isEqualTo(defaultResolved.plan()));
+        assertThat(registry.find(defaultV1)).containsSame(defaultResolved);
 
-        // and: a scope that holds nothing of the id has no entry, and resolving it names the scope
-        assertThat(registry.find(globexV1)).isEmpty();
-        assertThat(globexRefusal)
+        // and: building a plan registered nothing, so the acme key is neither held nor resolvable
+        assertThat(acmePlan.definitionScopeKey()).isEqualTo("acme");
+        assertThat(acmePlan.plan().planHash())
+                .isNotEqualTo(defaultResolved.plan().planHash());
+        assertThat(registry.find(acmeV1)).isEmpty();
+        assertThat(acmeRefusal)
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class)
-                .hasMessageContaining("globex")
+                .hasMessageContaining("acme")
                 .hasMessageContaining("purchase-approval");
 
-        // and: the default scope's highest version resolves in the default scope, before and after default v4
-        assertThat(registry.resolve(defaultV3).definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
-        assertThat(registry.resolve(defaultV4).plan().definitionVersion()).isEqualTo(4L);
-
-        // and: the second acme v1 is refused naming its scope, id and version, and the first entry is unchanged
-        assertNamesKey(duplicate, "acme", "purchase-approval", 1L);
-        assertThat(registry.resolve(acmeV1).plan()).isEqualTo(acmeResolved.plan());
-
-        // and: default v4 joined the default entries and the acme entry stayed as it was
-        assertThat(registry.keysFor("purchase-approval"))
-                .containsExactly(
-                        acmeV1,
-                        defaultV1,
-                        new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 2L),
-                        defaultV3,
-                        defaultV4);
-        assertThat(registry.resolve(defaultV4).definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
-
-        // and: code registered without a scope appears under no key outside the default scope
-        assertThat(registry.allRegistered())
-                .filteredOn(registered -> !"acme".equals(registered.definitionScopeKey()))
-                .hasSize(4)
-                .allSatisfy(registered ->
-                        assertThat(registered.definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT));
-        assertThat(registry.allRegistered()).hasSize(5);
+        // and: the code definitions are the default scope's three versions
+        assertThat(registry.codeDefinitions()).hasSize(3).allSatisfy(registered -> assertThat(
+                        registered.definitionScopeKey())
+                .isEqualTo(WorkflowScopes.DEFAULT));
     }
 
     @Test
-    @DisplayName("the contract and signal rules apply per scope and definition id")
-    void contractAndSignalRulesApplyPerScopeAndDefinitionId() {
+    @DisplayName("the contract and signal rules apply per definition id")
+    void contractAndSignalRulesApplyPerDefinitionId() {
         // Given: contract C declaring ok, contract D declaring go, and default X v1 naming C and waiting for ok
         registry.register(definition(ScopeContractC.class, "X", 1L, "ok"));
-        DefinitionKey acmeV1 = new DefinitionKey("acme", "X", 1L);
-        DefinitionKey acmeV2 = new DefinitionKey("acme", "X", 2L);
         DefinitionKey defaultV2 = new DefinitionKey(WorkflowScopes.DEFAULT, "X", 2L);
 
         // When: the registrations of the scenario run in order
-        Throwable acmeFirst =
-                catchThrowable(() -> registry.register("acme", definition(ScopeContractD.class, "X", 1L, "go")));
         Throwable defaultOtherContract =
                 catchThrowable(() -> registry.register(definition(ScopeContractD.class, "X", 2L, "go")));
-        Throwable acmeOtherContract =
-                catchThrowable(() -> registry.register("acme", definition(ScopeContractC.class, "X", 2L, "ok")));
-        Throwable acmeUndeclared =
-                catchThrowable(() -> registry.register("acme", definition(ScopeContractD.class, "X", 2L, "ok")));
-        boolean refusedLeftNothing =
-                registry.find(acmeV2).isEmpty() && registry.find(defaultV2).isEmpty();
-        Throwable acmeValid =
-                catchThrowable(() -> registry.register("acme", definition(ScopeContractD.class, "X", 2L, "go")));
+        Throwable undeclared = catchThrowable(() -> registry.register(definition(ScopeContractC.class, "X", 2L, "go")));
+        boolean refusedLeftNothing = registry.find(defaultV2).isEmpty();
         Throwable defaultOtherId =
                 catchThrowable(() -> registry.register(definition(ScopeContractD.class, "Y", 1L, "go")));
 
-        // Then: acme X v1 is accepted although the default X names another contract
-        assertThat(acmeFirst).isNull();
-
-        // and: default X v2 naming D is refused, its (default, X) names C
+        // Then: default X v2 naming D is refused, its id names C
         assertNamesKey(defaultOtherContract, WorkflowScopes.DEFAULT, "X", 2L);
         assertThat(defaultOtherContract.getMessage())
                 .containsIgnoringCase("contract")
                 .contains("scope-c")
                 .contains("scope-d");
 
-        // and: acme X v2 naming C is refused, its (acme, X) names D
-        assertNamesKey(acmeOtherContract, "acme", "X", 2L);
-        assertThat(acmeOtherContract.getMessage())
-                .containsIgnoringCase("contract")
-                .contains("scope-c")
-                .contains("scope-d");
-
-        // and: acme X v2 waiting for a signal that D does not declare is refused, naming the signal
-        assertNamesKey(acmeUndeclared, "acme", "X", 2L);
-        assertThat(acmeUndeclared.getMessage()).contains("ok");
+        // and: default X v2 waiting for a signal that C does not declare is refused, naming the signal
+        assertNamesKey(undeclared, WorkflowScopes.DEFAULT, "X", 2L);
+        assertThat(undeclared.getMessage()).contains("go");
 
         // and: the refusals registered nothing
         assertThat(refusedLeftNothing).isTrue();
 
-        // and: the valid acme v2 and the default Y, which shares contract D with the acme X, are accepted
-        assertThat(acmeValid).isNull();
+        // and: default Y, which shares contract D with no other id, is accepted
         assertThat(defaultOtherId).isNull();
-        assertThat(registry.find(acmeV2)).isPresent();
         assertThat(registry.find(new DefinitionKey(WorkflowScopes.DEFAULT, "Y", 1L)))
                 .isPresent();
-        assertThat(registry.allRegistered()).hasSize(4);
-
-        // and: the contract of each (scope, id) is the one its versions name, and a scope without the id has none
-        assertThat(registry.contractOf("acme", "X")).contains("scope-d");
-        assertThat(registry.contractOf(WorkflowScopes.DEFAULT, "X")).contains("scope-c");
-        assertThat(registry.contractOf(WorkflowScopes.DEFAULT, "Y")).contains("scope-d");
-        assertThat(registry.contractOf("globex", "X")).isEmpty();
-        assertThat(registry.find(acmeV1)).isPresent();
+        assertThat(registry.codeDefinitions()).hasSize(2);
     }
 
-    // --- State types per scope and id ---
+    // --- State types per id ---
 
     record StateA(String id) {}
 
@@ -1228,45 +1124,41 @@ class WorkflowRegistryTest {
     }
 
     @Test
-    @DisplayName("a version with another state type than its scope and id is refused, another scope may differ")
-    void versionWithAnotherStateTypeInSameScopeIsRefused() {
+    @DisplayName("a version with another state type than its id is refused naming the key and no state type")
+    void versionWithAnotherStateTypeIsRefused() {
         // Given: (default, s-x, 1) with state StateA registered
         registry.register(stateA("s-x", 1L));
 
-        // When: (default, s-x, 2) with state StateB registers, then (acme, s-x, 1) with StateA
+        // When: (default, s-x, 2) with state StateB registers
         Throwable anotherState = catchThrowable(() -> registry.register(
                 stated(StateB.class, ScopeContractC.class, "s-x", 2L, id -> new StateB(id.length()))));
-        Throwable otherScope = catchThrowable(() -> registry.register("acme", stateA("s-x", 1L)));
 
-        // Then: the first is refused naming the key and no state type
+        // Then: it is refused naming the key and no state type
         assertNamesKey(anotherState, WorkflowScopes.DEFAULT, "s-x", 2L);
         assertThat(anotherState.getMessage()).contains("s-x").doesNotContain("StateA", "StateB");
 
         // and: the refused version is not registered
         assertThat(registry.find(new DefinitionKey(WorkflowScopes.DEFAULT, "s-x", 2L)))
                 .isEmpty();
-
-        // and: the second is accepted
-        assertThat(otherScope).isNull();
-        assertThat(registry.find(new DefinitionKey("acme", "s-x", 1L))).isPresent();
     }
 
     @Test
-    @DisplayName("a scope state type that differs from the default is refused when no comparison is available")
-    void scopeStateTypeDifferingFromDefaultIsRefusedWithoutComparison() {
+    @DisplayName("a scope plan whose state type differs from the default is not accepted without a comparison")
+    void scopeStateTypeDifferingFromDefaultIsNotAcceptedWithoutComparison() {
         // Given: a registry with no comparison hook and (default, s-y, 1) with StateA
         registry.register(stateA("s-y", 1L));
 
-        // When: (acme, s-y, 1) with StateAPlus of the same contract registers
-        Throwable refusal = catchThrowable(() -> registry.register(
-                "acme", stated(StateAPlus.class, ScopeContractC.class, "s-y", 1L, id -> new StateAPlus(id, null))));
+        // When: the plan of (acme, s-y, 1) with StateAPlus of the same contract is compared with the default
+        RuntimeWorkflow scoped = registry.build(
+                "acme",
+                stated(StateAPlus.class, ScopeContractC.class, "s-y", 1L, id -> new StateAPlus(id, null)),
+                Map.of());
+        DefaultWorkflowRegistry.StateComparison comparison = registry.compareWithDefault(scoped);
 
-        // Then: it is refused naming the scope, the id and that the comparison is unavailable
-        assertNamesKey(refusal, "acme", "s-y", 1L);
-        assertThat(refusal.getMessage())
-                .containsIgnoringCase("comparison")
-                .containsPattern("(?i)(unavailable|not available)");
-        assertThat(registry.find(new DefinitionKey("acme", "s-y", 1L))).isEmpty();
+        // Then: it is not accepted, and the comparison names the default scope's state type
+        assertThat(comparison.accepted()).isFalse();
+        assertThat(comparison.defaultStateTypeName()).isNotNull();
+        assertThat(registry.defaultStateTypeName("s-y")).contains(comparison.defaultStateTypeName());
     }
 
     @Test
@@ -1275,25 +1167,17 @@ class WorkflowRegistryTest {
         // Given: a registry with no comparison hook and (default, s-c, 1) with StateA under contract C
         registry.register(stateA("s-c", 1L));
 
-        // When: (acme, s-c, 1) with StateB under D, (acme, s-c, 2) with StateB under D and (globex, s-c, 1)
-        // with StateB under C register
-        Throwable acmeV1 = catchThrowable(() ->
-                registry.register("acme", stated(StateB.class, ScopeContractD.class, "s-c", 1L, id -> new StateB(1))));
-        Throwable acmeV2 = catchThrowable(() ->
-                registry.register("acme", stated(StateB.class, ScopeContractD.class, "s-c", 2L, id -> new StateB(1))));
-        Throwable globexV1 = catchThrowable(() -> registry.register(
-                "globex", stated(StateB.class, ScopeContractC.class, "s-c", 1L, id -> new StateB(1))));
+        // When: the plans of (acme, s-c, 1) with StateB under D and (globex, s-c, 1) with StateB under C are compared
+        DefaultWorkflowRegistry.StateComparison otherContract = registry.compareWithDefault(registry.build(
+                "acme", stated(StateB.class, ScopeContractD.class, "s-c", 1L, id -> new StateB(1)), Map.of()));
+        DefaultWorkflowRegistry.StateComparison sameContract = registry.compareWithDefault(registry.build(
+                "globex", stated(StateB.class, ScopeContractC.class, "s-c", 1L, id -> new StateB(1)), Map.of()));
 
-        // Then: the two acme registrations are accepted, the rule is not id-wide
-        assertThat(acmeV1).isNull();
-        assertThat(acmeV2).isNull();
+        // Then: the plan of another contract is accepted, the rule is not id-wide
+        assertThat(otherContract.accepted()).isTrue();
 
-        // and: globex, which shares contract C with the default and differs in state type, is refused
-        assertNamesKey(globexV1, "globex", "s-c", 1L);
-        assertThat(globexV1.getMessage())
-                .containsIgnoringCase("comparison")
-                .containsPattern("(?i)(unavailable|not available)");
-        assertThat(registry.find(new DefinitionKey("globex", "s-c", 1L))).isEmpty();
+        // and: the plan that shares contract C with the default and differs in state type is not accepted
+        assertThat(sameContract.accepted()).isFalse();
     }
 
     record StateRemoved(String note) {}
@@ -1302,182 +1186,94 @@ class WorkflowRegistryTest {
     private static final WorkflowStateCompatibility ADDED_PROPERTIES_ONLY = (source, target) ->
             source == StateA.class && target == StateAPlus.class ? Optional.empty() : Optional.of("id");
 
-    /** A definition of the given state type and contract that waits for the one signal. */
-    private static <S, C> WorkflowDefinition<S, C> waiting(
-            Class<S> stateType,
-            Class<C> contract,
-            String definitionId,
-            long version,
-            String signal,
-            java.util.function.Function<String, S> initialState) {
-        return new WorkflowDefinition<>() {
-            @Override
-            public Class<C> contract() {
-                return contract;
-            }
-
-            @Override
-            public Class<S> stateType() {
-                return stateType;
-            }
-
-            @Override
-            public String definitionId() {
-                return definitionId;
-            }
-
-            @Override
-            public long definitionVersion() {
-                return version;
-            }
-
-            @Override
-            public void define(WorkflowBuilder<S> wf) {
-                wf.init(ApprovalStart.class, start -> initialState.apply(start.id()))
-                        .initialStep("wait")
-                        .waitForSignal("wait", signal, ApprovalSignal.class)
-                        .onSignal((state, payload) -> state)
-                        .toStepOnSignal("done")
-                        .build()
-                        .complete("done");
-            }
-        };
-    }
-
     @Test
-    @DisplayName("registering a failing row's plan skips only the cross-scope state comparison")
-    void registerFailingSkipsOnlyTheCrossScopeStateComparison() {
+    @DisplayName("with a comparison bound, a scope plan is accepted only when its state type extends the default's")
+    void scopePlanIsAcceptedOnlyWhenItsStateTypeExtendsTheDefaults() {
         // Given: a registry with the comparison bound and (default, f-x, 1) with StateA under contract C
         DefaultWorkflowRegistry withComparison = new DefaultWorkflowRegistry(
                 null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
         withComparison.register(stateA("f-x", 1L));
-        DefinitionKey acmeV1 = new DefinitionKey("acme", "f-x", 1L);
 
-        // When: acme's version 1 with StateRemoved, which does not extend StateA, registers as failing
-        Throwable removedState = catchThrowable(() -> withComparison.registerFailing(
-                "acme", stated(StateRemoved.class, ScopeContractC.class, "f-x", 1L, StateRemoved::new)));
+        // When: the plans of acme's StateRemoved, acme's StateAPlus and acme's StateA are compared with the default
+        var removed = withComparison.compareWithDefault(withComparison.build(
+                "acme", stated(StateRemoved.class, ScopeContractC.class, "f-x", 1L, StateRemoved::new), Map.of()));
+        var extended = withComparison.compareWithDefault(withComparison.build(
+                "acme",
+                stated(StateAPlus.class, ScopeContractC.class, "f-x", 2L, id -> new StateAPlus(id, null)),
+                Map.of()));
+        var same = withComparison.compareWithDefault(withComparison.build("acme", stateA("f-x", 3L), Map.of()));
 
-        // and: acme's version 2 with another state class than version 1, and acme's version 3 waiting for a signal
-        // its contract does not declare, register as failing
-        Throwable anotherStateInScope = catchThrowable(() -> withComparison.registerFailing(
-                "acme", stated(StateAPlus.class, ScopeContractC.class, "f-x", 2L, id -> new StateAPlus(id, null))));
-        Throwable undeclaredSignal = catchThrowable(() -> withComparison.registerFailing(
-                "acme", waiting(StateRemoved.class, ScopeContractC.class, "f-x", 3L, "undeclared", StateRemoved::new)));
+        // Then: the state that does not extend StateA is not accepted
+        assertThat(removed.accepted()).isFalse();
 
-        // and: the same first definition registers plainly in a fresh registry with the same default
-        DefaultWorkflowRegistry fresh = new DefaultWorkflowRegistry(
-                null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
-        fresh.register(stateA("f-x", 1L));
-        Throwable plainRegistration = catchThrowable(() ->
-                fresh.register("acme", stated(StateRemoved.class, ScopeContractC.class, "f-x", 1L, StateRemoved::new)));
-
-        // Then: the first call succeeds and the plan resolves
-        assertThat(removedState).isNull();
-        assertThat(withComparison.resolve(acmeV1).plan().definitionVersion()).isEqualTo(1L);
-
-        // and: the same-scope state rule still applies
-        assertNamesKey(anotherStateInScope, "acme", "f-x", 2L);
-        assertThat(withComparison.find(new DefinitionKey("acme", "f-x", 2L))).isEmpty();
-
-        // and: the signal rule still applies
-        assertNamesKey(undeclaredSignal, "acme", "f-x", 3L);
-        assertThat(undeclaredSignal.getMessage()).contains("undeclared");
-        assertThat(withComparison.find(new DefinitionKey("acme", "f-x", 3L))).isEmpty();
-
-        // and: the plain registration is refused with the state extension refusal
-        assertNamesKey(plainRegistration, "acme", "f-x", 1L);
-        assertThat(plainRegistration.getMessage()).contains("extend");
-        assertThat(fresh.find(acmeV1)).isEmpty();
+        // and: the extension and the equal state type are accepted
+        assertThat(extended.accepted()).isTrue();
+        assertThat(same.accepted()).isTrue();
+        assertThat(removed.defaultStateTypeName())
+                .isEqualTo(extended.defaultStateTypeName())
+                .isEqualTo(same.defaultStateTypeName());
     }
 
     @Test
-    @DisplayName("a failing scope row does not block a later default version of the same id")
-    void failingScopeRowDoesNotBlockALaterDefaultVersion() {
-        // Given: a registry with the comparison bound, acme's version 1 with StateRemoved registered as failing
-        // before any default version of the id exists, and (default, f-d, 1) with StateA registered after it
+    @DisplayName("a plan built for a scope constrains no default registration, and an id the default lacks is accepted")
+    void builtScopePlanConstrainsNoDefaultRegistration() {
+        // Given: a registry with the comparison bound and the plan of acme's StateRemoved built before any default
+        // version of the id exists
         DefaultWorkflowRegistry withComparison = new DefaultWorkflowRegistry(
                 null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
-        withComparison.registerFailing(
-                "acme", stated(StateRemoved.class, ScopeContractC.class, "f-d", 1L, StateRemoved::new));
-        Throwable firstDefault = catchThrowable(() -> withComparison.register(stateA("f-d", 1L)));
+        RuntimeWorkflow scoped = withComparison.build(
+                "acme", stated(StateRemoved.class, ScopeContractC.class, "f-d", 1L, StateRemoved::new), Map.of());
 
-        // When: a later default version, still with StateA, registers
+        // When: the plan is compared while the default holds nothing of the id, and then (default, f-d, 1) with StateA
+        // and a later default version register
+        var before = withComparison.compareWithDefault(scoped);
+        Throwable firstDefault = catchThrowable(() -> withComparison.register(stateA("f-d", 1L)));
         Throwable laterDefault = catchThrowable(() -> withComparison.register(stateA("f-d", 2L)));
 
-        // Then: both default registrations are accepted, the failing row does not take part in the comparison
+        // Then: the comparison accepted the plan, the default holding nothing of the id
+        assertThat(before.accepted()).isTrue();
+        assertThat(before.defaultStateTypeName()).isNull();
+
+        // and: both default registrations are accepted, the built plan does not take part in any comparison
         assertThat(firstDefault).isNull();
         assertThat(laterDefault).isNull();
-        assertThat(withComparison.find(new DefinitionKey(WorkflowScopes.DEFAULT, "f-d", 2L)))
-                .isPresent();
-        assertThat(withComparison.find(new DefinitionKey("acme", "f-d", 1L))).isPresent();
+        assertThat(withComparison.find(new DefinitionKey("acme", "f-d", 1L))).isEmpty();
     }
 
     @Test
-    @DisplayName("a scope row that registered plainly still takes part in the default version comparison")
-    void normallyRegisteredScopeRowStillConstrainsALaterDefaultVersion() {
-        // Given: a registry with the comparison bound and acme's version 1 with StateRemoved registered plainly
-        // before any default version of the id exists
-        DefaultWorkflowRegistry withComparison = new DefaultWorkflowRegistry(
-                null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
-        withComparison.register("acme", stated(StateRemoved.class, ScopeContractC.class, "f-n", 1L, StateRemoved::new));
+    @DisplayName("codeDefinitions lists only the code definitions deployed with the node")
+    void codeDefinitionsListsOnlyDeployedCodeDefinitions() {
+        // Given: two code definitions registered at construction and one document plan resident in the plan source
+        registry.register(new PurchaseApprovalV1());
+        registry.register(new TravelApprovalV1());
+        DefinitionKey documentKey = new DefinitionKey("acme", "purchase-approval", 2L);
+        RuntimeWorkflow documentPlan = registry.build("acme", new PurchaseApprovalV2(), Map.of());
+        registry.bindDocumentPlanSource(new DocumentPlanSource() {
+            @Override
+            public Future<RuntimeWorkflow> load(DefinitionKey key) {
+                return key.equals(documentKey)
+                        ? Future.succeededFuture(documentPlan)
+                        : Future.failedFuture(new IllegalStateException("no plan for " + key));
+            }
 
-        // When: (default, f-n, 1) with StateA, which acme's state does not extend, registers
-        Throwable refused = catchThrowable(() -> withComparison.register(stateA("f-n", 1L)));
+            @Override
+            public Optional<RuntimeWorkflow> resident(DefinitionKey key) {
+                return key.equals(documentKey) ? Optional.of(documentPlan) : Optional.empty();
+            }
+        });
 
-        // Then: it is refused naming the scope row, so only failing rows are exempt
-        assertNamesKey(refused, "acme", "f-n", 1L);
-        assertThat(withComparison.find(new DefinitionKey(WorkflowScopes.DEFAULT, "f-n", 1L)))
-                .isEmpty();
-    }
+        // When: the code definitions are listed
+        var listed = registry.codeDefinitions();
 
-    @Test
-    @DisplayName("a row registered as failing and removed is compared again when it registers plainly")
-    void removedFailingRowIsComparedAgainWhenRegisteredPlainly() {
-        // Given: a registry with the comparison bound, and acme's version 1 with StateRemoved registered as failing,
-        // removed and registered plainly, which is accepted while no default version of the id exists
-        DefaultWorkflowRegistry withComparison = new DefaultWorkflowRegistry(
-                null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
-        DefinitionKey acmeV1 = new DefinitionKey("acme", "f-r", 1L);
-        withComparison.registerFailing(
-                "acme", stated(StateRemoved.class, ScopeContractC.class, "f-r", 1L, StateRemoved::new));
-        withComparison.unregister(acmeV1);
-        withComparison.register("acme", stated(StateRemoved.class, ScopeContractC.class, "f-r", 1L, StateRemoved::new));
+        // Then: exactly the two code definitions are listed
+        assertThat(listed)
+                .containsExactlyInAnyOrder(
+                        registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 1L)),
+                        registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "travel-approval", 1L)));
 
-        // When: (default, f-r, 1) with StateA registers
-        Throwable refused = catchThrowable(() -> withComparison.register(stateA("f-r", 1L)));
-
-        // Then: it is refused, nothing of the earlier failing registration exempts the row
-        assertNamesKey(refused, "acme", "f-r", 1L);
-    }
-
-    @Test
-    @DisplayName("state refusals name the definition key and no state class name")
-    void stateRefusalsNameTheKeyAndNoStateClassName() {
-        // Given: a registry with the comparison bound, (default, s-q, 1) with StateA and (default, s-q, 2) refused
-        // for another state class, and a registry without the comparison holding the same default
-        DefaultWorkflowRegistry withComparison = new DefaultWorkflowRegistry(
-                null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
-        withComparison.register(stateA("s-q", 1L));
-        registry.register(stateA("s-q", 1L));
-
-        // When: a scope state that does not extend the default's, a second version with another state class in the
-        // default scope, and a scope state with no comparison available register
-        Throwable notExtended = catchThrowable(() -> withComparison.register(
-                "acme", stated(StateRemoved.class, ScopeContractC.class, "s-q", 1L, StateRemoved::new)));
-        Throwable anotherInScope = catchThrowable(() -> withComparison.register(
-                stated(StateB.class, ScopeContractC.class, "s-q", 2L, id -> new StateB(id.length()))));
-        Throwable unavailable = catchThrowable(() -> registry.register(
-                "acme", stated(StateAPlus.class, ScopeContractC.class, "s-q", 1L, id -> new StateAPlus(id, null))));
-
-        // Then: each refusal names the scope, the id and the version
-        assertNamesKey(notExtended, "acme", "s-q", 1L);
-        assertNamesKey(anotherInScope, WorkflowScopes.DEFAULT, "s-q", 2L);
-        assertNamesKey(unavailable, "acme", "s-q", 1L);
-
-        // and: none of them names a state class
-        assertThat(notExtended.getMessage()).doesNotContain("StateRemoved", "StateA");
-        assertThat(anotherInScope.getMessage()).doesNotContain("StateB", "StateA");
-        assertThat(unavailable.getMessage()).doesNotContain("StateAPlus", "StateA");
+        // and: the document plan is resident for lookups yet is not listed
+        assertThat(registry.find(documentKey)).containsSame(documentPlan);
+        assertThat(listed).doesNotContain(documentPlan);
     }
 
     private static void assertNamesKey(Throwable refusal, String scopeKey, String definitionId, long version) {

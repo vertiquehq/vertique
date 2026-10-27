@@ -260,7 +260,7 @@ public final class PgWorkflowEngineTestSupport {
                         .migrationRegistry(migrationRegistryOpt)
                         .propagator(propagator)
                         .typeNames(typeNamesOf(registry))
-                        .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry)));
+                        .definitionStore(InMemoryWorkflowDefinitionRegistryStore.of(registry)));
     }
 
     /**
@@ -322,7 +322,7 @@ public final class PgWorkflowEngineTestSupport {
                         .inboundContextInitializers(Set.of())
                         .beanValidator(beanValidator)
                         .typeNames(typeNamesOf(registry))
-                        .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry)));
+                        .definitionStore(InMemoryWorkflowDefinitionRegistryStore.of(registry)));
     }
 
     /**
@@ -362,7 +362,7 @@ public final class PgWorkflowEngineTestSupport {
                         .beanValidator(Optional.empty())
                         .typeNames(((DefaultWorkflowRegistry) registry).typeNames())
                         .stateCompatibility(stateCompatibility)
-                        .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry)));
+                        .definitionStore(InMemoryWorkflowDefinitionRegistryStore.of(registry)));
     }
 
     /**
@@ -724,7 +724,7 @@ public final class PgWorkflowEngineTestSupport {
                     .definitionStore(
                             definitionStore != null
                                     ? definitionStore
-                                    : new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                                    : InMemoryWorkflowDefinitionRegistryStore.of(registry))
                     .vertx(vertx)
                     .executorConfig(executorConfig)
                     .executorObservers(executorObservers)

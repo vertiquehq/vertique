@@ -505,7 +505,7 @@ final class ExecutionLockTestSupport {
      */
     private static void seedDefinitions(LockComponent component) {
         Instant now = Instant.now();
-        component.registry().allRegistered().stream()
+        component.registry().codeDefinitions().stream()
                 .filter(runtime -> WorkflowScopes.DEFAULT.equals(runtime.definitionScopeKey()))
                 .sorted(Comparator.comparing(
                                 (RuntimeWorkflow runtime) -> runtime.plan().definitionId())

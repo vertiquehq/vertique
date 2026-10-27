@@ -3,12 +3,15 @@
 
 package dev.vertique.workflow.engine.testsupport;
 
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
+import dev.vertique.workflow.registry.store.DeclaredSignalNames;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
@@ -23,6 +26,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
+import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -37,13 +41,20 @@ import java.util.UUID;
 /**
  * A {@link WorkflowDefinitionRegistryStore} that keeps its rows in memory, for tests that need a store but no database.
  *
+ * <p>It also answers the reads of {@link TransactionalDefinitionReads}, so an engine over it selects the version of a
+ * start from its rows, as an engine over the database does. A store built over a registry records the code definitions
+ * of that registry as available code rows, and makes the highest version of each id the default scope's current one,
+ * before every selection read, as the startup of an engine over a durable registry does for the code it deploys; a
+ * test that registers a definition after it built the engine need not record it by hand.
+ *
  * <p>Every operation completes before it returns and is serialized on the store. The store keeps the rows, the
  * document texts, the publication tokens and the activation records, and applies the status rules of the interface.
  * It holds no instances, so it never reports pinned instances, and it has no staleness bound, so a deprecated row
  * retires at once and {@link #resetStalePublishing(String)} changes nothing. Code rows are seeded through
  * {@link #upsertCode(WorkflowDefinitionRecord)}, or for a whole registry through {@link #seedCodeFrom}.
  */
-public class InMemoryWorkflowDefinitionRegistryStore implements WorkflowDefinitionRegistryStore {
+public class InMemoryWorkflowDefinitionRegistryStore
+        implements WorkflowDefinitionRegistryStore, TransactionalDefinitionReads<SqlClient> {
     private final Map<DefinitionKey, WorkflowDefinitionRecord> rows = new LinkedHashMap<>();
     private final Map<DefinitionKey, WorkflowDefinitionDocument> documents = new LinkedHashMap<>();
     private final Map<DefinitionKey, UUID> tokens = new LinkedHashMap<>();
@@ -51,19 +62,82 @@ public class InMemoryWorkflowDefinitionRegistryStore implements WorkflowDefiniti
 
     private record ActivationSlot(String scopeKey, String definitionId) {}
 
+    private static final Map<WorkflowRegistry, InMemoryWorkflowDefinitionRegistryStore> OF_REGISTRY =
+            new java.util.WeakHashMap<>();
+
+    private final @Nullable WorkflowRegistry code;
+    private volatile @Nullable WorkflowPlanSchemaProducer schemas;
+
+    /**
+     * Returns the store that mirrors the code of the registry, created on the first call for a registry. Every caller
+     * that asks for one registry gets the same store, so the engine under test and the test that adds rows read and
+     * write one table.
+     *
+     * @param registry the registry whose code definitions are the deployed code
+     * @return the store of the registry
+     */
+    public static InMemoryWorkflowDefinitionRegistryStore of(WorkflowRegistry registry) {
+        synchronized (OF_REGISTRY) {
+            return OF_REGISTRY.computeIfAbsent(registry, InMemoryWorkflowDefinitionRegistryStore::new);
+        }
+    }
+
+    /**
+     * Makes the rows this store seeds from now on carry the declared signal names and the start schema the producer
+     * describes, as the rows of a durable registry do on a node that binds a producer.
+     *
+     * @param producer the producer of the schemas
+     * @return this store
+     */
+    public InMemoryWorkflowDefinitionRegistryStore withSchemas(WorkflowPlanSchemaProducer producer) {
+        this.schemas = Objects.requireNonNull(producer, "producer");
+        return this;
+    }
+
+    private WorkflowDefinitionRecord withSchemas(WorkflowDefinitionRecord record, RuntimeWorkflow runtime) {
+        WorkflowPlanSchemaProducer producer = schemas;
+        if (producer == null) return record;
+        return new WorkflowDefinitionRecord(
+                record.key(),
+                record.kind(),
+                record.contractName(),
+                record.stateTypeName(),
+                record.planHash(),
+                record.status(),
+                record.provenance(),
+                record.documentFormat(),
+                record.createdAt(),
+                record.statusChangedAt(),
+                record.nameBinding(),
+                record.failure(),
+                DeclaredSignalNames.of(runtime),
+                producer.startSchema(runtime));
+    }
+
     /** Creates an empty store. */
-    public InMemoryWorkflowDefinitionRegistryStore() {}
+    public InMemoryWorkflowDefinitionRegistryStore() {
+        this(null);
+    }
+
+    /**
+     * Creates a store that records the code definitions of the registry before every selection read.
+     *
+     * @param code the registry whose code definitions are the deployed code
+     */
+    public InMemoryWorkflowDefinitionRegistryStore(@Nullable WorkflowRegistry code) {
+        this.code = code;
+    }
 
     /**
      * Seeds a code row for every default-scope definition the registry holds and makes the highest version of each id
      * the default scope's current version, as the startup of an engine over a durable registry does for the code it
      * deploys. Rows that exist already are reconciled like any other code row.
      *
-     * @param registry the registry whose default-scope definitions are the deployed code
+     * @param registry the registry whose code definitions are the deployed code
      * @return this store
      */
     public InMemoryWorkflowDefinitionRegistryStore seedCodeFrom(WorkflowRegistry registry) {
-        for (RuntimeWorkflow runtime : registry.allRegistered()) seedCode(runtime);
+        for (RuntimeWorkflow runtime : registry.codeDefinitions()) seedCode(runtime);
         return this;
     }
 
@@ -75,6 +149,57 @@ public class InMemoryWorkflowDefinitionRegistryStore implements WorkflowDefiniti
      * @return this store
      */
     public InMemoryWorkflowDefinitionRegistryStore seedCode(RuntimeWorkflow runtime) {
+        return seed(runtime, DefinitionStatus.AVAILABLE, true);
+    }
+
+    /**
+     * Seeds the code row of one default-scope runtime in the given status and activates nothing, for a test that needs
+     * a version in a status other than available, or a version that is not current. A runtime of another scope is
+     * ignored.
+     *
+     * @param runtime the deployed code definition
+     * @param status the status of the row
+     * @return this store
+     */
+    public InMemoryWorkflowDefinitionRegistryStore seedCode(RuntimeWorkflow runtime, DefinitionStatus status) {
+        return seed(runtime, status, false);
+    }
+
+    /**
+     * Seeds the document row of a built plan of any scope as available and activates nothing. The row holds no text:
+     * the plan itself is reached through the plan source the test binds to the registry.
+     *
+     * @param plan the built plan of a stored version
+     * @return this store
+     */
+    public synchronized InMemoryWorkflowDefinitionRegistryStore seedDocument(RuntimeWorkflow plan) {
+        Instant now = Instant.now();
+        DefinitionKey key = new DefinitionKey(
+                plan.definitionScopeKey(),
+                plan.plan().definitionId(),
+                plan.plan().definitionVersion());
+        rows.put(
+                key,
+                withSchemas(
+                        new WorkflowDefinitionRecord(
+                                key,
+                                DefinitionKind.DOCUMENT,
+                                plan.contractName(),
+                                plan.stateType().getName(),
+                                storableHash(plan.plan().planHash()),
+                                DefinitionStatus.AVAILABLE,
+                                new DefinitionProvenance("document", null, null, null, null, now),
+                                "YAML",
+                                now,
+                                now,
+                                Map.of(),
+                                null),
+                        plan));
+        return this;
+    }
+
+    private synchronized InMemoryWorkflowDefinitionRegistryStore seed(
+            RuntimeWorkflow runtime, DefinitionStatus status, boolean activateDefault) {
         if (!WorkflowScopes.DEFAULT.equals(runtime.definitionScopeKey())) return this;
         Instant now = Instant.now();
         DefinitionKey key = new DefinitionKey(
@@ -82,20 +207,23 @@ public class InMemoryWorkflowDefinitionRegistryStore implements WorkflowDefiniti
                 runtime.plan().definitionId(),
                 runtime.plan().definitionVersion());
         upsertCode(
-                new WorkflowDefinitionRecord(
-                        key,
-                        DefinitionKind.CODE,
-                        runtime.contractName(),
-                        runtime.stateType().getName(),
-                        storableHash(runtime.plan().planHash()),
-                        DefinitionStatus.AVAILABLE,
-                        new DefinitionProvenance("code", null, null, null, null, now),
-                        null,
-                        now,
-                        now,
-                        Map.of(),
-                        null),
-                true);
+                withSchemas(
+                        new WorkflowDefinitionRecord(
+                                key,
+                                DefinitionKind.CODE,
+                                runtime.contractName(),
+                                runtime.stateType().getName(),
+                                storableHash(runtime.plan().planHash()),
+                                DefinitionStatus.AVAILABLE,
+                                new DefinitionProvenance("code", null, null, null, null, now),
+                                null,
+                                now,
+                                now,
+                                Map.of(),
+                                null),
+                        runtime),
+                activateDefault);
+        if (status != DefinitionStatus.AVAILABLE) rows.put(key, withStatus(rows.get(key), status));
         return this;
     }
 
@@ -196,7 +324,9 @@ public class InMemoryWorkflowDefinitionRegistryStore implements WorkflowDefiniti
                         old.createdAt(),
                         old.statusChangedAt(),
                         record.nameBinding(),
-                        old.failure()));
+                        old.failure(),
+                        record.signalNames(),
+                        record.startSchema()));
         return Future.succeededFuture(ReconcileOutcome.REHASHED);
     }
 
@@ -334,6 +464,43 @@ public class InMemoryWorkflowDefinitionRegistryStore implements WorkflowDefiniti
         return Future.succeededFuture();
     }
 
+    @Override
+    public synchronized Future<Optional<StoredDocument>> findDocument(DefinitionKey key, SqlClient tx) {
+        WorkflowDefinitionRecord row = rows.get(key);
+        WorkflowDefinitionDocument document = documents.get(key);
+        return Future.succeededFuture(
+                row == null || document == null ? Optional.empty() : Optional.of(new StoredDocument(row, document)));
+    }
+
+    @Override
+    public synchronized Future<StartSelection> selectionRead(String startScope, String definitionId, SqlClient tx) {
+        if (code != null) seedCodeFrom(code);
+        List<StartVersion> versions = rows.values().stream()
+                .filter(row -> definitionId.equals(row.key().definitionId())
+                        && (startScope.equals(row.key().scopeKey())
+                                || WorkflowScopes.DEFAULT.equals(row.key().scopeKey())))
+                .sorted(Comparator.comparing(
+                                (WorkflowDefinitionRecord row) -> row.key().scopeKey())
+                        .thenComparingLong(row -> row.key().definitionVersion()))
+                .map(row -> new StartVersion(
+                        row.key(),
+                        row.kind(),
+                        row.contractName(),
+                        row.stateTypeName(),
+                        row.planHash(),
+                        row.status(),
+                        row.failure(),
+                        row.signalNames(),
+                        row.startSchema()))
+                .toList();
+        List<DefinitionActivation> records = activations.values().stream()
+                .filter(activation -> definitionId.equals(activation.definitionId())
+                        && (startScope.equals(activation.scopeKey())
+                                || WorkflowScopes.DEFAULT.equals(activation.scopeKey())))
+                .toList();
+        return Future.succeededFuture(new StartSelection(versions, records));
+    }
+
     /** The hash as a row stores it: a plan hash that is not 64 lowercase hexadecimal characters is digested first. */
     private static String storableHash(String planHash) {
         if (planHash.matches("[0-9a-f]{64}")) return planHash;
@@ -421,7 +588,9 @@ public class InMemoryWorkflowDefinitionRegistryStore implements WorkflowDefiniti
                 row.createdAt(),
                 Instant.now(),
                 row.nameBinding(),
-                row.failure());
+                row.failure(),
+                row.signalNames(),
+                row.startSchema());
     }
 
     private static WorkflowDefinitionRecord withProvenance(
@@ -438,7 +607,9 @@ public class InMemoryWorkflowDefinitionRegistryStore implements WorkflowDefiniti
                 row.createdAt(),
                 row.statusChangedAt(),
                 row.nameBinding(),
-                row.failure());
+                row.failure(),
+                row.signalNames(),
+                row.startSchema());
     }
 
     private static WorkflowDefinitionLifecycleException invalid(DefinitionKey key, String message) {

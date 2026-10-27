@@ -26,6 +26,7 @@ import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegist
 import dev.vertique.workflow.engine.testsupport.NoOpWorkflowDefinitionLifecycle;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -50,6 +51,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -123,8 +125,8 @@ class SchemaActivationTest {
 
     /**
      * Binds an in-memory registry store and a lifecycle that publishes the way the engine's lifecycle does: it claims
-     * the stored candidate, restores its definition through the loader, registers it, and completes the claim, or
-     * releases the claim when registration fails.
+     * the stored candidate, restores its definition through the loader, builds its plan, and completes the claim, or
+     * releases the claim when the build fails.
      */
     @Module
     static final class RegistryModule {
@@ -143,17 +145,17 @@ class SchemaActivationTest {
                 WorkflowDefinitionRegistryStore store,
                 Set<PersistedDefinitionLoader> loaders,
                 Provider<WorkflowRegistry> registry) {
-            return new RegisteringLifecycle(store, loaders, registry);
+            return new BuildingLifecycle(store, loaders, registry);
         }
     }
 
-    /** Publishes a stored candidate into the registry, which runs the registration validators. */
-    private static final class RegisteringLifecycle extends NoOpWorkflowDefinitionLifecycle {
+    /** Publishes a stored candidate after building its plan, which runs the registration validators. */
+    private static final class BuildingLifecycle extends NoOpWorkflowDefinitionLifecycle {
         private final WorkflowDefinitionRegistryStore store;
         private final Set<PersistedDefinitionLoader> loaders;
         private final Provider<WorkflowRegistry> registry;
 
-        RegisteringLifecycle(
+        BuildingLifecycle(
                 WorkflowDefinitionRegistryStore store,
                 Set<PersistedDefinitionLoader> loaders,
                 Provider<WorkflowRegistry> registry) {
@@ -173,7 +175,7 @@ class SchemaActivationTest {
                                     .findFirst()
                                     .orElseThrow()
                                     .load(row.orElseThrow(), document.orElseThrow());
-                            registry.get().register(key.scopeKey(), definition);
+                            ((DefaultWorkflowRegistry) registry.get()).build(key.scopeKey(), definition, Map.of());
                         } catch (RuntimeException failure) {
                             return store.release(claim).<Void>transform(released -> Future.failedFuture(failure));
                         }
@@ -267,7 +269,7 @@ class SchemaActivationTest {
     }
 
     @Test
-    @DisplayName("a candidate with object payload types activates and resolves")
+    @DisplayName("a candidate with object payload types activates")
     void aCandidateWithObjectPayloadTypesActivates() {
         // Given: a stored candidate whose decision type is a record
         Platform platform = DaggerSchemaActivationTest_Platform.create();
@@ -281,12 +283,7 @@ class SchemaActivationTest {
         // When: it is activated
         await(definitions.publish(REVIEW_NOTE_V1));
 
-        // Then: the registry resolves it and the service reports it active
-        assertThat(platform.registry()
-                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "review-note", 1L))
-                        .plan()
-                        .definitionVersion())
-                .isEqualTo(1L);
+        // Then: the service reports it active
         assertThat(await(definitions.list(GLOBAL)))
                 .extracting(WorkflowDefinitionRecord::status)
                 .containsExactly(DefinitionStatus.AVAILABLE);

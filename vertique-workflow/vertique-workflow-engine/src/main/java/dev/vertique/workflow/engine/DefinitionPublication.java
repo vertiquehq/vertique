@@ -7,9 +7,7 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -18,17 +16,15 @@ import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
-import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * The mechanics that every managed publisher of an executable definition shares: reading what the registry holds
- * for a version, choosing the loader of a document format, checking a stored code row against the deployed code,
- * and registering a definition under the key's attribution.
+ * The mechanics that every managed publisher of an executable definition shares: choosing the loader of a document
+ * format, checking a stored code row against the deployed code, and building a stored definition into a plan to
+ * validate it.
  *
  * <p>The methods are stateless. Callers make them under the {@link DefinitionApplyQueue} slot of the id. The loader,
  * hash and name checks are public for the engine's plan loader, which builds a stored plan on demand; the rest is
@@ -66,23 +62,6 @@ public final class DefinitionPublication {
                 + "' version " + key.definitionVersion() + " in scope '" + EchoedNames.bounded(key.scopeKey())
                 + "' was recorded with type names that no class resolves any more: " + listed + count
                 + "; keep the class under that name, or retire the version before moving the class");
-    }
-
-    /**
-     * The runtime the registry holds for the exact key, or {@code null} when it holds none. A plan that only the plan
-     * cache holds is not a registration, so it is not held: it was built from the row and no lifecycle operation
-     * published it.
-     */
-    static @Nullable RuntimeWorkflow held(WorkflowRegistry local, DefinitionKey key) {
-        try {
-            RuntimeWorkflow runtime = local.resolve(key);
-            // The framework registry also answers from the plan cache; it registered the plan if it kept its source
-            boolean cacheOnly = local instanceof DefaultWorkflowRegistry
-                    && local.registeredDefinition(key).isEmpty();
-            return cacheOnly ? null : runtime;
-        } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException absent) {
-            return null;
-        }
     }
 
     /** The one loader that supports the record's document format; any other count fails as a missing loader. */
@@ -136,66 +115,26 @@ public final class DefinitionPublication {
     }
 
     /**
-     * Registers the definition and attributes the exact registered runtime to the key. When the
-     * attribution cannot be recorded, the registration this call made is removed again.
+     * Builds the plan of a stored definition under the names its row was recorded with, so that every rule a plan
+     * build applies refuses an invalid definition before the row is published. Nothing is registered and no plan is
+     * kept: the plan cache builds the plan of a published row when it is first used.
      *
-     * @param nameBinding the names the row's plan hash used; an empty binding registers under current names
-     * @return the runtime the registry now holds for the key
+     * @param registry the registry whose validators the build applies; another registry than the framework's builds
+     *     with the framework's rules alone
+     * @param key the scope, definition id and version of the row
+     * @param definition the compiled definition of the row
+     * @param nameBinding the names the row's plan hash used; an empty binding builds under current names
+     * @return the built plan
+     * @throws dev.vertique.workflow.exception.WorkflowDefinitionException when the definition does not build
      */
-    static RuntimeWorkflow publish(
-            WorkflowRegistry local,
-            ManagedRegistrations registrations,
+    static RuntimeWorkflow build(
+            WorkflowRegistry registry,
             DefinitionKey key,
             WorkflowDefinition<?, ?> definition,
             Map<String, String> nameBinding) {
-        if (nameBinding.isEmpty()) local.register(key.scopeKey(), definition);
-        else local.register(key.scopeKey(), definition, nameBinding);
-        return attribute(local, registrations, key);
-    }
-
-    /**
-     * Registers the definition of a failing scope row, which skips only the comparison of the scope's state type with
-     * the default scope's, and attributes the exact registered runtime to the key. The plan is then rebuilt under the
-     * names the row's plan hash used when that gives the stored hash.
-     *
-     * @param nameBinding the names the row's plan hash used; an empty binding keeps the current names
-     * @param planHash the plan hash stored for the row
-     * @return the runtime the registry now holds for the key
-     */
-    static RuntimeWorkflow publishFailing(
-            WorkflowRegistry local,
-            ManagedRegistrations registrations,
-            DefinitionKey key,
-            WorkflowDefinition<?, ?> definition,
-            Map<String, String> nameBinding,
-            String planHash) {
-        local.registerFailing(key.scopeKey(), definition);
-        RuntimeWorkflow published = attribute(local, registrations, key);
-        if (nameBinding.isEmpty() || planHash.equals(published.plan().planHash())) return published;
-        Optional<RuntimeWorkflow> rebound = local.rebind(key, nameBinding, planHash);
-        if (rebound.isEmpty()) return published;
-        registrations.attribute(key.scopeKey(), key.definitionId(), key.definitionVersion(), rebound.get());
-        return rebound.get();
-    }
-
-    private static RuntimeWorkflow attribute(
-            WorkflowRegistry local, ManagedRegistrations registrations, DefinitionKey key) {
-        RuntimeWorkflow published = null;
-        try {
-            published = local.resolve(key);
-            registrations.attribute(key.scopeKey(), key.definitionId(), key.definitionVersion(), published);
-            return published;
-        } catch (RuntimeException e) {
-            // The registration was made by this call, so it is removed whatever the registry holds under the key.
-            try {
-                local.unregister(key);
-                if (published != null)
-                    registrations.clear(key.scopeKey(), key.definitionId(), key.definitionVersion(), published);
-            } catch (RuntimeException compensation) {
-                if (compensation != e) e.addSuppressed(compensation);
-            }
-            throw e;
-        }
+        DefaultWorkflowRegistry builder =
+                registry instanceof DefaultWorkflowRegistry framework ? framework : new DefaultWorkflowRegistry();
+        return builder.build(key.scopeKey(), definition, nameBinding);
     }
 
     static WorkflowDefinitionLifecycleException failure(Reason reason, DefinitionKey key, String message) {

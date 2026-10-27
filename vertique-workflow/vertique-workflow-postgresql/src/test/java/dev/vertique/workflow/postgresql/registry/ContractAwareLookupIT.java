@@ -91,7 +91,6 @@ public class ContractAwareLookupIT {
 
             // When a second boot adds the default's code X version 1 under C
             Boot second = database.node(none(), observation(), code(X, ContractC.class, 1));
-            await(second.app().definitionPropagationPoller().pollNow());
 
             // Then startup succeeded, acme starts its own X for a D client and the default's X for a C client
             assertThat(startAs(database, second, ContractD.class, ACME, X)).isEqualTo(new Pin(ACME, ACME, X, 1));
@@ -330,7 +329,6 @@ public class ContractAwareLookupIT {
         await(first.app().definitionService().activate(ACME, X, ACME, acmeVersions));
         first.close();
         Boot second = database.node(none(), observation(), code(X, ContractC.class, defaultVersions));
-        await(second.app().definitionPropagationPoller().pollNow());
         return second;
     }
 

@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.ExpensePayloads;
@@ -78,17 +79,18 @@ class WorkflowPayloadSchemasDescribeTest {
     @DisplayName("describe and decision are keyed by the definition scope")
     void describeIsKeyedByTheDefinitionScope() {
         // Given: purchase-approval v1 in the default scope whose review offers approve, and purchase-approval v1
-        // in the acme scope whose review offers approve and escalate
+        // as a plan of the acme scope whose review offers approve and escalate
         DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
         Map<String, Class<?>> defaultDecisions = Map.of("approve", ExpensePayloads.ApprovalComment.class);
         Map<String, Class<?>> acmeDecisions = new LinkedHashMap<>();
         acmeDecisions.put("approve", ExpensePayloads.ApprovalComment.class);
         acmeDecisions.put("escalate", ExpensePayloads.AuditNote.class);
         registry.register(Definitions.withDecisions(PURCHASE, 1L, defaultDecisions));
-        registry.register("acme", Definitions.withDecisions(PURCHASE, 1L, acmeDecisions));
-        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
         DefinitionKey defaultKey = new DefinitionKey(WorkflowScopes.DEFAULT, PURCHASE, 1L);
         DefinitionKey acmeKey = new DefinitionKey("acme", PURCHASE, 1L);
+        registry.bindDocumentPlanSource(new FixedPlanSource(Map.of(
+                acmeKey, registry.build("acme", Definitions.withDecisions(PURCHASE, 1L, acmeDecisions), Map.of()))));
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
         DefinitionKey globexKey = new DefinitionKey("globex", PURCHASE, 1L);
 
         // When: each key is described and asked for the decision only the acme version declares
@@ -335,11 +337,12 @@ class WorkflowPayloadSchemasDescribeTest {
         // Given: a plan for acme/order v2 built elsewhere, and a registry that does not hold it and loads it on a
         // worker thread once released; the plan's review step offers approve
         DefaultWorkflowRegistry source = Registries.withSchemaValidator(cache);
-        source.register(
-                "acme",
-                Definitions.withDecisions("order", 2L, Map.of("approve", ExpensePayloads.ApprovalComment.class)));
         DefinitionKey key = new DefinitionKey("acme", "order", 2L);
-        DeferredRegistry registry = DeferredRegistry.loadsLater(key, source.resolve(key));
+        RuntimeWorkflow built = source.build(
+                "acme",
+                Definitions.withDecisions("order", 2L, Map.of("approve", ExpensePayloads.ApprovalComment.class)),
+                Map.of());
+        DeferredRegistry registry = DeferredRegistry.loadsLater(key, built);
         WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
 
         // When: the version is described

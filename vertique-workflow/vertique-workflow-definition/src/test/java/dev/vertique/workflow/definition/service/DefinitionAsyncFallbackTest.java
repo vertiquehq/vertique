@@ -120,7 +120,7 @@ class DefinitionAsyncFallbackTest {
                 DocumentFormat.YAML,
                 provenance));
         assertThat(loaded.status()).isEqualTo(ActivationStatus.CANDIDATE);
-        assertThat(component.workflowRegistry().allRegistered()).isEmpty();
+        assertThat(component.workflowRegistry().codeDefinitions()).isEmpty();
 
         ServiceTestHelpers.await(service.publish(key));
         assertThat(component.definitionLifecycle().calls()).containsExactly("publish(" + key + ")");
@@ -187,7 +187,7 @@ class DefinitionAsyncFallbackTest {
         assertThatThrownBy(() -> ServiceTestHelpers.await(loaded)).isInstanceOf(IllegalArgumentException.class);
         DefinitionFilter all = new DefinitionFilter(null, null, null);
         assertThat(ServiceTestHelpers.await(service.list(all))).isEmpty();
-        assertThat(component.workflowRegistry().allRegistered()).isEmpty();
+        assertThat(component.workflowRegistry().codeDefinitions()).isEmpty();
     }
 
     @Test
@@ -209,7 +209,7 @@ class DefinitionAsyncFallbackTest {
         assertThatThrownBy(() -> ServiceTestHelpers.await(loaded)).isInstanceOf(IllegalArgumentException.class);
         DefinitionFilter all = new DefinitionFilter(null, null, null);
         assertThat(ServiceTestHelpers.await(service.list(all))).isEmpty();
-        assertThat(component.workflowRegistry().allRegistered()).isEmpty();
+        assertThat(component.workflowRegistry().codeDefinitions()).isEmpty();
     }
 
     @Test
@@ -233,7 +233,7 @@ class DefinitionAsyncFallbackTest {
         assertThat(loaded.source().uri()).isEqualTo(atBound);
         DefinitionFilter all = new DefinitionFilter(null, null, null);
         assertThat(ServiceTestHelpers.await(service.list(all))).hasSize(1);
-        assertThat(component.workflowRegistry().allRegistered()).isEmpty();
+        assertThat(component.workflowRegistry().codeDefinitions()).isEmpty();
     }
 
     private static byte[] yamlFor(String id, long version, Class<?> contract) {

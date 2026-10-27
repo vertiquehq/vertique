@@ -26,6 +26,7 @@ import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowType;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
@@ -119,7 +120,7 @@ class CatalogOnlyDocumentLoadTest {
 
         WorkflowDefinitionService workflowDefinitionService();
 
-        WorkflowDefinitionStore workflowDefinitionStore();
+        WorkflowDefinitionRegistryStore workflowDefinitionRegistryStore();
 
         DocumentDefinitionLoader documentDefinitionLoader();
     }
@@ -201,13 +202,12 @@ class CatalogOnlyDocumentLoadTest {
 
         for (String definitionId : List.of("acme-a", "acme-b")) {
             DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
-            assertThat(component
-                            .workflowDefinitionStore()
-                            .get(key)
-                            .orElseThrow()
-                            .compiled()
-                            .definition()
-                            .stateType())
+            WorkflowDefinitionRegistryStore rows = component.workflowDefinitionRegistryStore();
+            WorkflowDefinitionRecord record =
+                    ServiceTestHelpers.await(rows.find(key)).orElseThrow();
+            WorkflowDefinitionDocument text =
+                    ServiceTestHelpers.await(rows.findDocument(key)).orElseThrow();
+            assertThat(component.documentDefinitionLoader().load(record, text).stateType())
                     .isEqualTo(AcmeState.class);
         }
     }

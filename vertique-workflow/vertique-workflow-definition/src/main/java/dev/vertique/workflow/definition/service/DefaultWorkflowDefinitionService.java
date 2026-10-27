@@ -51,7 +51,6 @@ import java.util.function.Supplier;
 @Singleton
 public final class DefaultWorkflowDefinitionService implements WorkflowDefinitionService {
     private final WorkflowDefinitionPipeline pipeline;
-    private final WorkflowDefinitionStore store;
     private final Provider<WorkflowRegistry> registryProvider;
     private final WorkflowDefinitionRegistryStore durable;
     private final WorkflowDefinitionLifecycle lifecycle;
@@ -64,12 +63,11 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
      */
     public DefaultWorkflowDefinitionService(
             WorkflowDefinitionPipeline pipeline,
-            WorkflowDefinitionStore store,
             Provider<WorkflowRegistry> registryProvider,
             WorkflowDefinitionRegistryStore durable,
             WorkflowDefinitionLifecycle lifecycle,
             Optional<WorkflowDefinitionsConfig> config) {
-        this(pipeline, store, registryProvider, durable, lifecycle, config, Optional.empty());
+        this(pipeline, registryProvider, durable, lifecycle, config, Optional.empty());
     }
 
     /**
@@ -79,7 +77,6 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     @Inject
     public DefaultWorkflowDefinitionService(
             WorkflowDefinitionPipeline pipeline,
-            WorkflowDefinitionStore store,
             Provider<WorkflowRegistry> registryProvider,
             WorkflowDefinitionRegistryStore durable,
             WorkflowDefinitionLifecycle lifecycle,
@@ -87,7 +84,6 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
             Optional<WorkflowPlanSchemaProducer> schemaProducer) {
         this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
         this.pipeline = Objects.requireNonNull(pipeline, "pipeline");
-        this.store = Objects.requireNonNull(store, "store");
         this.registryProvider = Objects.requireNonNull(registryProvider, "registryProvider");
         this.durable = Objects.requireNonNull(durable, "durable");
         this.lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
@@ -137,11 +133,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                                 candidate.signalNames(),
                                 candidate.startSchema());
                         return durable.insertCandidate(record, candidate.document())
-                                .map(ignored -> {
-                                    store.storeCandidate(candidate.key(), candidate.compiled());
-                                    store.metadata(record);
-                                    return reference(candidate.compiled());
-                                });
+                                .map(ignored -> reference(candidate.compiled()));
                     });
         });
     }
@@ -167,15 +159,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     public Future<Void> deprecate(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
-            // The committed row is the source of truth for the local cache projection.
-            return lifecycle
-                    .deprecate(key)
-                    .compose(ignored -> durable.find(key))
-                    .map(found -> {
-                        found.filter(record -> record.kind() == DefinitionKind.DOCUMENT)
-                                .ifPresent(store::metadata);
-                        return (Void) null;
-                    });
+            return lifecycle.deprecate(key);
         });
     }
 
@@ -183,11 +167,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     public Future<Void> retire(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
-            // The committed row is the source of truth for the local cache projection.
-            return lifecycle.retire(key).compose(ignored -> durable.find(key)).map(found -> {
-                found.filter(record -> record.kind() == DefinitionKind.DOCUMENT).ifPresent(store::metadata);
-                return (Void) null;
-            });
+            return lifecycle.retire(key);
         });
     }
 
@@ -195,15 +175,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     public Future<Void> reinstate(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
-            // The committed row is the source of truth for the local cache projection.
-            return lifecycle
-                    .reinstate(key)
-                    .compose(ignored -> durable.find(key))
-                    .map(found -> {
-                        found.filter(record -> record.kind() == DefinitionKind.DOCUMENT)
-                                .ifPresent(store::metadata);
-                        return (Void) null;
-                    });
+            return lifecycle.reinstate(key);
         });
     }
 

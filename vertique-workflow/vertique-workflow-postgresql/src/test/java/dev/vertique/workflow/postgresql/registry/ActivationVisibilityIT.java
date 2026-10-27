@@ -27,7 +27,6 @@ import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import io.vertx.core.Vertx;
-import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Tuple;
 import java.io.IOException;
@@ -42,29 +41,28 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Verifies that an activation, a {@code follow} and a {@code deactivateDefault} committed on one node change which
- * version a start selects on every other node on the same database, through the peer's periodic reconciliation which
- * most tests trigger directly, and that activations survive a restart.
+ * version a start selects on every other node on the same database at once, because a start reads the records, and
+ * that activations survive a restart.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-public class ActivationPropagationIT {
+public class ActivationVisibilityIT {
 
     /** The one contract that every document and code definition of these tests names. */
     @WorkflowContract
     public interface PropagationContract extends OrderDocumentSignals {}
 
     static final PostgresContainer db = new PostgresContainer()
-            .withDatabaseName("workflow_activation_propagation_it")
+            .withDatabaseName("workflow_activation_visibility_it")
             .withMigration("classpath:db/migration/workflow");
 
     private static final String QA = "qa";
     private static final String ACME = "acme";
     private static final Instant LOADED_AT = Instant.parse("2026-10-21T12:00:00Z");
-    private static final long STALENESS_SECONDS = 1;
 
     @Test
-    @DisplayName("an activation on one node selects the version on a peer after one pass")
-    void activationOnOneNodeSelectsVersionOnPeerAfterOnePass(Vertx vertx) {
+    @DisplayName("an activation on one node selects the version on a peer at once")
+    void activationOnOneNodeSelectsVersionOnPeerAtOnce(Vertx vertx) {
         String id = "propagation-activation";
 
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
@@ -81,10 +79,6 @@ public class ActivationPropagationIT {
             // the default scope still runs version 1
             assertThat(b.start(QA, id)).isEqualTo(new Pin(QA, DEFAULT, id, 2));
             assertThat(b.start(DEFAULT, id)).isEqualTo(new Pin(DEFAULT, DEFAULT, id, 1));
-
-            // And a reconciliation of B changes nothing about what a start selects
-            await(b.app().definitionPropagationPoller().pollNow());
-            assertThat(b.start(QA, id)).isEqualTo(new Pin(QA, DEFAULT, id, 2));
         }
     }
 
@@ -96,16 +90,14 @@ public class ActivationPropagationIT {
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, id);
 
-            // Given nodes A and B, with qa activated on version 2 by A and applied by B
+            // Given nodes A and B, with qa activated on version 2 by A and started on by B
             Scenario a = scenario(database, boot(database, code(id, 1), optedOut(id, 2)));
             Scenario b = scenario(database, boot(database, code(id, 1), optedOut(id, 2)));
             await(a.service().activate(QA, id, DEFAULT, 2));
-            await(b.app().definitionPropagationPoller().pollNow());
             Pin pinned = b.start(QA, id);
 
-            // When A makes qa follow the default scope and B reconciles
+            // When A makes qa follow the default scope
             await(a.service().follow(QA, id));
-            await(b.app().definitionPropagationPoller().pollNow());
 
             // Then B ran version 2 before, and a start in qa on B now runs version 1, the default's
             assertThat(pinned).isEqualTo(new Pin(QA, DEFAULT, id, 2));
@@ -114,8 +106,8 @@ public class ActivationPropagationIT {
     }
 
     @Test
-    @DisplayName("a document published and activated on one node applies on a peer in one pass")
-    void publishedDocumentAndItsActivationApplyInOnePass(Vertx vertx) {
+    @DisplayName("a document published and activated on one node starts on a peer at once")
+    void publishedDocumentAndItsActivationStartOnAPeer(Vertx vertx) {
         String id = "purchase-approval";
 
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
@@ -125,17 +117,15 @@ public class ActivationPropagationIT {
             Scenario a = scenario(database, boot(database, code(id, 1)));
             Scenario b = scenario(database, boot(database, code(id, 1)));
 
-            // When A loads, publishes and activates the acme document of version 1, and B reconciles once
+            // When A loads, publishes and activates the acme document of version 1
             CompiledDefinitionRef loaded = await(a.service()
                     .load(ACME, resource("activation-purchase-approval.workflow.yaml"), DocumentFormat.YAML, meta()));
             await(a.service().publish(new DefinitionKey(ACME, id, 1)));
             await(a.service().activate(ACME, id, ACME, 1));
-            await(b.app().definitionPropagationPoller().pollNow());
 
-            // Then a start in acme on B runs the acme document with its plan hash, and B reports no apply failure
+            // Then a start in acme on B runs the acme document with its plan hash
             assertThat(b.start(ACME, id)).isEqualTo(new Pin(ACME, ACME, id, 1));
             assertThat(planHashOfStartedInstance(database, id, ACME)).isEqualTo(loaded.planHash());
-            assertThat(b.app().definitionRegistryView().applyFailures()).isZero();
         }
     }
 
@@ -154,45 +144,14 @@ public class ActivationPropagationIT {
             await(a.service().activate(QA, id, DEFAULT, 2));
             await(a.service().activate(ACME, id, ACME, 1));
 
-            // When A closes and a new node starts on the same database, and one reconciliation has run, which restores
-            // the records of the scopes other than the default one
+            // When A closes and a new node starts on the same database
             first.close();
             Scenario restarted = scenario(database, boot(database, code(id, 1), optedOut(id, 2)));
-            await(restarted.app().definitionPropagationPoller().pollNow());
 
             // Then starts in qa and acme run the activated versions
             assertThat(restarted.start(QA, id)).isEqualTo(new Pin(QA, DEFAULT, id, 2));
             assertThat(restarted.start(ACME, id)).isEqualTo(new Pin(ACME, ACME, id, 1));
             assertThat(restarted.start(DEFAULT, id)).isEqualTo(new Pin(DEFAULT, DEFAULT, id, 1));
-        }
-    }
-
-    @Test
-    @DisplayName("the peer's timer applies an activation within the staleness bound")
-    void peerTimerAppliesActivationWithinStalenessBound(Vertx vertx) {
-        String id = "propagation-timer";
-        JsonObject config = new JsonObject()
-                .put(
-                        "workflow",
-                        new JsonObject()
-                                .put("definitions", new JsonObject().put("maxStalenessSeconds", STALENESS_SECONDS)));
-
-        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
-            own(database, id);
-
-            // Given nodes A and B that reconcile every second, with version 1 current and a version 2 that opts out
-            Scenario a = scenario(database, boot(database, config, code(id, 1), optedOut(id, 2)));
-            Scenario b = scenario(database, boot(database, config, code(id, 1), optedOut(id, 2)));
-
-            // When A activates version 2 in qa and the test never reconciles B
-            await(a.service().activate(QA, id, DEFAULT, 2));
-            long committed = System.nanoTime();
-
-            // Then repeated starts in qa on B run version 2 before the bound plus slack has passed
-            long deadline = committed + TimeUnit.SECONDS.toNanos(STALENESS_SECONDS + 3);
-            Pin last = b.start(QA, id);
-            while (last.version() != 2 && System.nanoTime() < deadline) last = b.start(QA, id);
-            assertThat(last).isEqualTo(new Pin(QA, DEFAULT, id, 2));
         }
     }
 
@@ -236,16 +195,12 @@ public class ActivationPropagationIT {
         return database.node(none(), unobserved(), List.of(code));
     }
 
-    private static Boot boot(DefinitionScenario database, JsonObject config, WorkflowDefinition<?, ?>... code) {
-        return database.node(none(), unobserved(), List.of(code), config);
-    }
-
     private static Scenario scenario(DefinitionScenario database, Boot node) {
         return new Scenario(database, node, PropagationContract.class);
     }
 
     private static BootObservation unobserved() {
-        return new BootObservation("propagation-unused", 1, "unused", false);
+        return new BootObservation("visibility-unused", 1, "unused", false);
     }
 
     private static WorkflowDefinitionSource none() {

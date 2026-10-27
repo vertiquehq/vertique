@@ -14,7 +14,6 @@ import dev.vertique.workflow.definition.callbacks.NamedStartStateMapper;
 import dev.vertique.workflow.definition.callbacks.StartStateMapperContributor;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
-import dev.vertique.workflow.definition.pipeline.CompiledDefinition;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
@@ -26,6 +25,7 @@ import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowType;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
@@ -91,7 +91,7 @@ class DocumentRestorePlanHashTest {
 
         WorkflowDefinitionService workflowDefinitionService();
 
-        WorkflowDefinitionStore workflowDefinitionStore();
+        WorkflowDefinitionRegistryStore workflowDefinitionRegistryStore();
 
         DocumentDefinitionLoader documentDefinitionLoader();
 
@@ -117,7 +117,8 @@ class DocumentRestorePlanHashTest {
                 """;
     }
 
-    private static CompiledDefinition publish(RestoreComponent component) {
+    /** Loads the document through the service and returns the candidate row the store holds for it. */
+    private static WorkflowDefinitionRecord publish(RestoreComponent component) {
         ServiceTestHelpers.await(component
                 .workflowDefinitionService()
                 .load(
@@ -125,7 +126,9 @@ class DocumentRestorePlanHashTest {
                         document().getBytes(StandardCharsets.UTF_8),
                         DocumentFormat.YAML,
                         new SourceMetadata("test", "test://restore", null, null, null, Instant.now())));
-        return component.workflowDefinitionStore().get(KEY).orElseThrow().compiled();
+        return ServiceTestHelpers.await(
+                        component.workflowDefinitionRegistryStore().find(KEY))
+                .orElseThrow();
     }
 
     private static WorkflowDefinitionRecord storedRecord(String planHash) {
@@ -152,7 +155,7 @@ class DocumentRestorePlanHashTest {
     void restoredDocumentHashEqualsTheHashItWasPublishedWith() {
         // Given: a published document over an annotated state class, and the hash stored with it
         RestoreComponent component = DaggerDocumentRestorePlanHashTest_RestoreComponent.create();
-        CompiledDefinition published = publish(component);
+        WorkflowDefinitionRecord published = publish(component);
         WorkflowDefinitionRecord stored = storedRecord(published.planHash());
         WorkflowDefinitionDocument document = new WorkflowDefinitionDocument(KEY, document(), "YAML");
 
@@ -171,10 +174,13 @@ class DocumentRestorePlanHashTest {
     void loaderHashEqualsTheHashTheRegistryComputes() {
         // Given: a published document over an annotated state class
         RestoreComponent component = DaggerDocumentRestorePlanHashTest_RestoreComponent.create();
-        CompiledDefinition published = publish(component);
+        WorkflowDefinitionRecord published = publish(component);
+        WorkflowDefinition<?, ?> definition = component
+                .documentDefinitionLoader()
+                .load(published, new WorkflowDefinitionDocument(KEY, document(), "YAML"));
 
         // When: the registry registers the definition
-        component.workflowRegistry().register(published.definition());
+        component.workflowRegistry().register(definition);
         String registered = component
                 .workflowRegistry()
                 .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "restore-saga", 1L))
@@ -188,33 +194,21 @@ class DocumentRestorePlanHashTest {
                         .plan()
                         .stateTypeName())
                 .isEqualTo("restore.state");
-        assertThat(component.documentDefinitionLoader().planHash(published.definition()))
+        assertThat(component.documentDefinitionLoader().planHash(definition))
                 .isEqualTo(registered)
                 .isEqualTo(published.planHash());
     }
 
     @Test
-    @DisplayName("a restored document is cached with the same state type name as a freshly loaded one")
-    void restoredDocumentIsCachedWithTheSameStateTypeNameAsAFreshLoad() {
-        // Given: the state type name a fresh load of the document caches
-        String freshlyLoaded = publish(DaggerDocumentRestorePlanHashTest_RestoreComponent.create())
-                .stateTypeName();
-        RestoreComponent restarted = DaggerDocumentRestorePlanHashTest_RestoreComponent.create();
-        WorkflowDefinitionRecord stored = storedRecord("a".repeat(64));
-        WorkflowDefinitionDocument document = new WorkflowDefinitionDocument(KEY, document(), "YAML");
+    @DisplayName("the row of a loaded document names its state class by the logical name")
+    void loadedRowNamesTheStateClassByItsLogicalName() {
+        // Given: a document over an annotated state class
+        RestoreComponent component = DaggerDocumentRestorePlanHashTest_RestoreComponent.create();
 
-        // When: a restarted process restores the document into an empty cache
-        WorkflowDefinition<?, ?> restored = restarted.documentDefinitionLoader().load(stored, document);
-        restarted.documentDefinitionLoader().onRestored(stored, restored);
+        // When: it is loaded through the service
+        WorkflowDefinitionRecord row = publish(component);
 
-        // Then: the cache entry names the state class as the fresh load does
-        assertThat(restarted
-                        .workflowDefinitionStore()
-                        .get(KEY)
-                        .orElseThrow()
-                        .compiled()
-                        .stateTypeName())
-                .isEqualTo(freshlyLoaded)
-                .isEqualTo("restore.state");
+        // Then: the stored row names the state class as the registry's plan does
+        assertThat(row.stateTypeName()).isEqualTo("restore.state");
     }
 }

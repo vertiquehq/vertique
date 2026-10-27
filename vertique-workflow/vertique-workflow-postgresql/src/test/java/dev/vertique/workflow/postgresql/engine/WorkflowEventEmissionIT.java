@@ -23,6 +23,7 @@ import dev.vertique.workflow.contract.IdempotencyKeyed;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.engine.testsupport.ScopedDefinitions;
 import dev.vertique.workflow.events.WorkflowEventEnvelope;
 import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.events.binding.WorkflowEventOutboxBinding;
@@ -348,7 +349,6 @@ public class WorkflowEventEmissionIT {
         registry.register(FAIL_DEF);
         registry.register(TASK_DEF);
         registry.register(purchaseApproval("clerk"));
-        registry.register(ScopedApprovalFixture.ACME, purchaseApproval("finance"));
 
         // --- WorkflowEventsComposeValidator and recorder ---
         WorkflowEventsComposeValidator eventsValidator =
@@ -382,6 +382,8 @@ public class WorkflowEventEmissionIT {
                 timerStore,
                 new PgTaskStore(pool, exMapper),
                 Clock.fixed(Instant.parse("2026-05-09T00:00:00Z"), ZoneOffset.UTC));
+        // The acme version is a stored version the node builds a plan for; the registry holds code only
+        ScopedDefinitions.of(registry).publish(ScopedApprovalFixture.ACME, purchaseApproval("finance"));
 
         ctx.completeNow();
     }

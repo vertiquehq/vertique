@@ -181,8 +181,8 @@ public class PerPlanValidatorIT {
             await(load(service, "settle", serviceDocument("settle", "billing.charge"))
                     .compose(ignored -> service.publish(settle)));
 
-            // Then it is registered
-            assertThat(first.workflowRegistry().find(settle)).isPresent();
+            // Then it is available and its plan builds
+            assertThat(await(first.workflowRegistry().load(settle))).isNotNull();
 
             // And the first graph is shut down and the published row removed, so that the next graph, which has no
             // SERVICE handler, does not restore it

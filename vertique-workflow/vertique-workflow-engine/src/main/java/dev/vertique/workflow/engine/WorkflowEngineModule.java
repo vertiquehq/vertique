@@ -293,8 +293,7 @@ public abstract class WorkflowEngineModule {
 
     /**
      * Declares the transactional reads of definition rows as an optional binding; the PostgreSQL module binds them.
-     * Without them a start selects its version from this node's registry, as a node with a store that cannot read on
-     * the caller's transaction must.
+     * Without them a start of an instance fails, because it selects its version from the rows.
      *
      * @return the optional reads declaration
      */
@@ -385,35 +384,12 @@ public abstract class WorkflowEngineModule {
     @Singleton
     abstract dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle(
             DefaultWorkflowDefinitionLifecycle lifecycle);
-    /** Restores durable document membership before any BOOTSTRAP verticle deploys. */
+    /** Records the code and the packaged documents in the definition table before any BOOTSTRAP verticle deploys. */
     @Provides
     @Singleton
     @IntoSet
     static dev.vertique.core.lifecycle.ApplicationStartupStep definitionRegistryBootstrapStep(
             WorkflowDefinitionRegistryBootstrapStep step) {
         return step;
-    }
-
-    /** Exposes what this node has applied from the durable definition table. */
-    @Binds
-    @Singleton
-    abstract WorkflowDefinitionRegistryView definitionRegistryView(DefaultWorkflowDefinitionRegistryView view);
-
-    /** Arms the periodic reconciliation of the registry with the durable table once every verticle has deployed. */
-    @Provides
-    @Singleton
-    @IntoSet
-    static dev.vertique.core.lifecycle.ApplicationStartupStep definitionPropagationStartupStep(
-            WorkflowDefinitionPropagationPoller poller) {
-        return poller.startupStep();
-    }
-
-    /** Cancels the periodic reconciliation on shutdown and waits for the pass that is running. */
-    @Provides
-    @Singleton
-    @IntoSet
-    static dev.vertique.core.lifecycle.ApplicationShutdownStep definitionPropagationShutdownStep(
-            WorkflowDefinitionPropagationPoller poller) {
-        return poller.shutdownStep();
     }
 }

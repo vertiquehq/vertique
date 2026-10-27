@@ -164,6 +164,8 @@ public class DefinitionSourceTextTest {
         WorkflowDefinitionPipeline pipeline();
 
         WorkflowRegistry workflowRegistry();
+
+        DocumentDefinitionLoader documentDefinitionLoader();
     }
 
     @Singleton
@@ -316,10 +318,13 @@ public class DefinitionSourceTextTest {
         ReaderGraph graph = graph(vertx, List.of(staticYaml(), validTrailingJson()));
         String json = json("reader-encoding-😀", 1, ReaderEncodingUnicodeV1.class);
 
-        assertThat(graph.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-static-yaml", 1)))
+        // The contributors run when the registry is built; each packaged document builds from its retained text
+        WorkflowRegistry registry = graph.workflowRegistry();
+        assertThat(ServiceTestHelpers.buildPackaged(
+                        registry, graph.documentDefinitionLoader(), "reader-static-yaml", 1))
                 .isNotNull();
-        assertThat(graph.workflowRegistry()
-                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-valid-trailing-json", 1)))
+        assertThat(ServiceTestHelpers.buildPackaged(
+                        registry, graph.documentDefinitionLoader(), "reader-valid-trailing-json", 1))
                 .isNotNull();
 
         for (byte[] encoded : jsonEncodings(json)) {

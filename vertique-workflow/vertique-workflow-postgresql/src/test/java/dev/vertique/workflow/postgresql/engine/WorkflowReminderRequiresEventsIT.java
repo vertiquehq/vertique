@@ -257,7 +257,7 @@ public class WorkflowReminderRequiresEventsIT {
         // Must not throw
         registry.register(NO_REMINDER_DEF);
 
-        assertTrue(registry.allRegistered().size() == 1, "reminder-free plan must register");
+        assertTrue(registry.codeDefinitions().size() == 1, "reminder-free plan must register");
     }
 
     /**
@@ -291,6 +291,7 @@ public class WorkflowReminderRequiresEventsIT {
         registry.register(ONE_SHOT_REMINDER_DEF);
 
         assertTrue(
-                registry.allRegistered().size() == 1, "reminder plan must register when an event recorder is present");
+                registry.codeDefinitions().size() == 1,
+                "reminder plan must register when an event recorder is present");
     }
 }

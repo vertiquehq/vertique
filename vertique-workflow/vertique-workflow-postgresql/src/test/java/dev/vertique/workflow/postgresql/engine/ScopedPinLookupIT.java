@@ -25,6 +25,7 @@ import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.ScopedDefinitions;
 import dev.vertique.workflow.migration.WorkflowMigrationHandler;
 import dev.vertique.workflow.migration.WorkflowMigrationModule;
 import dev.vertique.workflow.ops.StartCommand;
@@ -37,6 +38,7 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -166,6 +168,8 @@ public class ScopedPinLookupIT {
 
         WorkflowRegistry workflowRegistry();
 
+        dev.vertique.workflow.engine.registry.PlanCache planCache();
+
         dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
 
         dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle();
@@ -184,12 +188,28 @@ public class ScopedPinLookupIT {
 
     private static Engine newEngine() {
         ApprovalHost host = DaggerScopedPinLookupIT_ApprovalHost.factory().create(pool, Clock.systemUTC());
+        // The plan cache binds itself as the plan source of the registry when it is built; build it first, so that the
+        // scoped versions bound next stay the source
+        host.planCache();
+        ScopedApprovalFixture.publishAcme(ScopedDefinitions.of((DefaultWorkflowRegistry) host.workflowRegistry()));
+        try {
+            for (DefinitionKey key : List.of(
+                    new DefinitionKey(ACME, APPROVAL_ID, 1),
+                    new DefinitionKey(ACME, FORK_ID, 1),
+                    new DefinitionKey(ACME, ScopedApprovalFixture.MIGRATION_ID, 1),
+                    new DefinitionKey(ACME, ScopedApprovalFixture.MIGRATION_ID, 2))) {
+                recordAcmeRow(host, key);
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("The stored versions of acme were not recorded", e);
+        }
         DefaultVersionSeed.recordAndActivate(
                 host.pgWorkflowDefinitionRegistryStore(),
                 host.definitionLifecycle(),
                 host.workflowRegistry(),
                 APPROVAL_ID,
-                FORK_ID);
+                FORK_ID,
+                ScopedApprovalFixture.MIGRATION_ID);
         try {
             if (liveExecutor != null) {
                 await(liveExecutor.undeploy());
@@ -199,6 +219,26 @@ public class ScopedPinLookupIT {
             throw new IllegalStateException("The executor of the engine generation did not deploy", e);
         }
         return new Engine(host);
+    }
+
+    /** Records the available document row that admits a pin on the acme version whose plan the node was given. */
+    private static void recordAcmeRow(ApprovalHost host, DefinitionKey key) throws Exception {
+        var plan = await(host.workflowRegistry().load(key));
+        await(pool.preparedQuery("""
+                        INSERT INTO workflow_definitions
+                            (scope_key, definition_id, definition_version, kind, contract_name, state_type_name,
+                             plan_hash, status, document, document_format, document_digest, source_type, loaded_at)
+                        VALUES ($1, $2, $3, 'DOCUMENT', $4, $5, $6, 'AVAILABLE', '{}', 'YAML',
+                                encode(sha256(convert_to('{}', 'UTF8')), 'hex'), 'test', now())
+                        ON CONFLICT DO NOTHING
+                        """)
+                .execute(Tuple.of(
+                        key.scopeKey(),
+                        key.definitionId(),
+                        key.definitionVersion(),
+                        plan.contractName(),
+                        plan.stateType().getName(),
+                        plan.plan().planHash())));
     }
 
     @BeforeAll
@@ -407,10 +447,8 @@ public class ScopedPinLookupIT {
         assertThat(await(TimerCommandRows.status(pool, timerId))).isEqualTo("FIRED");
     }
 
-    private static String planHash(Engine engine, String scopeKey, String definitionId, long version) {
-        return engine.host()
-                .workflowRegistry()
-                .resolve(new DefinitionKey(scopeKey, definitionId, version))
+    private static String planHash(Engine engine, String scopeKey, String definitionId, long version) throws Exception {
+        return await(engine.host().workflowRegistry().load(new DefinitionKey(scopeKey, definitionId, version)))
                 .plan()
                 .planHash();
     }

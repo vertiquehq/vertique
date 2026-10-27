@@ -244,11 +244,6 @@ public class WorkflowComposeStartupContractIT {
         }
 
         @Override
-        public void register(String scopeKey, dev.vertique.workflow.dsl.WorkflowDefinition<?, ?> def) {
-            throw new UnsupportedOperationException("not used in startup-contract test");
-        }
-
-        @Override
         public RuntimeWorkflow resolve(DefinitionKey key) {
             throw new UnsupportedOperationException("not used in startup-contract test");
         }
@@ -267,17 +262,12 @@ public class WorkflowComposeStartupContractIT {
         }
 
         @Override
-        public List<DefinitionKey> keysFor(String definitionId) {
-            return List.of();
-        }
-
-        @Override
         public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
             return Optional.empty();
         }
 
         @Override
-        public Collection<RuntimeWorkflow> allRegistered() {
+        public Collection<RuntimeWorkflow> codeDefinitions() {
             return List.of();
         }
     }

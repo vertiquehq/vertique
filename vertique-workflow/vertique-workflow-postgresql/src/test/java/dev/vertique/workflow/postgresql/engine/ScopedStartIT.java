@@ -216,7 +216,7 @@ public class ScopedStartIT {
     void explicitVersionResolvesOwnScopeThenDefault() throws Exception {
         // Given: version 1 in the default scope and, with another step graph, in acme
         Harness harness = ScopedStartFixture.open(pool, new Purchase(ID, 1L, "done-default"));
-        harness.registry().register(ACME, new Purchase(ID, 1L, "done-acme"));
+        harness.scoped().publish(ACME, new Purchase(ID, 1L, "done-acme"));
         String defaultHash = planHash(harness, DEFAULT);
         String acmeHash = planHash(harness, ACME);
         assertThat(acmeHash).isNotEqualTo(defaultHash);
@@ -288,7 +288,8 @@ public class ScopedStartIT {
             await(app.definitionService().publish(activeVersion));
             await(app.definitionService()
                     .load(ACME, ManagedDefinitionDatabase.jsonFixture(), DocumentFormat.JSON, metadata));
-            String contractName = app.workflowRegistry().resolve(activeVersion).contractName();
+            String contractName =
+                    await(app.workflowRegistry().load(activeVersion)).contractName();
             long instancesBefore = instanceRows(managedPool);
 
             // When: acme starts version 2, and acme starts version 2 of acme
@@ -319,7 +320,7 @@ public class ScopedStartIT {
     void versionInForeignScopeIsRefused() throws Exception {
         // Given: version 1 in the default scope and, with another step graph, in globex
         Harness harness = ScopedStartFixture.open(pool, new Purchase(ID, 1L, "done-default"));
-        harness.registry().register(GLOBEX, new Purchase(ID, 1L, "done-globex"));
+        harness.scoped().publish(GLOBEX, new Purchase(ID, 1L, "done-globex"));
         PurchaseContract acmeNamingGlobex = harness.factory()
                 .client(PurchaseContract.class, ID)
                 .scope(ACME)

@@ -113,12 +113,6 @@ final class PlanStubs {
         public String planHash(WorkflowDefinition<?, ?> definition) {
             return PLAN_HASH;
         }
-
-        @Override
-        public void onRestored(WorkflowDefinitionRecord record, WorkflowDefinition<?, ?> definition) {}
-
-        @Override
-        public void onMetadata(WorkflowDefinitionRecord record) {}
     }
 
     /** Serves stored document rows, counts the reads it answers and fails the next record read when told to. */

@@ -868,11 +868,10 @@ class WorkflowMigrationRegistryTest {
         @DisplayName("handlers are keyed by scopes and ordered only within one scope")
         void handlersAreKeyedByScopesAndOrderedOnlyWithinOneScope() {
             // Given: handlers (default, m-x, 1) -> (default, 2) and (default, m-x, 2) -> (acme, 1), and a
-            // third (acme, m-x, 2) -> (acme, 1); the definitions of every key registered
+            // third (acme, m-x, 2) -> (acme, 1); the default scope's definitions registered
             DefaultWorkflowRegistry wfReg = new DefaultWorkflowRegistry();
             wfReg.register(definition(1L));
             wfReg.register(definition(2L));
-            wfReg.register("acme", definition(1L));
             WorkflowMigrationHandler<StateV2, StateV2> withinDefault = handler("default", 1L, "default", 2L);
             WorkflowMigrationHandler<StateV2, StateV2> intoAcme = handler("default", 2L, "acme", 1L);
             WorkflowMigrationHandler<StateV2, StateV2> downgradeInAcme = handler("acme", 2L, "acme", 1L);

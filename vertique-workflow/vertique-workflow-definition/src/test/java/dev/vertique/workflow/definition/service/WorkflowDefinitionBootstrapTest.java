@@ -56,13 +56,13 @@ import org.mockito.Mockito;
 /**
  * Verifies {@link WorkflowDefinitionBootstrap}:
  * <ul>
- *   <li>One source with one good resource registers into the registry.</li>
- *   <li>One source with two good resources (different ids) both register.</li>
+ *   <li>One source with one good resource is compiled and retained as an origin; nothing is registered.</li>
+ *   <li>One source with two good resources (different ids) retains both.</li>
  *   <li>One source with duplicate {@code (id, version)}: bootstrap throws a structured
- *       {@link WorkflowDefinitionLoadException}; registry untouched.</li>
+ *       {@link WorkflowDefinitionLoadException}; no origin is retained.</li>
  *   <li>One source with one bad + one good resource: bootstrap collects ALL violations into one
- *       exception; registry untouched (no partial registration).</li>
- *   <li>Two sources providing the same {@code (id, version)}: hard error, registry untouched.</li>
+ *       exception; no origin is retained.</li>
+ *   <li>Two sources providing the same {@code (id, version)}: hard error, no origin is retained.</li>
  * </ul>
  */
 class WorkflowDefinitionBootstrapTest {
@@ -99,7 +99,6 @@ class WorkflowDefinitionBootstrapTest {
     private WorkflowDefinitionPipeline pipeline;
     private WorkflowDefinitionDocumentValidator validator;
     private WorkflowDefinitionCompiler compiler;
-    private WorkflowDefinitionStore store;
 
     @BeforeEach
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -138,7 +137,6 @@ class WorkflowDefinitionBootstrapTest {
         WorkflowDefinitionParser parser = ServiceTestHelpers.realParser();
         validator = new WorkflowDefinitionDocumentValidator(lookup);
         pipeline = new WorkflowDefinitionPipeline(parser, validator, compiler);
-        store = new WorkflowDefinitionStore();
     }
 
     // --- Helpers ---
@@ -168,7 +166,7 @@ class WorkflowDefinitionBootstrapTest {
 
     private WorkflowDefinitionBootstrap bootstrap(Set<WorkflowDefinitionSource> sources) {
         return new WorkflowDefinitionBootstrap(
-                pipeline, store, sources, new InMemoryWorkflowDefinitionRegistryStore(), Optional.empty());
+                pipeline, sources, new InMemoryWorkflowDefinitionRegistryStore(), Optional.empty());
     }
 
     private DefaultWorkflowRegistry freshRegistry() {
@@ -182,26 +180,29 @@ class WorkflowDefinitionBootstrapTest {
     class OneGoodResource {
 
         @Test
-        @DisplayName("bootstrap registers the definition and it resolves")
+        @DisplayName("bootstrap retains the compiled document as an origin and registers nothing")
         void bootstrapsOneDefinition() {
             WorkflowDefinitionBootstrap bs =
                     bootstrap(Set.of(() -> List.of(resourceFor("boot-alpha", 1, BootAlphaV1Contract.class))));
             DefaultWorkflowRegistry reg = freshRegistry();
             bs.contribute(reg);
 
-            assertThat(reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L))
-                            .plan()
-                            .definitionId())
-                    .isEqualTo("boot-alpha");
-            assertThat(store.list()).hasSize(1);
-            assertThat(store.list().iterator().next().status()).isEqualTo(ActivationStatus.AVAILABLE);
+            assertThat(bs.documentOrigins()).singleElement().satisfies(origin -> {
+                assertThat(origin.key()).isEqualTo(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L));
+                assertThat(origin.contractName()).isEqualTo(BootAlphaV1Contract.class.getName());
+                assertThat(origin.activateOnDeploy()).isTrue();
+                assertThat(origin.nameBinding()).containsKey(TaskState.class.getName());
+            });
+            assertThat(reg.codeDefinitions()).isEmpty();
+            assertThat(reg.find(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L)))
+                    .isEmpty();
         }
     }
 
     // --- Packaged documents and the default scope ---
 
     @Test
-    @DisplayName("packaged documents load into the default scope and a scope field is rejected")
+    @DisplayName("packaged documents are retained for the default scope and a scope field is rejected")
     void packagedDocumentsLoadIntoTheDefaultScopeAndRejectAScopeField() {
         // Given: the production parser, one valid packaged document and a second that also names a scope
         WorkflowDefinitionPipeline strict =
@@ -216,33 +217,23 @@ class WorkflowDefinitionBootstrapTest {
                 new SourceMetadata("test", "test://boot-alpha/scoped", null, null, null, Instant.now()));
 
         // When: the bootstrap contributes the valid document
-        WorkflowDefinitionStore acceptingStore = new WorkflowDefinitionStore();
         DefaultWorkflowRegistry accepting = freshRegistry();
-        new WorkflowDefinitionBootstrap(
-                        strict,
-                        acceptingStore,
-                        Set.of(() -> List.of(valid)),
-                        new InMemoryWorkflowDefinitionRegistryStore(),
-                        Optional.empty())
-                .contribute(accepting);
+        WorkflowDefinitionBootstrap acceptingBootstrap = new WorkflowDefinitionBootstrap(
+                strict, Set.of(() -> List.of(valid)), new InMemoryWorkflowDefinitionRegistryStore(), Optional.empty());
+        acceptingBootstrap.contribute(accepting);
 
-        // Then: it is registered under the default scope and under no other
-        assertThat(accepting.find(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L)))
-                .isPresent();
-        assertThat(accepting.find(new DefinitionKey("acme", "boot-alpha", 1L))).isEmpty();
-        assertThat(accepting.allRegistered()).hasSize(1);
+        // Then: its origin names the default scope and no other, and the registry holds nothing
+        assertThat(acceptingBootstrap.documentOrigins())
+                .extracting(origin -> origin.key().scopeKey())
+                .containsExactly(WorkflowScopes.DEFAULT);
+        assertThat(accepting.codeDefinitions()).isEmpty();
 
         // When: the bootstrap contributes the document that carries a scope field
-        WorkflowDefinitionStore rejectingStore = new WorkflowDefinitionStore();
         DefaultWorkflowRegistry rejecting = freshRegistry();
         WorkflowDefinitionBootstrap withScope = new WorkflowDefinitionBootstrap(
-                strict,
-                rejectingStore,
-                Set.of(() -> List.of(scoped)),
-                new InMemoryWorkflowDefinitionRegistryStore(),
-                Optional.empty());
+                strict, Set.of(() -> List.of(scoped)), new InMemoryWorkflowDefinitionRegistryStore(), Optional.empty());
 
-        // Then: it fails as a parse failure attributed to the resource, and nothing is registered or stored
+        // Then: it fails as a parse failure attributed to the resource, and no origin is retained
         assertThatThrownBy(() -> withScope.contribute(rejecting))
                 .isInstanceOf(WorkflowDefinitionLoadException.class)
                 .satisfies(ex -> {
@@ -251,9 +242,8 @@ class WorkflowDefinitionBootstrapTest {
                     assertThat(violations).extracting(Violation::code).containsExactly("DOCUMENT_PARSE_FAILURE");
                     assertThat(violations.get(0).message()).contains("test://boot-alpha/scoped");
                 });
-        assertThat(rejecting.allRegistered()).isEmpty();
+        assertThat(withScope.documentOrigins()).isEmpty();
         assertThat(rejecting.find(new DefinitionKey("acme", "boot-alpha", 1L))).isEmpty();
-        assertThat(rejectingStore.list()).isEmpty();
     }
 
     // --- Two good resources from one source ---
@@ -263,7 +253,7 @@ class WorkflowDefinitionBootstrapTest {
     class TwoGoodResources {
 
         @Test
-        @DisplayName("both definitions are registered")
+        @DisplayName("both definitions are retained")
         void bootstrapsTwoDefinitions() {
             WorkflowDefinitionBootstrap bs = bootstrap(Set.of(() -> List.of(
                     resourceFor("boot-alpha", 1, BootAlphaV1Contract.class),
@@ -271,15 +261,10 @@ class WorkflowDefinitionBootstrapTest {
             DefaultWorkflowRegistry reg = freshRegistry();
             bs.contribute(reg);
 
-            assertThat(reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L))
-                            .plan()
-                            .definitionId())
-                    .isEqualTo("boot-alpha");
-            assertThat(reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-beta", 1L))
-                            .plan()
-                            .definitionId())
-                    .isEqualTo("boot-beta");
-            assertThat(store.list()).hasSize(2);
+            assertThat(bs.documentOrigins())
+                    .extracting(origin -> origin.key().definitionId())
+                    .containsExactlyInAnyOrder("boot-alpha", "boot-beta");
+            assertThat(reg.codeDefinitions()).isEmpty();
         }
     }
 
@@ -290,7 +275,7 @@ class WorkflowDefinitionBootstrapTest {
     class DuplicateWithinSource {
 
         @Test
-        @DisplayName("bootstrap throws structured WorkflowDefinitionLoadException; registry is untouched")
+        @DisplayName("bootstrap throws structured WorkflowDefinitionLoadException; no origin is retained")
         void duplicateWithinSourceThrows() {
             // Same contract for the duplicate (store collision happens at storeCandidate)
             // Use different contract but same (id, version) → store collision
@@ -315,15 +300,15 @@ class WorkflowDefinitionBootstrapTest {
                                 .anyMatch(v -> v.code().equals("DUPLICATE_DEFINITION"));
                     });
 
-            // Registry must be untouched
-            assertThat(reg.allRegistered()).isEmpty();
+            // Nothing must be retained
+            assertThat(bs.documentOrigins()).isEmpty();
         }
     }
 
     // --- Documents sharing one contract ---
 
     @Test
-    @DisplayName("both register, and only an identical (id, version) is a duplicate")
+    @DisplayName("both are retained, and only an identical (id, version) is a duplicate")
     void packagedDocumentsSharingOneContractBothRegister() {
         // Given: two packaged documents naming one contract, and a third repeating the first's id and version
         DefinitionResource first = resourceFor("parity-doc", 1, ParityContract.class);
@@ -331,27 +316,25 @@ class WorkflowDefinitionBootstrapTest {
         DefinitionResource repeated = resourceFor("parity-doc", 1, ParityContract.class);
 
         // When: the bootstrap contributes the first two
-        DefaultWorkflowRegistry registry = freshRegistry();
-        bootstrap(Set.of(() -> List.of(first, variant))).contribute(registry);
+        WorkflowDefinitionBootstrap shared = bootstrap(Set.of(() -> List.of(first, variant)));
+        shared.contribute(freshRegistry());
 
-        // Then: both are registered and name the same contract
-        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "parity-doc", 1L))
-                        .contractName())
-                .isEqualTo(ParityContract.class.getName());
-        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "parity-variant", 1L))
-                        .contractName())
-                .isEqualTo(ParityContract.class.getName());
+        // Then: both are retained and name the same contract
+        assertThat(shared.documentOrigins())
+                .extracting(origin -> origin.key().definitionId(), origin -> origin.contractName())
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("parity-doc", ParityContract.class.getName()),
+                        org.assertj.core.groups.Tuple.tuple("parity-variant", ParityContract.class.getName()));
 
         // When: the bootstrap contributes all three, the repeat coming from another source
         DefaultWorkflowRegistry other = freshRegistry();
         WorkflowDefinitionBootstrap withRepeat = new WorkflowDefinitionBootstrap(
                 pipeline,
-                new WorkflowDefinitionStore(),
                 Set.of(() -> List.of(first, variant), () -> List.of(repeated)),
                 new InMemoryWorkflowDefinitionRegistryStore(),
                 Optional.empty());
 
-        // Then: exactly one violation is reported, the duplicate (id, version), and nothing is registered
+        // Then: exactly one violation is reported, the duplicate (id, version), and nothing is retained
         assertThatThrownBy(() -> withRepeat.contribute(other))
                 .isInstanceOf(WorkflowDefinitionLoadException.class)
                 .satisfies(ex -> {
@@ -361,7 +344,7 @@ class WorkflowDefinitionBootstrapTest {
                     assertThat(violations.get(0).message()).contains("'parity-doc' v1");
                     assertThat(violations).extracting(Violation::code).doesNotContain("DUPLICATE_CONTRACT");
                 });
-        assertThat(other.allRegistered()).isEmpty();
+        assertThat(withRepeat.documentOrigins()).isEmpty();
     }
 
     // --- One bad (validation) + one good resource: all-or-nothing ---
@@ -371,7 +354,7 @@ class WorkflowDefinitionBootstrapTest {
     class OneBadOneGoodResource {
 
         @Test
-        @DisplayName("both resources fail atomically; registry stays empty; store stays empty")
+        @DisplayName("both resources fail atomically; nothing is retained")
         void oneBadResourceCausesFullRollback() {
             byte[] badYaml = """
                     definitionId: ""
@@ -397,25 +380,22 @@ class WorkflowDefinitionBootstrapTest {
 
             assertThatThrownBy(() -> bs.contribute(reg)).isInstanceOf(WorkflowDefinitionLoadException.class);
 
-            // Registry must be untouched — the good resource was not registered
-            assertThat(reg.allRegistered()).isEmpty();
+            // Nothing is retained — the good resource did not survive the failure of the other
+            assertThat(bs.documentOrigins()).isEmpty();
             assertThatThrownBy(() -> reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-beta", 1L)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-
-            // Store must also be untouched — no candidates persisted from the partial run
-            assertThat(store.list()).isEmpty();
         }
     }
 
     // --- One bad (parse failure) + one good resource: store stays clean ---
 
     @Nested
-    @DisplayName("parse failure followed by good resource: store stays clean")
+    @DisplayName("parse failure followed by good resource: nothing is retained")
     class ParseFailureThenGoodResource {
 
         @Test
-        @DisplayName("a genuine YAML parse error leaves store and registry both empty")
-        void parseFailureLeavesStoreAndRegistryEmpty() {
+        @DisplayName("a genuine YAML parse error retains no origin and registers nothing")
+        void parseFailureRetainsNothing() {
             // Genuinely unparseable YAML for the workflow schema
             byte[] unparseableYaml = "{{{{ not valid yaml at all: [[".getBytes(StandardCharsets.UTF_8);
             SourceMetadata badMeta = new SourceMetadata("test", "test://bad-parse", null, null, null, Instant.now());
@@ -427,10 +407,9 @@ class WorkflowDefinitionBootstrapTest {
 
             assertThatThrownBy(() -> bs.contribute(reg)).isInstanceOf(WorkflowDefinitionLoadException.class);
 
-            // Store must be completely empty — the good resource must NOT have been stored
-            assertThat(store.list()).isEmpty();
-            // Registry must be untouched
-            assertThat(reg.allRegistered()).isEmpty();
+            // The good resource must NOT have been retained
+            assertThat(bs.documentOrigins()).isEmpty();
+            assertThat(reg.codeDefinitions()).isEmpty();
         }
     }
 
@@ -441,7 +420,7 @@ class WorkflowDefinitionBootstrapTest {
     class TwoSourcesWithDuplicate {
 
         @Test
-        @DisplayName("bootstrap throws structured exception; registry untouched")
+        @DisplayName("bootstrap throws structured exception; no origin is retained")
         void twoSourcesDuplicateFails() {
             // Source A contributes boot-alpha v1
             WorkflowDefinitionSource sourceA = () -> List.of(resourceFor("boot-alpha", 1, BootAlphaV1Contract.class));
@@ -466,7 +445,7 @@ class WorkflowDefinitionBootstrapTest {
                                 .anyMatch(v -> v.code().equals("DUPLICATE_DEFINITION"));
                     });
 
-            assertThat(reg.allRegistered()).isEmpty();
+            assertThat(bs.documentOrigins()).isEmpty();
         }
     }
 
@@ -481,19 +460,19 @@ class WorkflowDefinitionBootstrapTest {
         private final WorkflowDefinitionRegistryStore durable = new InMemoryWorkflowDefinitionRegistryStore();
 
         @Test
-        @DisplayName("300-code-point revision: failure names the second URI, nothing registered")
+        @DisplayName("300-code-point revision: failure names the second URI, nothing retained")
         void overLongRevisionWithStore() {
             assertAttributedAtomicFailure(durable, secondWithRevision("r".repeat(300)));
         }
 
         @Test
-        @DisplayName("70-code-point sourceType: failure names the second URI, nothing registered")
+        @DisplayName("70-code-point sourceType: failure names the second URI, nothing retained")
         void overLongSourceTypeWithStore() {
             assertAttributedAtomicFailure(durable, secondWithSourceType("s".repeat(70)));
         }
 
         @Test
-        @DisplayName("256-code-point definition id: failure names the second URI, nothing registered")
+        @DisplayName("256-code-point definition id: failure names the second URI, nothing retained")
         void overLongDefinitionIdWithStore() {
             assertAttributedAtomicFailure(durable, secondWithOverLongId());
         }
@@ -519,7 +498,7 @@ class WorkflowDefinitionBootstrapTest {
             // Given a valid first resource followed by a resource with an over-bound value
             DefinitionResource valid = resourceFor("boot-alpha", 1, BootAlphaV1Contract.class);
             WorkflowDefinitionBootstrap bs = new WorkflowDefinitionBootstrap(
-                    pipeline, store, Set.of(() -> List.of(valid, invalidSecond)), durable, Optional.empty());
+                    pipeline, Set.of(() -> List.of(valid, invalidSecond)), durable, Optional.empty());
             DefaultWorkflowRegistry reg = freshRegistry();
 
             // When the bootstrap contributes
@@ -530,8 +509,8 @@ class WorkflowDefinitionBootstrapTest {
                                     .violations()
                                     .toList())
                             .anyMatch(v -> v.message().contains(SECOND_URI)));
-            // ... and nothing from the valid first resource was registered
-            assertThat(reg.allRegistered()).isEmpty();
+            // ... and nothing from the valid first resource was retained
+            assertThat(bs.documentOrigins()).isEmpty();
         }
     }
 
@@ -542,13 +521,14 @@ class WorkflowDefinitionBootstrapTest {
     class EmptySourceSet {
 
         @Test
-        @DisplayName("bootstrap with empty source set does nothing; registry stays empty")
+        @DisplayName("bootstrap with empty source set does nothing; no origin is retained")
         void emptySourcesDoNothing() {
             WorkflowDefinitionBootstrap bs = bootstrap(Set.of());
             DefaultWorkflowRegistry reg = freshRegistry();
             bs.contribute(reg);
 
-            assertThat(reg.allRegistered()).isEmpty();
+            assertThat(bs.documentOrigins()).isEmpty();
+            assertThat(reg.codeDefinitions()).isEmpty();
         }
     }
 }

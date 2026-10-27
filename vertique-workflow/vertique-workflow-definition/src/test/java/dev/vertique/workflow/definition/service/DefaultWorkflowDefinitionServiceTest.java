@@ -101,7 +101,6 @@ class DefaultWorkflowDefinitionServiceTest {
     // --- Infrastructure ---
 
     private DefaultWorkflowRegistry registry;
-    private WorkflowDefinitionStore store;
     private DefaultWorkflowDefinitionService service;
 
     @BeforeEach
@@ -142,11 +141,9 @@ class DefaultWorkflowDefinitionServiceTest {
         WorkflowDefinitionDocumentValidator validator = new WorkflowDefinitionDocumentValidator(lookup);
         WorkflowDefinitionPipeline pipeline = new WorkflowDefinitionPipeline(parser, validator, compiler);
 
-        store = new WorkflowDefinitionStore();
         registry = new DefaultWorkflowRegistry();
         service = new DefaultWorkflowDefinitionService(
                 pipeline,
-                store,
                 () -> registry,
                 new InMemoryWorkflowDefinitionRegistryStore(),
                 new NoOpWorkflowDefinitionLifecycle(),
@@ -286,8 +283,7 @@ class DefaultWorkflowDefinitionServiceTest {
 
         // And: nothing was stored or registered
         assertThat(ServiceTestHelpers.await(service.list(everything))).isEmpty();
-        assertThat(store.records(everything)).isEmpty();
-        assertThat(registry.allRegistered()).isEmpty();
+        assertThat(registry.codeDefinitions()).isEmpty();
 
         // And: the same document loads when the scope is valid
         CompiledDefinitionRef loaded =
@@ -336,7 +332,6 @@ class DefaultWorkflowDefinitionServiceTest {
                 .thenReturn(io.vertx.core.Future.succeededFuture());
         DefaultWorkflowDefinitionService durableService = new DefaultWorkflowDefinitionService(
                 buildPipeline(),
-                new WorkflowDefinitionStore(),
                 () -> new DefaultWorkflowRegistry(),
                 durable,
                 new NoOpWorkflowDefinitionLifecycle(),

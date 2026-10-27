@@ -29,8 +29,6 @@ import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import java.time.Clock;
 import java.util.Set;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Public assembly seam for the portable workflow engine — the non-Dagger parallel to the wiring
@@ -54,8 +52,6 @@ import org.slf4j.LoggerFactory;
  * cannot drift.
  */
 public final class WorkflowEngineFactory {
-
-    private static final Logger LOG = LoggerFactory.getLogger(WorkflowEngineFactory.class);
 
     /**
      * The default set of {@link IntentKind} values the engine treats as optional — the single
@@ -83,9 +79,10 @@ public final class WorkflowEngineFactory {
      * both drive shapes, matching production Dagger wiring. Without a propagator no scope is built and the drives
      * run without initializers.
      *
-     * <p>The engine this method assembles runs no startup step, so the activation records that
-     * {@link WorkflowEngineParts#definitionStore()} holds when this method is called seed the view that a start
-     * without a version reads. Records written to the store later reach the engine only through its lifecycle.
+     * <p>The engine this method assembles runs no startup step: it reads the rows and the activation records of
+     * {@link WorkflowEngineParts#definitionStore()} when a start selects its version, so what the store holds at that
+     * time decides it. A store that cannot read on the caller's transaction, see {@link TransactionalDefinitionReads},
+     * fails the start of an instance.
      *
      * @param parts the engine's externally supplied dependencies, including the durable definition store
      * @return the assembled engine as a {@link WorkflowEngineHandle}
@@ -157,15 +154,6 @@ public final class WorkflowEngineFactory {
                         parts.schemaProducer());
         BranchCompensationOrchestrator branchCompensation =
                 new BranchCompensationOrchestrator(history, recorderRouter, clock);
-        // A factory-built engine runs no startup step, so the view of the activation records is seeded from the
-        // records the store holds now; a store that answers later seeds it when it does.
-        DefinitionActivations activations = new DefinitionActivations(parts.definitionStore());
-        parts.definitionStore()
-                .listActivations(null)
-                .onSuccess(records -> records.forEach(activations::put))
-                .onFailure(failure -> LOG.warn(
-                        "Could not seed the definition activation view; it stays empty until the store answers ({})",
-                        failure.getClass().getSimpleName()));
         WorkflowExecutorControl[] executorHolder = new WorkflowExecutorControl[1];
         // The plan cache of a factory-built engine has the default size and no observers, so it emits no cache events.
         PlanCache planCache = PlanCache.bound(
@@ -200,7 +188,6 @@ public final class WorkflowEngineFactory {
                 inboundExecScope,
                 payloadConstraintCheck,
                 parts.typeNames(),
-                activations,
                 parts.stateCompatibility(),
                 executionProbe,
                 parts.commands(),
@@ -223,8 +210,8 @@ public final class WorkflowEngineFactory {
     }
 
     /**
-     * The store's reads of definition rows on a caller's transaction, when it offers them; {@code null} leaves a start
-     * to select from the registry. The SQL-client handle is the only handle type the engine records on.
+     * The store's reads of definition rows on a caller's transaction, when it offers them; {@code null} fails a start,
+     * which selects its version from the rows. The SQL-client handle is the only handle type the engine records on.
      */
     @SuppressWarnings("unchecked")
     private static @Nullable TransactionalDefinitionReads<SqlClient> transactionalReads(

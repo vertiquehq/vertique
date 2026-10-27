@@ -139,11 +139,11 @@ public class DefinitionOwnershipIT {
                     .containsExactly(tuple("tenant-a", "AVAILABLE", null), tuple("tenant-b", "AVAILABLE", null));
             assertThat(fixture.stored(raceId)).extracting(Stored::planHash).containsOnly(planHash);
 
-            // And each node holds the executable registration of the scope it published
-            assertThat(nodeA.registry().resolve(raceA).plan().planHash()).isEqualTo(planHash);
-            assertThat(nodeB.registry().resolve(raceB).plan().planHash()).isEqualTo(planHash);
-            assertThat(nodeA.registry().registeredDefinition(raceB)).isEmpty();
-            assertThat(nodeB.registry().registeredDefinition(raceA)).isEmpty();
+            // And each node loads the plan of the row of the scope it published
+            assertThat(DefinitionScenario.planOf(nodeA.registry(), raceA).plan().planHash())
+                    .isEqualTo(planHash);
+            assertThat(DefinitionScenario.planOf(nodeB.registry(), raceB).plan().planHash())
+                    .isEqualTo(planHash);
 
             // Given a second id where tenant-a's claim is committed and its completion is held back
             TenantRowSeed.seed(
@@ -171,7 +171,7 @@ public class DefinitionOwnershipIT {
             await(nodeB.service().publish(heldB));
 
             // Then tenant-b is available at once and tenant-a's claim is untouched
-            assertThat(nodeB.registry().resolve(heldB)).isNotNull();
+            assertThat(DefinitionScenario.planOf(nodeB.registry(), heldB)).isNotNull();
             assertThat(fixture.stored(heldId))
                     .extracting(Stored::scopeKey, Stored::status)
                     .containsExactly(tuple("tenant-a", "PUBLISHING"), tuple("tenant-b", "AVAILABLE"));
@@ -182,7 +182,7 @@ public class DefinitionOwnershipIT {
             assertThat(fixture.stored(heldId))
                     .extracting(Stored::scopeKey, Stored::status, Stored::token)
                     .containsExactly(tuple("tenant-a", "AVAILABLE", null), tuple("tenant-b", "AVAILABLE", null));
-            assertThat(nodeA.registry().resolve(heldA)).isNotNull();
+            assertThat(DefinitionScenario.planOf(nodeA.registry(), heldA)).isNotNull();
         }
     }
 
@@ -266,8 +266,10 @@ public class DefinitionOwnershipIT {
                         .containsExactly(tuple(3L, loaded3.planHash()), tuple(4L, loaded4.planHash()));
 
                 // And each version stays pinnable on the node that published it
-                RuntimeWorkflow pinned3 = nodeA.registry().resolve(new DefinitionKey("tenant-a", id, 3));
-                RuntimeWorkflow pinned4 = nodeB.registry().resolve(new DefinitionKey("tenant-a", id, 4));
+                RuntimeWorkflow pinned3 =
+                        DefinitionScenario.planOf(nodeA.registry(), new DefinitionKey("tenant-a", id, 3));
+                RuntimeWorkflow pinned4 =
+                        DefinitionScenario.planOf(nodeB.registry(), new DefinitionKey("tenant-a", id, 4));
                 assertThat(pinned3.plan().definitionVersion()).isEqualTo(3);
                 assertThat(pinned3.plan().planHash()).isEqualTo(loaded3.planHash());
                 assertThat(pinned4.plan().definitionVersion()).isEqualTo(4);
@@ -312,14 +314,13 @@ public class DefinitionOwnershipIT {
                     .orElseThrow();
             assertThat(claimed.status()).isEqualTo("PUBLISHING");
             assertThat(claimed.token()).isNotBlank();
-            assertThat(nodeA.registry().resolve(tenantA)).isNotNull();
+            assertThat(claimed.planHash()).isNotBlank();
 
             // And that claim is older than twice the staleness bound when tenant-b then publishes the same id and
             // version
             fixture.ageClaim(nodeA.app().workflowDefinitionsConfig(), tenantA, claimed.token());
             await(nodeB.service().publish(tenantB));
-            RuntimeWorkflow replacement = nodeB.registry().resolve(tenantB);
-            var replacementDefinition = nodeB.registry().registeredDefinition(tenantB);
+            RuntimeWorkflow replacement = DefinitionScenario.planOf(nodeB.registry(), tenantB);
             Stored replacementRow = fixture.stored(id).stream()
                     .filter(row -> "tenant-b".equals(row.scopeKey()))
                     .findFirst()
@@ -343,18 +344,12 @@ public class DefinitionOwnershipIT {
                         assertThat(row.planHash()).isEqualTo(replacementRow.planHash());
                     });
 
-            // And tenant-b's runtime identity, pinned resolution and registered definition are unchanged
-            assertThat(nodeB.registry().resolve(tenantB)).isSameAs(replacement);
-            assertThat(nodeB.registry().registeredDefinition(tenantB)).isEqualTo(replacementDefinition);
-            assertThat(nodeB.registry().allRegistered())
-                    .filteredOn(runtime -> runtime.plan().definitionId().equals(id))
-                    .singleElement()
-                    .isSameAs(replacement);
-
-            // And each node holds only the registration of the scope it published
-            assertThat(nodeA.registry().resolve(tenantA)).isNotNull();
-            assertThat(nodeA.registry().registeredDefinition(tenantB)).isEmpty();
-            assertThat(nodeB.registry().registeredDefinition(tenantA)).isEmpty();
+            // And tenant-b's plan is the one the node already holds, and tenant-a's loads from its own row
+            assertThat(DefinitionScenario.planOf(nodeB.registry(), tenantB)).isSameAs(replacement);
+            assertThat(DefinitionScenario.planOf(nodeA.registry(), tenantA)
+                            .plan()
+                            .planHash())
+                    .isEqualTo(claimed.planHash());
         }
     }
 

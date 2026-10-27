@@ -14,6 +14,8 @@ import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
+import dev.vertique.workflow.registry.RuntimeWorkflow;
+import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
@@ -588,6 +590,14 @@ final class DefinitionScenario implements AutoCloseable {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
+    }
+
+    /**
+     * The plan of a version, loaded through the registry: a code definition at once, a stored document from its row
+     * into the plan cache. It fails as {@code load} does, with the underlying exception.
+     */
+    static RuntimeWorkflow planOf(WorkflowRegistry registry, DefinitionKey key) {
+        return await(registry.load(key));
     }
 
     static <T> T await(Future<T> future) {

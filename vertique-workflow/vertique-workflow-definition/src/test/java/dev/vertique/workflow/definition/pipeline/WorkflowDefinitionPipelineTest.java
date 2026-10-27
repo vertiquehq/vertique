@@ -31,7 +31,6 @@ import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParseException;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParser;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionBootstrap;
-import dev.vertique.workflow.definition.service.WorkflowDefinitionStore;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.validator.Violation;
@@ -363,7 +362,6 @@ class WorkflowDefinitionPipelineTest {
                 new SourceMetadata("test", "test://parity/no-such-contract", null, null, null, Instant.now()));
         WorkflowDefinitionBootstrap bootstrap = new WorkflowDefinitionBootstrap(
                 indexed,
-                new WorkflowDefinitionStore(),
                 Set.of(() -> List.of(packaged)),
                 new InMemoryWorkflowDefinitionRegistryStore(),
                 Optional.empty(),

@@ -93,7 +93,7 @@ public class DefinitionDeprecationIT {
             Node node = fixture.node();
             AppComponent app = node.app();
 
-            // Given two versions loaded and activated through the service, so both are registered and cached
+            // Given two versions loaded and activated through the service, so both are available
             CompiledDefinitionRef loadedV1 = await(app.definitionService()
                     .load(WorkflowScopes.DEFAULT, documentV1, DocumentFormat.YAML, source("deprecation-v1")));
             await(app.definitionService().publish(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)));
@@ -109,20 +109,19 @@ public class DefinitionDeprecationIT {
             assertThat(otherBefore.status()).isEqualTo(otherStatusBefore.name());
             assertThat(targetBefore.planHash()).isEqualTo(loadedTarget.planHash());
             assertThat(targetBefore.document()).isNotBlank();
-            assertThat(app.workflowRegistry()
-                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion))
+            assertThat(DefinitionScenario.planOf(
+                                    app.workflowRegistry(),
+                                    new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion))
                             .plan()
                             .planHash())
                     .isEqualTo(loadedTarget.planHash());
-            assertThat(app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, otherVersion)))
+            assertThat(DefinitionScenario.planOf(
+                            app.workflowRegistry(), new DefinitionKey(WorkflowScopes.DEFAULT, id, otherVersion)))
                     .isNotNull();
-            assertThat(app.workflowDefinitionStore().currentStatus(id, targetVersion))
+            assertThat(ManagedDefinitionDatabase.currentStatus(app, id, targetVersion))
                     .isEqualTo(ActivationStatus.valueOf(targetStatusBefore.name()));
-            assertThat(app.workflowDefinitionStore().currentStatus(id, otherVersion))
+            assertThat(ManagedDefinitionDatabase.currentStatus(app, id, otherVersion))
                     .isEqualTo(ActivationStatus.valueOf(otherStatusBefore.name()));
-            assertThat(app.workflowRegistry()
-                            .isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion)))
-                    .isFalse();
 
             // When the target version is deprecated through the public service
             await(app.definitionService().deprecate(targetKey));
@@ -151,26 +150,16 @@ public class DefinitionDeprecationIT {
                     .containsExactlyInAnyOrder(
                             tuple(targetVersion, DefinitionStatus.DEPRECATED), tuple(otherVersion, otherStatusBefore));
 
-            // And the local cache itself reports the target as DEPRECATED and the other version unchanged
-            assertThat(app.workflowDefinitionStore().currentStatus(id, targetVersion))
+            // And the management status reports the target as DEPRECATED and the other version unchanged
+            assertThat(ManagedDefinitionDatabase.currentStatus(app, id, targetVersion))
                     .isEqualTo(ActivationStatus.DEPRECATED);
-            assertThat(app.workflowDefinitionStore().currentStatus(id, otherVersion))
+            assertThat(ManagedDefinitionDatabase.currentStatus(app, id, otherVersion))
                     .isEqualTo(ActivationStatus.valueOf(otherStatusBefore.name()));
-            assertThat(app.workflowDefinitionStore().list())
-                    .filteredOn(ref -> ref.definitionId().equals(id))
-                    .extracting(CompiledDefinitionRef::definitionVersion, CompiledDefinitionRef::status)
-                    .containsExactlyInAnyOrder(
-                            tuple(targetVersion, ActivationStatus.DEPRECATED),
-                            tuple(otherVersion, ActivationStatus.valueOf(otherStatusBefore.name())));
 
-            // And the registry marks only the target and still serves it pinned
-            assertThat(app.workflowRegistry()
-                            .isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion)))
-                    .isTrue();
-            assertThat(app.workflowRegistry().isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, otherVersion)))
-                    .isFalse();
-            assertThat(app.workflowRegistry()
-                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion))
+            // And the node still serves the deprecated target pinned
+            assertThat(DefinitionScenario.planOf(
+                                    app.workflowRegistry(),
+                                    new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion))
                             .plan()
                             .planHash())
                     .isEqualTo(loadedTarget.planHash());

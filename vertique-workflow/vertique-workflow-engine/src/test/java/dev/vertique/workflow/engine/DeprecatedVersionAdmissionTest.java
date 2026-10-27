@@ -43,6 +43,7 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
@@ -80,7 +81,7 @@ import org.mockito.ArgumentCaptor;
  * Verifies that the engine refuses to admit new work onto a deprecated definition version, while
  * instances that already run on that version keep resuming.
  *
- * <p>The registry reports version 2 as deprecated and version 1 as the current version. The
+ * <p>The definition rows report version 2 as deprecated and version 1 as the current version. The
  * scenario starts version 2 explicitly, migrates another instance onto it, signals an instance that
  * is pinned to it, and finally starts without naming a version.
  */
@@ -94,9 +95,9 @@ class DeprecatedVersionAdmissionTest {
     private static final String WAIT_STEP = "wait-signal";
     private static final String COMPLETE_STEP = "complete";
     private static final String SIGNAL_NAME = "approve";
-    private static final String PLAN_HASH_V1 = "plan-hash-v1";
-    private static final String PLAN_HASH_V2 = "plan-hash-v2";
-    private static final String PLAN_HASH_V3 = "plan-hash-v3";
+    private static final String PLAN_HASH_V1 = "1".repeat(64);
+    private static final String PLAN_HASH_V2 = "2".repeat(64);
+    private static final String PLAN_HASH_V3 = "3".repeat(64);
 
     /** Runs the given task on a duplicated Vert.x context. */
     private static void runOnDuplicated(Vertx vertx, Handler<Void> task) {
@@ -189,8 +190,8 @@ class DeprecatedVersionAdmissionTest {
             AtomicInteger migrationsToVersion3) {}
 
     /**
-     * Assembles an engine whose registry reports version 1 as current, version 2 as deprecated and
-     * version 3 as an ordinary registered version, with every collaborator write succeeding so only
+     * Assembles an engine whose definition rows hold version 1 as current, version 2 as deprecated and
+     * version 3 as an ordinary available version, with every collaborator write succeeding so only
      * the admission checks can stop a start or a migration.
      */
     private static Harness harness() {
@@ -208,21 +209,17 @@ class DeprecatedVersionAdmissionTest {
         RuntimeWorkflow version1 = runtimeWorkflow(1, PLAN_HASH_V1);
         RuntimeWorkflow version2 = runtimeWorkflow(2, PLAN_HASH_V2);
         RuntimeWorkflow version3 = runtimeWorkflow(3, PLAN_HASH_V3);
-        DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
-        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
-        when(registry.isDeployed(currentKey)).thenReturn(true);
         when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1)))
                 .thenReturn(version1);
         when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2)))
                 .thenReturn(version2);
         when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 3)))
                 .thenReturn(version3);
-        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2)))
-                .thenReturn(true);
-        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1)))
-                .thenReturn(false);
-        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 3)))
-                .thenReturn(false);
+        // The rows decide: version 1 is current, version 2 is deprecated and version 3 is available
+        InMemoryWorkflowDefinitionRegistryStore definitions = new InMemoryWorkflowDefinitionRegistryStore()
+                .seedCode(version1)
+                .seedCode(version2, DefinitionStatus.DEPRECATED)
+                .seedCode(version3, DefinitionStatus.AVAILABLE);
 
         WorkflowInstance pinnedToDeprecated = waitingInstance(2, PLAN_HASH_V2);
         WorkflowInstance onVersion1 = waitingInstance(1, PLAN_HASH_V1);
@@ -288,7 +285,7 @@ class DeprecatedVersionAdmissionTest {
                 .propagator(null)
                 .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
                 .commands(new EmptyCommandRepository())
-                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCode(version1))
+                .definitionStore(definitions)
                 .build());
         return new Harness(
                 engine, instances, dedup, history, tx, pinnedToDeprecated, onVersion1, toVersion2, toVersion3);

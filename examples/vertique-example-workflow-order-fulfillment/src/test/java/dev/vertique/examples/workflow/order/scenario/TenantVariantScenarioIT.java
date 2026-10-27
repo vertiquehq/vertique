@@ -78,8 +78,7 @@ class TenantVariantScenarioIT {
         }
 
         try (ScenarioNode second = deploy(vertx)) {
-            // When the component restarts, reconciles once and purchases start again in both scopes
-            second.reconcile();
+            // When the component restarts and purchases start again in both scopes
             WorkflowInstanceId acme = startPurchase(second, ACME, "p-acme-2", "PO-2");
             WorkflowInstanceId globex = startPurchase(second, GLOBEX, "p-globex-2", "PO-2");
 

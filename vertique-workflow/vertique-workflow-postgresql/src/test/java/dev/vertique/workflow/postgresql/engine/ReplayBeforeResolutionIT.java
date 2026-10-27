@@ -16,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.ops.StartCommand;
@@ -25,6 +26,7 @@ import dev.vertique.workflow.postgresql.engine.ScopedStartFixture.Purchase;
 import dev.vertique.workflow.postgresql.engine.ScopedStartFixture.PurchaseContract;
 import dev.vertique.workflow.postgresql.engine.ScopedStartFixture.StartPurchase;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.pgclient.PgBuilder;
@@ -128,7 +130,7 @@ public class ReplayBeforeResolutionIT {
         // Given: version 1 in the default scope and in acme, version 2 in the default scope, and an instance
         // started in acme with K and version 1, pinned to the acme definition
         Harness harness = ScopedStartFixture.open(pool, new Purchase(ID, 1L, "done-default"));
-        harness.registry().register(ACME, new Purchase(ID, 1L, "done-acme"));
+        harness.scoped().publish(ACME, new Purchase(ID, 1L, "done-acme"));
         harness.registry().register(new Purchase(ID, 2L, "done-default-2"));
         WorkflowInstanceId original = await(harness.engine().start(command("K", 1L, ACME, null)));
         await(harness.engine().executionProbe().awaitIdle(original, IDLE_TIMEOUT));
@@ -155,7 +157,7 @@ public class ReplayBeforeResolutionIT {
     void explicitReplayThroughClientNamesItsPin() throws Exception {
         // Given: version 1 in the default scope and in acme, and an instance started in acme with K and version 1
         Harness harness = ScopedStartFixture.open(pool, new Purchase(ID, 1L, "done-default"));
-        harness.registry().register(ACME, new Purchase(ID, 1L, "done-acme"));
+        harness.scoped().publish(ACME, new Purchase(ID, 1L, "done-acme"));
         PurchaseContract sameVersion = harness.factory()
                 .client(PurchaseContract.class, ID)
                 .scope(ACME)
@@ -231,8 +233,12 @@ public class ReplayBeforeResolutionIT {
         return started;
     }
 
-    private static void deprecate(Harness harness, long version) {
-        harness.registry().markDeprecated(new DefinitionKey(DEFAULT, ID, version));
+    private static void deprecate(Harness harness, long version) throws Exception {
+        InMemoryWorkflowDefinitionRegistryStore rows = InMemoryWorkflowDefinitionRegistryStore.of(harness.registry());
+        // Record the versions registered since the last start, so that the current version has moved on
+        rows.seedCodeFrom(harness.registry());
+        await(rows.transition(
+                new DefinitionKey(DEFAULT, ID, version), DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED));
     }
 
     private static void assertStartConflict(Throwable failure, String idempotencyKey) {

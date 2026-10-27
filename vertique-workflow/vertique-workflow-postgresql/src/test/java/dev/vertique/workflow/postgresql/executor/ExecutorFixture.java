@@ -1252,7 +1252,7 @@ final class ExecutorFixture implements AutoCloseable {
      * @return the key of the recorded row
      */
     DefinitionKey recordAvailable(PgWorkflowDefinitionRegistryStore store, String definitionId) {
-        RuntimeWorkflow runtime = newRegistry().allRegistered().stream()
+        RuntimeWorkflow runtime = newRegistry().codeDefinitions().stream()
                 .filter(candidate -> candidate.plan().definitionId().equals(definitionId))
                 .findFirst()
                 .orElseThrow();

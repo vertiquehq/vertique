@@ -98,8 +98,8 @@ public class DefinitionDigestIT {
 
             // Then it is active and registered, and the guarded read returns exactly the text that was loaded
             assertThat(scenario.stored(activeId, 1).status()).isEqualTo("AVAILABLE");
-            assertThat(app.workflowRegistry()
-                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, activeId, 1))
+            assertThat(DefinitionScenario.planOf(
+                                    app.workflowRegistry(), new DefinitionKey(WorkflowScopes.DEFAULT, activeId, 1))
                             .plan()
                             .planHash())
                     .isEqualTo(activeLoaded.planHash());
@@ -140,10 +140,10 @@ public class DefinitionDigestIT {
                     .usingRecursiveComparison()
                     .ignoringFields("changedAt")
                     .isEqualTo(candidateBefore);
-            assertThat(app.workflowRegistry().allRegistered())
+            assertThat(app.workflowRegistry().codeDefinitions())
                     .noneMatch(runtime -> runtime.plan().definitionId().equals(editedId));
-            assertThatThrownBy(() ->
-                            app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, editedId, 1)))
+            assertThatThrownBy(() -> DefinitionScenario.planOf(
+                            app.workflowRegistry(), new DefinitionKey(WorkflowScopes.DEFAULT, editedId, 1)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
 
             // When the edited row is read through the guarded accessor

@@ -10,7 +10,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-workflow-definition`
 > **Depends on:** workflow-core, vertique-core, jackson-databind, jackson-dataformat-yaml, dev.cel:cel-runtime
 
-`vertique-workflow-definition` adds YAML/JSON workflow authoring on top of `workflow-core`. A definition document is parsed, validated, compiled into the same `WorkflowPlan` used by code-first definitions, and registered with `WorkflowRegistry`.
+`vertique-workflow-definition` adds YAML/JSON workflow authoring on top of `workflow-core`. A definition document is parsed, validated, compiled into the same `WorkflowPlan` used by code-first definitions, and stored as a row of the definition table; a node builds the plan from the row when it is first used.
 
 The runtime engine never parses definition files. Parsing and validation happen in the control plane, either at bootstrap or through `WorkflowDefinitionService`.
 
@@ -46,12 +46,12 @@ DefinitionResource
   -> WorkflowDefinitionDocumentValidator
   -> WorkflowDefinitionCompiler
   -> DocumentBackedWorkflowDefinition
-  -> WorkflowRegistry.register(...)
+  -> definition table row  (the plan is built from the row: WorkflowRegistry.load(...))
 ```
 
 `DefinitionResource` contains bytes, format, and source metadata. The source may be a repository file, CMS record, database row, REST upload, object store, or generated artifact. Source location is provenance metadata; it does not affect engine execution or plan identity.
 
-`WorkflowDefinitionBootstrap` loads contributed `WorkflowDefinitionSource` resources during registry construction. A packaged document is trusted: it may name a class that no catalog lists, by its binary name. Before the document is resolved, the bootstrap loads each such class with the context class loader (lookup only) and adds it to the index, so the class then joins the index for later loads. A name that is not a loadable class fails startup with a `LOAD_FAILURE` violation attributed to the resource, and a packaged document that startup then rejects leaves no name behind in the index. A packaged document is validated and compiled in one pass and registered in a second, so a rule only the registry can check (for example, a plan that waits for a signal its contract does not declare, or a version that names another contract than an earlier version of the same id) is found after the earlier documents of the run are registered. When such a document is deterministically bad, the documents before it in the run stay stored as `AVAILABLE` and registered, the bad one stays `CANDIDATE`, and bootstrap fails startup with the registry's `WorkflowDefinitionException` naming that document's definition id and version. Fix or remove the document before the next start. Runtime management surfaces can call `WorkflowDefinitionService.load(...)` and `publish(...)` directly.
+`WorkflowDefinitionBootstrap` loads contributed `WorkflowDefinitionSource` resources during registry construction. A packaged document is trusted: it may name a class that no catalog lists, by its binary name. Before the document is resolved, the bootstrap loads each such class with the context class loader (lookup only) and adds it to the index, so the class then joins the index for later loads. A name that is not a loadable class fails startup with a `LOAD_FAILURE` violation attributed to the resource, and a packaged document that startup then rejects leaves no name behind in the index. The bootstrap parses, validates and compiles every packaged document and registers none of them: the registry holds code only. The engine's startup then records each packaged document in the definition table, builds its plan once under the plan rules (a plan that waits for a signal its contract does not declare, for example, fails startup with the `WorkflowDefinitionException` naming that document's definition id and version) and keeps it only in the plan cache, where it is built again from its row when it is next needed. Fix or remove the document before the next start. Runtime management surfaces can call `WorkflowDefinitionService.load(...)` and `publish(...)` directly.
 
 ---
 
@@ -208,12 +208,12 @@ A well-formed definition is one that passes both parsing and semantic validation
 - Jackson YAML/JSON parsing is strict: unknown fields and invalid step types fail.
 - Required top-level fields and required step fields must be present.
 - Type and contract names resolve through the `WorkflowTypeNames` index only (types for state and payload names, contracts for the contract name). The index holds the classes of every contributed `WorkflowTypeCatalog` and of every registered definition, under their logical and binary names. Before validation the pipeline resolves the contract, the state type, the start payload type, then the signal and decision payload types in step order, and the first name the index does not hold fails the load with `WorkflowUnknownTypeNameException`, which names the document field, and repeats the name only when it consists of letters, digits, underscore, dot, dollar sign and hyphen and is at most 255 characters long. No class is loaded by a name the document supplies.
-- The contract class must be annotated with `@WorkflowContract`. A contract names no definition, so several documents and versions can share one contract. A document registers through the same registry rules as a Java definition, including the check that every signal it waits for is declared on its contract.
+- The contract class must be annotated with `@WorkflowContract`. A contract names no definition, so several documents and versions can share one contract. A document's plan is built under the same plan rules as a Java definition's, including the check that every signal it waits for is declared on its contract.
 - Contract names and type names are separate namespaces: a contract name given as `stateType`, or a type name given as `contract`, is unknown.
 - Named callbacks must resolve through the registered callback registries.
 - Decision expressions must parse through the expression profile.
 - Step ids must be unique, reachable from `initialStep`, and all step references must point to existing steps.
-- The compiled plan is registered through the normal `WorkflowRegistry` path, so core plan validation still applies. Publishing a loaded definition through the service registers it under the scope of its key, so a definition loaded into one scope is not found under the default scope. Documents packaged with the application are still registered in the default scope.
+- The plan of a document is built through the registry's build path, so core plan validation and the contributed validators still apply. Publishing a loaded definition through the service builds its plan once to validate it and completes the row; nothing is registered, and the node builds the plan again from the row when it is first used. A definition loaded into one scope is not found under the default scope. Documents packaged with the application are recorded in the default scope.
 
 There is currently no separate published JSON Schema or YAML Schema file for workflow definitions. The authoritative validation is strict Jackson mapping plus `WorkflowDefinitionDocumentValidator`.
 
@@ -280,24 +280,18 @@ accepted without a change. Which version starts when none is named is selected s
 metadata are durable (a graph that includes this module binds a `WorkflowDefinitionRegistryStore` and a
 `WorkflowDefinitionLifecycle`, normally PostgreSQL and the engine) and publication recompiles the stored text rather than
 trusting a local cache.
-The managed application lifecycle restores available and deprecated documents of every scope before any BOOTSTRAP verticle
-deploys. After source verification, it rereads committed status and
-provenance and delivers fresh metadata to each already-verified registration through `onRestored`; the
-cache therefore reflects the committed statuses before traffic starts. The callback is
-idempotent and a failure aborts startup. A missing loader or stored/compiled hash mismatch also aborts
-startup. All nodes sharing live documents must have the appropriate loader and application callback/type
-catalog. Source URIs are never fetched.
+The managed application lifecycle records the packaged documents and the deployed code before any BOOTSTRAP verticle
+deploys. It keeps no copy of the table: a node builds the plan of a stored document from its row, outside any
+transaction, when the plan is first needed, and a missing loader or a stored/compiled hash mismatch fails that load.
+All nodes sharing live documents must have the appropriate loader and application callback/type catalog. Source URIs
+are never fetched.
 
-`deprecate(DefinitionKey)` moves an AVAILABLE version to DEPRECATED durably, marks it in the
-local registry and reports DEPRECATED in service metadata and lists. New starts of that version and
-migrations to it are refused with reason `DEPRECATED`, including a retry of an explicit start under an
-idempotency key used before the deprecation; instances already pinned to it keep running on the node that
-marked it, and on every peer that marks the version when its own reconciliation applies the deprecation. A restart marks a deprecated packaged document (one deprecated in the database) again, and the
-next reconciliation registers and marks the other deprecated versions, so pinned instances resume while new starts of them stay refused.
-Other running nodes learn of the deprecation from their next periodic reconciliation, which takes the configured
-staleness cadence plus the time to apply, or when they restart. Deprecating a version leaves every other
-version available. The default scope's current version, which an activation record selects, cannot be deprecated until another
-version is activated or `deactivateDefault` clears the record. It requires the durable registry:
+`deprecate(DefinitionKey)` moves an AVAILABLE version to DEPRECATED durably and reports DEPRECATED in service metadata
+and lists. New starts of that version and migrations to it are refused with reason `DEPRECATED`, including a retry of an
+explicit start under an idempotency key used before the deprecation, on every node at once, because a start reads the
+status of the row in its own transaction; instances already pinned to it keep running. Deprecating a version leaves every
+other version available. The default scope's current version, which an activation record selects, cannot be deprecated
+until another version is activated or `deactivateDefault` clears the record. It requires the durable registry:
 without one, the returned Future fails.
 
 `activate(scopeKey, definitionId, targetScopeKey, version)` makes a version the one a start without a version runs in a scope,
@@ -320,22 +314,22 @@ default scope's current version again on its first publication. Ship such a vers
 the id deactivated.
 
 `reinstate(DefinitionKey)` brings a retired version back when its source is available (the deployed code for a code version,
-the stored text for a document), and a deprecated version back by clearing its deprecation mark; either becomes AVAILABLE.
+the stored text for a document that builds), and a deprecated version back by changing its status; either becomes AVAILABLE.
 The returned Future fails with `CODE_UNAVAILABLE`, `DRIFT`,
 `LOADER_MISSING` or `INVALID_TRANSITION`, and service metadata reports the committed status.
 
 `retire(DefinitionKey)` retires a candidate version, or a deprecated one after the cooling window with no live pinned
 instance, and reports RETIRED in service metadata and lists; the returned Future fails with `COOLING`,
-`PINNED_INSTANCES` or `INVALID_TRANSITION`. Retiring a candidate of one scope never removes another scope's runtime,
-even when id, version and hash are equal. A scope's activation record can still name a version that is retired, because
+`PINNED_INSTANCES` or `INVALID_TRANSITION`. Retiring a version changes only its own row, even when id, version and hash
+are equal to those of another scope's. A scope's activation record can still name a version that is retired, because
 only the default scope's current version is protected; a start without a version in that scope then fails until the
 record is moved to an available version or removed with `follow`.
 
-Startup reads the default scope, so it does not grow with the documents of other scopes: it registers the code definitions and
-the packaged documents, which register while the registry is constructed, and it builds no other document (a document published
+Startup reads the default scope, so it does not grow with the documents of other scopes: it records the code definitions and
+the packaged documents, builds each packaged document once to validate it, and builds no other document (a document published
 at run time is built from its row on first use; `workflow.definitions.buildDefaultScopeDocumentsAtStartup` makes startup build
-every live default scope document and fail on one that does not build). Documents of other scopes reach a node when the
-propagation pass first reconciles it, or when their plan is first needed. An id that deployed code registers is a
+every live default scope document into the plan cache and fail on one that does not build). A document of another scope is
+built from its row when its plan is first needed. An id that deployed code registers is a
 default-scope CODE row, and a document of another scope may publish the same id and version beside it.
 A load into a scope writes only that scope's rows; it never touches the default scope's or another scope's rows. Documents
 packaged with the application are loaded into the default scope. The service does not check identity: the application decides who may load
@@ -357,7 +351,7 @@ BOOTSTRAP step has recorded it. Definition id and scope key (255), source type (
 author and upload id (255) code-point limits apply in every mode. NUL and
 unpaired surrogates are rejected in every text field, ISO control characters in ids and scope keys, and a
 version must be positive. Over-limit input is rejected before anything is registered. Invalid asynchronous
-arguments are failed Futures. Previously started instances keep their pinned version. Coexisting versions of one document id name the same contract class, and a version that names another contract than the id's registered versions is refused at registration. A load into a scope other than the default one is refused with `WorkflowDefinitionContractMismatchException` when the default scope holds the id, in any status including candidate, under another contract, unless the scope already holds the id; the in-memory store applies the same rule, and a default-scope load of an id that a scope holds under another contract is accepted.
+arguments are failed Futures. Previously started instances keep their pinned version. Coexisting versions of one document id name the same contract class. A load into a scope other than the default one is refused with `WorkflowDefinitionContractMismatchException` when the default scope holds the id, in any status including candidate, under another contract, unless the scope already holds the id; the in-memory store applies the same rule, and a default-scope load of an id that a scope holds under another contract is accepted.
 
 ### Source Text And Size Policy
 
@@ -448,7 +442,7 @@ Applications must also contribute at least one `WorkflowDefinitionSource` for bo
 ## Invariants & Gotchas
 
 - **Engine purity.** The runtime engine never parses YAML / JSON. Parsing, validation, and plan compilation happen in the control plane (bootstrap loaders and `WorkflowDefinitionService`). The engine only executes `WorkflowPlan` nodes + `WorkflowCallbackRegistry` callbacks.
-- **Service-loaded documents are catalog-only.** `WorkflowDefinitionService.load`, restoration from the store and propagation resolve names through the index only. A deployment where no catalog and no registered definition lists a class refuses a document that names it, even by its binary name, and loads nothing. Packaged documents are the trusted exception described above.
+- **Service-loaded documents are catalog-only.** `WorkflowDefinitionService.load` and the build of a stored document resolve names through the index only. A deployment where no catalog and no registered definition lists a class refuses a document that names it, even by its binary name, and loads nothing. Packaged documents are the trusted exception described above.
 - **Trusted callers only; refusals are operator text.** `WorkflowDefinitionService.load` and `publish` take any scope key, so expose them only to trusted callers. A refusal message can name other scopes and plan hashes: log it for operators and never forward it to end users.
 - **Document plans are not no-code.** A document references Java classes (state type, contract type, payload types) and named callbacks from the application's callback module. A document without the corresponding Java types is rejected.
 - **Named conditions / mappers are looked up by id.** Document expression nodes resolve to callbacks registered in the application's `WorkflowDefinitionCallbacksModule`. Unknown ids fail at registration, not at first execution.

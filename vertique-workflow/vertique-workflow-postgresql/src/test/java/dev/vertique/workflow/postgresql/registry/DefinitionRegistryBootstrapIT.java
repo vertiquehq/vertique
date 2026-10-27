@@ -126,9 +126,6 @@ public class DefinitionRegistryBootstrapIT {
                     assertThat(observation.metadataObservation().service())
                             .extracting(record -> record.key().definitionVersion())
                             .containsExactly(1L, 2L);
-                    assertThat(observation.metadataObservation().compiled())
-                            .extracting(ref -> ref.definitionVersion())
-                            .containsExactly(1L, 2L);
                     return Future.succeededFuture();
                 });
 

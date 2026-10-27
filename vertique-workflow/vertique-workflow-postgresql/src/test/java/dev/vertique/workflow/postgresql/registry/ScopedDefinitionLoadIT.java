@@ -96,7 +96,7 @@ public class ScopedDefinitionLoadIT {
             assertThat(scenario.rowCount(scopeFieldId)).isZero();
 
             // Then the durable component holds no registration for the loaded candidate
-            assertThat(node.app().workflowRegistry().allRegistered())
+            assertThat(node.app().workflowRegistry().codeDefinitions())
                     .noneMatch(runtime -> runtime.plan().definitionId().equals(prefixedId));
         }
     }

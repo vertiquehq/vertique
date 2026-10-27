@@ -806,7 +806,7 @@ public class RecordedSignalIT {
 
         void seed(Definition code, List<String> names, JsonObject branches) {
             registry.register(code);
-            RuntimeWorkflow runtime = registry.allRegistered().stream()
+            RuntimeWorkflow runtime = registry.codeDefinitions().stream()
                     .filter(candidate -> candidate.plan().definitionId().equals(code.definitionId()))
                     .findFirst()
                     .orElseThrow();
@@ -851,7 +851,7 @@ public class RecordedSignalIT {
         }
 
         StartCommand start(Definition code, String ref) {
-            RuntimeWorkflow runtime = registry.allRegistered().stream()
+            RuntimeWorkflow runtime = registry.codeDefinitions().stream()
                     .filter(candidate -> candidate.plan().definitionId().equals(code.definitionId()))
                     .findFirst()
                     .orElseThrow();

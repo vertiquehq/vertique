@@ -514,8 +514,8 @@ Dagger module owning the engine-internal bindings:
 - Provides `WorkflowExecutionProbe` over the `WorkflowCommandRepository<SqlClient>` the adapter binds. The probe paces its
   polling with the graph's `Vertx` when one is bound (declared `@BindsOptionalOf`) and with a shared daemon thread otherwise.
 - Binds `WorkflowDefinitionLifecycle` for durable document publication and contributes the document registry startup step.
-- Binds `WorkflowDefinitionRegistryView` and contributes the startup and shutdown steps of
-  `WorkflowDefinitionPropagationPoller`, which keeps the node's registry in step with the durable table.
+- Keeps no copy of the definition table and arms no timer: a node reads the row it needs when it needs it (see Plan Cache),
+  so a change another node committed reaches it with the next read of that row.
 - Provides the `PlanCache` (see Plan Cache) and binds it as the `DocumentPlanSource` of the framework registry when it is built
   (a `BOOTSTRAP` startup step builds it right after the registry is restored, and the executor builds it on its first warm-up
   otherwise, so a graph that never starts or runs an executor does not build the registry for it); it takes its
@@ -560,7 +560,7 @@ public interface AppComponent {
 
 Work this node cannot run. A key that the node's registry holds no plan for is not runnable on that node, whether or not another node can run it (a rolling deploy publishes a version that reaches the other nodes as a committed record before they have its code; a failing scope row has no registered plan at all). A start needs no plan: it selects its version from the database and records a `PENDING` instance and a `START` command on any node, and the executor of a node that cannot run the plan defers the command until a node that can runs it. The plan lookup then fails with `WorkflowVersionNotRunnableException`: a task completion, a typed-client query, and the join advance leave the instance, its history and its dedup rows as they were, because the caller's transaction rolls back (inside a timer transaction a join advance that resolves the plan again would commit, but it cannot fail there today: it uses the pin the caller already resolved, and migration refuses an instance with active branches). A signal (including the branch-aware forms), a retry and a migration need no plan to be recorded, so a node without the pinned code records them like any other node; an executor of a node that cannot run the plan, or, for a migration, the target plan, defers the recorded command (a deferral spends no attempt) and a node that can run it applies it. A timer (a standalone or signal-timeout timer, a task due date or a task reminder, on an instance or on a branch) is a `TIMER` command, so the executor of a node that cannot run its plan defers it like any other command and a node that can run it fires it; a deferral spends no attempt and never fails the instance, however long it lasts. A direct call of a timer callback leaves the same rows and the task's reminder counter as they were for a different reason: it resolves the pinned plan before its first write, and the delayed-job timer executor of an earlier release's timer row queues its job again in the same transaction, which commits only that job bookkeeping while the timer row stays `SCHEDULED`. Branch recovery leaves the token scheduled for a node that has the code. No node marks an instance failed because it cannot run its pin, while `query(id)` still reads the stored instance and history without the plan, and only the contract-checked `query(id, contractName)` fails the same way, because it needs the pinned plan to compare contracts. A node whose deployed code lacks a non-retired version still fails startup with `CODE_UNAVAILABLE`, so deployments are roll-forward only: the not-runnable failures occur on nodes that are already running when another node publishes or activates.
 
-Every lookup of an instance's plan (signals, tasks, timers, retries, branch and join continuations, queries and migration) resolves the instance's full pin: its definition scope, definition id and definition version. An instance pinned to a definition scope never runs the plan that another scope holds under the same id and version, and migration resolves its target version in the instance's definition scope. The lifecycle, the startup restoration and the propagation pass register, mark and remove a runtime under the scope of the stored row they apply.
+Every lookup of an instance's plan (signals, tasks, timers, retries, branch and join continuations, queries and migration) resolves the instance's full pin: its definition scope, definition id and definition version. An instance pinned to a definition scope never runs the plan that another scope holds under the same id and version, and migration resolves its target version in the instance's definition scope. The lifecycle and the bootstrap step read and write the rows of the scope they name, and the plan cache builds a plan under the scope of the row it reads.
 
 Every event and side-effect correlation the engine records, single-path and branch, takes both scopes from the owning instance row, so events and outbox records name the scopes the instance really holds rather than a default. A branch drive reads them from the instance.
 
@@ -599,20 +599,16 @@ executor, which deserializes the payload into the plan's start type and applies 
 **Failing versions.** The failure mark column is read and refuses nothing: a start of a failing version is recorded, and the executor
 fails it (see Failing scope rows).
 
-**Ids with no row.** An id for which the database holds no row in the start scope or the default scope is unmanaged by the registry store
-(a definition registered only in this node's registry, or an engine whose store cannot read on the caller's transaction): its start
-selects from this node's registry and activation view, checks the payload against its declared start type and constraints, and is
-admitted as unmanaged under READ COMMITTED, as before.
+**Ids with no row.** An id for which the database holds no row in the start scope or the default scope is not startable: the
+selection read returns no version and no record, and the start fails with `WorkflowNoCurrentVersionException`, or
+with `WorkflowVersionNotRunnableException` when it names a version. The engine keeps no registry copy of a definition to select from, so a store that cannot read on the caller's
+transaction (`TransactionalDefinitionReads`) cannot serve a first start, which fails with `IllegalStateException`.
 
-The records live in a package-private, node-local `DefinitionActivations` view, one per engine, keyed by scope and id; only a start of an id with no stored row (see Ids with no row) selects from it. The
-lifecycle updates it after the durable write commits (`activate`, `deactivateDefault`, `follow`), and a refused or failed write
-leaves it as it was. `activations` reads the store. The startup step restores the default scope's stored records into the view,
-including records that name a version this node has no code for, and the records it writes itself on first publication; it reads
-no record of another scope, however many there are. The propagation pass refreshes the view from the committed records of every
-scope (see Peer Propagation), so a record of another scope, and an activation, `follow` or `deactivateDefault` committed on
-another node, reach this node within the propagation bound after it starts. A start of a stored id does not read the view: it reads the
-database. An engine assembled by `WorkflowEngineFactory.create` runs no startup step, so its view holds
-only the records the store held when it was created, plus what its own lifecycle writes.
+The activation records are rows of the table and the engine keeps no copy of them: the lifecycle writes them
+(`activate`, `deactivateDefault`, `follow`) and every start reads them in its selection read, so a record committed on
+any node is seen by the next start on every node. `activations` reads the store. The bootstrap step reads the default
+scope's records and writes the record of a version it records for the first time; it reads no record of another scope,
+however many there are.
 
 On first publication the startup step passes `activateDefault` to the store for every code version and packaged document
 version that does not opt out of activation on deploy, in ascending version order per id; the store writes the default scope's
@@ -628,7 +624,7 @@ record rules and the guard that refuses to deprecate or retire the default scope
 
 ### Document Publication And Startup Restoration
 
-When a `WorkflowPlanSchemaProducer` is bound (`WorkflowSchemaModule`), startup reconciliation gives each code and packaged document record the signal names and start schema of the plan this node registered, and the store writes them in the same statement as the plan hash (insert and rehash). A row with an unchanged hash keeps its columns. A row whose two columns are null, written before they were stored, is filled by a short statement guarded by the null column, after reconciliation for code and packaged documents and after restoration for stored documents, from the plan whose hash the row holds; the hash is never changed by the fill. Without a producer nothing is written and startup behaves as before.
+When a `WorkflowPlanSchemaProducer` is bound (`WorkflowSchemaModule`), startup reconciliation gives each code and packaged document record the signal names and start schema of the plan this node built, and the store writes them in the same statement as the plan hash (insert and rehash). A row with an unchanged hash keeps its columns. A row whose two columns are null, written before they were stored, is filled by a short statement guarded by the null column, after reconciliation for code and packaged documents and after restoration for stored documents, from the plan whose hash the row holds; the hash is never changed by the fill. Without a producer nothing is written and startup behaves as before.
 
 The engine orchestrates `WorkflowDefinitionLifecycle.publish` through the required SQL-free registry
 store and format-specific loaders. Parsing remains in the loader module. Publication claims a durable
@@ -637,61 +633,58 @@ completes the fenced claim, which makes the version `AVAILABLE`. Publishing a ve
 succeeds without a change, and publishing does not touch any other version or scope of the id. JVM fatal errors
 are not ordinary recovery cases.
 
-Local publication and cleanup share a per-definition-id queue. A definitive stale-claim
-refusal from completion preserves the original error, releases only its own claim token, and removes
-only the exact local runtime it published. A failed authoritative reread cannot prevent that known
-refusal's cleanup. For an uncertain completion response, the engine rereads committed metadata before
-compensation; a matching available row preserves the local publication. Loader cache-hook failures propagate
-without undoing a committed publication.
+Publication and the other lifecycle operations of one definition id share a per-definition-id queue. A definitive
+stale-claim refusal from completion preserves the original error and releases only its own claim token. For an
+uncertain completion response, the engine rereads the committed row before it compensates; a row that is available with
+the claimed plan hash means the publication won. The node keeps nothing of a publication: the plan is built again from the
+row by the plan cache when a command needs it.
 
 `WorkflowDefinitionRegistryBootstrapStep` runs in `BOOTSTRAP` with priority `Integer.MIN_VALUE / 2`,
 after schema migration and before any `BOOTSTRAP` verticle deploys. Its reads are bounded: it reads the rows of the default
 scope (which hold every code row and every packaged document), the rows of any scope that are being published (`PUBLISHING`),
 and the default scope's activation records, and nothing else, so no startup statement grows with the rows of other scopes. It
-builds a plan only for what the node deploys: the code definitions and the packaged documents, which the registry holds from
-its construction. It works in this order, all through the shared per-definition queue, and fails startup (nothing deploys) on
-any violation:
-1. It attributes the registrations that already exist (packaged documents and application-contributed
-   definitions) to the default scope and snapshots the code definitions available in the deployed code.
+builds a plan only for what the node deploys: the code definitions, which the registry holds, and the packaged documents,
+which it builds to check them and records but does not register. It works in this order, all through the shared
+per-definition queue, and fails startup (nothing deploys) on any violation:
+1. It snapshots the code definitions available in the deployed code and collects the packaged documents of the default
+   scope.
 2. It records every definition as `AVAILABLE`: packaged document origins are DOCUMENT rows (an equal plan hash AND an equal
-   text digest reconcile; a different hash, or the same hash with different text, is drift), every other
-   registered definition is a global CODE row. A changed code hash is rehashed only while no RUNNING, WAITING
+   text digest reconcile; a different hash, or the same hash with different text, is drift), every code definition
+   is a global CODE row. A changed code hash is rehashed only while no RUNNING, WAITING
    or COMPENSATING instance is pinned to that exact version (decided inside the store transaction, WARN logs both
    hashes); with a live pin startup fails naming both hashes. A row recorded with a name binding keeps the
-   type names its hash used: the registered plan is rebuilt under that binding, so annotating a state or payload
+   type names its hash used: a code definition registered under current names is rebuilt under the stored binding
+   (`DefaultWorkflowRegistry.adoptNameBinding`, internal to this step) when that gives the stored hash, and a
+   packaged document is compiled and hashed with the row's binding, so annotating a state or payload
    class after the version was published does not change its hash, and a rehash replaces the binding together
    with the hash. A non-retired row whose binding names a class that no longer resolves (for example one moved
    while the version is bound to its binary name) fails startup with `WorkflowUnknownTypeNameException`
-   naming the scope, the definition, the version and the name; a retired row is exempt. A document restored
-   from the store, at startup and on a peer, is compiled and hashed with the row's binding. A kind conflict fails naming both rows; a CODE row
+   naming the scope, the definition, the version and the name; a retired row is exempt. A kind conflict fails naming both rows; a CODE row
    in AVAILABLE or DEPRECATED state whose code is no longer deployed fails with `CODE_UNAVAILABLE`. Rows of other
    scopes for the same id and version never conflict.
-3. It verifies every live DOCUMENT row of the default scope (AVAILABLE and DEPRECATED) that the registry holds, the
-   packaged documents, through its loader: the compiled hash and the stored text digest must match. A live default scope
-   document the registry does not hold, one that was published at run time, is not built at startup; its plan is built from
+3. It verifies every live DOCUMENT row of the default scope that the packaged documents cover, through its loader:
+   the compiled hash and the stored text digest must match. A live default scope
+   document that is not packaged, one that was published at run time, is not built at startup; its plan is built from
    its row on first use (see Plan Cache), and a document that does not build is then not runnable, so its first command is
    deferred and a warning names it once. With `workflow.definitions.buildDefaultScopeDocumentsAtStartup` set to `true`,
    startup instead builds each such document into the plan cache, by the build a first use runs, and a document that does
    not build fails startup with its failure (`WorkflowUnknownTypeNameException` for a recorded name that no class resolves,
-   a `WorkflowDefinitionLifecycleException` for drift or a missing loader). No row of another scope is restored at startup:
-   the rows of other scopes are evaluated against the code this node ships when the propagation pass first reconciles them
-   or when their plan is built on use (see Failing scope rows below). A CODE row that conflicts still fails startup.
-4. It marks DEPRECATED rows (CODE and DOCUMENT, including packaged documents deprecated in the database) and
-   removes RETIRED runtimes only when the runtime is attributed to that row's own key; another scope's runtime, or
-   a replacement, is never removed because id, version and hash match, and an unattributed runtime fails startup.
-5. It resets stale PUBLISHING claims (older than twice the staleness bound, in any scope) to CANDIDATE, then re-reads
-   the default scope's rows and the rows it just reset and sends them through the loaders' `onRestored` and `onMetadata`
-   callbacks so caches reflect persisted state.
-6. It seals the registry: `DefaultWorkflowRegistry.register(WorkflowDefinition)` throws `IllegalStateException` naming the
-   definition from then on. Registration is a startup operation (code definitions and packaged documents register while
+   a `WorkflowDefinitionLifecycleException` for drift or a missing loader). No row of another scope is read at startup:
+   the rows of other scopes are evaluated against the code this node ships when their plan is built on use (see Failing
+   scope rows below). A CODE row that conflicts still fails startup.
+4. It resets stale PUBLISHING claims (older than twice the staleness bound, in any scope) to CANDIDATE.
+5. It seals the registry: `DefaultWorkflowRegistry.register(WorkflowDefinition)` throws `IllegalStateException` naming the
+   definition from then on. Registration is a startup operation (code definitions register while
    the registry is constructed); `DefaultWorkflowRegistry.seal()` is internal to this step and applications never call it.
    A graph without this step, such as one assembled by `WorkflowEngineFactory.create`, is never sealed.
-Required rows with no unique loader fail startup with the key and diagnostic when the step restores them. Callback failures remain fatal.
-Compose validators ran in VALIDATE and do not re-run for restored definitions.
+Required rows with no unique loader fail startup with the key and diagnostic when the step restores them.
+Compose validators ran in VALIDATE and do not re-run for stored definitions. The registry holds only the deployed code
+(`WorkflowRegistry.codeDefinitions()`): a packaged document is not registered, not listed there, and is built from its row
+by the plan cache like any other document.
 
-**Failing scope rows.** Evaluating a live DOCUMENT row of a scope other than the default one, which the propagation pass
-does when it first reconciles the node, can find that the
-code this node ships conflicts with the stored row. Two conflicts mark the row failing instead of failing the pass:
+**Failing scope rows.** Evaluating a live DOCUMENT row of a scope other than the default one, which happens when the plan
+cache builds its plan for a command, can find that the
+code this node ships conflicts with the stored row. Two conflicts mark the row failing instead of failing the command:
 the row's state class no longer extends the default scope's definition of the same id and contract
 (`STATE_TYPE_NOT_EXTENDED`), and a type name in the row's recorded name binding no longer resolves
 (`NAME_BINDING_UNRESOLVED`). A default scope row that conflicts fails startup with `WorkflowDefinitionException` for the state
@@ -699,10 +692,10 @@ rule or `WorkflowUnknownTypeNameException` for an unresolved binding, each namin
 definition id. A RETIRED row is not registered and is never evaluated, and a contract overlap between a scope row and
 default scope code is not a conflict. A CANDIDATE row is not evaluated either: an unresolved binding is refused
 when it is published, with `WorkflowUnknownTypeNameException`, and the row stays a candidate.
-- **State rule.** The plan is registered through `WorkflowRegistry.registerFailing`, which skips only the comparison with the
-  default scope's state class, so the instances pinned to the row keep resuming, receiving signals and completing tasks.
-- **Binding rule.** Nothing is compiled or registered, and no class is loaded by a name that no longer resolves; the row's
-  plan is absent from the registry, so its instances are not resumed on this node until the class is back.
+- **State rule.** The plan is built without the comparison with the default scope's state class and flagged, so the
+  instances pinned to the row keep resuming, receiving signals and completing tasks.
+- **Binding rule.** Nothing is compiled, and no class is loaded by a name that no longer resolves; the row has no plan on
+  this node, so its instances are not resumed here until the class is back.
 - **No record-time refusal.** A new start that selects the row, by an activation record or by an explicit version, is recorded
   like any other start: the stored mark and this node's evaluation refuse nothing in the caller's transaction. The executor fails
   the recorded `START` (see Evaluation on the executor). Other scopes, and the default scope's versions, are not affected.
@@ -724,43 +717,28 @@ when it is published, with `WorkflowUnknownTypeNameException`, and the row stays
   dropped, the command's outcome is unchanged, nothing retries it, and the next command that finds the outcome different
   writes again; once a write succeeds, later commands write nothing. The node that evaluated last wins. The stored mark
   feeds listings only.
-- **Default scope unaffected.** A failing scope row never blocks the registration of a default scope version of the same
-  id, at startup or when a default version is published later; only the scope-owned rows that registered plainly take part
-  in that comparison.
-- **Evaluation per node.** Startup evaluates no scope row. Every reconciliation pass evaluates the live scope rows it applies
-  against the code that node ships and writes the result with `recordFailure`, which clears the mark when no conflict
-  remains; each node's executor judges a command by its own plan, not by the stored mark. The stored mark feeds the definition listing
-  (`WorkflowDefinitionRecord.failure()`). During a rolling deploy, nodes that ship different code may rewrite the mark in turn,
-  so the listing shows the most recent node's evaluation while each executor keeps judging by its own.
-- **Peer propagation.** The reconciliation pass evaluates a scope row the same way: a live scope DOCUMENT row published by
-  another node that this node's code conflicts with is registered as failing (state rule) or left unregistered (binding
-  rule), kept in this node's evaluation, written with `recordFailure` when the stored mark differs, and counted as settled,
-  not as an apply failure. A default scope row and a CODE row that conflict stay apply failures. The node's evaluation is
-  cleared when the row is retired or removed.
+- **Default scope unaffected.** A failing scope row never blocks a default scope version of the same id, at startup or
+  when a default version is published later.
+- **Evaluation per node.** Startup evaluates no scope row. Each node's executor judges a command by the plan it builds
+  against the code that node ships, not by the stored mark, and writes the result with `recordFailure`, which clears
+  the mark when no conflict remains. A row nobody runs a command of keeps the mark it has. The stored mark feeds the definition
+  listing (`WorkflowDefinitionRecord.failure()`). During a rolling deploy, nodes that ship different code may rewrite the
+  mark in turn, so the listing shows the most recent node's evaluation while each executor keeps judging by its own.
 - **Start target scope.** A start that names a target scope that is neither its own scope nor `default` fails with
   `WorkflowDefinitionMissingException` before any failing mark is read, so a client learns nothing about another scope's rows.
-- **Containment is limited.** Only these two rules are contained. Any other failure to restore a scope row (a different
-  hash, a missing loader, an unreadable source, a conflict among the scope's own versions) still aborts startup.
+- **Containment is limited.** Only these two rules are contained. Any other failure to build a scope row (a different
+  hash, a missing loader, an unreadable source) makes the row not runnable on this node, and its commands are deferred.
 
 `WorkflowDefinitionLifecycle.reinstate` brings a RETIRED or DEPRECATED version back to `AVAILABLE`. A RETIRED version is accepted
 only when the executable source is available (a code definition from the code deployed with the node, captured before startup
 removed retired runtimes; a document through its loader and the stored text, whose compiled hash must equal the stored hash).
-It publishes the runtime locally first, then commits `RETIRED -> AVAILABLE` in one store transaction. If the transaction
-fails, only the runtime this call published is removed; a registration that was already present and attributed to the key
-is kept. A DEPRECATED version is still registered, so the store commits `DEPRECATED -> AVAILABLE` first and the call then clears the
-deprecation mark of the registration it published, without publishing the source again; other nodes learn of it from their
-next periodic reconciliation. Failures are typed: `CODE_UNAVAILABLE`, `DRIFT`, `LOADER_MISSING` or `INVALID_TRANSITION` (also for a
-runtime that was registered directly rather than by the lifecycle). Between the local publication and the commit, new pins on the
-version are still refused by the database. Reinstating code needs a registry that retains definition sources; with one that
-does not, the deployed code is reported as `CODE_UNAVAILABLE`. As with publication, a failure of the loader hand-off after
-the commit does not undo the reinstatement, and a retry then reports the row's current status rather than repeating the hand-off. `retire` and `reinstate` rely on every node running a release that
-takes the shared id lock when admitting a pin, so finish a rolling upgrade before using them.
-
-A registration that already stands for the key is checked by plan hash against the stored hash and is not recompiled; this
-is deliberate, because a runtime this lifecycle published for the key already passed that check. When the commit
-outcome cannot be read back, the published runtime is remembered. A retry that finds the row committed with that runtime's plan
-hash succeeds and hands the row over as after a first success; a retry that the store refuses removes the remembered runtime.
-Only a runtime this lifecycle published is ever remembered or removed.
+It checks the source first and then commits `RETIRED -> AVAILABLE` in one store transaction; nothing is registered, and a
+failed commit leaves nothing behind. A DEPRECATED version needs no source check, and the store commits
+`DEPRECATED -> AVAILABLE` at once. Other nodes read the new status with their next read of the row. Failures are typed:
+`CODE_UNAVAILABLE`, `DRIFT`, `LOADER_MISSING` or `INVALID_TRANSITION`. When the commit outcome cannot be read back, the
+lifecycle reads the row again: an available row with the plan hash it read means the commit won. `retire` and `reinstate`
+rely on every node running a release that takes the shared id lock when admitting a pin, so finish a rolling upgrade
+before using them.
 
 Changing the compiled shape of a code definition without changing its version is a rolling-deploy hazard: the first
 new-code node that finds no live instance pinned to that version rewrites the stored hash (a WARN names both hashes), and
@@ -768,50 +746,29 @@ from then on every old-code node refuses new starts, migrations and failed-insta
 `WorkflowDefinitionLifecycleException` reason `DRIFT` until it restarts on the new code. A node that restarts on old
 code, including a rollback, then fails startup with `CODE_UNAVAILABLE` or drift for a row its code does not carry.
 Prefer a new version over editing a deployed version; to remove a version, deprecate it, wait out the cooling window and
-retire it while no live instance is pinned, before removing its code. A packaged document registered over a CANDIDATE row of
-the same id, version, plan hash and text stays CANDIDATE while its runtime is registered. Starts of that version are refused, and
-`publish` fails because the registration already stands: retire the row and reinstate it, or publish the document under a new version.
-Do not register definitions directly at runtime, from other threads or startup steps, while the bootstrap step runs; a
-runtime it did not attribute fails the apply with `INVALID_TRANSITION` for DEPRECATED and RETIRED rows.
+retire it while no live instance is pinned, before removing its code.
 
-`WorkflowDefinitionLifecycle.deprecate` first commits AVAILABLE to DEPRECATED in the store,
-then marks the version deprecated in the local registry through the same per-id queue; a failed mark
-leaves the committed row, and repeating the call repairs the mark. A deprecated version is skipped by
-current resolution, and an explicit-version start whose version is deprecated fails with
-`WorkflowDefinitionLifecycleException` reason `DEPRECATED` before any instance row is written, and a migration whose target is deprecated is
-rejected by the executor with the instance unchanged. Signals,
-timers and resumption of instances already pinned to the version, and migration away from it, are
-unaffected. These checks use the node's own registry: this call does not tell other nodes. A freshly
-started node restores deprecation from the database and a running node learns of it from its next periodic
-reconciliation (see Peer Propagation), which is bounded only by the cadence plus the time the pass needs, so do not
-rely on these checks alone to stop starts elsewhere or to prove that nothing still runs the version. Marking is a no-op for a version not registered on the
-node, and a registry without deprecation support fails the call after the durable commit, leaving the
-committed status in place.
+`WorkflowDefinitionLifecycle.deprecate` commits AVAILABLE to DEPRECATED in the store through the per-id queue; deprecating a
+version that is already deprecated succeeds. A deprecated version is skipped by current resolution, and an
+explicit-version start whose version is deprecated fails with `WorkflowDefinitionLifecycleException` reason `DEPRECATED`
+before any instance row is written, and a migration whose target is deprecated is rejected by the executor with the
+instance unchanged. Signals, timers and resumption of instances already pinned to the version, and migration away from it,
+are unaffected. Both checks read the row, so a deprecation committed on any node is seen by the next start and the next
+migration on every node; the plan cache keeps no copy of the status.
 
 `WorkflowDefinitionLifecycle.retire` retires a CANDIDATE version, or a DEPRECATED one after the cooling window (the
 configured staleness bound) once no RUNNING, WAITING or COMPENSATING instance, archived or not, is pinned to it; the
 store checks status, cooling and the pin count in one transaction, so a refusal is typed (`COOLING`, `PINNED_INSTANCES`,
-or `INVALID_TRANSITION` for any other status). Retirement removes the local runtime only when
-the engine's own managed publication attributed that exact runtime to the retiring key: the engine records every
-registration it publishes or restores, and the registrations present when startup begins (packaged documents and
-application-contributed code) count as default-scope ones. A runtime that was registered directly through `WorkflowRegistry`
-after startup, or replaced after a managed publication, is not attributed: deprecate and retire then fail with
-`INVALID_TRANSITION` before any durable change and leave the runtime alone. Do not register definitions directly
-at runtime and expect the lifecycle to manage them; managed operations also rely on the shared per-definition queue.
-Managed operations are serialized per definition id on the node. A direct `register` or `unregister` of the same id
-while a managed operation is in flight does not take part in that queue and is outside the lifecycle's compound
-guarantee; each individual registry operation stays thread safe.
-`publish` has no such preflight: publishing a version that a foreign registration already occupies, or that names another contract than the id's registered versions, fails when it
-registers, and the claim is released. If removing the local runtime fails after the durable retirement committed, the
-call fails but the row stays RETIRED and the runtime stays registered until the next restart; repeating the call is
-refused because the row is no longer retirable.
+or `INVALID_TRANSITION` for any other status). A retired row is refused by pin admission as a lifecycle failure. The node
+holds no runtime to remove: a plan that the plan cache still holds is not used for a retired row, because a start
+reads the row. Managed operations are serialized per definition id on the node.
+`publish` builds the plan before it completes the claim, so a document that a registration rule or validator refuses fails when it is published, and the claim is released.
 
 Every public transaction-aware engine entrypoint (`start`, the `signal` overloads, `cancel`, `retry`, `migrate`, the
 task and timer callbacks) requires a `SqlConnection` with a pending transaction begun through Vert.x and returns a
 failed Future with `IllegalArgumentException`, before any SQL, for a pool, a bare or completed connection, a raw `BEGIN`
 or a wrapper; await the operation before committing or rolling back. New starts are admitted against the
-definition row in the caller's transaction (see the PostgreSQL reference), so for a short window between local
-publication and the durable commit of a publication, new starts of that version are refused; the re-pin of a migration is admitted the same
+definition row in the caller's transaction (see the PostgreSQL reference); the re-pin of a migration is admitted the same
 way in the executor's segment, where a refusal rejects the command.
 
 Every node sharing live document rows must install the corresponding loader, normally
@@ -819,86 +776,16 @@ Every node sharing live document rows must install the corresponding loader, nor
 on a Vert.x context. Compose validators already ran in VALIDATE and do not rerun for these restored
 registrations or runtime publication.
 
-### Peer Propagation
+### Changes Made By Other Nodes
 
-`WorkflowDefinitionPropagationPoller` converges a running node with changes that another node committed. It contributes a startup step in `AFTER_START` that arms a Vert.x periodic timer, and a
-shutdown step in the same phase that cancels it. The period is `workflow.definitions.maxStalenessSeconds` (30
-seconds by default, the same key that bounds the cooling window); a value whose millisecond equivalent overflows
-fails startup with a configuration error. The startup step runs no pass itself, because the bootstrap step has
-applied the table before traffic, so the first pass runs one period after startup.
-
-`pollNow()` runs one pass immediately and returns its `Future`; the timer calls the same entry. At most one pass is
-in flight: a call that arrives while one runs, from the timer or from `pollNow()`, returns that pass's future.
-The future succeeds when every row was handled, including when some rows failed to apply, and fails only when the
-table cannot be read; a failed pass does not stop the following ones. Shutdown cancels the timer at once, a tick
-that was already queued starts nothing, a `pollNow()` call after shutdown began returns a completed future and runs
-no pass, and shutdown completes only after the pass in flight has finished. A `pollNow()` call that joins a pass
-already running receives that pass, which may have read the table before a change committed just before the call, so
-that change can need one more pass.
-
-After both rounds the pass lists the committed activation records once and refreshes the node's activation view from them,
-each definition id under its queue slot. A committed record replaces the node's entry for its scope and id as a whole, and an
-entry with no committed record is removed, which is how `follow` and `deactivateDefault` reach a peer. The view keeps a record
-whose version this node holds no code for, and applying a record is not an apply failure. Because the definition rounds run
-first, a document published and activated within one interval is held before the record that names it is applied, so one pass
-applies both. A scope that this node's own lifecycle changed after the listing was read is left for the next pass. The pass
-never writes the table and never changes the pin of a running instance. A change of activation therefore reaches a peer within
-the same bound as a definition row.
-
-Convergence time is the cadence plus the time one pass needs to apply; there is no tighter bound. A row that
-cannot be applied is retried on every pass and stays unapplied meanwhile, so a stalled or failing apply gives no
-time bound at all.
-
-A pass reads the table's metadata and does not read the bodies of rows that are already applied. It applies the
-metadata in two rounds, each row under the shared per-definition queue after re-reading it, and the round is chosen
-by the re-read status: a row whose status moved between the listing and the re-read is left untouched for the next
-pass, and a row that vanished is forgotten. A row that is already settled on the node costs nothing: a retired,
-candidate or publishing row whose status and change instant were settled by an earlier pass and whose key has no
-runtime in memory, and a live row whose runtime the node holds with the stored hash, whose recorded change instant and
-deprecation mark agree with the row and that is not failing, are skipped without taking a slot or reading the row.
-Anything else takes the full path again, so a runtime that was removed behind the pass is restored. A row that is
-not applied within twice the poll period is counted as failing and logged, and the pass goes on with the other
-rows; its slot stays held until the action finishes. An error that is not fatal, such as a stack overflow, is
-contained to its row in the same way. A store error while re-reading a row fails the pass instead of counting the
-healthy rows as failing.
-
-1. Retired rows remove the runtime attributed to the row's own key; a runtime of another
-   scope, or a replacement, is never removed because id, version and hash match, and a retired row whose runtime is
-   unattributed has nothing of its own to remove and is settled without failing. Candidate and retired documents are
-   handed to their loader through `onMetadata`. Publishing rows are left alone.
-2. Available and deprecated rows restore the runtime the node does not hold for the key, then mark a
-   deprecated row, or clear the mark of a registration that an available row no longer calls deprecated (a reinstated
-   version). A DOCUMENT row needs exactly one loader that supports its format (normally
-   `WorkflowDefinitionModule`); the stored text is read through the guarded projection, compiled by the loader, and
-   its hash must equal the row's before the runtime is registered. A CODE row needs the same version in the code
-   deployed on this node, with a plan hash equal to the row's. A runtime this lifecycle already published for the key is
-   checked by plan hash. An unattributed runtime is preserved and fails the row with `INVALID_TRANSITION`.
-
-Polling never deploys code, never records or accepts a code hash, never reinstates, and never changes a durable
-row. A node whose deployed code lacks a live CODE version, or compiles it to a different hash, reports
-`CODE_UNAVAILABLE` or `DRIFT` for the row on every pass until it is deployed with matching code; a document without a
-loader fails with `LOADER_MISSING`. A registration failure of the registry itself, for example a contract class that
-another runtime already holds, fails the row in the same way, with the committed row untouched. Compose validators
-do not re-run for propagated definitions.
-
-A failing row is logged at WARN through the logger named after `WorkflowDefinitionPropagationPoller` with the
-definition key and the typed reason, never with source text, on its first failure and whenever the reason changes;
-the same failure on later passes is logged at DEBUG, and the row stays counted. Each applied change is logged at
-INFO.
-
-### WorkflowDefinitionRegistryView
-
-The bound `WorkflowDefinitionRegistryView` is a read-only view of one node:
-
-- `registered()` returns an immutable snapshot of the committed records, in a live status, whose runtime this
-  node holds, ordered by definition id, scope (default first) and version. It lists the applied records of every
-  scope, with their ids, versions and provenance, so it is an operator view: do not expose it to end users
-  unfiltered.
-- `applyFailures()` returns the number of rows that currently fail to apply, not a running total: a successful
-  retry removes the row from the count, and so does a row that is no longer in the table.
-
-The startup step, the lifecycle operations of this node (`publish`, `deprecate`, `retire`, `reinstate`) and the
-poller feed the view. The view reflects this node only; another node can differ until its own pass has run.
+A node keeps no copy of the definition table, so there is nothing to bring in step with it. A start reads the stored
+versions and the activation records in its selection read, so an activation, deprecation or retirement committed on any
+node is seen by the next start on every node (see Activation Records And The Current Version for the isolation caveat). A
+command reads its plan through the plan cache (see Plan Cache), which builds a document version from its row the first time
+this node runs it; a version that was published, deprecated or retired elsewhere needs no step on this node. The convergence
+bound is a read, not a cadence. The cache keeps a built plan until it evicts it, and a plan is determined by the row's plan
+hash, which never changes for a version that has instances; a code definition is the deployed code and changes only with a
+deployment.
 
 ### WorkflowContextBinder
 
@@ -994,8 +881,7 @@ bind `WorkflowCommandRepository<SqlClient>`.
 
 ### Plan Cache
 
-`WorkflowRegistry.load(key)` answers a plan the registry holds (code definitions and the documents registered at startup)
-at once. Any other key goes to the engine's plan cache, a size-bounded object cache named `workflow-plans` that
+`WorkflowRegistry.load(key)` answers a code definition, which the registry holds, at once. Any other key goes to the engine's plan cache, a size-bounded object cache named `workflow-plans` that
 `WorkflowEngineModule` provides and binds as the registry's document plan source. The executor warms the plan of every
 command it peeks on a live instance through `load`, so a node runs a document version it was not started with.
 
@@ -1003,7 +889,8 @@ command it peeks on a live instance through `load`, so a node runs a document ve
   the record and the document text, each on a pooled connection that is released when the read ends, then compiles the
   document and builds the plan on a worker thread that holds no connection, and checks the rebuilt plan hash against the
   stored one. Every registration validator runs in the build. Nothing is registered: the plan belongs to the cache, and
-  `find` and `resolve` answer a document key only while its plan is resident, never loading. A request completes on the
+  `find` and `resolve` answer a document key only while its plan is resident, never loading. A packaged document is a
+  document like any other: it is not registered and not listed by `codeDefinitions()`, and the cache builds it from its row. A request completes on the
   caller's own Vert.x context, so a continuation runs on its executor instance's event loop.
 - **What is remembered.** A `WorkflowDefinitionException` is remembered under the key and fails every later request: the
   document does not compile, a recorded type name no class resolves, no loader supports its format, or the rebuilt hash
@@ -1014,12 +901,11 @@ command it peeks on a live instance through `load`, so a node runs a document ve
   built. A name binding that no class resolves is remembered as a failure like any other that does not build.
 - **Size.** At most `workflow.definitions.planCache.maxEntries` plans (default 500) stay resident; remembered failures count as entries. The cache reports each miss, each successful and each failed
   load and each size eviction to the `Set<CacheObserver>` under the name `workflow-plans`, and nothing for a hit.
-- **Startup builds nothing into it by default.** Startup builds the code definitions and the packaged documents, which the
-  registry holds, and no plan for a document published at run time, whatever its scope. With
+- **Startup builds nothing into it by default.** Startup builds the code definitions, which the registry holds, and checks the packaged documents, but it keeps
+  no plan of a document, whatever its scope. With
   `workflow.definitions.buildDefaultScopeDocumentsAtStartup` set to `true`, startup builds every live default scope document
   the registry does not hold into this cache, so one that does not build fails startup; the setting does not touch documents of
-  other scopes, which are built on first use. A plan that only this cache holds is not a registration: the lifecycle's
-  deprecate, retire and reinstate see no registered runtime for it, and a start or a command on it loads it through `load`.
+  other scopes, which are built on first use. A plan that this cache holds is not a registration, and a start or a command on it loads it through `load`.
   A document that does not build is logged once at warn level, with its key only, when the cache first remembers the failure.
 - **Held for the segment.** A plan can be evicted at any moment, and a lookup inside a segment's transaction must never
   build. The executor therefore holds the plans it warmed from the peek until its segment ends (or until it decides not to

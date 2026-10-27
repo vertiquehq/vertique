@@ -36,7 +36,6 @@ import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
-import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
@@ -121,9 +120,8 @@ class WorkflowEngineStartTenantTest {
         TaskStore<SqlClient> taskStore = mock();
 
         DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
-        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
-        when(registry.isDeployed(currentKey)).thenReturn(true);
-        when(registry.resolve(currentKey)).thenReturn(minimalRuntimeWorkflow());
+        RuntimeWorkflow current = minimalRuntimeWorkflow();
+        when(registry.resolve(currentKey)).thenReturn(current);
         when(dedup.findStart(any(), eq(DEFINITION_ID), any(), any()))
                 .thenReturn(Future.succeededFuture(Optional.empty()));
         when(dedup.claimOrResolveStart(any(), eq(DEFINITION_ID), any(), any(), any(), any()))
@@ -161,9 +159,9 @@ class WorkflowEngineStartTenantTest {
         BranchCompensationOrchestrator branchCompensation =
                 new BranchCompensationOrchestrator(history, recorderRouter, FIXED_CLOCK);
 
-        DefinitionActivations activations = new DefinitionActivations(new InMemoryWorkflowDefinitionRegistryStore());
-        activations.put(new DefinitionActivation(
-                WorkflowScopes.DEFAULT, DEFINITION_ID, WorkflowScopes.DEFAULT, 1, FIXED_CLOCK.instant()));
+        // The version a start selects is the one the rows name as current
+        InMemoryWorkflowDefinitionRegistryStore definitions =
+                new InMemoryWorkflowDefinitionRegistryStore().seedCode(current);
         WorkflowEngine engine = new WorkflowEngine(
                 txRunner,
                 registry,
@@ -188,12 +186,12 @@ class WorkflowEngineStartTenantTest {
                 inboundExecScope,
                 new PayloadConstraintCheck(Optional.empty()),
                 WorkflowEngineFactory.registryTypeNames(registry),
-                activations,
                 Optional.empty(),
                 mock(WorkflowExecutionProbe.class),
                 commands,
                 new AcceptingTaskReservations(),
-                () -> null);
+                () -> null,
+                definitions);
         return new Rig(engine, instances, history, taskStore);
     }
 

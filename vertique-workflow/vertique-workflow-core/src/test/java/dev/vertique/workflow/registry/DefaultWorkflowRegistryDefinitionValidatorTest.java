@@ -204,9 +204,8 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
         // Then: nothing about the definition is resolvable
         assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
-                .isEmpty();
-        assertThat(registry.allRegistered()).isEmpty();
+        assertThat(registry.codeRegistrations()).isEmpty();
+        assertThat(registry.codeDefinitions()).isEmpty();
 
         // When: the validator passes and the same definition is registered again
         failing.set(false);
@@ -219,8 +218,9 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
                 .isEqualTo(1L);
         assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
                 .isNotNull();
-        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
-                .containsSame(definition);
+        assertThat(registry.codeRegistrations())
+                .singleElement()
+                .satisfies(registration -> assertThat(registration.definition()).isSameAs(definition));
     }
 
     @Test

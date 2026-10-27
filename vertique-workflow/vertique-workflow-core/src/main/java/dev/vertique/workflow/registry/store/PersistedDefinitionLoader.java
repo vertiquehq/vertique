@@ -7,7 +7,7 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import java.util.List;
 import java.util.Map;
 
-/** Internal format-specific compilation and cache synchronization seam. */
+/** Internal format-specific compilation seam. */
 public interface PersistedDefinitionLoader {
     boolean supports(String documentFormat);
 
@@ -29,8 +29,4 @@ public interface PersistedDefinitionLoader {
     default String planHash(WorkflowDefinition<?, ?> definition, Map<String, String> nameBinding) {
         return planHash(definition);
     }
-
-    void onRestored(WorkflowDefinitionRecord record, WorkflowDefinition<?, ?> definition);
-
-    void onMetadata(WorkflowDefinitionRecord record);
 }

@@ -298,7 +298,7 @@ class WorkflowReminderComposeValidatorTest {
     private static RegisteredWorkflowDefinition candidate(WorkflowDefinition<State, ?> definition) {
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
         registry.register(definition);
-        WorkflowPlan plan = registry.allRegistered().iterator().next().plan();
+        WorkflowPlan plan = registry.codeDefinitions().iterator().next().plan();
         return new RegisteredWorkflowDefinition(plan, State.class);
     }
 
@@ -311,7 +311,7 @@ class WorkflowReminderComposeValidatorTest {
     private static void validateAll(
             DefaultWorkflowRegistry registry, Set<WorkflowSideEffectRecorder<SqlClient>> recorders) {
         WorkflowReminderComposeValidator validator = new WorkflowReminderComposeValidator(recorders);
-        registry.allRegistered()
+        registry.codeDefinitions()
                 .forEach(rw -> validator.validate(new RegisteredWorkflowDefinition(rw.plan(), State.class)));
     }
 

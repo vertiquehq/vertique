@@ -11,8 +11,17 @@ import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParseException;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParser;
 import dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument;
+import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.RuntimeWorkflow;
+import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKind;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.DocumentOrigin;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import io.vertx.core.Future;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -92,5 +101,49 @@ final class ServiceTestHelpers {
         } catch (TimeoutException e) {
             throw new AssertionError("Workflow definition service Future did not complete within five seconds", e);
         }
+    }
+
+    /**
+     * The row a packaged document is recorded as.
+     *
+     * @param origin the retained packaged document
+     * @return the available row of the document
+     */
+    static WorkflowDefinitionRecord recordOf(DocumentOrigin origin) {
+        Instant now = Instant.now();
+        return new WorkflowDefinitionRecord(
+                origin.key(),
+                DefinitionKind.DOCUMENT,
+                origin.contractName(),
+                origin.stateTypeName(),
+                origin.planHash(),
+                DefinitionStatus.AVAILABLE,
+                origin.provenance(),
+                origin.document().documentFormat(),
+                now,
+                now,
+                origin.nameBinding(),
+                null);
+    }
+
+    /**
+     * Builds the plan of a retained packaged document the way the plan cache builds the plan of a stored one: from
+     * its source text under the names its plan hash used. Nothing is registered.
+     *
+     * @param registry the framework registry whose rules and type names the build uses
+     * @param loader the loader that compiles the document
+     * @param definitionId the id of the packaged document
+     * @param version the version of the packaged document
+     * @return the built plan
+     */
+    static RuntimeWorkflow buildPackaged(
+            WorkflowRegistry registry, DocumentDefinitionLoader loader, String definitionId, long version) {
+        DocumentOrigin origin = loader.documentOrigins().stream()
+                .filter(candidate -> candidate.key().definitionId().equals(definitionId)
+                        && candidate.key().definitionVersion() == version)
+                .findFirst()
+                .orElseThrow();
+        WorkflowDefinition<?, ?> definition = loader.load(recordOf(origin), origin.document());
+        return ((DefaultWorkflowRegistry) registry).build(origin.key().scopeKey(), definition, origin.nameBinding());
     }
 }

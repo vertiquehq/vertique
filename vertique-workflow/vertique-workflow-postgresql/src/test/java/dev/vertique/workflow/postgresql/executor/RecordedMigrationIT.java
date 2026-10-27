@@ -412,7 +412,7 @@ public class RecordedMigrationIT {
     /** Records a version of a fixture definition as available in the durable registry, without activating it. */
     private static void seed(SignalFixture f, Definition code, List<String> signalNames) {
         f.registry.register(code);
-        RuntimeWorkflow runtime = f.registry.allRegistered().stream()
+        RuntimeWorkflow runtime = f.registry.codeDefinitions().stream()
                 .filter(candidate -> candidate.plan().definitionId().equals(code.definitionId())
                         && candidate.plan().definitionVersion() == code.definitionVersion())
                 .findFirst()

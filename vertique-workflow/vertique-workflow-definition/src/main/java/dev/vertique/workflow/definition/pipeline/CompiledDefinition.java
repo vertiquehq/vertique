@@ -12,8 +12,7 @@ import java.util.Objects;
  * validated, and compiled workflow definition together with its plan hash, provenance metadata,
  * and the logical names of its state type and contract.
  *
- * <p>This record is the internal storage shape used by
- * {@link dev.vertique.workflow.definition.service.WorkflowDefinitionStore}. The public API surface
+ * <p>This record is the internal compilation result of the pipeline. The public API surface
  * uses {@link dev.vertique.workflow.definition.service.CompiledDefinitionRef} which exposes only
  * safe, non-generic fields.
  *

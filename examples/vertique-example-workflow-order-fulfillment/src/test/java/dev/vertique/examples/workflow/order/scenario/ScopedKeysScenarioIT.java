@@ -85,8 +85,6 @@ class ScopedKeysScenarioIT {
 
         // When the component restarts
         try (ScenarioNode second = deploy(vertx)) {
-            second.reconcile();
-
             // Then every instance started before the restart resumes on its own pin and completes
             finish(second, orderClient(second, DEFAULT), orderInDefault, "order-default");
             finish(second, orderClient(second, QA), orderInQa, "order-qa");

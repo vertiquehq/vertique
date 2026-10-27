@@ -17,7 +17,6 @@ import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
-import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
@@ -84,7 +83,7 @@ public class DefinitionActivationIT {
                                     .publish(v1)
                                     .transform(result -> {
                                         assertThat(result.failed()).isTrue();
-                                        assertThat(app.workflowRegistry().allRegistered())
+                                        assertThat(app.workflowRegistry().codeDefinitions())
                                                 .noneMatch(runtime -> runtime.plan()
                                                         .definitionId()
                                                         .equals(definitionId));
@@ -105,17 +104,14 @@ public class DefinitionActivationIT {
                                     app.definitionService().publish(v1).map(loaded))
                             .compose(loaded -> app.definitionRegistryStore()
                                     .find(v1)
-                                    .map(record -> {
+                                    .compose(record -> {
                                         assertThat(record).isPresent();
                                         assertThat(record.orElseThrow().status())
                                                 .isEqualTo(DefinitionStatus.AVAILABLE);
-                                        assertThat(app.workflowRegistry()
-                                                        .resolve(new DefinitionKey(
-                                                                WorkflowScopes.DEFAULT, definitionId, 1))
-                                                        .plan()
-                                                        .planHash())
-                                                .isEqualTo(loaded.planHash());
-                                        return loaded;
+                                        return app.workflowRegistry().load(v1).map(plan -> {
+                                            assertThat(plan.plan().planHash()).isEqualTo(loaded.planHash());
+                                            return loaded;
+                                        });
                                     }))
                             .compose(ignoredResult -> {
                                 SourceMetadata v2Metadata = new SourceMetadata(
@@ -168,10 +164,10 @@ public class DefinitionActivationIT {
                                                                                     v2Metadata))
                                                                             .planHash());
                                                     assertThat(app.workflowRegistry()
-                                                                    .allRegistered())
-                                                            .extracting(runtime -> runtime.plan()
-                                                                    .definitionVersion())
-                                                            .containsExactly(1L);
+                                                                    .codeDefinitions())
+                                                            .noneMatch(runtime -> runtime.plan()
+                                                                    .definitionId()
+                                                                    .equals(definitionId));
                                                     return Future.succeededFuture(loaded);
                                                 }))
                                         .compose(loaded -> app.definitionRegistryStore()
@@ -248,12 +244,6 @@ public class DefinitionActivationIT {
                             .compose(pair -> {
                                 assertThat(pair.newClaim().token())
                                         .isNotEqualTo(pair.oldClaim().token());
-                                var compiled = app.definitionPipeline()
-                                        .load(new dev.vertique.workflow.definition.source.DefinitionResource(
-                                                ManagedDefinitionDatabase.yamlFixture(),
-                                                DocumentFormat.YAML,
-                                                metadata));
-                                app.workflowRegistry().register(WorkflowScopes.DEFAULT, compiled.definition());
                                 return app.definitionRegistryStore()
                                         .complete(pair.newClaim())
                                         .map(pair);
@@ -274,19 +264,17 @@ public class DefinitionActivationIT {
                                     }))
                             .compose(pair -> app.definitionRegistryStore()
                                     .find(key)
-                                    .map(record -> {
+                                    .compose(record -> {
                                         assertThat(record).isPresent();
                                         assertThat(record.orElseThrow().status())
                                                 .isEqualTo(DefinitionStatus.AVAILABLE);
                                         assertThat(record.orElseThrow().planHash())
                                                 .isEqualTo(pair.loaded().planHash());
-                                        assertThat(app.workflowRegistry()
-                                                        .resolve(new DefinitionKey(
-                                                                WorkflowScopes.DEFAULT, definitionId, 1))
-                                                        .plan()
-                                                        .planHash())
-                                                .isEqualTo(pair.loaded().planHash());
-                                        return (Void) null;
+                                        return app.workflowRegistry().load(key).map(plan -> {
+                                            assertThat(plan.plan().planHash())
+                                                    .isEqualTo(pair.loaded().planHash());
+                                            return (Void) null;
+                                        });
                                     }))
                             .compose(ignoredResult -> handle.shutdown());
                 });
@@ -342,12 +330,7 @@ public class DefinitionActivationIT {
                     assertThat(state.status()).isEqualTo(DefinitionStatus.PUBLISHING.name());
                     assertThat(state.publishToken()).isNotBlank();
                     assertThat(state.planHash()).isEqualTo(pending.loaded().planHash());
-                    RuntimeWorkflow publicationA = appA.workflowRegistry()
-                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, key.definitionVersion()));
-                    assertThat(publicationA).isNotNull();
-                    assertThat(publicationA.plan().planHash()).isEqualTo(state.planHash());
-                    return new HeldPublication(
-                            pending.activation(), publicationA, state.publishToken(), state.planHash());
+                    return new HeldPublication(pending.activation(), state.publishToken(), state.planHash());
                 }))
                 .compose(heldA -> poolB.preparedQuery("""
                                 UPDATE workflow_definitions
@@ -372,13 +355,7 @@ public class DefinitionActivationIT {
                     assertThat(state.publishToken())
                             .isNotEqualTo(pendingB.original().publishToken());
                     assertThat(state.planHash()).isEqualTo(pendingB.original().planHash());
-                    RuntimeWorkflow publicationB = appB.workflowRegistry()
-                            .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, key.definitionVersion()));
-                    assertThat(publicationB).isNotNull();
-                    assertThat(publicationB).isNotSameAs(pendingB.original().publication());
-                    assertThat(publicationB.plan().planHash()).isEqualTo(state.planHash());
-                    return new HeldReplacement(
-                            pendingB.original(), pendingB.activation(), publicationB, state.publishToken());
+                    return new HeldReplacement(pendingB.original(), pendingB.activation(), state.publishToken());
                 }))
                 .compose(heldB -> {
                     gateB.release();
@@ -388,10 +365,6 @@ public class DefinitionActivationIT {
                     assertThat(state.status()).isEqualTo(DefinitionStatus.AVAILABLE.name());
                     assertThat(state.publishToken()).isNull();
                     assertThat(state.planHash()).isEqualTo(heldB.original().planHash());
-                    assertThat(appB.workflowRegistry()
-                                    .resolve(new DefinitionKey(
-                                            WorkflowScopes.DEFAULT, definitionId, key.definitionVersion())))
-                            .isSameAs(heldB.publication());
                     return heldB;
                 }))
                 .compose(heldB -> {
@@ -406,18 +379,18 @@ public class DefinitionActivationIT {
                         return Future.succeededFuture(heldB);
                     });
                 })
-                .compose(heldB -> readActivationState(poolB, key).map(state -> {
+                .compose(heldB -> readActivationState(poolB, key).compose(state -> {
                     assertThat(state.status()).isEqualTo(DefinitionStatus.AVAILABLE.name());
                     assertThat(state.publishToken()).isNull();
                     assertThat(state.planHash()).isEqualTo(heldB.original().planHash());
-                    assertThat(appA.workflowRegistry().allRegistered())
-                            .noneMatch(runtime -> runtime == heldB.original().publication());
-                    assertThat(appB.workflowRegistry()
-                                    .resolve(new DefinitionKey(
-                                            WorkflowScopes.DEFAULT, definitionId, key.definitionVersion())))
-                            .isSameAs(heldB.publication());
-                    assertThat(heldB.publication().plan().planHash()).isEqualTo(state.planHash());
-                    return (Void) null;
+                    // Both nodes load the plan of the row the second publication completed
+                    return appA.workflowRegistry()
+                            .load(key)
+                            .compose(planA -> appB.workflowRegistry().load(key).map(planB -> {
+                                assertThat(planA.plan().planHash()).isEqualTo(state.planHash());
+                                assertThat(planB.plan().planHash()).isEqualTo(state.planHash());
+                                return (Void) null;
+                            }));
                 }))
                 .eventually(() -> {
                     gateA.release();
@@ -463,8 +436,6 @@ public class DefinitionActivationIT {
                                 VertiqueRuntime.of(vertx, new JsonObject()), ignoredRuntime -> activation)
                         .compose(handle -> {
                             handles.add(handle);
-                            assertThat(activation.workflowDefinitionStore().get(definitionId, key.definitionVersion()))
-                                    .isEmpty();
                             Future<Void> publicActivation =
                                     activation.definitionService().publish(key);
                             return responseLoss
@@ -475,22 +446,20 @@ public class DefinitionActivationIT {
                                         return publicActivation;
                                     })
                                     .compose(ignoredActivation -> readActivationState(verificationPool, key))
-                                    .map(state -> {
+                                    .compose(state -> {
                                         assertThat(state.status()).isEqualTo(DefinitionStatus.AVAILABLE.name());
                                         assertThat(state.publishToken()).isNull();
                                         assertThat(state.planHash()).isEqualTo(loaded.planHash());
-                                        RuntimeWorkflow publication = activation
+                                        return activation
                                                 .workflowRegistry()
-                                                .resolve(new DefinitionKey(
-                                                        WorkflowScopes.DEFAULT, definitionId, key.definitionVersion()));
-                                        assertThat(publication).isNotNull();
-                                        assertThat(publication.plan().planHash())
-                                                .isEqualTo(loaded.planHash());
-                                        assertThat(activation
-                                                        .workflowDefinitionStore()
-                                                        .get(definitionId, key.definitionVersion()))
-                                                .isPresent();
-                                        return (Void) null;
+                                                .load(key)
+                                                .map(publication -> {
+                                                    assertThat(publication
+                                                                    .plan()
+                                                                    .planHash())
+                                                            .isEqualTo(loaded.planHash());
+                                                    return (Void) null;
+                                                });
                                     })
                                     .compose(ignoredActivation -> handle.shutdown());
                         }));
@@ -534,32 +503,6 @@ public class DefinitionActivationIT {
                     .compose(reclaimed -> {
                         ActivationClaim newClaim = reclaimed.newClaim();
                         assertThat(newClaim.token().toString()).isNotEqualTo(reclaimed.oldToken());
-                        assertThat(app.workflowRegistry()
-                                        .resolve(new DefinitionKey(
-                                                WorkflowScopes.DEFAULT,
-                                                oldKey.definitionId(),
-                                                oldKey.definitionVersion())))
-                                .isNotNull();
-                        RuntimeWorkflow oldPublication = app.workflowRegistry()
-                                .resolve(new DefinitionKey(
-                                        WorkflowScopes.DEFAULT, oldKey.definitionId(), oldKey.definitionVersion()));
-                        app.workflowRegistry()
-                                .unregister(new DefinitionKey(
-                                        WorkflowScopes.DEFAULT, oldKey.definitionId(), oldKey.definitionVersion()));
-                        String replacementJson = new String(originalJson, StandardCharsets.UTF_8);
-                        var replacement = app.definitionPipeline()
-                                .load(new DefinitionResource(
-                                        replacementJson.getBytes(StandardCharsets.UTF_8),
-                                        DocumentFormat.JSON,
-                                        oldMetadata));
-                        app.workflowRegistry().register(WorkflowScopes.DEFAULT, replacement.definition());
-                        RuntimeWorkflow replacementPublication = app.workflowRegistry()
-                                .resolve(new DefinitionKey(
-                                        WorkflowScopes.DEFAULT, oldKey.definitionId(), oldKey.definitionVersion()));
-                        assertThat(replacementPublication).isNotSameAs(oldPublication);
-                        assertThat(replacementPublication.plan().planHash()).isEqualTo(replacement.planHash());
-                        assertThat(replacementPublication.plan().planHash())
-                                .isEqualTo(oldPublication.plan().planHash());
 
                         DefinitionKey queuedKey = new DefinitionKey(WorkflowScopes.DEFAULT, oldKey.definitionId(), 3);
                         String queuedJson = new String(originalJson, StandardCharsets.UTF_8)
@@ -606,45 +549,24 @@ public class DefinitionActivationIT {
                                             assertThat(row.getString("status")).isEqualTo("PUBLISHING");
                                             assertThat(row.getString("publish_token"))
                                                     .isEqualTo(newClaim.token().toString());
-                                            assertThat(app.workflowRegistry()
-                                                            .resolve(new DefinitionKey(
-                                                                    WorkflowScopes.DEFAULT,
-                                                                    oldKey.definitionId(),
-                                                                    oldKey.definitionVersion())))
-                                                    .isSameAs(replacementPublication);
-                                            assertThat(app.workflowRegistry()
-                                                            .resolve(new DefinitionKey(
-                                                                    WorkflowScopes.DEFAULT,
-                                                                    oldKey.definitionId(),
-                                                                    oldKey.definitionVersion()))
-                                                            .plan()
-                                                            .planHash())
-                                                    .isEqualTo(replacement.planHash());
                                             return (Void) null;
                                         }))
                                 .compose(ignoredQueued ->
                                         app.definitionRegistryStore().complete(newClaim))
                                 .compose(ignoredComplete -> app.definitionRegistryStore()
                                         .find(oldKey)
-                                        .map(record -> {
+                                        .compose(record -> {
                                             assertThat(record).isPresent();
                                             assertThat(record.orElseThrow().status())
                                                     .isEqualTo(DefinitionStatus.AVAILABLE);
-                                            assertThat(app.workflowRegistry()
-                                                            .resolve(new DefinitionKey(
-                                                                    WorkflowScopes.DEFAULT,
-                                                                    oldKey.definitionId(),
-                                                                    oldKey.definitionVersion())))
-                                                    .isSameAs(replacementPublication);
-                                            assertThat(app.workflowRegistry()
-                                                            .resolve(new DefinitionKey(
-                                                                    WorkflowScopes.DEFAULT,
-                                                                    oldKey.definitionId(),
-                                                                    oldKey.definitionVersion()))
-                                                            .plan()
-                                                            .planHash())
-                                                    .isEqualTo(replacement.planHash());
-                                            return (Void) null;
+                                            return app.workflowRegistry()
+                                                    .load(oldKey)
+                                                    .map(plan -> {
+                                                        assertThat(plan.plan().planHash())
+                                                                .isEqualTo(record.orElseThrow()
+                                                                        .planHash());
+                                                        return (Void) null;
+                                                    });
                                         }));
                     });
             return scenario.eventually(() -> {
@@ -751,13 +673,11 @@ public class DefinitionActivationIT {
 
     private record PendingActivation(CompiledDefinitionRef loaded, Future<Void> activation) {}
 
-    private record HeldPublication(
-            Future<Void> activation, RuntimeWorkflow publication, String publishToken, String planHash) {}
+    private record HeldPublication(Future<Void> activation, String publishToken, String planHash) {}
 
     private record PendingReplacement(HeldPublication original, Future<Void> activation) {}
 
-    private record HeldReplacement(
-            HeldPublication original, Future<Void> activation, RuntimeWorkflow publication, String publishToken) {}
+    private record HeldReplacement(HeldPublication original, Future<Void> activation, String publishToken) {}
 
     private record ClaimPair(CompiledDefinitionRef loaded, ActivationClaim oldClaim, ActivationClaim newClaim) {
 

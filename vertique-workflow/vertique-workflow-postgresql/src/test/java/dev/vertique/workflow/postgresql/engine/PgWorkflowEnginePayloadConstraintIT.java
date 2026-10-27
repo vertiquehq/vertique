@@ -18,7 +18,6 @@ import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import dagger.Component;
 import dev.vertique.core.validation.BeanValidator;
-import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -30,6 +29,7 @@ import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
@@ -134,7 +134,6 @@ public class PgWorkflowEnginePayloadConstraintIT {
     private static final String START_DEFINITION_ID = "payload-constraint-start";
 
     private static final String DECISION_REJECTION = "invalid decision payload";
-    private static final String START_REJECTION = "invalid start payload";
 
     private static final String ENABLED_LINE = "workflow payload constraint enforcement: enabled";
     private static final String DISABLED_LINE = "workflow payload constraint enforcement: disabled";
@@ -346,6 +345,8 @@ public class PgWorkflowEnginePayloadConstraintIT {
         registry.register(INSTANCE_DEF);
         registry.register(BRANCH_DEF);
         registry.register(START_DEF);
+        // A start is checked against the start schema its row stores, so the rows the engine selects from carry it
+        InMemoryWorkflowDefinitionRegistryStore.of(registry).withSchemas(PlanSchemas.producer());
 
         beanValidator = DaggerPgWorkflowEnginePayloadConstraintIT_ValidationComponent.create()
                 .beanValidator();
@@ -538,10 +539,11 @@ public class PgWorkflowEnginePayloadConstraintIT {
         // When: the start payload leaves the property blank
         WorkflowInvalidPayloadException rejection = assertInvalidStart(Map.of("requester", ""), key);
 
-        // Then: one required detail at the property pointer, no instance row and no claim
-        assertEquals(START_REJECTION, rejection.getMessage());
-        assertEquals(1, rejection.violations().size(), "exactly one detail expected: " + rejection.violations());
-        assertEquals("required", detailAt(rejection, "/requester").type());
+        // Then: the stored schema refuses it at the property, no instance row and no claim
+        assertTrue(
+                rejection.getMessage().startsWith("Start of definition '" + START_DEFINITION_ID + "' version 1"),
+                "the refusal must name the definition version, was: " + rejection.getMessage());
+        assertTrue(rejection.getMessage().contains("/requester"), "the refusal must name the property");
         assertEquals(0L, instanceRows(START_DEFINITION_ID), "a rejected start must not create an instance");
         assertEquals(0L, startDedupRows(key), "a rejected start must not retain the claim");
 
@@ -769,15 +771,6 @@ public class PgWorkflowEnginePayloadConstraintIT {
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
-    }
-
-    /** Returns the single detail whose path equals {@code path}, whatever the detail order. */
-    private static ViolationDetail detailAt(WorkflowInvalidPayloadException rejection, String path) {
-        List<ViolationDetail> matching = rejection.violations().stream()
-                .filter(detail -> path.equals(detail.path()))
-                .toList();
-        assertEquals(1, matching.size(), "exactly one detail at " + path + " expected in " + rejection.violations());
-        return matching.get(0);
     }
 
     private static String lastError(UUID taskId) {

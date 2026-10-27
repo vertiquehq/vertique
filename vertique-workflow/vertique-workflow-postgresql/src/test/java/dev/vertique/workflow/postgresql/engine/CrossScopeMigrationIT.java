@@ -24,6 +24,7 @@ import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.engine.testsupport.ScopedDefinitions;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.MigrationContext;
@@ -37,6 +38,7 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
@@ -286,7 +288,14 @@ public class CrossScopeMigrationIT {
         }
     }
 
-    private static Harness open(Consumer<WorkflowRegistry> definitions, WorkflowMigrationHandler<?, ?>... handlers) {
+    /**
+     * Opens an engine whose registry holds the given code and whose stored versions of the other scopes are the given
+     * ones; the plans of another scope reach the node through a plan source that is bound once the engine was built.
+     */
+    private static Harness open(
+            Consumer<WorkflowRegistry> code,
+            Consumer<ScopedDefinitions> scoped,
+            WorkflowMigrationHandler<?, ?>... handlers) {
         Vertx vertx = Vertx.vertx();
         DbPoolConfig config = db.toPoolConfig();
         Pool pool = PgBuilder.pool()
@@ -301,7 +310,7 @@ public class CrossScopeMigrationIT {
                 .build();
         Comparison comparison = DaggerCrossScopeMigrationIT_Comparison.create();
         WorkflowRegistry registry = comparison.registry();
-        definitions.accept(registry);
+        code.accept(registry);
         PgDbExceptionMapper mapper = new PgDbExceptionMapper();
         WorkflowEngineHandle engine = PgWorkflowEngineTestSupport.createWithStateCompatibility(
                 pool,
@@ -314,12 +323,13 @@ public class CrossScopeMigrationIT {
                 Clock.systemUTC(),
                 new DefaultWorkflowMigrationRegistry(Set.of(handlers), registry),
                 comparison.compatibility());
+        scoped.accept(ScopedDefinitions.of((DefaultWorkflowRegistry) registry));
         return new Harness(vertx, pool, registry, engine);
     }
 
     @BeforeEach
     void truncateTables() throws Exception {
-        Harness harness = open(registry -> {});
+        Harness harness = open(registry -> {}, scoped -> {});
         try {
             await(harness.pool()
                     .query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
@@ -380,8 +390,8 @@ public class CrossScopeMigrationIT {
                 registry -> {
                     registry.register(defaultCode(1L));
                     registry.register(defaultCode(2L));
-                    registry.register(ACME, acmeDocument());
                 },
+                scoped -> scoped.publish(ACME, acmeDocument()),
                 defaultToDefault,
                 defaultToAcme,
                 acmeToDefault);
@@ -433,10 +443,10 @@ public class CrossScopeMigrationIT {
         Recording<Base, Base> toAcme = baseToBase(DEFAULT, 1L, ACME, 1L);
         Recording<Base, Base> toGlobex = baseToBase(DEFAULT, 1L, GLOBEX, 1L);
         Harness harness = open(
-                registry -> {
-                    registry.register(ACME, new Waiting<>(Base.class, ContractD.class, 1L, id -> new Base(id, 0)));
-                    registry.register(defaultCode(1L));
-                    registry.register(GLOBEX, defaultCode(1L));
+                registry -> registry.register(defaultCode(1L)),
+                scoped -> {
+                    scoped.publish(ACME, new Waiting<>(Base.class, ContractD.class, 1L, id -> new Base(id, 0)));
+                    scoped.publish(GLOBEX, defaultCode(1L));
                 },
                 toAcme,
                 toGlobex);
@@ -480,8 +490,8 @@ public class CrossScopeMigrationIT {
                 registry -> {
                     registry.register(defaultCode(1L));
                     registry.register(defaultCode(2L));
-                    registry.register(ACME, acmeDocument());
                 },
+                scoped -> scoped.publish(ACME, acmeDocument()),
                 acmeToDefault);
         try {
             // and: an instance started in acme and pinned to the acme definition
@@ -504,7 +514,7 @@ public class CrossScopeMigrationIT {
     @DisplayName("a refused migration repeats a long caller-supplied target scope only in bounded form")
     void refusalOfAMigrationBoundsTheTargetScope() throws Exception {
         // Given: an instance started in acme and pinned to the default version 1
-        Harness harness = open(registry -> registry.register(defaultCode(1L)));
+        Harness harness = open(registry -> registry.register(defaultCode(1L)), scoped -> {});
         try {
             WorkflowInstanceId id = waitingPinnedTo(harness, DEFAULT, ACME, harness.planHash(DEFAULT, 1L));
 

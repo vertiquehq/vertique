@@ -38,7 +38,6 @@ import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
@@ -237,12 +236,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private final PayloadConstraintCheck payloadConstraintCheck;
 
-    /** This node's view of the activation records, which chooses the version of a start without one. */
-    private final DefinitionActivations activations;
-
     /**
      * The reads of definition rows on the caller's transaction that a start selects its version from; {@code null} when
-     * the store cannot read on a caller's transaction, which leaves a start to select from this node's registry.
+     * the store cannot read on a caller's transaction, which fails a start that has no replay to answer.
      */
     private final @Nullable TransactionalDefinitionReads<SqlClient> definitionReads;
 
@@ -291,7 +287,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             DurableContextPropagator propagator,
             WorkflowContextBinder contextBinder,
             PayloadConstraintCheck payloadConstraintCheck,
-            DefinitionActivations activations,
             Optional<TransactionalDefinitionReads<SqlClient>> definitionReads,
             WorkflowExecutionProbe executionProbe,
             WorkflowCommandRepository<SqlClient> commands,
@@ -304,7 +299,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.executionProbe = executionProbe;
         this.commands = commands;
         this.executorControl = executorControl::get;
-        this.activations = activations;
         this.definitionReads = definitionReads.orElse(null);
         this.txRunner = txRunner;
         this.registry = registry;
@@ -357,12 +351,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
             PayloadConstraintCheck payloadConstraintCheck,
             WorkflowTypeNames typeNames,
-            DefinitionActivations activations,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
             WorkflowExecutionProbe executionProbe,
             WorkflowCommandRepository<SqlClient> commands,
             TaskReservations<SqlClient> reservations,
-            Supplier<WorkflowExecutorControl> executorControl) {
+            Supplier<WorkflowExecutorControl> executorControl,
+            @Nullable TransactionalDefinitionReads<SqlClient> definitionReads) {
         this(
                 txRunner,
                 registry,
@@ -387,7 +381,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 inboundExecScope,
                 payloadConstraintCheck,
                 typeNames,
-                activations,
                 stateCompatibility,
                 executionProbe,
                 commands,
@@ -396,7 +389,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 reservations,
                 Optional.empty(),
                 key -> Optional.empty(),
-                null);
+                definitionReads);
     }
 
     /**
@@ -440,8 +433,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * task-lifecycle service built below.
      *
      * <p>The {@code typeNames} parameter is the type-name index a decision payload's declared type
-     * name resolves through; the factory passes the one index the registry fills. The {@code activations}
-     * parameter is this engine's view of the activation records, which the factory builds empty. The
+     * name resolves through; the factory passes the one index the registry fills. The
      * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes. The {@code executionProbe} parameter is the probe the handle exposes. The {@code commands} parameter is the
      * command repository whose execution lock every instance-changing entry point takes. The {@code reservations}
      * parameter reserves a task for a recorded completion; the {@code schemaProducer} parameter, when present, supplies
@@ -475,7 +467,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
             PayloadConstraintCheck payloadConstraintCheck,
             WorkflowTypeNames typeNames,
-            DefinitionActivations activations,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
             WorkflowExecutionProbe executionProbe,
             WorkflowCommandRepository<SqlClient> commands,
@@ -493,7 +484,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.commands = commands;
         this.executorControl = executorControl;
         this.payloadConstraintCheck = payloadConstraintCheck;
-        this.activations = activations;
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -629,7 +619,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 builtContextBinder,
                 stateCompatibility,
                 failingMarks,
-                commands);
+                commands,
+                definitionReads);
     }
 
     // --- WorkflowEngineHandle ---
@@ -905,9 +896,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * caller's transaction; the payload is checked against the stored schema; and only then the lock, the dedup claim,
      * pin admission and the insert follow.
      *
-     * <p>An id the database holds no row of in the start scope or the default scope is not managed by the registry
-     * store; its start selects from this node's registry as it always did, as does a start through a store that cannot
-     * read on the caller's transaction.
+     * <p>A start through a store that cannot read on the caller's transaction fails: the node keeps no copy of the
+     * definition table to select from.
      */
     private Future<WorkflowInstanceId> firstStart(StartCommand cmd, String startScope, SqlClient tx) {
         WorkflowInvalidPayloadException oversized = oversizedSubject(cmd.subjectRef());
@@ -915,13 +905,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return Future.failedFuture(oversized);
         }
         if (definitionReads == null) {
-            return firstStartFromRegistry(cmd, startScope, tx);
+            return Future.failedFuture(new IllegalStateException(
+                    "A start selects its version from the definition rows on the caller's transaction, but the"
+                            + " definition store of this engine cannot read on it"));
         }
         return definitionReads
                 .selectionRead(startScope, cmd.definitionId(), tx)
-                .compose(read -> read.versions().isEmpty()
-                        ? firstStartFromRegistry(cmd, startScope, tx)
-                        : firstStartFromRows(cmd, startScope, read, tx));
+                .compose(read -> firstStartFromRows(cmd, startScope, read, tx));
     }
 
     /** Runs the version the selection read chose; no plan is loaded and no payload class is read. */
@@ -956,48 +946,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 startScope,
                 new Selected(key.scopeKey(), key.definitionId(), key.definitionVersion(), chosen.planHash()),
                 cmd.payload(),
-                tx);
-    }
-
-    /** Runs the version this node's registry and activation view select, for an id the database holds no row of. */
-    private Future<WorkflowInstanceId> firstStartFromRegistry(StartCommand cmd, String startScope, SqlClient tx) {
-        RuntimeWorkflow rw;
-        try {
-            rw = resolveForStart(cmd, startScope);
-            DefinitionKey resolved = new DefinitionKey(
-                    rw.definitionScopeKey(), rw.plan().definitionId(), rw.plan().definitionVersion());
-            // A deprecated version admits no new work, whether it was named or an activation record selected it;
-            // refuse before any dedup claim or write.
-            if (registry.isDeprecated(resolved)) {
-                return Future.failedFuture(deprecatedRefusal(resolved));
-            }
-            if (!cmd.contractName().equals(rw.contractName())) {
-                return Future.failedFuture(startContractRefusal(cmd, rw.contractName(), resolved));
-            }
-        } catch (Exception e) {
-            return Future.failedFuture(e);
-        }
-
-        // The payload is validated and bound to its declared type before any lock is taken or row written.
-        Object coercedPayload;
-        try {
-            coercedPayload = WorkflowPayloads.validateAndCoerceStartPayload(cmd.payload(), rw.startPayloadType());
-            payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.START_REJECTION);
-        } catch (WorkflowInvalidPayloadException e) {
-            if (e.getCause() != null) {
-                log.debug("Start payload rejected", e.getCause());
-            }
-            return Future.failedFuture(e);
-        }
-        return claimAndCreate(
-                cmd,
-                startScope,
-                new Selected(
-                        rw.definitionScopeKey(),
-                        rw.plan().definitionId(),
-                        rw.plan().definitionVersion(),
-                        rw.plan().planHash()),
-                coercedPayload,
                 tx);
     }
 
@@ -1058,43 +1006,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         return new WorkflowInvalidPayloadException(
                 "Start is refused: the subject " + part + " exceeds " + limit + " characters",
                 List.of(ViolationDetail.unlocated("the subject " + part + " is too long", "payload")));
-    }
-
-    /**
-     * Resolves the definition version a first start runs from this node's registry and activation view, for an id the
-     * database holds no row of. An explicit version in a named scope resolves exactly that key, and only the start
-     * scope and the default scope can be named. An explicit version without a scope resolves from the start scope
-     * when it holds a version of the id that implements the client's contract, and from the default scope otherwise.
-     * A start without a version runs what the activation view selects for the client's contract.
-     */
-    private RuntimeWorkflow resolveForStart(StartCommand cmd, String startScope) {
-        Long version = cmd.requestedDefinitionVersion();
-        if (version == null) {
-            return activations.resolve(registry, startScope, cmd.definitionId(), cmd.contractName());
-        }
-        String targetScope = cmd.requestedTargetScope();
-        if (targetScope != null) {
-            if (!targetScope.equals(startScope) && !targetScope.equals(WorkflowScopes.DEFAULT)) {
-                throw new WorkflowDefinitionMissingException(cmd.definitionId(), targetScope);
-            }
-            return PinnedPlans.resolve(
-                    registry, StartVersionSelection.requestedKey(targetScope, cmd.definitionId(), version));
-        }
-        String owner = ownsId(registry, startScope, cmd.definitionId(), cmd.contractName())
-                ? startScope
-                : WorkflowScopes.DEFAULT;
-        return PinnedPlans.resolve(registry, StartVersionSelection.requestedKey(owner, cmd.definitionId(), version));
-    }
-
-    /**
-     * Whether the start scope's own definitions of the id apply to a client of the contract: a scope other than the
-     * default one holds a registered version of the id (available or deprecated) that implements that contract.
-     */
-    static boolean ownsId(WorkflowRegistry registry, String startScope, String definitionId, String contractName) {
-        return !WorkflowScopes.DEFAULT.equals(startScope)
-                && registry.contractOf(startScope, definitionId)
-                        .filter(contractName::equals)
-                        .isPresent();
     }
 
     /** The refusal for a start through a client of another contract than the resolved definition's. */

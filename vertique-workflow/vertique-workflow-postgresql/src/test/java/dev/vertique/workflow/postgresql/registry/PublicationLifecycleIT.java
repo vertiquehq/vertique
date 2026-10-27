@@ -107,7 +107,9 @@ public class PublicationLifecycleIT {
                 assertThat(row.publishToken()).isNull();
                 assertThat(row.planHash()).isEqualTo(loaded.planHash());
             });
-            assertThat(node.app().workflowRegistry().resolve(key).plan().planHash())
+            assertThat(DefinitionScenario.planOf(node.app().workflowRegistry(), key)
+                            .plan()
+                            .planHash())
                     .isEqualTo(loaded.planHash());
 
             // When the same key is published again
@@ -164,11 +166,15 @@ public class PublicationLifecycleIT {
 
             // And every node whose publication succeeded resolves the key
             if (failureA == null) {
-                assertThat(nodeA.app().workflowRegistry().resolve(key).plan().planHash())
+                assertThat(DefinitionScenario.planOf(nodeA.app().workflowRegistry(), key)
+                                .plan()
+                                .planHash())
                         .isEqualTo(loaded.planHash());
             }
             if (failureB == null) {
-                assertThat(nodeB.app().workflowRegistry().resolve(key).plan().planHash())
+                assertThat(DefinitionScenario.planOf(nodeB.app().workflowRegistry(), key)
+                                .plan()
+                                .planHash())
                         .isEqualTo(loaded.planHash());
             }
         }
@@ -202,15 +208,15 @@ public class PublicationLifecycleIT {
 
             // And both code versions resolve
             WorkflowRegistry registry = node.app().workflowRegistry();
-            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, codeId, 1))
+            assertThat(DefinitionScenario.planOf(registry, new DefinitionKey(WorkflowScopes.DEFAULT, codeId, 1))
                             .plan()
                             .definitionVersion())
                     .isEqualTo(1);
-            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, codeId, 2))
+            assertThat(DefinitionScenario.planOf(registry, new DefinitionKey(WorkflowScopes.DEFAULT, codeId, 2))
                             .plan()
                             .definitionVersion())
                     .isEqualTo(2);
-            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, packagedId, 1)))
+            assertThat(DefinitionScenario.planOf(registry, new DefinitionKey(WorkflowScopes.DEFAULT, packagedId, 1)))
                     .isNotNull();
         }
     }
@@ -246,8 +252,10 @@ public class PublicationLifecycleIT {
 
             // And the registry resolves each scope's own plan
             WorkflowRegistry registry = node.app().workflowRegistry();
-            assertThat(registry.resolve(defaultKey).plan().planHash()).isEqualTo(defaultLoaded.planHash());
-            assertThat(registry.resolve(acmeKey).plan().planHash()).isEqualTo(acmeLoaded.planHash());
+            assertThat(DefinitionScenario.planOf(registry, defaultKey).plan().planHash())
+                    .isEqualTo(defaultLoaded.planHash());
+            assertThat(DefinitionScenario.planOf(registry, acmeKey).plan().planHash())
+                    .isEqualTo(acmeLoaded.planHash());
             assertThat(defaultLoaded.planHash()).isNotEqualTo(acmeLoaded.planHash());
         }
     }
@@ -361,7 +369,9 @@ public class PublicationLifecycleIT {
                 assertThat(row.status()).isEqualTo("AVAILABLE");
                 assertThat(row.publishToken()).isNull();
             });
-            assertThat(node.app().workflowRegistry().resolve(versionOne).plan().planHash())
+            assertThat(DefinitionScenario.planOf(node.app().workflowRegistry(), versionOne)
+                            .plan()
+                            .planHash())
                     .isEqualTo(loadedOne.planHash());
 
             // And version 2 is unchanged

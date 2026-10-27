@@ -47,6 +47,7 @@ import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.Postg
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.TypeCatalogModule;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.schema.WorkflowSchemaModule;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
@@ -139,6 +140,8 @@ final class PlanCacheFixture implements AutoCloseable {
         WorkflowInstanceRepository<SqlClient> instanceRepository();
 
         WorkflowCommandRepository<SqlClient> commandRepository();
+
+        Set<PersistedDefinitionLoader> persistedLoaders();
     }
 
     @Singleton
@@ -222,7 +225,12 @@ final class PlanCacheFixture implements AutoCloseable {
     private boolean closed;
 
     private PlanCacheFixture(
-            Vertx vertx, PostgresContainer db, int maxEntries, int poolSize, int acquisitionTimeoutSeconds) {
+            Vertx vertx,
+            PostgresContainer db,
+            int maxEntries,
+            int poolSize,
+            int acquisitionTimeoutSeconds,
+            int maxStalenessSeconds) {
         this.vertx = vertx;
         this.admin = pool(vertx, db, 4, 0);
         resetTables();
@@ -236,7 +244,7 @@ final class PlanCacheFixture implements AutoCloseable {
                                 .put(
                                         "definitions",
                                         new JsonObject()
-                                                .put("maxStalenessSeconds", 3600)
+                                                .put("maxStalenessSeconds", maxStalenessSeconds)
                                                 .put("planCache", new JsonObject().put("maxEntries", maxEntries)))
                                 .put("executor", new JsonObject().put("pollIntervalMs", 100)));
         WorkflowDefinitionSource none = List::of;
@@ -263,7 +271,21 @@ final class PlanCacheFixture implements AutoCloseable {
      */
     static PlanCacheFixture open(
             Vertx vertx, PostgresContainer db, int maxEntries, int poolSize, int acquisitionTimeoutSeconds) {
-        return new PlanCacheFixture(vertx, db, maxEntries, poolSize, acquisitionTimeoutSeconds);
+        return new PlanCacheFixture(vertx, db, maxEntries, poolSize, acquisitionTimeoutSeconds, 3600);
+    }
+
+    /**
+     * Starts the graph as {@link #open} does, with the definition staleness bound set to the given seconds instead of
+     * one no test outlasts.
+     */
+    static PlanCacheFixture open(
+            Vertx vertx,
+            PostgresContainer db,
+            int maxEntries,
+            int poolSize,
+            int acquisitionTimeoutSeconds,
+            int maxStalenessSeconds) {
+        return new PlanCacheFixture(vertx, db, maxEntries, poolSize, acquisitionTimeoutSeconds, maxStalenessSeconds);
     }
 
     private static Pool pool(Vertx vertx, PostgresContainer db, int size, int acquisitionTimeoutSeconds) {
@@ -299,7 +321,7 @@ final class PlanCacheFixture implements AutoCloseable {
         return cacheEvents;
     }
 
-    AppComponent app() {
+    PlanCacheGraph app() {
         return app;
     }
 

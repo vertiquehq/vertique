@@ -5,14 +5,13 @@ package dev.vertique.workflow.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
-import dev.vertique.workflow.plan.WorkflowPlan;
-import dev.vertique.workflow.registry.RegisteredDefinitionClass;
-import dev.vertique.workflow.registry.RuntimeWorkflow;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
@@ -33,9 +32,7 @@ import io.vertx.core.Future;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Deque;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -50,11 +47,11 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.mockito.Mockito;
 
 /**
- * Verifies the claim release of {@link DefaultWorkflowDefinitionLifecycle} when a durable activation
- * fails and the follow-up read of the definition row fails as well.
+ * Verifies how {@link DefaultWorkflowDefinitionLifecycle} moves a definition row through its lifecycle: the claim of
+ * a publication and its release, the read-back that decides a change whose outcome is unknown, and the transitions
+ * that deprecate, retire and reinstate a row. The lifecycle changes only the row; it keeps no copy of it.
  */
 class DefaultWorkflowDefinitionLifecycleTest {
 
@@ -62,65 +59,254 @@ class DefaultWorkflowDefinitionLifecycleTest {
     private static final String PLAN_HASH = "a".repeat(64);
     private static final String OTHER_HASH = "b".repeat(64);
 
+    /** The contract of the definition the stored documents of these tests compile to. */
+    @WorkflowContract("lifecycle-contract")
+    interface LifecycleContract {}
+
+    record LifecycleState(String id) {}
+
+    record LifecycleStart(String id) {}
+
+    /** A definition that completes at once, with the identity of {@link #KEY}. */
+    private static final class CompletingDefinition implements WorkflowDefinition<LifecycleState, LifecycleContract> {
+        @Override
+        public Class<LifecycleContract> contract() {
+            return LifecycleContract.class;
+        }
+
+        @Override
+        public Class<LifecycleState> stateType() {
+            return LifecycleState.class;
+        }
+
+        @Override
+        public String definitionId() {
+            return "wf";
+        }
+
+        @Override
+        public long definitionVersion() {
+            return 1;
+        }
+
+        @Override
+        public void define(WorkflowBuilder<LifecycleState> wf) {
+            wf.init(LifecycleStart.class, start -> new LifecycleState(start.id()))
+                    .initialStep("done")
+                    .complete("done");
+        }
+    }
+
+    /** A definition that never calls {@code init}, which the plan build refuses. */
+    private static final class InvalidDefinition implements WorkflowDefinition<LifecycleState, LifecycleContract> {
+        @Override
+        public Class<LifecycleContract> contract() {
+            return LifecycleContract.class;
+        }
+
+        @Override
+        public Class<LifecycleState> stateType() {
+            return LifecycleState.class;
+        }
+
+        @Override
+        public String definitionId() {
+            return "wf";
+        }
+
+        @Override
+        public long definitionVersion() {
+            return 1;
+        }
+
+        @Override
+        public void define(WorkflowBuilder<LifecycleState> wf) {}
+    }
+
+    // --- Publishing a candidate ---
+
     @Test
-    @DisplayName("a failed reread after an activation that published nothing still releases the claim once")
-    void releasesClaimWhenNothingWasPublishedAndRereadFails() {
+    @DisplayName("a publication that fails before its completion still releases the claim once")
+    void releasesClaimWhenTheFailureComesBeforeTheCompletion() {
         // Given a CANDIDATE document row, a claim that succeeds, and no loader bound
         FakeStore store = new FakeStore();
-        DefaultWorkflowDefinitionLifecycle lifecycle = lifecycle(store, Set.of(), Mockito.mock(WorkflowRegistry.class));
+        DefaultWorkflowDefinitionLifecycle lifecycle = lifecycle(store, Set.of());
 
-        // When the activation fails with LOADER_MISSING and the reread of the row fails
+        // When the publication fails with LOADER_MISSING and the reread of the row would fail as well
         Future<Void> result = lifecycle.publish(KEY);
 
-        // Then the activation failed with the original LOADER_MISSING refusal ...
+        // Then the publication failed with the original LOADER_MISSING refusal ...
         assertThat(result.failed()).isTrue();
         assertThat(result.cause())
                 .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, e -> assertThat(e.reason())
-                        .isEqualTo(WorkflowDefinitionLifecycleException.Reason.LOADER_MISSING));
+                        .isEqualTo(Reason.LOADER_MISSING));
         // ... and the claim was released exactly once
         assertThat(store.releases.get()).isEqualTo(1);
     }
 
     @Test
-    @DisplayName("control: a failed reread after a local publication does not release the claim")
-    void keepsClaimWhenPublicationExistsAndRereadFails() {
-        // Given a loader that publishes the definition locally, and a completion that fails unknown
+    @DisplayName("a failed reread after a completion of unknown outcome does not release the claim")
+    void keepsClaimWhenTheCompletionOutcomeIsUnknownAndRereadFails() {
+        // Given a loader whose definition builds, and a completion that fails with an unknown outcome
         FakeStore store = new FakeStore();
         store.completion = Future.failedFuture(new IllegalStateException("commit outcome unknown"));
-        WorkflowRegistry registry = Mockito.mock(WorkflowRegistry.class);
-        Mockito.when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1)))
-                .thenReturn(Mockito.mock(RuntimeWorkflow.class));
-        DefaultWorkflowDefinitionLifecycle lifecycle = lifecycle(store, Set.of(publishingLoader()), registry);
+        DefaultWorkflowDefinitionLifecycle lifecycle = lifecycle(store, Set.of(publishingLoader()));
 
-        // When the reread of the row fails after the publication
+        // When the reread of the row fails after the completion
         Future<Void> result = lifecycle.publish(KEY);
 
-        // Then the activation failed and the claim stays owned by reconciliation
+        // Then the publication failed and the claim stays for the reset of stale claims
         assertThat(result.failed()).isTrue();
         assertThat(store.releases.get()).isZero();
     }
 
-    @ParameterizedTest(name = "a {0} row is deprecated with that status and then marked locally")
-    @EnumSource(
-            value = DefinitionStatus.class,
-            names = {"AVAILABLE"})
-    void deprecatesCommittedRowBeforeMarkingTheRegistry(DefinitionStatus committed) {
-        // Given a row committed with the status under test and a transition that succeeds
+    @Test
+    @DisplayName("a publication builds the plan, completes the claim once and changes nothing when repeated")
+    void publicationCompletesOnceAndARepeatChangesNothing() {
+        // Given a candidate row whose document builds
+        ActivationStore store = new ActivationStore();
+        store.completions.add(Future.succeededFuture());
+        DefaultWorkflowDefinitionLifecycle lifecycle = lifecycle(store, Set.of(publishingLoader()));
+
+        // When it is published, and published again
+        Future<Void> first = lifecycle.publish(KEY);
+        Future<Void> again = lifecycle.publish(KEY);
+
+        // Then the first publication completed the claim, and the repeat saw an available row and did nothing
+        assertThat(first.succeeded()).as("first publication: %s", first.cause()).isTrue();
+        assertThat(again.succeeded()).isTrue();
+        assertThat(store.claims).isEqualTo(1);
+        assertThat(store.completes).isEqualTo(1);
+        assertThat(store.releases).isZero();
+    }
+
+    @Test
+    @DisplayName("a document that does not build is refused before its completion and its claim is released")
+    void documentThatDoesNotBuildIsRefusedBeforeCompletion() {
+        // Given a candidate row whose compiled definition fails the plan rules
+        ActivationStore store = new ActivationStore();
+        store.completions.add(Future.succeededFuture());
+        DefaultWorkflowDefinitionLifecycle lifecycle =
+                lifecycle(store, Set.of(publishingLoader(new InvalidDefinition())));
+
+        // When it is published
+        Future<Void> result = lifecycle.publish(KEY);
+
+        // Then the plan rule refusal is reported, the claim was released and nothing was completed
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isInstanceOf(WorkflowDefinitionException.class);
+        assertThat(store.completes).isZero();
+        assertThat(store.releases).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a rebuilt plan hash that differs from the row's is refused before the completion")
+    void hashDriftIsRefusedBeforeCompletion() {
+        // Given a candidate row and a loader whose definition hashes to another value than the row's
+        ActivationStore store = new ActivationStore();
+        store.planHash = OTHER_HASH;
+        DefaultWorkflowDefinitionLifecycle lifecycle = lifecycle(store, Set.of(publishingLoader()));
+
+        // When it is published
+        Future<Void> result = lifecycle.publish(KEY);
+
+        // Then it fails as drift, with the claim released and nothing completed
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
+            assertThat(failure.reason()).isEqualTo(Reason.DRIFT);
+            assertThat(failure.key()).isEqualTo(KEY);
+        });
+        assertThat(store.completes).isZero();
+        assertThat(store.releases).isEqualTo(1);
+    }
+
+    static Stream<Arguments> rereadsThatAreNotTheCommit() {
+        return Stream.of(
+                Arguments.of(DefinitionStatus.PUBLISHING, PLAN_HASH),
+                Arguments.of(DefinitionStatus.AVAILABLE, OTHER_HASH));
+    }
+
+    @ParameterizedTest(name = "a failed completion whose reread shows {0} with hash {1} is not a commit")
+    @MethodSource("rereadsThatAreNotTheCommit")
+    void aRereadThatIsNotTheCommitReleasesTheClaim(DefinitionStatus reread, String hash) {
+        // Given a completion that fails, after which the row reads as something other than this publication's commit
+        ActivationStore store = new ActivationStore();
+        IllegalStateException failure = new IllegalStateException("completion failed");
+        store.completionOutcome = () -> {
+            store.status = reread;
+            store.planHash = hash;
+            return Future.failedFuture(failure);
+        };
+        DefaultWorkflowDefinitionLifecycle lifecycle = lifecycle(store, Set.of(publishingLoader()));
+
+        // When the publication runs
+        Future<Void> result = lifecycle.publish(KEY);
+
+        // Then the failure is reported and the claim is released
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isSameAs(failure);
+        assertThat(store.releases).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a failed completion whose reread shows the row available with the row's hash is a commit")
+    void aRereadWithTheRowsHashIsTheCommit() {
+        // Given a completion whose response is lost after the row was committed
+        ActivationStore store = new ActivationStore();
+        store.completionOutcome = () -> {
+            store.status = DefinitionStatus.AVAILABLE;
+            return Future.failedFuture(new IllegalStateException("response lost"));
+        };
+        DefaultWorkflowDefinitionLifecycle lifecycle = lifecycle(store, Set.of(publishingLoader()));
+
+        // When the publication runs
+        Future<Void> result = lifecycle.publish(KEY);
+
+        // Then it succeeds and the claim is not released
+        assertThat(result.succeeded()).as("result: %s", result.cause()).isTrue();
+        assertThat(store.releases).isZero();
+    }
+
+    @Test
+    @DisplayName("a completion refused as a stale claim is definitive and releases the claim without a reread")
+    void staleClaimRefusalReleasesTheClaim() {
+        // Given a completion that the store refuses because the claim went stale
+        ActivationStore store = new ActivationStore();
+        WorkflowDefinitionLifecycleException stale = new WorkflowDefinitionLifecycleException(
+                Reason.STALE_CLAIM, KEY, "the claim is not the row's any more");
+        store.completionOutcome = () -> Future.failedFuture(stale);
+        DefaultWorkflowDefinitionLifecycle lifecycle = lifecycle(store, Set.of(publishingLoader()));
+
+        // When the publication runs
+        Future<Void> result = lifecycle.publish(KEY);
+
+        // Then the refusal is reported, the claim is released and the row was not read again
+        assertThat(result.cause()).isSameAs(stale);
+        assertThat(store.releases).isEqualTo(1);
+        assertThat(store.finds).isEqualTo(2);
+    }
+
+    // --- Deprecating ---
+
+    @Test
+    @DisplayName("an available row is deprecated with one transition from its actual status")
+    void deprecatesCommittedRow() {
+        // Given a row committed as available and a transition that succeeds
         DeprecationScenario scenario = new DeprecationScenario();
-        scenario.reads.add(Future.succeededFuture(Optional.of(row(committed))));
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.AVAILABLE))));
         scenario.transitions.add(Future.succeededFuture());
 
         // When the definition is deprecated
         Future<Void> result = scenario.lifecycle().deprecate(KEY);
 
-        // Then the transition ran once with the actual status, and only afterwards was the registry marked once
+        // Then the transition ran once with the actual status
         assertThat(result.succeeded()).isTrue();
         assertThat(scenario.transitionKeys).containsExactly(KEY);
-        assertThat(scenario.events).containsExactly("find", "transition " + committed + "->DEPRECATED", "mark wf 1");
+        assertThat(scenario.events).containsExactly("find", "transition AVAILABLE->DEPRECATED");
     }
 
     @Test
-    @DisplayName("a lost transition response whose reread shows DEPRECATED still succeeds and marks the registry")
+    @DisplayName("a lost transition response whose reread shows DEPRECATED still succeeds")
     void acceptsLostResponseWhenRereadShowsDeprecated() {
         // Given a transition that fails after the status was committed
         DeprecationScenario scenario = new DeprecationScenario();
@@ -131,9 +317,9 @@ class DefaultWorkflowDefinitionLifecycleTest {
         // When the definition is deprecated
         Future<Void> result = scenario.lifecycle().deprecate(KEY);
 
-        // Then the committed status is accepted without a second transition, and the registry is marked once
+        // Then the committed status is accepted without a second transition
         assertThat(result.succeeded()).isTrue();
-        assertThat(scenario.events).containsExactly("find", "transition AVAILABLE->DEPRECATED", "find", "mark wf 1");
+        assertThat(scenario.events).containsExactly("find", "transition AVAILABLE->DEPRECATED", "find");
     }
 
     @Test
@@ -150,16 +336,11 @@ class DefaultWorkflowDefinitionLifecycleTest {
         // When the definition is deprecated
         Future<Void> result = scenario.lifecycle().deprecate(KEY);
 
-        // Then the second attempt succeeded, and the registry was marked once afterwards
+        // Then the second attempt succeeded
         assertThat(result.succeeded()).isTrue();
         assertThat(scenario.events)
                 .containsExactly(
-                        "find",
-                        "transition AVAILABLE->DEPRECATED",
-                        "find",
-                        "find",
-                        "transition AVAILABLE->DEPRECATED",
-                        "mark wf 1");
+                        "find", "transition AVAILABLE->DEPRECATED", "find", "find", "transition AVAILABLE->DEPRECATED");
     }
 
     @Test
@@ -180,14 +361,12 @@ class DefaultWorkflowDefinitionLifecycleTest {
         // When the definition is deprecated
         Future<Void> result = scenario.lifecycle().deprecate(KEY);
 
-        // Then there are exactly two transition attempts, the refusal of the last one is reported, and nothing is
-        // marked
+        // Then there are exactly two transition attempts, and the refusal of the last one is reported
         assertThat(result.failed()).isTrue();
         assertThat(result.cause()).isSameAs(secondRefusal);
         assertThat(scenario.events)
                 .filteredOn(event -> event.startsWith("transition"))
                 .hasSize(2);
-        assertThat(scenario.events).noneMatch(event -> event.startsWith("mark"));
     }
 
     @Test
@@ -205,15 +384,14 @@ class DefaultWorkflowDefinitionLifecycleTest {
         // When the definition is deprecated
         Future<Void> result = scenario.lifecycle().deprecate(KEY);
 
-        // Then the original failure is reported carrying the read failure, and nothing is marked
+        // Then the original failure is reported carrying the read failure
         assertThat(result.failed()).isTrue();
         assertThat(result.cause()).isSameAs(transitionFailure);
         assertThat(result.cause().getSuppressed()).containsExactly(readFailure);
-        assertThat(scenario.events).noneMatch(event -> event.startsWith("mark"));
     }
 
     @Test
-    @DisplayName("a JVM error from the transition is passed through without a reread, a retry or a mark")
+    @DisplayName("a JVM error from the transition is passed through without a reread or a retry")
     void passesThroughJvmErrors() {
         // Given a transition that fails with an Error
         DeprecationScenario scenario = new DeprecationScenario();
@@ -224,15 +402,15 @@ class DefaultWorkflowDefinitionLifecycleTest {
         // When the definition is deprecated
         Future<Void> result = scenario.lifecycle().deprecate(KEY);
 
-        // Then that same error is reported after a single read and a single transition, and nothing is marked
+        // Then that same error is reported after a single read and a single transition
         assertThat(result.failed()).isTrue();
         assertThat(result.cause()).isSameAs(fatal);
         assertThat(scenario.events).containsExactly("find", "transition AVAILABLE->DEPRECATED");
     }
 
     @Test
-    @DisplayName("an already deprecated row issues no transition but still marks the registry")
-    void marksRegistryForAlreadyDeprecatedRow() {
+    @DisplayName("an already deprecated row issues no transition")
+    void issuesNoTransitionForAnAlreadyDeprecatedRow() {
         // Given a row that is already DEPRECATED, for instance after a restart or a lost response
         DeprecationScenario scenario = new DeprecationScenario();
         scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
@@ -240,9 +418,9 @@ class DefaultWorkflowDefinitionLifecycleTest {
         // When the definition is deprecated
         Future<Void> result = scenario.lifecycle().deprecate(KEY);
 
-        // Then no transition ran and the registry was marked once
+        // Then no transition ran
         assertThat(result.succeeded()).isTrue();
-        assertThat(scenario.events).containsExactly("find", "mark wf 1");
+        assertThat(scenario.events).containsExactly("find");
     }
 
     @ParameterizedTest(name = "a {0} row cannot be deprecated")
@@ -257,7 +435,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         // When the definition is deprecated
         Future<Void> result = scenario.lifecycle().deprecate(KEY);
 
-        // Then it fails as an invalid transition naming the key, with no transition and no mark
+        // Then it fails as an invalid transition naming the key, with no transition
         assertInvalidTransition(result);
         assertThat(scenario.events).containsExactly("find");
     }
@@ -272,7 +450,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         // When the definition is deprecated
         Future<Void> result = scenario.lifecycle().deprecate(KEY);
 
-        // Then it fails as an invalid transition naming the key, with no transition and no mark
+        // Then it fails as an invalid transition naming the key, with no transition
         assertInvalidTransition(result);
         assertThat(scenario.events).containsExactly("find");
     }
@@ -291,7 +469,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         // When the definition is deprecated
         Future<Void> result = scenario.lifecycle().deprecate(KEY);
 
-        // Then the failure is reported after one transition and nothing is marked
+        // Then the failure is reported after one transition
         assertThat(result.failed()).isTrue();
         assertThat(result.cause()).isSameAs(failure);
         assertThat(scenario.events).containsExactly("find", "transition AVAILABLE->DEPRECATED", "find");
@@ -318,14 +496,13 @@ class DefaultWorkflowDefinitionLifecycleTest {
         Future<Void> plainResult = plain.lifecycle().deprecate(KEY);
         Future<Void> otherResult = otherReason.lifecycle().deprecate(KEY);
 
-        // Then each reports its own failure after a single transition and nothing is marked
+        // Then each reports its own failure after a single transition
         assertThat(plainResult.cause()).isSameAs(failure);
         assertThat(otherResult.cause()).isSameAs(staleClaim);
         for (DeprecationScenario scenario : List.of(plain, otherReason)) {
             assertThat(scenario.events)
                     .filteredOn(event -> event.startsWith("transition"))
                     .hasSize(1);
-            assertThat(scenario.events).noneMatch(event -> event.startsWith("mark"));
         }
     }
 
@@ -345,166 +522,15 @@ class DefaultWorkflowDefinitionLifecycleTest {
         // When the definition is deprecated
         Future<Void> result = scenario.lifecycle().deprecate(KEY);
 
-        // Then the refusal is reported after one transition and nothing is marked
+        // Then the refusal is reported after one transition
         assertThat(result.cause()).isSameAs(refused);
         assertThat(scenario.events)
                 .filteredOn(event -> event.startsWith("transition"))
                 .hasSize(1);
-        assertThat(scenario.events).noneMatch(event -> event.startsWith("mark"));
     }
 
     @Test
-    @DisplayName("deprecating over a runtime the lifecycle did not publish is refused before any store call")
-    void deprecateRefusesUnattributedRuntimeBeforeTheStore() {
-        // Given a runtime registered for the key that no attribution names, as after a direct registry call
-        DeprecationScenario scenario = new DeprecationScenario();
-        scenario.registryHolds(Mockito.mock(RuntimeWorkflow.class));
-
-        // When the definition is deprecated
-        Future<Void> result = scenario.lifecycle(new ManagedRegistrations()).deprecate(KEY);
-
-        // Then it fails as an invalid transition naming the key, and neither the store nor the registry is touched
-        assertInvalidTransition(result);
-        assertThat(scenario.events).isEmpty();
-    }
-
-    @Test
-    @DisplayName("deprecating over a runtime published for another scope's key is refused before any store call")
-    void deprecateRefusesRuntimePublishedForAnotherScopeBeforeTheStore() {
-        // Given a runtime attributed to the same id and version in another scope
-        DeprecationScenario scenario = new DeprecationScenario();
-        RuntimeWorkflow otherScopes = Mockito.mock(RuntimeWorkflow.class);
-        scenario.registryHolds(otherScopes);
-        ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute("tenant-other", "wf", 1, otherScopes);
-
-        // When this scope's row is deprecated
-        Future<Void> result = scenario.lifecycle(registrations).deprecate(KEY);
-
-        // Then the registration is not this key's own, so the call is refused and neither the store nor the registry
-        // is touched
-        assertInvalidTransition(result);
-        assertThat(scenario.events).isEmpty();
-    }
-
-    @Test
-    @DisplayName("deprecating marks the runtime the lifecycle published for this key")
-    void deprecateMarksOwnPublishedRuntime() {
-        // Given a runtime attributed to this owner
-        DeprecationScenario scenario = new DeprecationScenario();
-        RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
-        scenario.registryHolds(own);
-        ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute(WorkflowScopes.DEFAULT, "wf", 1, own);
-        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.AVAILABLE))));
-        scenario.transitions.add(Future.succeededFuture());
-
-        // When the row is deprecated
-        Future<Void> result = scenario.lifecycle(registrations).deprecate(KEY);
-
-        // Then the transition ran and the registry was marked afterwards
-        assertThat(result.succeeded()).isTrue();
-        assertThat(scenario.events).containsExactly("find", "transition AVAILABLE->DEPRECATED", "mark wf 1");
-    }
-
-    @Test
-    @DisplayName("retiring over a runtime the lifecycle did not publish is refused before the store retires")
-    void retireRefusesUnattributedRuntimeBeforeTheStore() {
-        // Given a runtime registered for the key that no attribution names
-        DeprecationScenario scenario = new DeprecationScenario();
-        scenario.registryHolds(Mockito.mock(RuntimeWorkflow.class));
-        scenario.retirements.add(Future.succeededFuture());
-
-        // When the definition is retired
-        Future<Void> result = scenario.lifecycle(new ManagedRegistrations()).retire(KEY);
-
-        // Then it fails as an invalid transition naming the key, and the store and the registry are untouched
-        assertInvalidTransition(result);
-        assertThat(scenario.events).isEmpty();
-    }
-
-    @Test
-    @DisplayName("retiring over a runtime published for another scope's key is refused before the store retires")
-    void retireRefusesRuntimePublishedForAnotherScopeBeforeTheStore() {
-        // Given a runtime attributed to the same id and version in another scope
-        DeprecationScenario scenario = new DeprecationScenario();
-        RuntimeWorkflow otherScopes = Mockito.mock(RuntimeWorkflow.class);
-        scenario.registryHolds(otherScopes);
-        ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute("tenant-other", "wf", 1, otherScopes);
-        scenario.retirements.add(Future.succeededFuture());
-
-        // When this scope's row is retired
-        Future<Void> result = scenario.lifecycle(registrations).retire(KEY);
-
-        // Then the registration is not this key's own, so the call is refused and nothing is touched
-        assertInvalidTransition(result);
-        assertThat(scenario.events).isEmpty();
-    }
-
-    @Test
-    @DisplayName("retiring removes the runtime the lifecycle published for this key")
-    void retireRemovesOwnPublishedRuntime() {
-        // Given a runtime attributed to this owner
-        DeprecationScenario scenario = new DeprecationScenario();
-        RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
-        scenario.registryHolds(own);
-        ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute(WorkflowScopes.DEFAULT, "wf", 1, own);
-        scenario.retirements.add(Future.succeededFuture());
-
-        // When the row is retired
-        Future<Void> result = scenario.lifecycle(registrations).retire(KEY);
-
-        // Then the store retired the row, and only afterwards was the runtime unregistered
-        assertThat(result.succeeded()).isTrue();
-        assertThat(scenario.events).containsExactly("retire", "unregister wf 1");
-    }
-
-    @Test
-    @DisplayName("a retirement whose response was lost but whose row is retired still removes the runtime")
-    void retireWithLostResponseRemovesOwnRuntimeWhenTheRowIsRetired() {
-        // Given a runtime attributed to this owner and a retirement that fails after it committed
-        DeprecationScenario scenario = new DeprecationScenario();
-        RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
-        scenario.registryHolds(own);
-        ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute(WorkflowScopes.DEFAULT, "wf", 1, own);
-        scenario.retirements.add(Future.failedFuture(new IllegalStateException("commit outcome unknown")));
-        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.RETIRED))));
-
-        // When the row is retired
-        Future<Void> result = scenario.lifecycle(registrations).retire(KEY);
-
-        // Then the read-back found the retirement committed, so the runtime was unregistered and the call succeeded
-        assertThat(result.succeeded()).isTrue();
-        assertThat(scenario.events).containsExactly("retire", "find", "unregister wf 1");
-    }
-
-    @Test
-    @DisplayName("a failed retirement whose row is not retired keeps the runtime and reports the original failure")
-    void retireThatDidNotCommitKeepsTheRuntimeAndFailsWithTheOriginalError() {
-        // Given a runtime attributed to this owner and a retirement that failed without committing
-        DeprecationScenario scenario = new DeprecationScenario();
-        RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
-        scenario.registryHolds(own);
-        ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute(WorkflowScopes.DEFAULT, "wf", 1, own);
-        IllegalStateException original = new IllegalStateException("pins exist");
-        scenario.retirements.add(Future.failedFuture(original));
-        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
-
-        // When the row is retired
-        Future<Void> result = scenario.lifecycle(registrations).retire(KEY);
-
-        // Then the original failure is reported and nothing was unregistered
-        assertThat(result.failed()).isTrue();
-        assertThat(result.cause()).isSameAs(original);
-        assertThat(scenario.events).containsExactly("retire", "find");
-    }
-
-    @Test
-    @DisplayName("a null key fails the returned future instead of throwing, and marks nothing")
+    @DisplayName("a null key fails the returned future instead of throwing")
     void failsFutureForNullKey() {
         // Given a lifecycle with a store
         DeprecationScenario scenario = new DeprecationScenario();
@@ -512,11 +538,330 @@ class DefaultWorkflowDefinitionLifecycleTest {
         // When deprecate is called with a null key
         Future<Void> result = scenario.lifecycle().deprecate(null);
 
-        // Then the future fails, the store is untouched and nothing is marked
+        // Then the future fails and the store is untouched
         assertThat(result.failed()).isTrue();
         assertThat(result.cause()).isInstanceOf(NullPointerException.class);
         assertThat(scenario.events).isEmpty();
     }
+
+    // --- Retiring ---
+
+    @Test
+    @DisplayName("retiring asks the store to retire the row and nothing else")
+    void retireAsksTheStoreToRetire() {
+        // Given a store that retires the row
+        DeprecationScenario scenario = new DeprecationScenario();
+        scenario.retirements.add(Future.succeededFuture());
+
+        // When the row is retired
+        Future<Void> result = scenario.lifecycle().retire(KEY);
+
+        // Then the store retired the row and was not read
+        assertThat(result.succeeded()).isTrue();
+        assertThat(scenario.events).containsExactly("retire");
+    }
+
+    @Test
+    @DisplayName("a retirement whose response was lost but whose row is retired succeeds")
+    void retireWithLostResponseSucceedsWhenTheRowIsRetired() {
+        // Given a retirement that fails after it committed
+        DeprecationScenario scenario = new DeprecationScenario();
+        scenario.retirements.add(Future.failedFuture(new IllegalStateException("commit outcome unknown")));
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.RETIRED))));
+
+        // When the row is retired
+        Future<Void> result = scenario.lifecycle().retire(KEY);
+
+        // Then the read-back found the retirement committed and the call succeeded
+        assertThat(result.succeeded()).isTrue();
+        assertThat(scenario.events).containsExactly("retire", "find");
+    }
+
+    @Test
+    @DisplayName("a failed retirement whose row is not retired reports the original failure")
+    void retireThatDidNotCommitFailsWithTheOriginalError() {
+        // Given a retirement that failed without committing
+        DeprecationScenario scenario = new DeprecationScenario();
+        IllegalStateException original = new IllegalStateException("pins exist");
+        scenario.retirements.add(Future.failedFuture(original));
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
+
+        // When the row is retired
+        Future<Void> result = scenario.lifecycle().retire(KEY);
+
+        // Then the original failure is reported
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isSameAs(original);
+        assertThat(scenario.events).containsExactly("retire", "find");
+    }
+
+    // --- Reinstating ---
+
+    @Test
+    @DisplayName("a retired document is restored from its stored text, built and then committed as available")
+    void reinstatingADocumentRestoresItsSourceBeforeTheChange() {
+        // Given a retired document and a change that succeeds
+        ReinstateStore store = new ReinstateStore();
+        store.transitions.add(() -> {
+            store.status = DefinitionStatus.AVAILABLE;
+            return Future.succeededFuture();
+        });
+        ReinstateWorld world = new ReinstateWorld(store);
+
+        // When it is reinstated
+        Future<Void> result = world.lifecycle.reinstate(KEY);
+
+        // Then the source was read before the change, and nothing is read after it
+        assertThat(result.succeeded()).as("result: %s", result.cause()).isTrue();
+        assertThat(store.events).containsExactly("find", "findDocument", "transition RETIRED->AVAILABLE");
+    }
+
+    @Test
+    @DisplayName(
+            "a retired document whose stored text hashes to another value than the row's is refused before a change")
+    void reinstatementIsRefusedOnDriftBeforeAnyChange() {
+        // Given a retired row whose hash is not the one its stored text compiles to
+        ReinstateStore store = new ReinstateStore();
+        store.planHash = OTHER_HASH;
+        ReinstateWorld world = new ReinstateWorld(store);
+
+        // When the reinstatement runs
+        Future<Void> result = world.lifecycle.reinstate(KEY);
+
+        // Then the refusal is reported as drift before any change was attempted
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
+            assertThat(failure.reason()).isEqualTo(Reason.DRIFT);
+            assertThat(failure.key()).isEqualTo(KEY);
+        });
+        assertThat(store.events).containsExactly("find", "findDocument");
+    }
+
+    @Test
+    @DisplayName("a retired document without its stored text is refused before a change")
+    void reinstatementIsRefusedWithoutTheStoredText() {
+        // Given a retired row whose text is gone
+        ReinstateStore store = new ReinstateStore();
+        store.textMissing = true;
+        ReinstateWorld world = new ReinstateWorld(store);
+
+        // When the reinstatement runs
+        Future<Void> result = world.lifecycle.reinstate(KEY);
+
+        // Then it fails as a missing loader source, and no change was attempted
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause())
+                .isInstanceOfSatisfying(
+                        WorkflowDefinitionLifecycleException.class,
+                        failure -> assertThat(failure.reason()).isEqualTo(Reason.LOADER_MISSING));
+        assertThat(store.events).containsExactly("find", "findDocument");
+    }
+
+    @Test
+    @DisplayName("a change that fails definitively is reported")
+    void aDefinitiveFailureIsReported() {
+        // Given a document whose change is refused for good
+        ReinstateStore store = new ReinstateStore();
+        WorkflowDefinitionLifecycleException conflict = refusal(Reason.INVALID_TRANSITION);
+        store.transitions.add(() -> Future.failedFuture(conflict));
+        ReinstateWorld world = new ReinstateWorld(store);
+
+        // When the reinstatement runs
+        Future<Void> result = world.lifecycle.reinstate(KEY);
+
+        // Then the refusal is reported
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isSameAs(conflict);
+    }
+
+    static Stream<Arguments> reinstatementRereadsThatAreNotTheCommit() {
+        return Stream.of(
+                Arguments.of(DefinitionStatus.DEPRECATED, PLAN_HASH),
+                Arguments.of(DefinitionStatus.AVAILABLE, OTHER_HASH));
+    }
+
+    @ParameterizedTest(name = "a failed change whose reread shows {0} with hash {1} is not a commit")
+    @MethodSource("reinstatementRereadsThatAreNotTheCommit")
+    void aRereadThatIsNotTheReinstatementCommitFails(DefinitionStatus reread, String hash) {
+        // Given a change that fails, after which the row reads as something other than this reinstatement's commit
+        ReinstateStore store = new ReinstateStore();
+        IllegalStateException failure = new IllegalStateException("change failed");
+        store.transitions.add(() -> {
+            store.status = reread;
+            store.planHash = hash;
+            return Future.failedFuture(failure);
+        });
+        ReinstateWorld world = new ReinstateWorld(store);
+
+        // When the reinstatement runs
+        Future<Void> result = world.lifecycle.reinstate(KEY);
+
+        // Then the failure is reported: a row that is not this reinstatement's commit does not count as committed
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isSameAs(failure);
+    }
+
+    @Test
+    @DisplayName("a failed change whose reread shows the row available with the row's hash is a commit")
+    void aRereadWithTheRowsHashIsTheReinstatementCommit() {
+        // Given a change whose response is lost after the row was committed
+        ReinstateStore store = new ReinstateStore();
+        store.transitions.add(() -> {
+            store.status = DefinitionStatus.AVAILABLE;
+            return Future.failedFuture(new IllegalStateException("response lost"));
+        });
+        ReinstateWorld world = new ReinstateWorld(store);
+
+        // When the reinstatement runs
+        Future<Void> result = world.lifecycle.reinstate(KEY);
+
+        // Then it succeeds
+        assertThat(result.succeeded()).as("result: %s", result.cause()).isTrue();
+    }
+
+    @Test
+    @DisplayName("a retired code row is reinstated when the deployed code still provides its hash")
+    void reinstatingACodeRowChecksTheDeployedCode() {
+        // Given a retired code row and deployed code with the row's plan hash
+        DefaultWorkflowRegistry deployed = new DefaultWorkflowRegistry();
+        deployed.register(new CompletingDefinition());
+        WorkflowCodeDefinitionCatalog catalog = new WorkflowCodeDefinitionCatalog();
+        catalog.capture(deployed);
+        String deployedHash =
+                deployed.codeDefinitions().iterator().next().plan().planHash();
+        ReinstateStore store = new ReinstateStore();
+        store.kind = DefinitionKind.CODE;
+        store.planHash = deployedHash;
+        store.transitions.add(() -> Future.succeededFuture());
+        DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
+                store, () -> deployed, Set.of(), new DefinitionApplyQueue(), catalog);
+
+        // When it is reinstated
+        Future<Void> result = lifecycle.reinstate(KEY);
+
+        // Then the change was committed without reading a document
+        assertThat(result.succeeded()).as("result: %s", result.cause()).isTrue();
+        assertThat(store.events).containsExactly("find", "transition RETIRED->AVAILABLE");
+    }
+
+    @ParameterizedTest(name = "a retired code row is refused as {0} when the deployed code {1}")
+    @MethodSource("codeReinstatementsThatAreRefused")
+    void reinstatingACodeRowIsRefusedWithoutMatchingDeployedCode(Reason reason, String situation, boolean provided) {
+        // Given a retired code row, and deployed code that is missing or has another plan hash
+        DefaultWorkflowRegistry deployed = new DefaultWorkflowRegistry();
+        WorkflowCodeDefinitionCatalog catalog = new WorkflowCodeDefinitionCatalog();
+        if (provided) deployed.register(new CompletingDefinition());
+        catalog.capture(deployed);
+        ReinstateStore store = new ReinstateStore();
+        store.kind = DefinitionKind.CODE;
+        DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
+                store, () -> deployed, Set.of(), new DefinitionApplyQueue(), catalog);
+
+        // When it is reinstated
+        Future<Void> result = lifecycle.reinstate(KEY);
+
+        // Then it is refused before any change
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
+            assertThat(failure.reason()).isEqualTo(reason);
+            assertThat(failure.key()).isEqualTo(KEY);
+        });
+        assertThat(store.events).containsExactly("find");
+    }
+
+    static Stream<Arguments> codeReinstatementsThatAreRefused() {
+        return Stream.of(
+                Arguments.of(Reason.CODE_UNAVAILABLE, "no longer provides it", false),
+                Arguments.of(Reason.DRIFT, "provides another plan hash", true));
+    }
+
+    @Test
+    @DisplayName("a deprecated row is committed as available without restoring its source")
+    void reinstatingADeprecatedRowCommitsAtOnce() {
+        // Given a deprecated row
+        DeprecationScenario scenario = new DeprecationScenario();
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
+        scenario.transitions.add(Future.succeededFuture());
+
+        // When the row is reinstated
+        Future<Void> result = scenario.lifecycle().reinstate(KEY);
+
+        // Then the durable change ran once from deprecated to available
+        assertThat(result.succeeded()).as("result: %s", result.cause()).isTrue();
+        assertThat(scenario.events).containsExactly("find", "transition DEPRECATED->AVAILABLE");
+    }
+
+    @Test
+    @DisplayName("a lost response whose reread shows the deprecated row available is accepted")
+    void reinstatingADeprecatedRowAcceptsALostResponseThatCommitted() {
+        // Given a transition that fails after the row was committed as available
+        DeprecationScenario scenario = new DeprecationScenario();
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.AVAILABLE))));
+        scenario.transitions.add(Future.failedFuture(new IllegalStateException("response lost")));
+
+        // When the row is reinstated
+        Future<Void> result = scenario.lifecycle().reinstate(KEY);
+
+        // Then the committed row is accepted
+        assertThat(result.succeeded()).as("result: %s", result.cause()).isTrue();
+        assertThat(scenario.events).containsExactly("find", "transition DEPRECATED->AVAILABLE", "find");
+    }
+
+    @Test
+    @DisplayName("a failed change that did not commit leaves the deprecated row alone")
+    void reinstatingADeprecatedRowThatDidNotCommitFails() {
+        // Given a transition that fails while the row still reads as deprecated
+        DeprecationScenario scenario = new DeprecationScenario();
+        IllegalStateException failure = new IllegalStateException("database unavailable");
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
+        scenario.transitions.add(Future.failedFuture(failure));
+
+        // When the row is reinstated
+        Future<Void> result = scenario.lifecycle().reinstate(KEY);
+
+        // Then the original failure is reported
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isSameAs(failure);
+        assertThat(scenario.events).containsExactly("find", "transition DEPRECATED->AVAILABLE", "find");
+    }
+
+    @ParameterizedTest(name = "a {0} row cannot be reinstated")
+    @EnumSource(
+            value = DefinitionStatus.class,
+            names = {"CANDIDATE", "PUBLISHING", "AVAILABLE"})
+    void reinstatementRefusesARowThatIsNotRetired(DefinitionStatus status) {
+        // Given a row that is not retired
+        ReinstateStore store = new ReinstateStore();
+        store.status = status;
+        ReinstateWorld world = new ReinstateWorld(store);
+
+        // When the reinstatement runs
+        Future<Void> result = world.lifecycle.reinstate(KEY);
+
+        // Then it fails as an invalid transition after the single read, with nothing changed
+        assertInvalidTransition(result);
+        assertThat(store.events).containsExactly("find");
+    }
+
+    @Test
+    @DisplayName("a missing row cannot be reinstated")
+    void reinstatementRefusesAMissingRow() {
+        // Given no row for the key
+        ReinstateStore store = new ReinstateStore();
+        store.missing = true;
+        ReinstateWorld world = new ReinstateWorld(store);
+
+        // When the reinstatement runs
+        Future<Void> result = world.lifecycle.reinstate(KEY);
+
+        // Then it fails as an invalid transition after the single read, with nothing changed
+        assertInvalidTransition(result);
+        assertThat(store.events).containsExactly("find");
+    }
+
+    // --- Support ---
 
     private static void assertInvalidTransition(Future<Void> result) {
         assertThat(result.failed()).isTrue();
@@ -531,93 +876,96 @@ class DefaultWorkflowDefinitionLifecycleTest {
     }
 
     private static WorkflowDefinitionRecord row(DefinitionStatus status) {
-        Instant now = Instant.parse("2026-01-01T00:00:00Z");
-        return new WorkflowDefinitionRecord(
-                KEY,
-                DefinitionKind.DOCUMENT,
-                "example.Contract",
-                "example.State",
-                PLAN_HASH,
-                status,
-                new DefinitionProvenance("test", null, null, null, null, now),
-                "YAML",
-                now,
-                now,
-                Map.of(),
-                null);
+        return row(status, PLAN_HASH, DefinitionKind.DOCUMENT);
     }
 
-    private static WorkflowDefinitionRecord row(DefinitionStatus status, String planHash) {
+    private static WorkflowDefinitionRecord row(DefinitionStatus status, String planHash, DefinitionKind kind) {
         Instant now = Instant.parse("2026-01-01T00:00:00Z");
         return new WorkflowDefinitionRecord(
                 KEY,
-                DefinitionKind.DOCUMENT,
+                kind,
                 "example.Contract",
                 "example.State",
                 planHash,
                 status,
                 new DefinitionProvenance("test", null, null, null, null, now),
-                "YAML",
+                kind == DefinitionKind.DOCUMENT ? "YAML" : null,
                 now,
                 now,
                 Map.of(),
                 null);
     }
 
-    /** A registry that logs every deprecation mark into the shared event log. */
-    private static WorkflowRegistry recordingRegistry(List<String> events) {
-        WorkflowRegistry registry = Mockito.mock(WorkflowRegistry.class);
-        Mockito.doAnswer(invocation -> {
-                    DefinitionKey key = invocation.getArgument(0);
-                    events.add("mark " + key.definitionId() + " " + key.definitionVersion());
-                    return null;
-                })
-                .when(registry)
-                .markDeprecated(Mockito.any(DefinitionKey.class));
-        Mockito.doAnswer(invocation -> {
-                    DefinitionKey key = invocation.getArgument(0);
-                    events.add("unmark " + key.definitionId() + " " + key.definitionVersion());
-                    return null;
-                })
-                .when(registry)
-                .unmarkDeprecated(Mockito.any(DefinitionKey.class));
-        Mockito.doAnswer(invocation -> {
-                    DefinitionKey key = invocation.getArgument(0);
-                    events.add("unregister " + key.definitionId() + " " + key.definitionVersion());
-                    return null;
-                })
-                .when(registry)
-                .unregister(Mockito.any(DefinitionKey.class));
-        return registry;
+    private static DefaultWorkflowDefinitionLifecycle lifecycle(
+            WorkflowDefinitionRegistryStore store, Set<PersistedDefinitionLoader> loaders) {
+        WorkflowRegistry registry = new DefaultWorkflowRegistry();
+        return new DefaultWorkflowDefinitionLifecycle(store, () -> registry, loaders, new DefinitionApplyQueue());
+    }
+
+    private static PersistedDefinitionLoader publishingLoader() {
+        return publishingLoader(new CompletingDefinition());
+    }
+
+    /** A loader that compiles every stored text to the given definition and hashes it to the plan hash of the tests. */
+    private static PersistedDefinitionLoader publishingLoader(WorkflowDefinition<?, ?> definition) {
+        return new HashingLoader(definition);
+    }
+
+    /** Hands out the given definition for every stored text, hashed to {@code PLAN_HASH}. */
+    private static final class HashingLoader implements PersistedDefinitionLoader {
+        private final WorkflowDefinition<?, ?> definition;
+
+        HashingLoader(WorkflowDefinition<?, ?> definition) {
+            this.definition = definition;
+        }
+
+        @Override
+        public boolean supports(String documentFormat) {
+            return "YAML".equals(documentFormat);
+        }
+
+        @Override
+        public List<DocumentOrigin> documentOrigins() {
+            return List.of();
+        }
+
+        @Override
+        public WorkflowDefinition<?, ?> load(WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+            return definition;
+        }
+
+        @Override
+        public String planHash(WorkflowDefinition<?, ?> definition) {
+            return PLAN_HASH;
+        }
     }
 
     /** A JVM-level failure that must never be retried or swallowed. */
     private static final class FatalProbe extends Error {}
 
-    /** Scripts the reads and transitions of one deprecation and logs them with the registry marks in order. */
+    /** Scripts the reads and transitions of one change of a row and logs them in order. */
     private static final class DeprecationScenario {
         final List<String> events = new ArrayList<>();
         final Deque<Future<Optional<WorkflowDefinitionRecord>>> reads = new ArrayDeque<>();
         final Deque<Future<Void>> transitions = new ArrayDeque<>();
         final Deque<Future<Void>> retirements = new ArrayDeque<>();
         final List<DefinitionKey> transitionKeys = new ArrayList<>();
-        private final WorkflowRegistry registry = recordingRegistry(events);
+        private final WorkflowRegistry registry = new DefaultWorkflowRegistry();
 
         DefaultWorkflowDefinitionLifecycle lifecycle() {
             return new DefaultWorkflowDefinitionLifecycle(
                     new ScriptedStore(this), () -> registry, Set.of(), new DefinitionApplyQueue());
         }
+    }
 
-        /** Builds the lifecycle over the given attributions, so a test decides who published the registration. */
-        DefaultWorkflowDefinitionLifecycle lifecycle(ManagedRegistrations registrations) {
-            return new DefaultWorkflowDefinitionLifecycle(
-                    new ScriptedStore(this), () -> registry, Set.of(), new DefinitionApplyQueue(), registrations);
-        }
+    /** A lifecycle over a {@link ReinstateStore}, with the loader it works against. */
+    private static final class ReinstateWorld {
+        final DefaultWorkflowDefinitionLifecycle lifecycle;
 
-        /** Makes the registry hold the given runtime for the test key, as a published or direct registration. */
-        void registryHolds(RuntimeWorkflow runtime) {
-            Mockito.when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1)))
-                    .thenReturn(runtime);
+        ReinstateWorld(ReinstateStore store) {
+            WorkflowRegistry registry = new DefaultWorkflowRegistry();
+            lifecycle = new DefaultWorkflowDefinitionLifecycle(
+                    store, () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
         }
     }
 
@@ -718,496 +1066,6 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
     }
 
-    @Test
-    @DisplayName("a retried activation adopts the runtime its unresolved earlier attempt published")
-    void retryAfterUnresolvedCompletionAdoptsItsOwnPublication() {
-        // Given a first activation that publishes locally, then fails to complete with an unknown outcome
-        // while the follow-up reread fails as well
-        ActivationStore store = new ActivationStore();
-        store.completions.add(Future.failedFuture(new IllegalStateException("commit outcome unknown")));
-        store.failReadsAfterFirstCompletion = true;
-        store.completions.add(Future.succeededFuture());
-        RecordingRegistry registry = new RecordingRegistry();
-        DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
-                store, () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
-
-        Future<Void> first = lifecycle.publish(KEY);
-
-        assertThat(first.failed()).isTrue();
-        RuntimeWorkflow published = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
-        assertThat(registry.allRegistered()).containsExactly(published);
-        assertThat(registry.unregistered).isEmpty();
-
-        // When the same key is activated again after the claim became claimable again and reads work
-        store.readsFail = false;
-        Future<Void> second = lifecycle.publish(KEY);
-
-        // Then the activation succeeds, the registry still holds exactly the first runtime, and it was never removed
-        assertThat(second.succeeded())
-                .as("second activation: %s", second.cause())
-                .isTrue();
-        assertThat(store.completes).isEqualTo(2);
-        assertThat(registry.allRegistered()).hasSize(1);
-        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1)))
-                .isSameAs(published);
-        assertThat(registry.unregistered).isEmpty();
-    }
-
-    @Test
-    @DisplayName("a registration made by someone else is never adopted and survives the failed activation")
-    void doesNotAdoptForeignRegistration() {
-        // Given a runtime for the key registered directly in the registry, and a lifecycle that never published it
-        ActivationStore store = new ActivationStore();
-        store.completions.add(Future.succeededFuture());
-        RecordingRegistry registry = new RecordingRegistry();
-        WorkflowDefinition<?, ?> foreignDefinition = Mockito.mock(WorkflowDefinition.class);
-        Mockito.when(foreignDefinition.definitionId()).thenReturn("wf");
-        Mockito.when(foreignDefinition.definitionVersion()).thenReturn(1L);
-        registry.register(foreignDefinition);
-        RuntimeWorkflow foreign = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
-        DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
-                store, () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
-
-        // When the key is activated
-        Future<Void> result = lifecycle.publish(KEY);
-
-        // Then the activation fails on the existing registration, which stays registered, and the claim is released
-        assertThat(result.failed()).isTrue();
-        assertThat(result.cause()).isInstanceOf(WorkflowDefinitionException.class);
-        assertThat(registry.allRegistered()).containsExactly(foreign);
-        assertThat(registry.unregistered).isEmpty();
-        assertThat(store.completes).isZero();
-        assertThat(store.releases).isEqualTo(1);
-    }
-
-    @Test
-    @DisplayName("activating a key whose earlier activation succeeded changes nothing")
-    void secondActivationOfActiveKeyIsANoOp() {
-        // Given a key that was activated successfully
-        ActivationStore store = new ActivationStore();
-        store.completions.add(Future.succeededFuture());
-        RecordingRegistry registry = new RecordingRegistry();
-        DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
-                store, () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
-        assertThat(lifecycle.publish(KEY).succeeded()).isTrue();
-        RuntimeWorkflow published = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
-
-        // When it is activated again
-        Future<Void> again = lifecycle.publish(KEY);
-
-        // Then it succeeds without another claim or completion, and the registration is unchanged
-        assertThat(again.succeeded()).isTrue();
-        assertThat(store.claims).isEqualTo(1);
-        assertThat(store.completes).isEqualTo(1);
-        assertThat(registry.allRegistered()).containsExactly(published);
-        assertThat(registry.unregistered).isEmpty();
-    }
-
-    @ParameterizedTest(name = "a retry that finds the earlier change committed as {0} completes and hands the row over")
-    @EnumSource(
-            value = DefinitionStatus.class,
-            names = {"AVAILABLE"})
-    void retryAfterAnUnknownCommitOutcomeAdoptsTheCommittedRow(DefinitionStatus committed) {
-        // Given a reinstatement whose change failed and whose follow-up read failed as well
-        ReinstateStore store = new ReinstateStore();
-        store.transitions.add(() -> {
-            store.readsFail = true;
-            return Future.failedFuture(new IllegalStateException("response lost"));
-        });
-        ReinstateWorld world = new ReinstateWorld(store);
-        Future<Void> first = world.lifecycle.reinstate(KEY);
-        assertThat(first.failed()).isTrue();
-        RuntimeWorkflow published = world.registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
-        assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf", 1, published))
-                .isEqualTo(ManagedRegistrations.Standing.OWN);
-        assertThat(world.registry.unregistered).isEmpty();
-
-        // And the row turns out to have been committed, with the hash of the published runtime
-        store.readsFail = false;
-        store.status = committed;
-
-        // When the reinstatement is retried
-        Future<Void> retry = world.lifecycle.reinstate(KEY);
-
-        // Then it succeeds without refusing the committed row, and the published runtime is kept
-        assertThat(retry.succeeded()).as("retry: %s", retry.cause()).isTrue();
-        assertThat(world.registry.allRegistered()).containsExactly(published);
-        assertThat(world.registry.unregistered).isEmpty();
-        assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf", 1, published))
-                .isEqualTo(ManagedRegistrations.Standing.OWN);
-
-        // And the committed row is handed to the loader exactly once
-        assertThat(world.loader.handOffs)
-                .extracting(WorkflowDefinitionRecord::status)
-                .containsExactly(committed);
-    }
-
-    @Test
-    @DisplayName("a retry that the store refuses definitively removes the publication the unknown outcome left behind")
-    void retryRefusedByTheStoreRemovesTheLeftoverPublication() {
-        // Given a reinstatement whose change failed and whose follow-up read failed, so its publication stays
-        ReinstateStore store = new ReinstateStore();
-        store.transitions.add(() -> {
-            store.readsFail = true;
-            return Future.failedFuture(new IllegalStateException("response lost"));
-        });
-        ReinstateWorld world = new ReinstateWorld(store);
-        assertThat(world.lifecycle.reinstate(KEY).failed()).isTrue();
-        RuntimeWorkflow published = world.registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
-        assertThat(world.registry.allRegistered()).containsExactly(published);
-
-        // And the row is still retired, and the store now refuses the change for good
-        store.readsFail = false;
-        WorkflowDefinitionLifecycleException conflict = refusal(Reason.INVALID_TRANSITION);
-        store.transitions.add(() -> Future.failedFuture(conflict));
-
-        // When the reinstatement is retried
-        Future<Void> retry = world.lifecycle.reinstate(KEY);
-
-        // Then the refusal is reported and no runtime of the id remains registered or attributed
-        assertThat(retry.failed()).isTrue();
-        assertThat(retry.cause()).isSameAs(conflict);
-        assertThat(world.registry.allRegistered()).isEmpty();
-        assertThat(world.registry.unregistered).contains("wf@1");
-        assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf", 1, published))
-                .isEqualTo(ManagedRegistrations.Standing.UNATTRIBUTED);
-        assertThat(world.loader.handOffs).isEmpty();
-    }
-
-    @Test
-    @DisplayName("a retry refused before any change removes the publication the unknown outcome left behind")
-    void retryRefusedBeforeAnyChangeRemovesTheLeftoverPublication() {
-        // Given a reinstatement whose change failed and whose follow-up read failed, so its publication stays
-        ReinstateStore store = new ReinstateStore();
-        store.transitions.add(() -> {
-            store.readsFail = true;
-            return Future.failedFuture(new IllegalStateException("response lost"));
-        });
-        ReinstateWorld world = new ReinstateWorld(store);
-        assertThat(world.lifecycle.reinstate(KEY).failed()).isTrue();
-        RuntimeWorkflow published = world.registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
-        assertThat(world.registry.allRegistered()).containsExactly(published);
-        store.events.clear();
-
-        // And the row is still retired but now carries a different plan hash, so the retry is refused on drift
-        store.readsFail = false;
-        store.planHash = OTHER_HASH;
-
-        // When the reinstatement is retried
-        Future<Void> retry = world.lifecycle.reinstate(KEY);
-
-        // Then the refusal is reported before any change was attempted, and the leftover runtime is gone
-        assertThat(retry.failed()).isTrue();
-        assertThat(retry.cause()).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-            assertThat(failure.reason()).isEqualTo(Reason.DRIFT);
-            assertThat(failure.key()).isEqualTo(KEY);
-        });
-        assertThat(store.events).containsExactly("find");
-        assertThat(world.registry.allRegistered()).isEmpty();
-        assertThat(world.registry.unregistered).contains("wf@1");
-        assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf", 1, published))
-                .isEqualTo(ManagedRegistrations.Standing.UNATTRIBUTED);
-        assertThat(world.loader.handOffs).isEmpty();
-    }
-
-    static Stream<Arguments> rereadsThatAreNotTheCommit() {
-        return Stream.of(
-                Arguments.of(DefinitionStatus.DEPRECATED, PLAN_HASH),
-                Arguments.of(DefinitionStatus.AVAILABLE, OTHER_HASH));
-    }
-
-    @ParameterizedTest(name = "a failed change whose reread shows {0} with hash {1} is not a commit")
-    @MethodSource("rereadsThatAreNotTheCommit")
-    void aRereadThatIsNotTheCommitRemovesThePublication(DefinitionStatus reread, String hash) {
-        // Given a change that fails, after which the row reads as something other than this reinstatement's commit
-        ReinstateStore store = new ReinstateStore();
-        IllegalStateException failure = new IllegalStateException("change failed");
-        store.transitions.add(() -> {
-            store.status = reread;
-            store.planHash = hash;
-            return Future.failedFuture(failure);
-        });
-        ReinstateWorld world = new ReinstateWorld(store);
-
-        // When the reinstatement runs
-        Future<Void> result = world.lifecycle.reinstate(KEY);
-
-        // Then the failure is reported, the publication is removed again, and nothing is handed to the loader
-        assertThat(result.failed())
-                .as("a row that is not this reinstatement's commit must not count as committed")
-                .isTrue();
-        assertThat(result.cause()).isSameAs(failure);
-        assertThat(world.registry.allRegistered()).isEmpty();
-        assertThat(world.registry.unregistered).contains("wf@1");
-        assertThat(world.loader.handOffs).isEmpty();
-    }
-
-    @ParameterizedTest(name = "a failed change whose reread shows {0} with the published hash is a commit")
-    @EnumSource(
-            value = DefinitionStatus.class,
-            names = {"AVAILABLE"})
-    void aRereadWithThePublishedHashIsTheCommit(DefinitionStatus reread) {
-        // Given a change whose response is lost after the row was committed with the published runtime's hash
-        ReinstateStore store = new ReinstateStore();
-        store.transitions.add(() -> {
-            store.status = reread;
-            return Future.failedFuture(new IllegalStateException("response lost"));
-        });
-        ReinstateWorld world = new ReinstateWorld(store);
-
-        // When the reinstatement runs
-        Future<Void> result = world.lifecycle.reinstate(KEY);
-
-        // Then it succeeds, the publication stays, and the committed row is handed to the loader
-        assertThat(result.succeeded()).as("result: %s", result.cause()).isTrue();
-        assertThat(world.registry.allRegistered()).hasSize(1);
-        assertThat(world.registry.unregistered).isEmpty();
-        assertThat(world.loader.handOffs)
-                .extracting(WorkflowDefinitionRecord::status)
-                .containsExactly(reread);
-    }
-
-    @Test
-    @DisplayName("a change that fails definitively after a document was published removes just that publication")
-    void aDefinitiveFailureAfterPublishingADocumentCompensates() {
-        // Given a document whose change is refused for good after its source was published
-        ReinstateStore store = new ReinstateStore();
-        WorkflowDefinitionLifecycleException conflict = refusal(Reason.INVALID_TRANSITION);
-        store.transitions.add(() -> Future.failedFuture(conflict));
-        ReinstateWorld world = new ReinstateWorld(store);
-
-        // When the reinstatement runs
-        Future<Void> result = world.lifecycle.reinstate(KEY);
-
-        // Then the refusal is reported, the runtime is unregistered and its attribution is gone
-        assertThat(result.failed()).isTrue();
-        assertThat(result.cause()).isSameAs(conflict);
-        assertThat(world.registry.history).hasSize(1);
-        assertThat(world.registry.allRegistered()).isEmpty();
-        assertThat(world.registry.unregistered).containsExactly("wf@1");
-        assertThat(world.registrations.classify(WorkflowScopes.DEFAULT, "wf", 1, world.registry.history.getFirst()))
-                .isEqualTo(ManagedRegistrations.Standing.UNATTRIBUTED);
-        assertThat(world.loader.handOffs).isEmpty();
-    }
-
-    @Test
-    @DisplayName("a reinstated document hands the committed row to the loader after the change")
-    void reinstatingADocumentHandsTheCommittedRowToTheLoader() {
-        // Given a retired document and a change that succeeds
-        ReinstateStore store = new ReinstateStore();
-        store.transitions.add(() -> {
-            store.status = DefinitionStatus.AVAILABLE;
-            return Future.succeededFuture();
-        });
-        ReinstateWorld world = new ReinstateWorld(store);
-
-        // When it is reinstated
-        Future<Void> result = world.lifecycle.reinstate(KEY);
-
-        // Then the source was published before the change, and the committed row was handed over once
-        assertThat(result.succeeded()).as("result: %s", result.cause()).isTrue();
-        assertThat(store.events).containsExactly("find", "findDocument", "transition RETIRED->AVAILABLE", "find");
-        assertThat(world.registry.allRegistered()).hasSize(1);
-        assertThat(world.loader.handOffs)
-                .extracting(WorkflowDefinitionRecord::status)
-                .containsExactly(DefinitionStatus.AVAILABLE);
-    }
-
-    @Test
-    @DisplayName("a registration that the lifecycle did not publish for this key refuses the reinstatement")
-    void reinstatementRefusesARegistrationThatIsNotThisKeys() {
-        // Given a retired row and a runtime registered for its id and version that is not this key's publication
-        ReinstateStore store = new ReinstateStore();
-        ReinstateWorld world = new ReinstateWorld(store);
-        WorkflowDefinition<?, ?> foreign = Mockito.mock(WorkflowDefinition.class);
-        Mockito.when(foreign.definitionId()).thenReturn("wf");
-        Mockito.when(foreign.definitionVersion()).thenReturn(1L);
-        world.registry.register(foreign);
-        RuntimeWorkflow registered = world.registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1));
-
-        // When the reinstatement runs
-        Future<Void> result = world.lifecycle.reinstate(KEY);
-
-        // Then it fails as an invalid transition, before any source is loaded or any change is made
-        assertInvalidTransition(result);
-        assertThat(store.events).containsExactly("find");
-        assertThat(world.registry.history).containsExactly(registered);
-        assertThat(world.registry.allRegistered()).containsExactly(registered);
-        assertThat(world.registry.unregistered).isEmpty();
-    }
-
-    @Test
-    @DisplayName("reinstating a deprecated row commits it as available and then clears the registry mark")
-    void reinstatingADeprecatedRowCommitsBeforeClearingTheMark() {
-        // Given a deprecated row whose registration this lifecycle published for the key
-        DeprecationScenario scenario = new DeprecationScenario();
-        RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
-        scenario.registryHolds(own);
-        ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute(WorkflowScopes.DEFAULT, "wf", 1, own);
-        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
-        scenario.transitions.add(Future.succeededFuture());
-
-        // When the row is reinstated
-        Future<Void> result = scenario.lifecycle(registrations).reinstate(KEY);
-
-        // Then the durable change ran once from deprecated to available, and only afterwards the mark was cleared;
-        // the source was not published again
-        assertThat(result.succeeded()).as("result: %s", result.cause()).isTrue();
-        assertThat(scenario.events).containsExactly("find", "transition DEPRECATED->AVAILABLE", "unmark wf 1");
-    }
-
-    @Test
-    @DisplayName("a lost response whose reread shows the deprecated row available still clears the registry mark")
-    void reinstatingADeprecatedRowAcceptsALostResponseThatCommitted() {
-        // Given a transition that fails after the row was committed as available
-        DeprecationScenario scenario = new DeprecationScenario();
-        RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
-        scenario.registryHolds(own);
-        ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute(WorkflowScopes.DEFAULT, "wf", 1, own);
-        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
-        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.AVAILABLE))));
-        scenario.transitions.add(Future.failedFuture(new IllegalStateException("response lost")));
-
-        // When the row is reinstated
-        Future<Void> result = scenario.lifecycle(registrations).reinstate(KEY);
-
-        // Then the committed row is accepted and the mark is cleared once
-        assertThat(result.succeeded()).as("result: %s", result.cause()).isTrue();
-        assertThat(scenario.events).containsExactly("find", "transition DEPRECATED->AVAILABLE", "find", "unmark wf 1");
-    }
-
-    @Test
-    @DisplayName("a failed change that did not commit leaves the deprecated row and its mark alone")
-    void reinstatingADeprecatedRowThatDidNotCommitClearsNothing() {
-        // Given a transition that fails while the row still reads as deprecated
-        DeprecationScenario scenario = new DeprecationScenario();
-        RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
-        scenario.registryHolds(own);
-        ManagedRegistrations registrations = new ManagedRegistrations();
-        registrations.attribute(WorkflowScopes.DEFAULT, "wf", 1, own);
-        IllegalStateException failure = new IllegalStateException("database unavailable");
-        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
-        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
-        scenario.transitions.add(Future.failedFuture(failure));
-
-        // When the row is reinstated
-        Future<Void> result = scenario.lifecycle(registrations).reinstate(KEY);
-
-        // Then the original failure is reported and the mark stays
-        assertThat(result.failed()).isTrue();
-        assertThat(result.cause()).isSameAs(failure);
-        assertThat(scenario.events).containsExactly("find", "transition DEPRECATED->AVAILABLE", "find");
-    }
-
-    @Test
-    @DisplayName("reinstating a deprecated row over a runtime the lifecycle did not publish is refused before a change")
-    void reinstatingADeprecatedRowRefusesAnUnattributedRuntime() {
-        // Given a deprecated row and a runtime registered for the key that no attribution names
-        DeprecationScenario scenario = new DeprecationScenario();
-        scenario.registryHolds(Mockito.mock(RuntimeWorkflow.class));
-        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
-
-        // When the row is reinstated
-        Future<Void> result = scenario.lifecycle(new ManagedRegistrations()).reinstate(KEY);
-
-        // Then it fails as an invalid transition after the single read, with nothing changed
-        assertInvalidTransition(result);
-        assertThat(scenario.events).containsExactly("find");
-    }
-
-    @ParameterizedTest(name = "a {0} row cannot be reinstated")
-    @EnumSource(
-            value = DefinitionStatus.class,
-            names = {"CANDIDATE", "PUBLISHING", "AVAILABLE"})
-    void reinstatementRefusesARowThatIsNotRetired(DefinitionStatus status) {
-        // Given a row that is not retired
-        ReinstateStore store = new ReinstateStore();
-        store.status = status;
-        ReinstateWorld world = new ReinstateWorld(store);
-
-        // When the reinstatement runs
-        Future<Void> result = world.lifecycle.reinstate(KEY);
-
-        // Then it fails as an invalid transition after the single read, with nothing published or changed
-        assertInvalidTransition(result);
-        assertThat(store.events).containsExactly("find");
-        assertThat(world.registry.history).isEmpty();
-    }
-
-    @Test
-    @DisplayName("a missing row cannot be reinstated")
-    void reinstatementRefusesAMissingRow() {
-        // Given no row for the key
-        ReinstateStore store = new ReinstateStore();
-        store.missing = true;
-        ReinstateWorld world = new ReinstateWorld(store);
-
-        // When the reinstatement runs
-        Future<Void> result = world.lifecycle.reinstate(KEY);
-
-        // Then it fails as an invalid transition after the single read, with nothing published or changed
-        assertInvalidTransition(result);
-        assertThat(store.events).containsExactly("find");
-        assertThat(world.registry.history).isEmpty();
-    }
-
-    /** A lifecycle over a {@link ReinstateStore}, with the registry, attributions and loader it works against. */
-    private static final class ReinstateWorld {
-        final PlannedRegistry registry = new PlannedRegistry();
-        final ManagedRegistrations registrations = new ManagedRegistrations();
-        final LoggingLoader loader = new LoggingLoader();
-        final DefaultWorkflowDefinitionLifecycle lifecycle;
-
-        ReinstateWorld(ReinstateStore store) {
-            lifecycle = new DefaultWorkflowDefinitionLifecycle(
-                    store, () -> registry, Set.of(loader), new DefinitionApplyQueue(), registrations);
-        }
-    }
-
-    /** Hands out the stored text of a document and logs the rows the lifecycle hands over after a commit. */
-    private static final class LoggingLoader implements PersistedDefinitionLoader {
-        final List<WorkflowDefinitionRecord> handOffs = new ArrayList<>();
-        private final WorkflowDefinition<?, ?> definition;
-
-        LoggingLoader() {
-            definition = Mockito.mock(WorkflowDefinition.class);
-            Mockito.when(definition.definitionId()).thenReturn("wf");
-            Mockito.when(definition.definitionVersion()).thenReturn(1L);
-        }
-
-        @Override
-        public boolean supports(String documentFormat) {
-            return "YAML".equals(documentFormat);
-        }
-
-        @Override
-        public List<DocumentOrigin> documentOrigins() {
-            return List.of();
-        }
-
-        @Override
-        public WorkflowDefinition<?, ?> load(WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
-            return definition;
-        }
-
-        @Override
-        public String planHash(WorkflowDefinition<?, ?> definition) {
-            return PLAN_HASH;
-        }
-
-        @Override
-        public void onRestored(WorkflowDefinitionRecord record, WorkflowDefinition<?, ?> definition) {
-            handOffs.add(record);
-        }
-
-        @Override
-        public void onMetadata(WorkflowDefinitionRecord record) {
-            handOffs.add(record);
-        }
-    }
-
     /**
      * Behaves like a registry table for one retired global document row: reads reflect its current status and
      * hash and can be made to fail, and every change is scripted by the test, which also decides what the row
@@ -1217,15 +1075,17 @@ class DefaultWorkflowDefinitionLifecycleTest {
         final List<String> events = new ArrayList<>();
         final Deque<Supplier<Future<Void>>> transitions = new ArrayDeque<>();
         DefinitionStatus status = DefinitionStatus.RETIRED;
+        DefinitionKind kind = DefinitionKind.DOCUMENT;
         String planHash = PLAN_HASH;
         boolean readsFail;
         boolean missing;
+        boolean textMissing;
 
         @Override
         public Future<Optional<WorkflowDefinitionRecord>> find(DefinitionKey key) {
             events.add("find");
             if (readsFail) return Future.failedFuture(new IllegalStateException("read failed"));
-            return Future.succeededFuture(missing ? Optional.empty() : Optional.of(row(status, planHash)));
+            return Future.succeededFuture(missing ? Optional.empty() : Optional.of(row(status, planHash, kind)));
         }
 
         @Override
@@ -1237,6 +1097,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         @Override
         public Future<Optional<WorkflowDefinitionDocument>> findDocument(DefinitionKey key) {
             events.add("findDocument");
+            if (textMissing) return Future.succeededFuture(Optional.empty());
             return Future.succeededFuture(Optional.of(new WorkflowDefinitionDocument(key, "{}", "YAML")));
         }
 
@@ -1309,122 +1170,21 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
     }
 
-    /**
-     * Rejects a second registration of an id and version like the default registry does, retains the registered
-     * definitions, creates a new runtime per registration that reports the shared plan hash, and logs every
-     * removal and every runtime ever created.
-     */
-    private static final class PlannedRegistry implements WorkflowRegistry {
-        private final Map<String, RuntimeWorkflow> registrations = new LinkedHashMap<>();
-        private final Map<String, WorkflowDefinition<?, ?>> definitions = new LinkedHashMap<>();
-        final List<RuntimeWorkflow> history = new ArrayList<>();
-        final List<String> unregistered = new ArrayList<>();
-
-        @Override
-        public void register(WorkflowDefinition<?, ?> def) {
-            String name = def.definitionId() + "@" + def.definitionVersion();
-            if (registrations.containsKey(name))
-                throw new WorkflowDefinitionException("definition '" + def.definitionId() + "' v"
-                        + def.definitionVersion() + " is already registered");
-            WorkflowPlan plan = Mockito.mock(WorkflowPlan.class);
-            Mockito.when(plan.planHash()).thenReturn(PLAN_HASH);
-            RuntimeWorkflow runtime = Mockito.mock(RuntimeWorkflow.class);
-            Mockito.when(runtime.plan()).thenReturn(plan);
-            registrations.put(name, runtime);
-            definitions.put(name, def);
-            history.add(runtime);
-        }
-
-        @Override
-        public RuntimeWorkflow resolve(DefinitionKey key) {
-            String definitionId = key.definitionId();
-            long version = key.definitionVersion();
-            RuntimeWorkflow found = registrations.get(definitionId + "@" + version);
-            if (found == null) throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
-            return found;
-        }
-
-        @Override
-        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
-            return Optional.ofNullable(registrations.get(key.definitionId() + "@" + key.definitionVersion()));
-        }
-
-        @Override
-        public io.vertx.core.Future<RuntimeWorkflow> load(DefinitionKey key) {
-            return find(key)
-                    .map(io.vertx.core.Future::succeededFuture)
-                    .orElseGet(() -> io.vertx.core.Future.failedFuture(
-                            new dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException(key)));
-        }
-
-        @Override
-        public List<DefinitionKey> keysFor(String definitionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
-            register(def);
-        }
-
-        @Override
-        public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
-            return Optional.empty();
-        }
-
-        @Override
-        public Collection<RuntimeWorkflow> allRegistered() {
-            return List.copyOf(registrations.values());
-        }
-
-        @Override
-        public Optional<WorkflowDefinition<?, ?>> registeredDefinition(DefinitionKey key) {
-            String definitionId = key.definitionId();
-            long version = key.definitionVersion();
-            return Optional.ofNullable(definitions.get(definitionId + "@" + version));
-        }
-
-        @Override
-        public void unregister(DefinitionKey key) {
-            String definitionId = key.definitionId();
-            long version = key.definitionVersion();
-            String name = definitionId + "@" + version;
-            unregistered.add(name);
-            registrations.remove(name);
-            definitions.remove(name);
-        }
-    }
-
-    private static DefaultWorkflowDefinitionLifecycle lifecycle(
-            FakeStore store, Set<PersistedDefinitionLoader> loaders, WorkflowRegistry registry) {
-        return new DefaultWorkflowDefinitionLifecycle(store, () -> registry, loaders, new DefinitionApplyQueue());
-    }
-
-    private static PersistedDefinitionLoader publishingLoader() {
-        WorkflowDefinition<?, ?> definition = Mockito.mock(WorkflowDefinition.class);
-        Mockito.when(definition.definitionId()).thenReturn("wf");
-        Mockito.when(definition.definitionVersion()).thenReturn(1L);
-        PersistedDefinitionLoader loader = Mockito.mock(PersistedDefinitionLoader.class);
-        Mockito.when(loader.supports("YAML")).thenReturn(true);
-        Mockito.doReturn(definition).when(loader).load(Mockito.any(), Mockito.any());
-        Mockito.when(loader.planHash(definition)).thenReturn(PLAN_HASH);
-        return loader;
-    }
-
     /** Behaves like a registry table for one key: reads reflect the committed status and can be made to fail. */
     private static final class ActivationStore implements WorkflowDefinitionRegistryStore {
         final Deque<Future<Void>> completions = new ArrayDeque<>();
+        Supplier<Future<Void>> completionOutcome;
         DefinitionStatus status = DefinitionStatus.CANDIDATE;
-        boolean readsFail;
-        boolean failReadsAfterFirstCompletion;
+        String planHash = PLAN_HASH;
+        int finds;
         int claims;
         int completes;
         int releases;
 
         @Override
         public Future<Optional<WorkflowDefinitionRecord>> find(DefinitionKey key) {
-            if (readsFail) return Future.failedFuture(new IllegalStateException("read failed"));
-            return Future.succeededFuture(Optional.of(row(status)));
+            finds++;
+            return Future.succeededFuture(Optional.of(row(status, planHash, DefinitionKind.DOCUMENT)));
         }
 
         @Override
@@ -1441,7 +1201,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         @Override
         public Future<Void> complete(ActivationClaim claim) {
             completes++;
-            if (completes == 1 && failReadsAfterFirstCompletion) readsFail = true;
+            if (completionOutcome != null) return completionOutcome.get();
             Future<Void> next = completions.poll();
             if (next == null) return Future.failedFuture(new IllegalStateException("unscripted completion"));
             if (next.succeeded()) status = DefinitionStatus.AVAILABLE;
@@ -1508,74 +1268,6 @@ class DefaultWorkflowDefinitionLifecycleTest {
         @Override
         public Future<Void> transition(DefinitionKey key, DefinitionStatus from, DefinitionStatus to) {
             throw new UnsupportedOperationException();
-        }
-    }
-
-    /**
-     * Rejects a second registration of an id and version like the default registry does, creates a new
-     * runtime per registration, and logs every removal.
-     */
-    private static final class RecordingRegistry implements WorkflowRegistry {
-        private final Map<String, RuntimeWorkflow> registrations = new LinkedHashMap<>();
-        final List<String> unregistered = new ArrayList<>();
-
-        @Override
-        public void register(WorkflowDefinition<?, ?> def) {
-            String name = def.definitionId() + "@" + def.definitionVersion();
-            if (registrations.containsKey(name))
-                throw new WorkflowDefinitionException("definition '" + def.definitionId() + "' v"
-                        + def.definitionVersion() + " is already registered");
-            registrations.put(name, Mockito.mock(RuntimeWorkflow.class));
-        }
-
-        @Override
-        public RuntimeWorkflow resolve(DefinitionKey key) {
-            String definitionId = key.definitionId();
-            long version = key.definitionVersion();
-            RuntimeWorkflow found = registrations.get(definitionId + "@" + version);
-            if (found == null) throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
-            return found;
-        }
-
-        @Override
-        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
-            return Optional.ofNullable(registrations.get(key.definitionId() + "@" + key.definitionVersion()));
-        }
-
-        @Override
-        public io.vertx.core.Future<RuntimeWorkflow> load(DefinitionKey key) {
-            return find(key)
-                    .map(io.vertx.core.Future::succeededFuture)
-                    .orElseGet(() -> io.vertx.core.Future.failedFuture(
-                            new dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException(key)));
-        }
-
-        @Override
-        public List<DefinitionKey> keysFor(String definitionId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
-            register(def);
-        }
-
-        @Override
-        public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
-            return Optional.empty();
-        }
-
-        @Override
-        public Collection<RuntimeWorkflow> allRegistered() {
-            return List.copyOf(registrations.values());
-        }
-
-        @Override
-        public void unregister(DefinitionKey key) {
-            String definitionId = key.definitionId();
-            long version = key.definitionVersion();
-            unregistered.add(definitionId + "@" + version);
-            registrations.remove(definitionId + "@" + version);
         }
     }
 

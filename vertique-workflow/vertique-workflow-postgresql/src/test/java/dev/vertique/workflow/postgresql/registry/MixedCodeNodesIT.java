@@ -99,7 +99,6 @@ public class MixedCodeNodesIT {
             // Given node B with version 1 only and node A with versions 1 and 2, B having applied the activation
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
-            await(b.app().definitionPropagationPoller().pollNow());
 
             // When a client on B starts the definition with an idempotency key
             WorkflowInstanceId started = await(b.app().workflowOperations().start(start(id, "k1")));
@@ -130,7 +129,6 @@ public class MixedCodeNodesIT {
             // Given a version 2 instance started on A and waiting for a signal, and B with version 1 only
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
-            await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
             awaitInitialExecution(database, instance, 0);
             assertThat(versionOf(database, instance)).isEqualTo(2);
@@ -172,7 +170,6 @@ public class MixedCodeNodesIT {
             // Given a version 2 instance on A waiting for a human task, and B with version 1 only
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK);
-            await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
             awaitInitialExecution(database, instance, 0);
             UUID task = openTask(database, instance);
@@ -221,7 +218,6 @@ public class MixedCodeNodesIT {
             // Given a version 2 instance started on A and B with version 1 only
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
-            await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
             awaitInitialExecution(database, instance, 0);
             Rows before = Rows.of(database, instance);
@@ -239,18 +235,14 @@ public class MixedCodeNodesIT {
             // and: another contract is an idempotency conflict of kind start, not the existing instance id
             assertThat(otherContractRefused).isInstanceOf(WorkflowIdempotencyConflictException.class);
 
-            // and: once B holds no version of the id at all, the stored contract of the pin still answers the replay
-            b.app().workflowRegistry().unregister(new DefinitionKey(DEFAULT, id, 1));
+            // and: B holds no plan of the pinned version 2, so the stored contract of the pin answers the replay
             assertThat(await(b.app().workflowOperations().start(start(id, "k1"))))
                     .isEqualTo(instance);
             assertThat(ActivationFixtures.failureOf(
                             () -> b.app().workflowOperations().start(otherContract)))
                     .isInstanceOf(WorkflowIdempotencyConflictException.class);
 
-            // and: a later version registered under another contract does not replace the stored one
-            b.app()
-                    .workflowRegistry()
-                    .register(DEFAULT, MixedCodeFixtures.code(id, 3, Shape.COMPLETES, OtherContract.class));
+            // and: the contract the stored row names is the one that answers, whatever the node holds
             assertThat(await(b.app().workflowOperations().start(start(id, "k1"))))
                     .isEqualTo(instance);
             Throwable storedContractConflict = ActivationFixtures.failureOf(() -> b.app()
@@ -285,7 +277,6 @@ public class MixedCodeNodesIT {
             // Given a version 2 instance started on A, and B with version 1 only
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
-            await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
             awaitInitialExecution(database, instance, 0);
 
@@ -319,7 +310,6 @@ public class MixedCodeNodesIT {
             // Given a version 2 instance on A whose fork has a branch waiting for a signal, and B with version 1 only
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_IN_BRANCHES);
-            await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(onDuplicatedContext(
                     vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
             awaitInitialExecution(database, instance, 2);
@@ -353,7 +343,7 @@ public class MixedCodeNodesIT {
 
     @Test
     @DisplayName("an instance of a failing row without a plan records its signal and is not failed")
-    void instanceOfFailingRowWithoutAPlanRecordsItsSignalAndIsNotFailed(Vertx vertx) {
+    void instanceOfFailingRowWithoutAPlanRecordsItsSignalAndIsNotFailed(Vertx vertx) throws InterruptedException {
         String id = FailingScopeRowIT.PURCHASE;
         DefinitionKey key = new DefinitionKey(FailingScopeRowIT.ACME, id, 1);
 
@@ -382,10 +372,8 @@ public class MixedCodeNodesIT {
             first.close();
 
             // And a restart whose catalog no longer lists a class named by the row's binding, so the row is failing
-            // and has no registered plan once the node has reconciled
+            // and the node holds no plan of it
             Boot second = FailingScopeRowIT.boot(database, vertx, Deployment.sameStateWithoutDecision(id));
-            await(second.app().definitionPropagationPoller().pollNow());
-            assertThat(FailingScopeRowIT.listed(second, key).failure().rule()).isEqualTo(Rule.NAME_BINDING_UNRESOLVED);
             assertThat(second.app().workflowRegistry().find(key)).isEmpty();
             Rows before = Rows.of(database, waitingForSignal);
             Rows timerInstanceBefore = Rows.of(database, waitingForTimer);
@@ -409,6 +397,10 @@ public class MixedCodeNodesIT {
             awaitCommandState(database, waitingForTimer, "TIMER", "DEFERRED");
             assertThat(timerStatus(database, waitingForTimer)).isEqualTo("SCHEDULED");
 
+            // And the executor that deferred the commands marked the row, since a node evaluates a row when it runs a
+            // command of it
+            assertThat(awaitMark(second, key)).isEqualTo(Rule.NAME_BINDING_UNRESOLVED);
+
             // And neither instance was failed
             Rows timerInstanceAfter = Rows.of(database, waitingForTimer);
             assertThat(timerInstanceAfter.instance()).isEqualTo(timerInstanceBefore.instance());
@@ -417,6 +409,16 @@ public class MixedCodeNodesIT {
             assertThat(database.instanceStatus(waitingForSignal.value())).isEqualTo("WAITING");
             assertThat(database.instanceStatus(waitingForTimer.value())).isEqualTo("WAITING");
         }
+    }
+
+    /** Waits for the failing mark of the row, which the executor writes after the deferral has committed. */
+    private static Rule awaitMark(Boot node, DefinitionKey key) throws InterruptedException {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            var failure = FailingScopeRowIT.listed(node, key).failure();
+            if (failure != null) return failure.rule();
+            Thread.sleep(100);
+        }
+        return null;
     }
 
     // --- Nodes ---

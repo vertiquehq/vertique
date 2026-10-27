@@ -127,22 +127,12 @@ final class DeferredRegistry implements WorkflowRegistry {
     }
 
     @Override
-    public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public List<DefinitionKey> keysFor(String definitionId) {
-        return List.of();
-    }
-
-    @Override
     public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
         return Optional.empty();
     }
 
     @Override
-    public Collection<RuntimeWorkflow> allRegistered() {
+    public Collection<RuntimeWorkflow> codeDefinitions() {
         return List.of();
     }
 }

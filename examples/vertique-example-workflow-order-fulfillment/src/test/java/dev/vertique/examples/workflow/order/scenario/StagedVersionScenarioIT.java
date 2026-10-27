@@ -65,8 +65,6 @@ class StagedVersionScenarioIT {
 
         // When the component restarts with the same code and starts in qa
         try (ScenarioNode second = deploy(vertx)) {
-            second.reconcile();
-
             // Then qa still runs version 2
             assertEquals(pin(QA, 2), start(second, "order-qa-again", QA));
 

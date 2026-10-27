@@ -150,7 +150,7 @@ class DefaultWorkflowRegistryConcurrencyTest {
     class ConcurrentDistinctIds {
 
         @Test
-        @DisplayName("10 threads register 10 different definitions; all succeed; allRegistered() returns 10")
+        @DisplayName("10 threads register 10 different definitions; all succeed; codeDefinitions() returns 10")
         void shouldRegisterAllConcurrently() throws InterruptedException {
             List<WorkflowDefinition<TaskState, ?>> defs = List.of(
                     minimalDef("id1", 1, C1.class),
@@ -196,8 +196,8 @@ class DefaultWorkflowRegistryConcurrencyTest {
                     .as("no exceptions during concurrent registration")
                     .isEmpty();
 
-            Collection<RuntimeWorkflow> allRegistered = registry.allRegistered();
-            assertThat(allRegistered).hasSize(10);
+            Collection<RuntimeWorkflow> codeDefinitions = registry.codeDefinitions();
+            assertThat(codeDefinitions).hasSize(10);
         }
     }
 
@@ -290,13 +290,13 @@ class DefaultWorkflowRegistryConcurrencyTest {
 
             // Now attempt to register "task-foo" v2 naming another contract than v1.
             // This must fail (every version of a definition names one contract). The refusal must ensure
-            // v2 does NOT appear in allRegistered().
+            // v2 does NOT appear in codeDefinitions().
             WorkflowDefinition<TaskState, ?> refusedDef = minimalDef("task-foo", 2, OtherTaskContract.class);
 
             assertThatThrownBy(() -> registry.register(refusedDef)).isInstanceOf(WorkflowDefinitionException.class);
 
-            // After the refusal, allRegistered must contain only task-foo v1
-            Collection<RuntimeWorkflow> registered = registry.allRegistered();
+            // After the refusal, codeDefinitions must contain only task-foo v1
+            Collection<RuntimeWorkflow> registered = registry.codeDefinitions();
             assertThat(registered).hasSize(1);
             assertThat(registered.iterator().next().plan().definitionId()).isEqualTo("task-foo");
 
@@ -315,7 +315,7 @@ class DefaultWorkflowRegistryConcurrencyTest {
 
             registry.register(minimalDef("task-bar", 1, TaskFooContract.class));
 
-            assertThat(registry.allRegistered()).hasSize(2);
+            assertThat(registry.codeDefinitions()).hasSize(2);
             assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-bar", 1L))
                             .plan()
                             .definitionId())
@@ -395,8 +395,8 @@ class DefaultWorkflowRegistryConcurrencyTest {
                     .as("reader saw unexpected state: " + firstUnexpected.get())
                     .isZero();
 
-            // After rollback, allRegistered still has exactly 1 entry (task-foo v1 only)
-            assertThat(registry.allRegistered()).hasSize(1);
+            // After rollback, codeDefinitions still has exactly 1 entry (task-foo v1 only)
+            assertThat(registry.codeDefinitions()).hasSize(1);
             assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L))
                             .plan()
                             .definitionVersion())
@@ -443,10 +443,10 @@ class DefaultWorkflowRegistryConcurrencyTest {
                     // and: only the winner is registered, and only the winner's contract name is indexed
                     String winnerContract = aWins ? "race-a" : "race-b";
                     String loserContract = aWins ? "race-b" : "race-a";
-                    assertThat(racing.allRegistered())
+                    assertThat(racing.codeDefinitions())
                             .as("round %d: registered", round)
                             .hasSize(1);
-                    assertThat(racing.allRegistered().iterator().next().contractName())
+                    assertThat(racing.codeDefinitions().iterator().next().contractName())
                             .as("round %d: registered contract", round)
                             .isEqualTo(winnerContract);
                     assertThat(racing.typeNames().findContract(winnerContract))

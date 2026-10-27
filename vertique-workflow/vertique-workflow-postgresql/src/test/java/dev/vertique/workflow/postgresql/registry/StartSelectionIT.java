@@ -360,7 +360,6 @@ public class StartSelectionIT {
             // knows the version as failing, with its executor stopped
             Node second = Nodes.start(database, vertx, FailingScopeRowIT.class, Deployment.laterWith(PURCHASE));
             Nodes.stopExecutors(second);
-            await(second.graph().definitionPropagationPoller().pollNow());
             Rows.markFailing(database, key, "STATE_TYPE_NOT_EXTENDED");
 
             // When a start without a version is recorded in acme

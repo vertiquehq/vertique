@@ -37,7 +37,6 @@ import dev.vertique.workflow.definition.expression.ExpressionProfile;
 import dev.vertique.workflow.definition.expression.cel.CelExpressionProfile;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionMapperFactory;
-import dev.vertique.workflow.definition.pipeline.CompiledDefinition;
 import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
@@ -50,7 +49,6 @@ import dev.vertique.workflow.engine.testsupport.InMemoryDefinitionRegistryModule
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
@@ -63,8 +61,10 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.DocumentOrigin;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
@@ -89,7 +89,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 /**
- * Verifies that a YAML or JSON document is registered through the same rules as a Java definition: a
+ * Verifies that a YAML or JSON document is built through the same rules as a Java definition is registered: a
  * document names its contract and types by logical name, is not compared with the contract annotation, may
  * share its contract with other definitions, and yields the same plan and plan hash whichever source it is
  * loaded from.
@@ -345,12 +345,12 @@ class DocumentRegistrationParityTest {
         }
     }
 
-    /** What a test reads from a component that registers a packaged document at startup. */
+    /** What a test reads from a component that compiles a packaged document at startup. */
     interface PackagedView {
 
         WorkflowRegistry workflowRegistry();
 
-        WorkflowDefinitionStore workflowDefinitionStore();
+        DocumentDefinitionLoader documentDefinitionLoader();
     }
 
     @Singleton
@@ -388,7 +388,7 @@ class DocumentRegistrationParityTest {
 
         WorkflowDefinitionService workflowDefinitionService();
 
-        WorkflowDefinitionStore workflowDefinitionStore();
+        WorkflowDefinitionRegistryStore workflowDefinitionRegistryStore();
 
         DocumentDefinitionLoader documentDefinitionLoader();
 
@@ -407,6 +407,8 @@ class DocumentRegistrationParityTest {
     interface LegacyPackagedComponent {
 
         WorkflowRegistry workflowRegistry();
+
+        DocumentDefinitionLoader documentDefinitionLoader();
     }
 
     @Singleton
@@ -475,22 +477,31 @@ class DocumentRegistrationParityTest {
             registry = new DefaultWorkflowRegistry(null, Set.of(recorder), typeNames);
         }
 
-        /** Runs one bootstrap over one packaged source holding the given documents. */
-        void bootstrap(DefinitionResource... resources) {
-            bootstrap(new WorkflowDefinitionStore(), resources);
-        }
-
-        /** Runs one bootstrap over one packaged source, keeping its candidates in the given store. */
-        void bootstrap(WorkflowDefinitionStore store, DefinitionResource... resources) {
+        /**
+         * Runs one bootstrap over one packaged source holding the given documents, and builds the plan of each
+         * retained document the way the plan cache builds the plan of a stored one: from its source text under the
+         * names its plan hash used. Nothing is registered.
+         *
+         * @return the built plans, in the order of the documents
+         */
+        List<RuntimeWorkflow> bootstrap(DefinitionResource... resources) {
             WorkflowDefinitionSource source = () -> List.of(resources);
-            new WorkflowDefinitionBootstrap(
-                            pipeline,
-                            store,
-                            Set.of(source),
-                            new InMemoryWorkflowDefinitionRegistryStore(),
-                            Optional.empty(),
-                            typeNames)
-                    .contribute(registry);
+            WorkflowDefinitionBootstrap bootstrap = new WorkflowDefinitionBootstrap(
+                    pipeline,
+                    Set.of(source),
+                    new InMemoryWorkflowDefinitionRegistryStore(),
+                    Optional.empty(),
+                    typeNames);
+            bootstrap.contribute(registry);
+            DocumentDefinitionLoader loader =
+                    new DocumentDefinitionLoader(pipeline, bootstrap, Optional.empty(), typeNames);
+            List<RuntimeWorkflow> built = new ArrayList<>();
+            for (DocumentOrigin origin : bootstrap.documentOrigins()) {
+                WorkflowDefinition<?, ?> definition =
+                        loader.load(ServiceTestHelpers.recordOf(origin), origin.document());
+                built.add(registry.build(origin.key().scopeKey(), definition, origin.nameBinding()));
+            }
+            return built;
         }
     }
 
@@ -507,13 +518,14 @@ class DocumentRegistrationParityTest {
     }
 
     private static Outcome viaPackagedSource(PackagedView component) {
-        WorkflowPlan plan = component
-                .workflowRegistry()
-                .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION, 1L))
+        // The contributors run when the registry is built
+        DefaultWorkflowRegistry registry = (DefaultWorkflowRegistry) component.workflowRegistry();
+        DocumentDefinitionLoader loader = component.documentDefinitionLoader();
+        DocumentOrigin origin = loader.documentOrigins().getFirst();
+        WorkflowDefinition<?, ?> definition = loader.load(ServiceTestHelpers.recordOf(origin), origin.document());
+        WorkflowPlan plan = registry.build(origin.key().scopeKey(), definition, origin.nameBinding())
                 .plan();
-        CompiledDefinition compiled =
-                component.workflowDefinitionStore().get(KEY).orElseThrow().compiled();
-        return new Outcome(plan, compiled.planHash(), compiled.contractName(), compiled.stateTypeName());
+        return new Outcome(plan, origin.planHash(), origin.contractName(), origin.stateTypeName());
     }
 
     private static Outcome viaStore(String document) {
@@ -536,15 +548,13 @@ class DocumentRegistrationParityTest {
                 KEY, bytes(document), DocumentFormat.YAML, WorkflowDefinitionsConfig.defaults());
 
         WorkflowDefinition<?, ?> restored = component.documentDefinitionLoader().load(stored, decoded);
-        component.documentDefinitionLoader().onRestored(stored, restored);
 
-        CompiledDefinition cached =
-                component.workflowDefinitionStore().get(KEY).orElseThrow().compiled();
+        WorkflowTypeNames names = component.workflowTypeNames();
         return new Outcome(
-                planOf(restored, component.workflowTypeNames()),
+                planOf(restored, names),
                 component.documentDefinitionLoader().planHash(restored),
-                cached.contractName(),
-                cached.stateTypeName());
+                names.contractNameOf(restored.contract()),
+                names.nameOf(restored.stateType()));
     }
 
     private static Outcome viaService(String document) {
@@ -554,19 +564,25 @@ class DocumentRegistrationParityTest {
                 .workflowDefinitionService()
                 .load(WorkflowScopes.DEFAULT, bytes(document), DocumentFormat.YAML, metadata("test://parity/service")));
 
-        CompiledDefinition compiled =
-                component.workflowDefinitionStore().get(KEY).orElseThrow().compiled();
+        WorkflowDefinitionRecord row = ServiceTestHelpers.await(
+                        component.workflowDefinitionRegistryStore().find(KEY))
+                .orElseThrow();
+        WorkflowDefinitionDocument text = ServiceTestHelpers.await(
+                        component.workflowDefinitionRegistryStore().findDocument(KEY))
+                .orElseThrow();
+        WorkflowDefinition<?, ?> definition =
+                component.documentDefinitionLoader().load(row, text);
         return new Outcome(
-                planOf(compiled.definition(), component.workflowTypeNames()),
+                planOf(definition, component.workflowTypeNames()),
                 loaded.planHash(),
-                compiled.contractName(),
-                compiled.stateTypeName());
+                row.contractName(),
+                row.stateTypeName());
     }
 
     // --- Tests ---
 
     @Test
-    @DisplayName("a Java definition and a document of one contract pass the same registration rules")
+    @DisplayName("a Java definition and a document of one contract pass the same plan rules")
     void javaAndDocumentDefinitionsOfOneContractShareTheRegistrationPath() {
         // Given: a registry that records the definitions reaching its validators, a Java definition of the
         // contract, a document of the same contract, and a second document waiting for an undeclared signal
@@ -577,26 +593,24 @@ class DocumentRegistrationParityTest {
         DefinitionResource bad = resource(fixtureBytes("parity-doc-bad.yaml"), "test://parity/bad");
         ParityCodeDefinition badCode = new ParityCodeDefinition(CODE_DEFINITION_BAD, "refund");
 
-        // When: the Java definition registers, then the good document in one bootstrap run
+        // When: the Java definition registers, then the good document is bootstrapped and its plan built
         registry.register(code);
-        registration.bootstrap(good);
+        List<RuntimeWorkflow> documentPlans = registration.bootstrap(good);
 
-        // Then: both reach the validators and the registry, each reporting the contract
+        // Then: both reach the validators, each reporting the contract; only the code is registered
         assertThat(registration.recorder.seen).containsExactly("parity-code v1", "parity-doc v1");
-        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, CODE_DEFINITION, 1L))
-                        .orElseThrow()
-                        .contract())
-                .isEqualTo(ParityOrders.class);
-        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION, 1L))
-                        .orElseThrow()
-                        .contract())
-                .isEqualTo(ParityOrders.class);
+        assertThat(registry.codeRegistrations()).singleElement().satisfies(registered -> assertThat(
+                        registered.definition().contract())
+                .isEqualTo(ParityOrders.class));
         assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, CODE_DEFINITION, 1L))
                         .contractName())
                 .isEqualTo(CONTRACT_NAME);
-        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION, 1L))
-                        .contractName())
-                .isEqualTo(CONTRACT_NAME);
+        assertThat(documentPlans).singleElement().satisfies(plan -> {
+            assertThat(plan.contractName()).isEqualTo(CONTRACT_NAME);
+            assertThat(plan.plan().definitionId()).isEqualTo(DOCUMENT_DEFINITION);
+        });
+        assertThat(registry.find(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION, 1L)))
+                .isEmpty();
 
         // When: the bad document is bootstrapped in a second run, and a Java definition awaiting the same signal
         // registers
@@ -617,43 +631,6 @@ class DocumentRegistrationParityTest {
         assertThat(documentRefusal.getMessage().replace(DOCUMENT_DEFINITION_BAD, "<id>"))
                 .isEqualTo(codeRefusal.getMessage().replace(CODE_DEFINITION_BAD, "<id>"));
         assertThat(registration.recorder.seen).containsExactly("parity-code v1", "parity-doc v1");
-    }
-
-    @Test
-    @DisplayName("a bootstrap run whose second document is refused by the registry keeps the first one")
-    void secondDocumentRefusedByRegistryLeavesFirstCommitted() {
-        // Given: one packaged source listing a good document and then a document that waits for a signal its
-        // contract does not declare; document validation does not know the contract's signals
-        Registration registration = new Registration();
-        DefaultWorkflowRegistry registry = registration.registry;
-        WorkflowDefinitionStore store = new WorkflowDefinitionStore();
-        DefinitionResource good = resource(fixtureBytes("parity-doc.yaml"), "test://parity/good");
-        DefinitionResource bad = resource(fixtureBytes("parity-doc-bad.yaml"), "test://parity/bad");
-
-        // When: both are bootstrapped in one run
-        Throwable refusal = catchThrowable(() -> registration.bootstrap(store, good, bad));
-
-        // Then: the run fails with the registry's exception for the second document, not a load exception
-        assertThat(refusal)
-                .isExactlyInstanceOf(WorkflowDefinitionException.class)
-                .hasMessageContaining(DOCUMENT_DEFINITION_BAD + "' v1")
-                .hasMessageContaining(REFUSAL_FRAGMENT);
-
-        // and: the first document stays registered and active, and reached the contributed validators
-        assertThat(registry.allRegistered())
-                .extracting(registered -> registered.plan().definitionId())
-                .containsExactly(DOCUMENT_DEFINITION);
-        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION, 1L))
-                        .contractName())
-                .isEqualTo(CONTRACT_NAME);
-        assertThat(store.currentStatus(DOCUMENT_DEFINITION, 1L)).isEqualTo(ActivationStatus.AVAILABLE);
-        assertThat(registration.recorder.seen).containsExactly("parity-doc v1");
-
-        // and: the second document is neither registered nor active; its claim was released to candidate
-        assertThatThrownBy(
-                        () -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION_BAD, 1L)))
-                .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-        assertThat(store.currentStatus(DOCUMENT_DEFINITION_BAD, 1L)).isEqualTo(ActivationStatus.CANDIDATE);
     }
 
     @Test
@@ -690,7 +667,7 @@ class DocumentRegistrationParityTest {
 
     @Test
     @DisplayName("a packaged document may name an unannotated class by binary name; a service load may not")
-    void packagedBinaryNameRegistersWhileServiceLoadOfUnreferencedClassIsRefused() {
+    void packagedBinaryNameBuildsWhileServiceLoadOfUnreferencedClassIsRefused() {
         // Given: component A with the legacy document as a packaged source, and component B with the same
         // catalog and no packaged source, whose class loader is watched
         LegacyPackagedComponent packaged = DaggerDocumentRegistrationParityTest_LegacyPackagedComponent.create();
@@ -698,8 +675,13 @@ class DocumentRegistrationParityTest {
         RecordingClassLoader recorder = new RecordingClassLoader();
 
         // When: A starts and provides its registry, and B loads the same bytes through the service
-        RuntimeWorkflow registered =
-                packaged.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "legacy-doc", 1L));
+        DefaultWorkflowRegistry packagedRegistry = (DefaultWorkflowRegistry) packaged.workflowRegistry();
+        DocumentOrigin origin =
+                packaged.documentDefinitionLoader().documentOrigins().getFirst();
+        RuntimeWorkflow built = packagedRegistry.build(
+                origin.key().scopeKey(),
+                packaged.documentDefinitionLoader().load(ServiceTestHelpers.recordOf(origin), origin.document()),
+                origin.nameBinding());
         Future<CompiledDefinitionRef> loading = recorder.callWithContextLoader(() -> service.workflowDefinitionService()
                 .load(
                         WorkflowScopes.DEFAULT,
@@ -707,8 +689,8 @@ class DocumentRegistrationParityTest {
                         DocumentFormat.YAML,
                         metadata("test://parity/legacy-service")));
 
-        // Then: A registered the document with the unannotated state class
-        assertThat(registered.stateType()).isEqualTo(Legacy.class);
+        // Then: A built the document with the unannotated state class
+        assertThat(built.stateType()).isEqualTo(Legacy.class);
         // And: B refuses the name, never asked its class loader for the class, and holds no candidate
         assertThatThrownBy(() -> ServiceTestHelpers.await(loading))
                 .isInstanceOf(WorkflowUnknownTypeNameException.class)

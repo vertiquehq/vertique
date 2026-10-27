@@ -111,9 +111,9 @@ public class FailingScopeRowIT {
             first.close();
 
             // When the second deployment, whose state class acme's state no longer extends, starts on the database and
-            // reconciles once, which evaluates the rows of the scopes that startup does not read
+            // its executor runs a command of the row
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
-            reconcile(second);
+            evaluate(second, key, true);
 
             // Then startup succeeded and the listing shows the row failing with the state rule
             WorkflowDefinitionRecord listed = listed(second, key);
@@ -157,9 +157,9 @@ public class FailingScopeRowIT {
             first.close();
 
             // When the second deployment, whose catalog omits the decision class although the class stays on the class
-            // path, starts on the database and reconciles once
+            // path, starts on the database and its executor runs a command of the row
             Boot second = boot(database, vertx, Deployment.sameStateWithoutDecision(PURCHASE));
-            reconcile(second);
+            evaluate(second, key, true);
 
             // Then startup succeeded and the listing shows the row failing with the binding rule
             WorkflowDefinitionRecord listed = listed(second, key);
@@ -202,7 +202,6 @@ public class FailingScopeRowIT {
             // When the second deployment marks the row failing, a start names acme's version 1 explicitly and the
             // earlier start is repeated with its key
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
-            reconcile(second);
             Outcome explicit = startOutcome(database, second, ContractC.class, ACME, PURCHASE, 1L, ACME);
             WorkflowInstanceId replayed = await(second.app()
                     .workflowOperations()
@@ -220,7 +219,7 @@ public class FailingScopeRowIT {
     }
 
     @Test
-    @DisplayName("a row whose conflict is gone is no longer failing after the next reconciliation")
+    @DisplayName("a row whose conflict is gone is no longer failing once the executor runs a command of it")
     void rowIsClearedWhenTheConflictIsGone(Vertx vertx) {
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, PURCHASE);
@@ -230,13 +229,14 @@ public class FailingScopeRowIT {
             DefinitionKey key = publishAndActivateAcme(first, PURCHASE, false);
             first.close();
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
-            reconcile(second);
+            evaluate(second, key, true);
             assertThat(listed(second, key).failure()).isNotNull();
             second.close();
 
-            // When a node that ships the first deployment's state again starts and reconciles
+            // When a node that ships the first deployment's state again starts and its executor runs a command of the
+            // row
             Boot third = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
-            reconcile(third);
+            evaluate(third, key, false);
 
             // Then the listing and the stored column show no failure and a start in acme runs acme's own row
             assertThat(listed(third, key).failure()).isNull();
@@ -294,12 +294,11 @@ public class FailingScopeRowIT {
             // When the later deployment ships the default's code of the id under contract C with a state acme's does
             // not extend
             Boot second = boot(database, vertx, Deployment.laterWith(id));
-            reconcile(second);
 
-            // Then startup succeeded, acme's row is not failing and a D client in acme starts acme's own row
+            // Then startup succeeded, a D client in acme starts acme's own row, and the row is not failing
+            assertThat(startPin(database, second, ContractD.class, ACME, id)).isEqualTo(new Pin(ACME, ACME, id, 1));
             assertThat(listed(second, key).failure()).isNull();
             assertThat(failureReason(database, key)).isNull();
-            assertThat(startPin(database, second, ContractD.class, ACME, id)).isEqualTo(new Pin(ACME, ACME, id, 1));
         }
     }
 
@@ -401,23 +400,20 @@ public class FailingScopeRowIT {
             DefinitionKey acme = publishAndActivateAcme(first, PURCHASE, false);
             publishDefaultPurchaseState(first, PURCHASE, 2);
             first.close();
-            DefinitionKey defaultKey = new DefinitionKey(DEFAULT, PURCHASE, 2);
 
             // When the second deployment, whose default code of the id has a state acme's state does not extend,
             // starts: acme's key sorts before the default scope's, so its row restores first
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
-            reconcile(second);
+            evaluate(second, acme, true);
 
-            // Then startup succeeded, acme's row is failing and the default scope's version 2 is registered
+            // Then startup succeeded, acme's row is failing and the default scope's version 2 is available
             assertThat(listed(second, acme).failure()).isNotNull();
             assertThat(listed(second, acme).failure().rule()).isEqualTo(Rule.STATE_TYPE_NOT_EXTENDED);
-            assertThat(second.app().workflowRegistry().find(defaultKey)).isPresent();
+            assertThat(database.stored(DEFAULT, PURCHASE, 2).status()).isEqualTo("AVAILABLE");
 
             // And publishing a default version while the node runs succeeds
             publishDefaultPurchaseState(second, PURCHASE, 3);
             assertThat(database.stored(DEFAULT, PURCHASE, 3).status()).isEqualTo("AVAILABLE");
-            assertThat(second.app().workflowRegistry().find(new DefinitionKey(DEFAULT, PURCHASE, 3)))
-                    .isPresent();
 
             // And a start in acme still fails at the executor as failing and another scope still starts
             assertThat(startOutcome(database, second, ContractC.class, ACME, PURCHASE, null, null)
@@ -430,61 +426,25 @@ public class FailingScopeRowIT {
     }
 
     @Test
-    @DisplayName("a pass does not count a failing row with an unresolvable name binding as an apply failure")
-    void passDoesNotFailARowThatStartupMarkedFailing(Vertx vertx) {
+    @DisplayName("a failing row with an unresolvable name binding stays marked and a start of it is deferred")
+    void unresolvableBindingRowStaysMarkedAndItsStartIsDeferred(Vertx vertx) {
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, PURCHASE);
 
-            // Given a row marked failing by a first reconciliation because its recorded type name no longer resolves
+            // Given a row marked failing by the executor because its recorded type name no longer resolves
             Boot first = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
             DefinitionKey key = publishAndActivateAcme(first, PURCHASE, true);
             first.close();
             Boot second = boot(database, vertx, Deployment.sameStateWithoutDecision(PURCHASE));
-            reconcile(second);
-            assertThat(listed(second, key).failure().rule()).isEqualTo(Rule.NAME_BINDING_UNRESOLVED);
+            assertThat(evaluate(second, key, true)).isEqualTo(Rule.NAME_BINDING_UNRESOLVED);
 
-            // When the periodic reconciliation runs twice
-            await(second.app().definitionPropagationPoller().pollNow());
-            await(second.app().definitionPropagationPoller().pollNow());
+            // When another start of the row is recorded
 
-            // Then the row is not counted as an apply failure and stays marked, and a start of it is recorded and
-            // deferred as not runnable on this node
-            assertThat(second.app().definitionRegistryView().applyFailures()).isZero();
+            // Then the row stays marked, and the start is recorded and deferred as not runnable on this node
             assertThat(failureReason(database, key)).isEqualTo("NAME_BINDING_UNRESOLVED");
             Outcome recorded = recordedStart(database, second, ContractC.class, ACME, PURCHASE, null, null);
             assertThat(recorded.status()).isEqualTo("PENDING");
             assertThat(recorded.commandState()).isEqualTo("DEFERRED");
-        }
-    }
-
-    @Test
-    @DisplayName("a scope row that a peer publishes and this node's code conflicts with is marked failing by the pass")
-    void passMarksAScopeRowThatAPeerPublishedAndThisNodesCodeConflictsWith(Vertx vertx) {
-        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
-            own(database, PURCHASE);
-
-            // Given node B, which ships the later default code, and node A, which ships the first one
-            Boot b = boot(database, vertx, Deployment.laterWith(PURCHASE));
-            Boot a = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
-
-            // When A publishes and activates acme's document and B reconciles
-            DefinitionKey key = publishAndActivateAcme(a, PURCHASE, false);
-            await(b.app().definitionPropagationPoller().pollNow());
-
-            // Then B does not count the row as an apply failure and the table shows the state rule
-            assertThat(b.app().definitionRegistryView().applyFailures()).isZero();
-            assertThat(failureReason(database, key)).isEqualTo("STATE_TYPE_NOT_EXTENDED");
-
-            // And a start in acme on A, whose code does not conflict, runs acme's own row
-            assertThat(startPin(database, a, ContractC.class, ACME, PURCHASE))
-                    .isEqualTo(new Pin(ACME, ACME, PURCHASE, 1));
-
-            // And once A no longer runs commands, a start in acme on B fails at the executor as failing, not as
-            // unrunnable
-            a.close();
-            Outcome failed = startOutcome(database, b, ContractC.class, ACME, PURCHASE, null, null);
-            assertThat(failed.status()).isEqualTo("FAILED");
-            assertThat(failed.reason()).contains(Rule.STATE_TYPE_NOT_EXTENDED.name());
         }
     }
 
@@ -499,8 +459,7 @@ public class FailingScopeRowIT {
             DefinitionKey key = publishAndActivateAcme(first, PURCHASE, false);
             first.close();
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
-            reconcile(second);
-            assertThat(listed(second, key).failure()).isNotNull();
+            evaluate(second, key, true);
             assertThat(startOutcome(database, second, ContractC.class, ACME, PURCHASE, 1L, ACME)
                             .status())
                     .isEqualTo("FAILED");
@@ -518,29 +477,27 @@ public class FailingScopeRowIT {
     }
 
     @Test
-    @DisplayName("a failing row that a peer retires is no longer refused as failing after the next pass")
+    @DisplayName("a failing row that a peer retires is no longer refused as failing")
     void retiredFailingRowLosesItsMarkOnAPeer(Vertx vertx) {
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, PURCHASE);
 
             // Given node A, which ships the first code, and node B, which ships the later code and marks the row
-            // failing at startup
+            // failing once its executor runs a command of it
             Boot a = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
             DefinitionKey key = publishAndActivateAcme(a, PURCHASE, false);
             Boot b = boot(database, vertx, Deployment.laterWith(PURCHASE));
-            reconcile(b);
             a.close();
+            evaluate(b, key, true);
             assertThat(startOutcome(database, b, ContractC.class, ACME, PURCHASE, 1L, ACME)
                             .status())
                     .isEqualTo("FAILED");
             Boot peer = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
 
-            // When the peer deprecates and retires the row and B reconciles
+            // When the peer deprecates and retires the row
             await(peer.app().definitionService().deprecate(key));
             database.ageStatus(key, 60);
             await(peer.app().definitionService().retire(key));
-            await(b.app().definitionPropagationPoller().pollNow());
-            await(b.app().definitionPropagationPoller().pollNow());
 
             // Then a start naming the version on B is refused for another reason than the stale mark
             Throwable refused = failureOfExplicitStart(b, key);
@@ -570,12 +527,11 @@ public class FailingScopeRowIT {
             await(first.app().definitionService().publish(v2));
             first.close();
 
-            // When the second deployment marks both versions failing and the instance migrates to version 2, which
-            // is recorded and then run by the executor
+            // When the second deployment marks version 1 failing and the instance migrates to version 2, which is
+            // recorded and then run by the executor
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
-            reconcile(second);
+            evaluate(second, v1, true);
             assertThat(listed(second, v1).failure()).isNotNull();
-            assertThat(listed(second, v2).failure()).isNotNull();
             await(second.app().workflowOperations().migrate(waiting, ACME, 2L));
             await(second.app().executionProbe().awaitIdle(waiting, IDLE_TIMEOUT));
 
@@ -605,7 +561,7 @@ public class FailingScopeRowIT {
             DefinitionKey key = publishAndActivateAcme(first, PURCHASE, false);
             first.close();
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
-            reconcile(second);
+            evaluate(second, key, true);
             assertThat(listed(second, key).failure()).isNotNull();
 
             // When a client in globex names acme's version 1 and acme as the target scope
@@ -637,9 +593,9 @@ public class FailingScopeRowIT {
             DefinitionKey key = publishAndActivateAcme(first, longId, false);
             first.close();
 
-            // When the second deployment starts and reconciles
+            // When the second deployment starts and its executor runs a command of the row
             Boot second = boot(database, vertx, Deployment.laterWith(longId));
-            reconcile(second);
+            evaluate(second, key, true);
             assertThat(listed(second, key).failure()).isNotNull();
 
             // Then the log line names the row and repeats neither the whole id nor a long run of it
@@ -796,11 +752,31 @@ public class FailingScopeRowIT {
     }
 
     /**
-     * Runs one reconciliation pass, which evaluates the rows of the scopes other than the default one against the
-     * code the node ships; startup reads only the default scope.
+     * Starts an instance of the version's scope and id so that the executor of the node evaluates the row against the
+     * code the node ships, and waits until the row's failing mark is as the evaluation says: set when the row
+     * conflicts, absent when it does not. Startup reads only the default scope; the executor writes the marks of the
+     * other scopes' rows when it runs a command of them.
+     *
+     * @return the rule the row is marked with, or {@code null} when it carries no mark
      */
-    private static void reconcile(Boot node) {
-        await(node.app().definitionPropagationPoller().pollNow());
+    private static Rule evaluate(Boot node, DefinitionKey key, boolean expectMark) {
+        String idempotencyKey = "evaluate-" + UUID.randomUUID();
+        await(node.app()
+                .workflowOperations()
+                .start(command(key.scopeKey(), key.definitionId(), "evaluate-order", idempotencyKey, null, null)));
+        long deadline = System.nanoTime() + IDLE_TIMEOUT.toNanos();
+        while (System.nanoTime() < deadline) {
+            var failure = listed(node, key).failure();
+            if ((failure != null) == expectMark) return failure == null ? null : failure.rule();
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted while waiting for the failing mark", e);
+            }
+        }
+        var failure = listed(node, key).failure();
+        return failure == null ? null : failure.rule();
     }
 
     /** Loads, publishes and activates acme's document of the id and returns its key. */
@@ -1079,10 +1055,10 @@ public class FailingScopeRowIT {
                 row.getLong("definition_version"));
     }
 
-    /** Collects what the reconciliation pass logs while it is open. */
+    /** Collects what the plan loader logs while it is open. */
     private static final class BootstrapLog implements AutoCloseable {
         private final ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
-                org.slf4j.LoggerFactory.getLogger("dev.vertique.workflow.engine.WorkflowDefinitionPropagationPoller");
+                org.slf4j.LoggerFactory.getLogger("dev.vertique.workflow.engine.registry.DefinitionPlanLoader");
         private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
         private final Level previousLevel = logger.getLevel();
 

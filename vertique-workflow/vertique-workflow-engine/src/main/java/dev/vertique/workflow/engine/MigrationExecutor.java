@@ -10,6 +10,7 @@ import dev.vertique.workflow.engine.registry.FailingMarks;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -19,6 +20,7 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
@@ -79,6 +81,14 @@ final class MigrationExecutor {
 
     private final WorkflowRegistry registry;
     private final Function<DefinitionKey, Optional<DefinitionFailure>> failing;
+
+    /**
+     * The reads of definition rows on the migration's transaction, which tell whether the target is deprecated;
+     * {@code null} when the store cannot read on a transaction, which leaves no stored status to refuse a target by.
+     */
+    @jakarta.annotation.Nullable
+    private final TransactionalDefinitionReads<SqlClient> definitionReads;
+
     private final WorkflowInstanceRepository<SqlClient> instances;
     private final WorkflowHistoryRepository<SqlClient> history;
     private final WorkflowCommandRepository<SqlClient> commands;
@@ -131,6 +141,8 @@ final class MigrationExecutor {
      *     conflicts with; a migration into a version it reports as failing is refused
      * @param commands the command repository whose execution lock a migration takes before it reads or writes the
      *     instance
+     * @param definitionReads the reads of definition rows on the migration's transaction, by which a deprecated target
+     *     is refused; may be {@code null}
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -143,12 +155,14 @@ final class MigrationExecutor {
             WorkflowContextBinder contextBinder,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
             Function<DefinitionKey, Optional<DefinitionFailure>> failing,
-            WorkflowCommandRepository<SqlClient> commands) {
+            WorkflowCommandRepository<SqlClient> commands,
+            @jakarta.annotation.Nullable TransactionalDefinitionReads<SqlClient> definitionReads) {
         // migrationRegistryOpt is null only from test-only constructors that delegate with null;
         // Dagger always provides a non-null Optional via @BindsOptionalOf.
         this.migrationRegistry = migrationRegistryOpt != null ? migrationRegistryOpt.orElse(null) : null;
         this.registry = registry;
         this.failing = failing;
+        this.definitionReads = definitionReads;
         this.instances = instances;
         this.history = history;
         this.commands = commands;
@@ -173,6 +187,7 @@ final class MigrationExecutor {
      * @param stateCompatibility the state comparison; empty refuses a migration between differing state classes
      * @param marks the failing marks, resolved when a migration runs because building them builds the plan cache
      * @param commands the command repository whose execution lock a migration takes
+     * @param definitionReads the reads of definition rows on a transaction, when the store offers them
      */
     @Inject
     MigrationExecutor(
@@ -186,7 +201,8 @@ final class MigrationExecutor {
             WorkflowContextBinder contextBinder,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
             Provider<FailingMarks> marks,
-            WorkflowCommandRepository<SqlClient> commands) {
+            WorkflowCommandRepository<SqlClient> commands,
+            Optional<TransactionalDefinitionReads<SqlClient>> definitionReads) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -198,7 +214,8 @@ final class MigrationExecutor {
                 contextBinder,
                 stateCompatibility,
                 key -> marks.get().find(key),
-                commands);
+                commands,
+                definitionReads.orElse(null));
     }
 
     /**
@@ -237,7 +254,8 @@ final class MigrationExecutor {
                 contextBinder,
                 stateCompatibility,
                 key -> Optional.empty(),
-                commands);
+                commands,
+                null);
     }
 
     /**
@@ -534,9 +552,31 @@ final class MigrationExecutor {
             return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_NOT_ADMITTED));
         }
         // A deprecated target admits no new work; refuse before any handler call or write.
-        if (registry.isDeprecated(targetKey)) {
-            return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_DEPRECATED));
+        return deprecated(targetKey, tx)
+                .compose(deprecated -> deprecated
+                        ? Future.<Void>failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_DEPRECATED))
+                        : migrateToAdmittedTarget(inst, sourceRw, targetRw, targetKey, tx));
+    }
+
+    /** Whether the stored row of the target is deprecated, read on the migration's transaction. */
+    private Future<Boolean> deprecated(DefinitionKey target, SqlClient tx) {
+        if (definitionReads == null) {
+            return Future.succeededFuture(false);
         }
+        return definitionReads
+                .selectionRead(target.scopeKey(), target.definitionId(), tx)
+                .map(read -> read.versions().stream()
+                        .anyMatch(row -> row.key().equals(target) && row.status() == DefinitionStatus.DEPRECATED));
+    }
+
+    private Future<Void> migrateToAdmittedTarget(
+            WorkflowInstance inst,
+            RuntimeWorkflow sourceRw,
+            RuntimeWorkflow targetRw,
+            DefinitionKey targetKey,
+            SqlClient tx) {
+        WorkflowInstanceId id = inst.id();
+        String targetScope = targetKey.scopeKey();
         // The target must name the source's contract and, when its state class differs, extend the source's.
         if (!incompatibilityFree(sourceRw, targetRw)) {
             return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_NOT_ADMITTED));
