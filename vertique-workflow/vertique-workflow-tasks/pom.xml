@@ -40,7 +40,6 @@ SPDX-License-Identifier: EUPL-1.2
                                     <excludes>
                                         <exclude>dev.vertique:vertique-workflow-postgresql</exclude>
                                         <exclude>dev.vertique:vertique-workflow-engine</exclude>
-                                        <exclude>dev.vertique:vertique-workflow-delayed</exclude>
                                         <exclude>dev.vertique:vertique-services</exclude>
                                         <exclude>dev.vertique:vertique-job-core</exclude>
                                         <exclude>dev.vertique:vertique-job-delayed</exclude>
@@ -52,7 +51,7 @@ SPDX-License-Identifier: EUPL-1.2
                                         <exclude>dev.vertique:vertique-inbox-outbox-kafka</exclude>
                                     </excludes>
                                     <message>
-                                        workflow-tasks must stay decoupled from workflow-postgresql, workflow-delayed,
+                                        workflow-tasks must stay decoupled from workflow-postgresql,
                                         services, job-*, and inbox-outbox-* (uses TaskStore&lt;TX&gt; and
                                         TransactionalTaskCallbacks&lt;TX&gt; SPIs from workflow-core; the typed
                                         TaskService is the only public contract — no service-contract surface,

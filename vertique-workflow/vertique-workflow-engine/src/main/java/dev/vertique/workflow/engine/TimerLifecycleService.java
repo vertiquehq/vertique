@@ -13,7 +13,6 @@ import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
-import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
@@ -51,27 +50,23 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 /**
- * Package-private collaborator owning the timer-fire callback paths and timer helpers.
+ * Package-private collaborator owning the timer-fire paths and timer helpers.
  *
  * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition
- * (PRD-WF-006, Slice C8). It absorbs the {@code TransactionalTimerCallbacks} bodies and their
- * supporting helpers:
+ * (PRD-WF-006, Slice C8). The workflow executor runs a recorded {@code TIMER} command through
+ * {@link #runTimer}; the service also owns the supporting helpers:
  * <ul>
- *   <li>{@link #timerFired} — the wait-slot dispatcher (branch-owned vs single-path; standalone /
- *       signal-timeout / task-due routing).</li>
+ *   <li>{@link #runTimer} — the executor entry: validates the pin, locks the timer row and fires it.</li>
  *   <li>{@link #handleTimerFiredStandalone} / {@link #handleTimerFiredTimeout} — the single-path
  *       standalone-timer and signal-timeout fire flows.</li>
- *   <li>{@link #timerFiringFailed} — the permanent-failure reconciliation flow.</li>
  *   <li>{@link #doBranchTimerFired} / {@link #doBranchStandaloneTimerFired} /
  *       {@link #doBranchSignalTimeoutFired} — the branch-owned timer-fire flows.</li>
- *   <li>The static helpers {@link #resolveActiveTimerId} and {@link #isTimerSlotMatch}, the
+ *   <li>The static helper {@link #resolveActiveTimerId}, the
  *       canonical {@link #appendTimerCancelledHistory}, and {@link #resolveFireAt}.</li>
  * </ul>
  *
- * <p>The facade's {@code TransactionalTimerCallbacks} entrypoints ({@code timerFired} /
- * {@code timerFiringFailed}) delegate their bodies to this service. Plan-hash checks reuse the
- * shared {@link WorkflowPayloads} utilities; lifecycle event emission reuses {@link
- * WorkflowEventEmitter}.
+ * <p>Plan-hash checks reuse the
+ * shared {@link WorkflowPayloads} utilities.
  *
  * <p><b>Driver↔timer cycle-break.</b> This service drives the state machine forward after a timer
  * fires via {@link WorkflowTransitionDriver#driveTransitions} (single-path) and
@@ -83,8 +78,8 @@ import java.util.function.Supplier;
  * breaks the Dagger constructor cycle (replacing the transient C5 {@code Provider<WorkflowEngine>}
  * back-edge the driver previously used for {@code resolveFireAt}).
  *
- * <p><b>Timer→task edge.</b> The single-path {@link #timerFired} dispatcher routes a {@code TASK}
- * due-date wait to {@link TaskLifecycleService#taskDueFired}, so this service injects
+ * <p><b>Timer→task edge.</b> {@link #runTimer} runs a {@code TASK_DUE} or {@code TASK_REMINDER}
+ * timer through {@link TaskLifecycleService}, so this service injects
  * {@link TaskLifecycleService} <em>eagerly</em>. {@link TaskLifecycleService} therefore must not
  * depend back on this service (it keeps its own private {@code appendTimerCancelledHistory} copy for
  * its task-completion due-date cancel path, to avoid a {@code timer → task → timer} cycle).
@@ -101,7 +96,6 @@ final class TimerLifecycleService {
     private final WorkflowHistoryRepository<SqlClient> history;
     private final BranchTokenRepository<SqlClient> branchTokens;
     private final TimerStore<SqlClient> timerStore;
-    private final WorkflowEventEmitter eventEmitter;
     private final ForkJoinCoordinator forkJoin;
     private final WorkflowTransitionDriver driver;
     private final TaskLifecycleService taskLifecycle;
@@ -111,9 +105,7 @@ final class TimerLifecycleService {
 
     /**
      * Binder-row seam for the instance-owned (non-branch) timer drives (Contract Appendix C2): the
-     * single-path branch of {@link #timerFired} and all of {@link #timerFiringFailed} (a
-     * branch-owned timer failure is treated identically to an instance-owned one per the existing
-     * slot-match check — see {@link #timerFiringFailed}'s javadoc). The branch-owned fire path
+     * single-path branch of {@link #fired}. The branch-owned fire path
      * ({@link #doBranchTimerFired}) MUST NOT use this binder — the bind-once routing rule reserves
      * branch-owned drives for the {@link BranchTransitionEngine} carrier seam. Never {@code null} —
      * the engine assembly seam substitutes {@link WorkflowContextBinder#noop()} when the propagator
@@ -130,14 +122,12 @@ final class TimerLifecycleService {
      * @param history the history repository used for sequence numbers and history entries
      * @param branchTokens the branch-token repository used by the branch-owned timer paths; may be
      *     {@code null} in legacy test constructors that omit the fork/join collaborators
-     * @param timerStore the timer store used to lock, mark-failed, and read timer rows
-     * @param eventEmitter the event emitter used to emit the {@code WORKFLOW_FAILED} event on a
-     *     permanent timer failure
+     * @param timerStore the timer store used to lock, mark, and read timer rows
      * @param forkJoin the fork/join coordinator whose {@code driveAndMaybeJoin} continues a branch
      *     after a branch-owned timer fires; may be {@code null} in legacy test constructors
      * @param driver the transition driver invoked as the single-path post-fire continuation
-     * @param taskLifecycle the task-lifecycle service to which the single-path {@code TASK} due-date
-     *     wait is dispatched; injected eagerly (the timer→task edge has no back-edge)
+     * @param taskLifecycle the task-lifecycle service that runs the due date and the reminders of a
+     *     task's timers; injected eagerly (the timer→task edge has no back-edge)
      * @param clock the clock used to timestamp history entries and state updates
      * @param contextBinder the binder-row seam for the instance-owned timer drives; never
      *     {@code null} (the engine assembly seam substitutes {@link WorkflowContextBinder#noop()}
@@ -152,7 +142,6 @@ final class TimerLifecycleService {
             WorkflowHistoryRepository<SqlClient> history,
             BranchTokenRepository<SqlClient> branchTokens,
             TimerStore<SqlClient> timerStore,
-            WorkflowEventEmitter eventEmitter,
             ForkJoinCoordinator forkJoin,
             WorkflowTransitionDriver driver,
             TaskLifecycleService taskLifecycle,
@@ -165,7 +154,6 @@ final class TimerLifecycleService {
         this.history = history;
         this.branchTokens = branchTokens;
         this.timerStore = timerStore;
-        this.eventEmitter = eventEmitter;
         this.forkJoin = forkJoin;
         this.driver = driver;
         this.taskLifecycle = taskLifecycle;
@@ -309,11 +297,6 @@ final class TimerLifecycleService {
                 .map(done -> WorkflowSegments.Outcome.SETTLED_STALE);
     }
 
-    /** The binding of a caller of the engine's callbacks: the ambient context with the instance's own. */
-    private <T> Future<T> ambientBinding(WorkflowInstance instance, Supplier<Future<T>> drive) {
-        return contextBinder.withBound(instance, null, drive);
-    }
-
     private static boolean isEnded(WorkflowStatus status) {
         return status == WorkflowStatus.COMPLETED
                 || status == WorkflowStatus.COMPENSATED
@@ -321,35 +304,10 @@ final class TimerLifecycleService {
                 || status == WorkflowStatus.EXPIRED;
     }
 
-    // --- TransactionalTimerCallbacks ---
+    // --- Timer fire ---
 
     /**
-     * Handles a timer fire.
-     *
-     * <p>Reads the instance without locking (no FOR UPDATE), then classifies the wait slot:
-     * <ul>
-     *   <li>{@code wait_type=TIMER, wait_key=timerId} — standalone-timer path: advances to
-     *       {@code tn.nextStepId()} and appends {@code TIMER_FIRED}.</li>
-     *   <li>{@code wait_type=SIGNAL, wait_aux_id=timerId} — signal-timeout path: applies the
-     *       {@code onTimeout} mutator, advances to {@code timeoutNextStepId}, and appends
-     *       {@code TIMEOUT}.</li>
-     *   <li>{@code wait_type=TASK, wait_aux_id=timerId} — task due-date path: dispatched to
-     *       {@link TaskLifecycleService#taskDueFired}.</li>
-     *   <li>Otherwise — {@link TimerFiringResult#STALE_NOOP}.</li>
-     * </ul>
-     *
-     * @param workflowId the workflow instance this timer belongs to
-     * @param timerId the stable UUID of the timer that fired
-     * @param tx the active transaction context; all writes must use this context
-     * @return a {@link Future} resolving to the firing result
-     */
-    Future<TimerFiringResult> timerFired(WorkflowInstanceId workflowId, UUID timerId, SqlClient tx) {
-        return fired(workflowId, timerId, this::ambientBinding, tx);
-    }
-
-    /**
-     * Fires a timer like {@link #timerFired}, binding the durable context of an instance-owned drive with the given
-     * binding.
+     * Fires a timer, binding the durable context of an instance-owned drive with the given binding.
      *
      * @param workflowId the workflow instance this timer belongs to
      * @param timerId    the stable UUID of the timer that fired
@@ -381,7 +339,7 @@ final class TimerLifecycleService {
 
     /**
      * Executes the single-path timer-fire dispatch after the instance-owned binder-row bind is in
-     * effect. Extracted so {@link #timerFired} can pass it to {@link WorkflowContextBinder#withBound}
+     * effect. Extracted so {@link #fired} can pass it to {@link WorkflowContextBinder#withBound}
      * as a {@link java.util.function.Supplier}.
      *
      * @param workflowId the workflow instance this timer belongs to
@@ -406,141 +364,8 @@ final class TimerLifecycleService {
             return handleTimerFiredTimeout(inst, timerId, tx);
         }
 
-        // Task due-date path: wait_type=TASK and wait_aux_id == timerId (due-date timer).
-        if (inst.waitType() == WaitType.TASK && timerId.equals(inst.waitAuxId())) {
-            UUID taskId;
-            try {
-                taskId = UUID.fromString(inst.waitKey());
-            } catch (IllegalArgumentException e) {
-                return Future.failedFuture(new WorkflowDefinitionException(
-                        "Invalid task UUID in wait_key for instance '" + workflowId.value() + "'"));
-            }
-            return taskLifecycle.taskDueFired(workflowId, taskId, tx).map(result -> switch (result) {
-                case APPLIED -> TimerFiringResult.APPLIED;
-                case STALE_NOOP, LOST_TO_RACE -> TimerFiringResult.STALE_NOOP;
-            });
-        }
-
         // Slot mismatch — another timer or a different wait type.
         return Future.succeededFuture(TimerFiringResult.STALE_NOOP);
-    }
-
-    /**
-     * Handles a permanent timer-firing failure.
-     *
-     * <p>Lock-order: acquires the {@code workflow_timers} row lock first via
-     * {@link TimerStore#lockForFiring}, then reads the instance. On slot match, marks the timer
-     * {@link TimerStatus#FAILED}, appends {@code TIMER_FAILED} history, and transitions the
-     * workflow to {@code FAILED}. On slot mismatch or non-WAITING instance, marks the timer
-     * {@code FAILED} with {@code "TIMER_INCONSISTENCY: ..."} and returns
-     * {@link TimerFiringResult#STALE_NOOP} without mutating the workflow instance.
-     *
-     * @param workflowId the workflow instance this timer belongs to
-     * @param timerId the stable UUID of the timer that failed to fire
-     * @param errorType the error category reported by the delayed job executor
-     * @param errorMessage human-readable description of the failure cause
-     * @param tx the active transaction context; all writes must use this context
-     * @return a {@link Future} resolving to the firing result
-     */
-    Future<TimerFiringResult> timerFiringFailed(
-            WorkflowInstanceId workflowId, UUID timerId, String errorType, String errorMessage, SqlClient tx) {
-        // Lock the timer row first (lock-order invariant: workflow_timers before workflow_instances).
-        return timerStore.lockForFiring(timerId, tx).compose(optTimer -> {
-            if (optTimer.isEmpty()) {
-                // Timer row is missing (CASCADE-deleted or never existed) — STALE_NOOP.
-                return Future.succeededFuture(TimerFiringResult.STALE_NOOP);
-            }
-            if (optTimer.get().status() != TimerStatus.SCHEDULED) {
-                // Already FIRED / CANCELLED / FAILED — another writer beat us; nothing to reconcile.
-                return Future.succeededFuture(TimerFiringResult.STALE_NOOP);
-            }
-
-            // Timer is SCHEDULED — proceed to mark it failed regardless of slot match.
-            Instant now = clock.instant();
-            return instances.findById(workflowId, tx).compose(optInst -> {
-                // Determine whether this is a slot match or an inconsistency.
-                boolean slotMatch = optInst.isPresent()
-                        && optInst.get().status() == WorkflowStatus.WAITING
-                        && isTimerSlotMatch(optInst.get(), timerId);
-
-                if (!slotMatch) {
-                    // Inconsistency: mark the timer failed but do NOT touch the workflow instance.
-                    String reason = "TIMER_INCONSISTENCY: workflow not waiting for this timer";
-                    return timerStore.markFailed(timerId, now, reason, tx).map(v -> TimerFiringResult.STALE_NOOP);
-                }
-
-                WorkflowInstance inst = optInst.get();
-
-                // Binder-row bind (Contract Appendix C2): instance-owned timer permanent-failure
-                // drive. isTimerSlotMatch above only matches the instance's own wait slot (not any
-                // branch token's), so a slot match here is always instance-owned.
-                return contextBinder.withBound(
-                        inst,
-                        null,
-                        () -> doTimerFiringFailedBound(workflowId, timerId, errorType, errorMessage, now, inst, tx));
-            });
-        });
-    }
-
-    /**
-     * Executes the slot-match timer-failure drive body after the instance-owned binder-row bind is
-     * in effect. Extracted so {@link #timerFiringFailed} can pass it to
-     * {@link WorkflowContextBinder#withBound} as a {@link java.util.function.Supplier}.
-     *
-     * @param workflowId   the workflow instance this timer belongs to
-     * @param timerId      the stable UUID of the timer that failed to fire
-     * @param errorType    the error category reported by the delayed job executor
-     * @param errorMessage human-readable description of the failure cause
-     * @param now          the failure timestamp
-     * @param inst         the loaded (slot-matched) instance snapshot
-     * @param tx           the active transaction
-     * @return a {@link Future} resolving to the firing result
-     */
-    private Future<TimerFiringResult> doTimerFiringFailedBound(
-            WorkflowInstanceId workflowId,
-            UUID timerId,
-            String errorType,
-            String errorMessage,
-            Instant now,
-            WorkflowInstance inst,
-            SqlClient tx) {
-        // Slot match: mark timer failed, append TIMER_FAILED history, fail the workflow.
-        return timerStore.markFailed(timerId, now, errorMessage, tx).compose(v -> {
-            long prevVersion = inst.version();
-            WorkflowInstance failed = inst.withVersion(prevVersion + 1)
-                    .withStatus(WorkflowStatus.FAILED)
-                    .withWait(null, null)
-                    .withError(errorType, errorMessage)
-                    .withUpdatedAt(now);
-
-            return instances
-                    .updateOptimistic(failed, prevVersion, tx)
-                    .compose(rowCount -> {
-                        if (rowCount == 0) {
-                            return Future.<Void>failedFuture(
-                                    new WorkflowConflictException("Optimistic concurrency conflict for instance '"
-                                            + workflowId.value() + "' during timerFiringFailed"));
-                        }
-                        return history.nextSequence(workflowId, tx).compose(seq -> {
-                            String histPayload = Json.encode(new TimerFailedHistoryPayload(
-                                    inst.currentStepId(), timerId, now, errorType, errorMessage));
-                            return history.append(
-                                            new WorkflowHistoryEntry(
-                                                    workflowId, seq, WorkflowEntryType.TIMER_FAILED, histPayload, now),
-                                            tx)
-                                    .compose(v3 -> eventEmitter.emitEvent(
-                                            failed,
-                                            WorkflowEventType.WORKFLOW_FAILED,
-                                            seq,
-                                            null,
-                                            null,
-                                            WorkflowEventEmitter.attrs(
-                                                    "errorType", errorType, "errorMessage", errorMessage),
-                                            tx));
-                        });
-                    })
-                    .map(v2 -> TimerFiringResult.APPLIED);
-        });
     }
 
     // --- Single-path timer-fire flows ---
@@ -682,7 +507,7 @@ final class TimerLifecycleService {
     // --- Branch-aware timer-fire flows ---
 
     /**
-     * Branch path for {@link #timerFired}: handles a timer fire when the timer is branch-owned
+     * Branch path for {@link #fired}: handles a timer fire when the timer is branch-owned
      * (i.e., {@link TimerRecord#branchTokenId()} is non-null).
      *
      * <p>Routes on the branch token's current wait state:
@@ -692,7 +517,7 @@ final class TimerLifecycleService {
      *   <li>Otherwise — {@link TimerFiringResult#STALE_NOOP} (branch has already advanced).</li>
      * </ul>
      *
-     * <p>The triggering timer is already locked by {@code WorkflowTimerFireExecutor}; this method
+     * <p>The triggering timer is already locked by the executor; this method
      * does NOT re-acquire the timer row lock.
      *
      * @param workflowId    the owning workflow instance id
@@ -993,33 +818,6 @@ final class TimerLifecycleService {
             return inst.waitAuxId();
         }
         return null;
-    }
-
-    /**
-     * Returns {@code true} if the given timer id matches the wait slot of the instance.
-     *
-     * <p>A timer matches when:
-     * <ul>
-     *   <li>{@code wait_type=TIMER} and {@code wait_key == timerId.toString()}.</li>
-     *   <li>{@code wait_type=SIGNAL} and {@code wait_aux_id == timerId}.</li>
-     *   <li>{@code wait_type=TASK} and {@code wait_aux_id == timerId} (due-date timer).</li>
-     * </ul>
-     *
-     * @param inst the instance to check
-     * @param timerId the timer id to match
-     * @return {@code true} if the instance is waiting on this timer
-     */
-    static boolean isTimerSlotMatch(WorkflowInstance inst, UUID timerId) {
-        if (inst.waitType() == WaitType.TIMER) {
-            return timerId.toString().equals(inst.waitKey());
-        }
-        if (inst.waitType() == WaitType.SIGNAL) {
-            return timerId.equals(inst.waitAuxId());
-        }
-        if (inst.waitType() == WaitType.TASK) {
-            return timerId.equals(inst.waitAuxId());
-        }
-        return false;
     }
 
     /**

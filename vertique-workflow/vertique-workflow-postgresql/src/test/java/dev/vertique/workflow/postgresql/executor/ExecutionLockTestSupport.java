@@ -17,7 +17,6 @@ import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
-import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -29,7 +28,6 @@ import dev.vertique.workflow.migration.WorkflowMigrationHandler;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
-import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -104,7 +102,6 @@ final class ExecutionLockTestSupport {
     static final String FORK = "lock-fork";
     static final String MIGRATING = "lock-migrating";
     static final String TASK = "lock-task";
-    static final String TIMER = "lock-timer";
 
     private ExecutionLockTestSupport() {}
 
@@ -148,9 +145,6 @@ final class ExecutionLockTestSupport {
 
     /** Contract of the definition with a task. */
     interface TaskContract {}
-
-    /** Contract of the definition with a timer. */
-    interface TimerContract {}
 
     private static final class Def<C> implements WorkflowDefinition<LockState, C> {
         private final String id;
@@ -267,15 +261,6 @@ final class ExecutionLockTestSupport {
                 .complete("escalate"));
     }
 
-    /** A timer that is fired by the tests, not by a clock. */
-    private static Def<TimerContract> timerDefinition() {
-        return new Def<>(TIMER, 1L, TimerContract.class, wf -> wf.init(LockStart.class, s -> new LockState(s.id(), 0))
-                .initialStep("wait")
-                .timer("wait", Duration.ofHours(1))
-                .toStep("done")
-                .complete("done"));
-    }
-
     private static final class LockMigration implements WorkflowMigrationHandler<LockState, LockState> {
         @Override
         public String definitionId() {
@@ -322,7 +307,6 @@ final class ExecutionLockTestSupport {
                 registry.register(migratingV1());
                 registry.register(migratingV2());
                 registry.register(taskDefinition());
-                registry.register(timerDefinition());
             };
         }
 
@@ -380,8 +364,6 @@ final class ExecutionLockTestSupport {
 
         TransactionalWorkflowOperations<SqlClient> transactionalOperations();
 
-        TransactionalTimerCallbacks<SqlClient> timerCallbacks();
-
         TransactionalTaskCallbacks<SqlClient> taskCallbacks();
 
         WorkflowExecutionProbe probe();
@@ -393,8 +375,6 @@ final class ExecutionLockTestSupport {
         BranchTokenRepository<SqlClient> branchTokens();
 
         WorkflowInstanceRepository<SqlClient> instances();
-
-        WorkflowRecoveryBridge recoveryBridge();
 
         WorkflowRegistry registry();
 
@@ -491,11 +471,6 @@ final class ExecutionLockTestSupport {
             return start(TASK, TaskContract.class, null);
         }
 
-        /** An instance waiting on a timer. */
-        WorkflowInstanceId startTimer() {
-            return start(TIMER, TimerContract.class, null);
-        }
-
         /** Inserts an instance row in status {@code PENDING}, as the recording of a start leaves it. */
         WorkflowInstanceId insertPendingInstance() {
             UUID id = UUID.randomUUID();
@@ -515,46 +490,12 @@ final class ExecutionLockTestSupport {
             return UUID.fromString(row.getString(0));
         }
 
-        /** The id and fire time of the one timer of the given purpose that the instance owns. */
-        Row timerOf(WorkflowInstanceId id, String purpose) {
-            return await(pool.preparedQuery(
-                                    "SELECT timer_id, fire_at FROM workflow_timers WHERE workflow_id = $1 AND purpose = $2")
-                            .execute(Tuple.of(id.value(), purpose)))
-                    .iterator()
-                    .next();
-        }
-
-        /** The branch token of {@code branchId} of the instance's fork. */
-        dev.vertique.workflow.state.BranchToken branchToken(WorkflowInstanceId id, String branchId) {
-            UUID tokenId = await(pool.preparedQuery(
-                                    "SELECT id FROM workflow_branch_tokens WHERE workflow_id = $1 AND branch_id = $2")
-                            .execute(Tuple.of(id.value(), branchId)))
-                    .iterator()
-                    .next()
-                    .getUUID(0);
-            return await(pool.withConnection(
-                            connection -> component.branchTokens().findById(tokenId, connection)))
-                    .orElseThrow();
-        }
-
-        /** Sets the status of a branch token of an instance, as a crashed or exhausted branch leaves it. */
-        void setBranchStatus(WorkflowInstanceId id, String branchId, String status) {
-            await(pool.preparedQuery("UPDATE workflow_branch_tokens SET status = $3"
-                            + " WHERE workflow_id = $1 AND branch_id = $2")
-                    .execute(Tuple.of(id.value(), branchId, status)));
-        }
-
         /** Makes a waiting instance a failed one, as an exhausted step leaves it. */
         void failInstance(WorkflowInstanceId id) {
             await(pool.preparedQuery("UPDATE workflow_instances SET status = 'FAILED', wait_type = NULL,"
                             + " wait_key = NULL, wait_aux_id = NULL, error_type = 'IT', error_message = 'failed'"
                             + " WHERE id = $1")
                     .execute(Tuple.of(id.value())));
-        }
-
-        /** The runtime form of version {@code version} of {@code definitionId} in the default scope. */
-        RuntimeWorkflow runtime(String definitionId, long version) {
-            return component.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version));
         }
     }
 

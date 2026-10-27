@@ -18,7 +18,6 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.ops.StartCommand;
-import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
@@ -63,7 +62,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   </li>
  *   <li>Signal arrival on a SIGNAL+aux WAITING cancels the timer and appends TIMER_CANCELLED.</li>
  *   <li>Signal arrival on a plain SIGNAL WAITING (no timeout) does not touch workflow_timers.</li>
- *   <li>timerFired for a SIGNAL+aux match runs onTimeout mutator and advances to
+ *   <li>A due signal-timeout command runs the onTimeout mutator and advances to
  *       timeoutNextStepId.</li>
  * </ul>
  */
@@ -519,15 +518,16 @@ public class PgWorkflowEngineSignalTimeoutIT {
     }
 
     /**
-     * timerFired for a SIGNAL+aux match (wait_type=SIGNAL, wait_aux_id=timerId) should:
+     * A signal-timeout timer whose command comes due while the instance waits (wait_type=SIGNAL,
+     * wait_aux_id=timerId) should:
      * - run the onTimeout mutator
      * - advance the workflow to the timeoutNextStepId
      * - append a TIMEOUT history entry
-     * - return APPLIED
+     * - complete the timer's command
      */
     @Test
-    @DisplayName("timerFired on SIGNAL+aux match runs onTimeout mutator and advances to timeout step")
-    void timerFiredOnSignalAuxMatchRunsTimeoutMutator(VertxTestContext ctx) {
+    @DisplayName("a due signal-timeout command runs onTimeout mutator and advances to timeout step")
+    void dueSignalTimeoutRunsTimeoutMutator(VertxTestContext ctx) {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "signal-timeout-test",
@@ -544,14 +544,12 @@ public class PgWorkflowEngineSignalTimeoutIT {
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     assertNotNull(timerId, "timerId must be set");
-                    return pool.withTransaction(tx -> engineWithTimeout.timerFired(wfId, timerId, tx))
-                            .compose(fired -> engineWithTimeout
-                                    .executionProbe()
-                                    .awaitIdle(wfId, IDLE_TIMEOUT)
-                                    .map(idle -> fired))
-                            .compose(result -> {
-                                ctx.verify(() -> assertEquals(
-                                        TimerFiringResult.APPLIED, result, "timerFired must return APPLIED"));
+                    return TimerCommandRows.makeDue(pool, timerId)
+                            .compose(due -> engineWithTimeout.executionProbe().awaitIdle(wfId, IDLE_TIMEOUT))
+                            .compose(idle -> TimerCommandRows.commandState(pool, timerId))
+                            .compose(commandState -> {
+                                ctx.verify(() ->
+                                        assertEquals("COMPLETE", commandState, "the timeout command must complete"));
                                 return pool.withTransaction(tx -> instanceRepo.findById(wfId, tx))
                                         .compose(optInst -> {
                                             ctx.verify(() -> {

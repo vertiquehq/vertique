@@ -20,9 +20,8 @@ import jakarta.annotation.Nullable;
  * <p>An optional {@link TimeoutBranch} can be attached. When present, the engine schedules a
  * durable timer alongside the signal wait. If the timer fires before the signal arrives the engine
  * takes the timeout branch instead of the normal signal path. If the signal arrives first the
- * timer is cancelled. Timeout support requires the {@code vertique-workflow-delayed} module and is
- * fully implemented in cycle 2; the field is accepted by the plan model so that definitions can
- * express it without a cycle-1 engine change.
+ * timer is cancelled. The timeout runs as a timer command that the workflow executor fires when it comes
+ * due.
  *
  * @param stepId unique step identifier within the plan
  * @param signalName name of the signal this node waits for; must be unique within the plan

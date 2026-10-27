@@ -30,7 +30,6 @@ import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
-import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
@@ -216,7 +215,6 @@ class HistoryPayloadCorrelationStitchingTest {
             WorkflowOperations ops,
             TransactionalWorkflowOperations<SqlClient> txOps,
             TransactionalTaskCallbacks<SqlClient> taskCallbacks,
-            TransactionalTimerCallbacks<SqlClient> timerCallbacks,
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowHistoryRepository<SqlClient> history,
             WorkflowDedupRepository<SqlClient> dedup,
@@ -261,17 +259,7 @@ class HistoryPayloadCorrelationStitchingTest {
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                 .build());
         return new Harness(
-                handle,
-                handle,
-                handle,
-                handle,
-                instances,
-                history,
-                dedup,
-                registry,
-                taskStore,
-                timerStore,
-                branchTokens);
+                handle, handle, handle, instances, history, dedup, registry, taskStore, timerStore, branchTokens);
     }
 
     /**

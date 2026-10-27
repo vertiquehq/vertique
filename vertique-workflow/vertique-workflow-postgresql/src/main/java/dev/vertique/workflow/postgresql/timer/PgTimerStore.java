@@ -7,7 +7,6 @@ import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgTableNames;
-import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.timer.TimerPurpose;
 import dev.vertique.workflow.timer.TimerRecord;
@@ -64,8 +63,6 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
     private final String sqlMarkCancelled;
     private final String sqlMarkFailed;
     private final String sqlSelectStatus;
-    private final String sqlFindRecoverableScheduled;
-    private final String sqlUpdateExecutionId;
     private final String sqlFindById;
     private final String sqlFindScheduledByBranchToken;
     private final String sqlFindScheduledRemindersForTask;
@@ -104,11 +101,11 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
         String commands = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_commands");
 
         this.sqlInsert = "INSERT INTO " + timers
-                + " (timer_id, workflow_id, step_id, status, fire_at, delayed_job_execution_id,"
+                + " (timer_id, workflow_id, step_id, status, fire_at,"
                 + " scheduled_at, purpose, task_id, branch_token_id, fork_step_id, branch_id, metadata, command_id)"
-                + " VALUES ($1, $2, $3, 'SCHEDULED', $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)";
+                + " VALUES ($1, $2, $3, 'SCHEDULED', $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)";
 
-        this.sqlSelectAllColumns = "SELECT timer_id, workflow_id, step_id, status, fire_at, delayed_job_execution_id,"
+        this.sqlSelectAllColumns = "SELECT timer_id, workflow_id, step_id, status, fire_at,"
                 + " scheduled_at, fired_at, cancelled_at, failed_at, failure_reason,"
                 + " purpose, task_id, branch_token_id, fork_step_id, branch_id, metadata, command_id"
                 + " FROM " + timers;
@@ -134,17 +131,6 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
 
         this.sqlSelectStatus = "SELECT status FROM " + timers + " WHERE timer_id = $1";
 
-        // Only the timers of earlier releases are recovered through their delayed job: a timer linked to a command is
-        // fired by the command.
-        this.sqlFindRecoverableScheduled = sqlSelectAllColumns
-                + " WHERE status = 'SCHEDULED' AND command_id IS NULL AND delayed_job_execution_id IS NOT NULL"
-                + " AND fire_at < $1"
-                + " ORDER BY fire_at ASC"
-                + " LIMIT $2";
-
-        this.sqlUpdateExecutionId = "UPDATE " + timers + " SET delayed_job_execution_id = $2"
-                + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
-
         this.sqlFindById = sqlSelectAllColumns + " WHERE timer_id = $1";
 
         this.sqlFindScheduledByBranchToken =
@@ -161,7 +147,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
      *
      * <p>Inserts a {@code SCHEDULED} row. Explicitly bound columns are
      * {@code timer_id}, {@code workflow_id}, {@code step_id}, {@code fire_at},
-     * {@code delayed_job_execution_id}, {@code scheduled_at}, {@code purpose}, {@code task_id},
+     * {@code scheduled_at}, {@code purpose}, {@code task_id},
      * {@code branch_token_id}, {@code fork_step_id}, {@code branch_id}, {@code metadata} and
      * {@code command_id} (null for timers not linked to a command);
      * {@code status} is the literal {@code 'SCHEDULED'}.
@@ -173,7 +159,6 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
                 record.workflowId().value(),
                 record.stepId(),
                 toOffsetDateTime(record.fireAt()),
-                record.delayedJobExecutionId(),
                 toOffsetDateTime(record.scheduledAt()),
                 record.purpose().name(),
                 record.taskId(),
@@ -279,55 +264,6 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
     }
 
     /**
-     * {@inheritDoc}
-     *
-     * <p>Returns only the scheduled timers of earlier releases: those that name a delayed-job execution and are not
-     * linked to a command. A timer linked to a command is fired by that command and is never recovered through a job.
-     */
-    @Override
-    public Future<List<TimerRecord>> findRecoverableScheduled(Instant beforeFireAt, int limit, SqlClient tx) {
-        Tuple params = Tuple.of(toOffsetDateTime(beforeFireAt), limit);
-        return tx.preparedQuery(sqlFindRecoverableScheduled)
-                .execute(params)
-                .map(rs -> {
-                    List<TimerRecord> records = new ArrayList<>();
-                    for (var row : rs) {
-                        records.add(mapRow(row));
-                    }
-                    return records;
-                })
-                .recover(t ->
-                        Future.failedFuture(exceptionMapper.translate(t, "workflow_timers findRecoverableScheduled")));
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public Future<Void> updateExecutionId(UUID timerId, UUID delayedJobExecutionId, SqlClient tx) {
-        Tuple params = Tuple.of(timerId, delayedJobExecutionId);
-        return tx.preparedQuery(sqlUpdateExecutionId)
-                .execute(params)
-                // Translate SQL errors to typed DB exceptions BEFORE the row-count check, so the
-                // domain WorkflowConflictException raised below isn't itself swept into the DB
-                // exception mapper's catch-all path.
-                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_timers updateExecutionId")))
-                .<Void>flatMap(rs -> {
-                    // The UPDATE is guarded by status = 'SCHEDULED'; rowCount=0 means a concurrent
-                    // mark{Cancelled,Fired,Failed} or CASCADE-delete won the race and the timer
-                    // row is no longer eligible for re-binding. Failing the future rolls back the
-                    // caller's tx — including the just-enqueued delayed_jobs row — so we don't
-                    // strand a job whose timer row will never reach SCHEDULED again.
-                    if (rs.rowCount() == 0) {
-                        return Future.failedFuture(new WorkflowConflictException(
-                                "Timer '" + timerId + "' is no longer SCHEDULED; updateExecutionId aborted to"
-                                        + " avoid stranding the re-enqueued delayed job"));
-                    }
-                    return Future.succeededFuture();
-                });
-    }
-
-    /**
      * Returns the timer ids of all {@link dev.vertique.workflow.timer.TimerStatus#SCHEDULED}
      * reminder timers ({@code purpose = 'TASK_REMINDER'}) that belong to the given task.
      *
@@ -388,7 +324,6 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
         String stepId = row.getString("step_id");
         TimerStatus status = TimerStatus.valueOf(row.getString("status"));
         Instant fireAt = toInstant(row.getOffsetDateTime("fire_at"));
-        UUID delayedJobExecutionId = row.getUUID("delayed_job_execution_id");
         Instant scheduledAt = toInstant(row.getOffsetDateTime("scheduled_at"));
         Instant firedAt = toInstant(row.getOffsetDateTime("fired_at"));
         Instant cancelledAt = toInstant(row.getOffsetDateTime("cancelled_at"));
@@ -406,7 +341,6 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
                 stepId,
                 fireAt,
                 status,
-                delayedJobExecutionId,
                 scheduledAt,
                 firedAt,
                 cancelledAt,

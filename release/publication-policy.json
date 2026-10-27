@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 122,
+  "expectedPublishableGavCount": 121,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -152,7 +152,6 @@
     "dev.vertique:vertique-validation",
     "dev.vertique:vertique-workflow-core",
     "dev.vertique:vertique-workflow-definition",
-    "dev.vertique:vertique-workflow-delayed",
     "dev.vertique:vertique-workflow-engine",
     "dev.vertique:vertique-workflow-events",
     "dev.vertique:vertique-workflow-postgresql",

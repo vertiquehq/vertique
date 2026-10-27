@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -43,9 +42,6 @@ import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.tasks.TaskAssignment;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -59,7 +55,6 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -476,28 +471,6 @@ public class TaskReminderIT {
                 .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
                 .compose(idle -> refreshTimers(workflowId))
                 .mapEmpty();
-    }
-
-    /**
-     * Fires a reminder the way a caller of the public callback does: {@link WorkflowEngineHandle#taskReminderFired}
-     * inside a transaction, then {@link PgTimerStore#markFired} on the timer row. Returns a succeeded future even if
-     * the task was already closed.
-     *
-     * @param workflowId the owning workflow instance id
-     * @param taskId     the task UUID
-     * @param timerId    the reminder timer UUID to fire
-     * @return a succeeded future when the fire + mark sequence completes
-     */
-    private Future<Void> fireReminderDirectly(WorkflowInstanceId workflowId, UUID taskId, UUID timerId) {
-        // Look up the timer's persisted fire_at and pass it as the scheduledFireAt anchor (cycle-4
-        // SPI extension: recurring reminders re-anchor off this instant to avoid drift).
-        return pool.withTransaction(tx -> timerStore.lockForFiring(timerId, tx).compose(opt -> {
-                    Instant scheduledFireAt = opt.map(r -> r.fireAt()).orElse(Instant.now());
-                    return engine.taskReminderFired(workflowId, taskId, timerId, scheduledFireAt, tx);
-                }))
-                .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
-                .compose(v -> pool.withTransaction(
-                        tx -> timerStore.markFired(timerId, Instant.now(), tx).mapEmpty()));
     }
 
     /**
@@ -920,16 +893,12 @@ public class TaskReminderIT {
     }
 
     /**
-     * Idempotent reminder fire on closed task: calling {@code taskReminderFired} after the task
-     * has been completed succeeds (no exception), emits no TASK_REMINDER event, writes no history
-     * entry, and the timer row ends as FIRED (not FAILED).
-     *
-     * <p>This validates that a closed task is treated as a normal no-op outcome by the engine, not
-     * as a {@code TIMER_INCONSISTENCY} error.
+     * Reminder on a closed task: completing the task cancels its reminder timers, and a reminder that comes due
+     * afterwards runs nothing: no TASK_REMINDER event is emitted, and the timer row ends as CANCELLED (not FAILED).
      */
     @Test
-    @DisplayName("Idempotent fire on closed task: no event emitted; timer ends FIRED not FAILED")
-    void reminderFireOnClosedTaskIsIdempotent(VertxTestContext ctx) {
+    @DisplayName("Reminder on a closed task: no event emitted; timer stays CANCELLED, not FAILED")
+    void reminderOfClosedTaskIsNotFired(VertxTestContext ctx) {
         State state = new State("idempotent-closed-" + UUID.randomUUID());
         engine.start(new StartCommand(
                         "reminder-recurring",
@@ -946,9 +915,7 @@ public class TaskReminderIT {
                         .compose(idle -> refreshTimers(started)))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
-                    // insertedTimerIds.get(0) is the initial reminder timer — cancel cascade will
-                    // set it to CANCELLED when the task completes. We don't need to reference it
-                    // directly; the test focuses on the racing timer created below.
+                    UUID reminderId = insertedTimerIds.get(0);
 
                     // Complete the task first (task becomes COMPLETED, workflow becomes COMPLETED)
                     TaskCompletionCommand completeCmd = new TaskCompletionCommand(
@@ -965,66 +932,31 @@ public class TaskReminderIT {
                                     .map(idle -> applied))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
+                                return readTimerStatus(reminderId);
+                            })
+                            .compose(statusAfterCompletion -> {
+                                ctx.verify(() -> assertEquals(
+                                        "CANCELLED",
+                                        statusAfterCompletion,
+                                        "completing the task cancels its reminder"));
 
-                                // Now fire the reminder against the already-closed task
-                                // (the cancel cascade already set reminderId to CANCELLED)
-                                // We re-schedule a fake new reminder timer to simulate the race:
-                                // a reminder that was already dispatched to the delayed-job queue
-                                // arrives after the task completed.
-                                UUID racingTimerId = UUID.randomUUID();
-                                TimerRecord raceRecord = new TimerRecord(
-                                        racingTimerId,
-                                        workflowId,
-                                        "review",
-                                        Instant.now().plusSeconds(1),
-                                        TimerStatus.SCHEDULED,
-                                        UUID.randomUUID(),
-                                        Instant.now(),
-                                        null,
-                                        null,
-                                        null,
-                                        null,
-                                        TimerPurpose.TASK_REMINDER,
-                                        taskId,
-                                        null, // branchTokenId
-                                        null, // forkStepId
-                                        null,
-                                        DurableMetadata.empty()); // branchId
-
-                                return pool.withTransaction(tx -> timerStore.insertScheduled(raceRecord, tx))
-                                        .compose(v -> {
-                                            // Count TASK_REMINDER events BEFORE the racing fire
-                                            return countOutboxEvents(
-                                                    workflowId.value(), WorkflowEventType.TASK_REMINDER.name());
-                                        })
-                                        .compose(countBefore -> {
-                                            ctx.verify(() -> assertEquals(
-                                                    0L, countBefore, "no TASK_REMINDER events before racing fire"));
-
-                                            // Fire the racing reminder against the closed task
-                                            return fireReminderDirectly(workflowId, taskId, racingTimerId);
-                                        })
-                                        .compose(v -> {
-                                            // Count TASK_REMINDER events AFTER the racing fire — must still be 0
-                                            return countOutboxEvents(
-                                                    workflowId.value(), WorkflowEventType.TASK_REMINDER.name());
-                                        })
-                                        .compose(countAfter -> {
-                                            ctx.verify(() -> assertEquals(
-                                                    0L,
-                                                    countAfter,
-                                                    "no TASK_REMINDER events must be emitted for closed-task fire"));
-
-                                            // Timer must be FIRED (not FAILED)
-                                            return readTimerStatus(racingTimerId);
-                                        })
-                                        .map(timerStatus -> {
-                                            ctx.verify(() -> assertEquals(
-                                                    "FIRED",
-                                                    timerStatus,
-                                                    "racing reminder timer must be FIRED, not FAILED"));
-                                            return null;
-                                        });
+                                // The reminder's time comes after the task closed
+                                return TimerCommandRows.makeDue(pool, reminderId);
+                            })
+                            .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                            .compose(idle ->
+                                    countOutboxEvents(workflowId.value(), WorkflowEventType.TASK_REMINDER.name()))
+                            .compose(count -> {
+                                ctx.verify(() -> assertEquals(
+                                        0L, count, "no TASK_REMINDER events must be emitted for a closed task"));
+                                return readTimerStatus(reminderId);
+                            })
+                            .map(timerStatus -> {
+                                ctx.verify(() -> assertEquals(
+                                        "CANCELLED",
+                                        timerStatus,
+                                        "the reminder timer must stay CANCELLED, not FAILED"));
+                                return null;
                             });
                 }))
                 .onComplete(ar -> {

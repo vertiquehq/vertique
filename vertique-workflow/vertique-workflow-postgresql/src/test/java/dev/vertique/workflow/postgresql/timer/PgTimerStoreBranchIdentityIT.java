@@ -108,7 +108,6 @@ public class PgTimerStoreBranchIdentityIT {
                 "branch-timer-step",
                 Instant.now().plusSeconds(60),
                 TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
                 Instant.now(),
                 null,
                 null,

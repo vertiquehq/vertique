@@ -4,7 +4,6 @@
 package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
-import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
@@ -26,10 +25,7 @@ import io.vertx.sqlclient.SqlClient;
  * @see WorkflowEngine
  */
 public interface WorkflowEngineHandle
-        extends WorkflowOperations,
-                TransactionalWorkflowOperations<SqlClient>,
-                TransactionalTimerCallbacks<SqlClient>,
-                TransactionalTaskCallbacks<SqlClient> {
+        extends WorkflowOperations, TransactionalWorkflowOperations<SqlClient>, TransactionalTaskCallbacks<SqlClient> {
 
     /**
      * The probe that waits until the commands recorded for an instance, or for every instance, have run.

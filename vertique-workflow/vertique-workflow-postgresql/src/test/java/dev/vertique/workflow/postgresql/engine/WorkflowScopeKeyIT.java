@@ -24,7 +24,6 @@ import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
-import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -39,6 +38,7 @@ import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
+import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
@@ -69,8 +69,6 @@ import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -118,7 +116,7 @@ public class WorkflowScopeKeyIT {
     static WorkflowTransactionRunner<SqlClient> txRunner;
     static WorkflowInstanceRepository<SqlClient> instanceRepository;
     static ContextHolder holder;
-    static PgWorkflowBranchRecoveryService recovery;
+    static TransactionalWorkflowOperations<SqlClient> txOperations;
 
     // --- Workflow definitions ---
 
@@ -218,7 +216,7 @@ public class WorkflowScopeKeyIT {
 
     /**
      * fork: branch a creates a task at once, branch b waits for a signal and then creates a task. The
-     * test parks branch b for recovery, so the sweep creates the second task.
+     * test signals branch b, which creates the second task.
      */
     static final WorkflowDefinition<FlowState, ForkContract> FORK =
             new FlowDefinition<>(ForkContract.class, FlowState.class, FORK_ID, 1L, wf -> {
@@ -366,8 +364,8 @@ public class WorkflowScopeKeyIT {
     }
 
     /**
-     * Generated application graph with the PostgreSQL engine, the migration registry, the recovery
-     * bridge and the real propagator.
+     * Generated application graph with the PostgreSQL engine, the migration registry and the real
+     * propagator.
      */
     @Singleton
     @Component(
@@ -389,6 +387,8 @@ public class WorkflowScopeKeyIT {
 
         TransactionalTaskCallbacks<SqlClient> taskCallbacks();
 
+        TransactionalWorkflowOperations<SqlClient> txWorkflowOperations();
+
         WorkflowTransactionRunner<SqlClient> transactionRunner();
 
         BranchTokenRepository<SqlClient> branchTokenRepository();
@@ -396,8 +396,6 @@ public class WorkflowScopeKeyIT {
         WorkflowCommandRepository<SqlClient> commandRepository();
 
         WorkflowInstanceRepository<SqlClient> instanceRepository();
-
-        WorkflowRecoveryBridge recoveryBridge();
 
         WorkflowRegistry workflowRegistry();
 
@@ -440,14 +438,7 @@ public class WorkflowScopeKeyIT {
         txRunner = host.transactionRunner();
         instanceRepository = host.instanceRepository();
         holder = host.contextHolder();
-        recovery = new PgWorkflowBranchRecoveryService(
-                txRunner,
-                host.commandRepository(),
-                host.branchTokenRepository(),
-                instanceRepository,
-                host.recoveryBridge(),
-                host.workflowRegistry(),
-                Clock.systemUTC());
+        txOperations = host.txWorkflowOperations();
         ctx.completeNow();
     }
 
@@ -540,11 +531,11 @@ public class WorkflowScopeKeyIT {
         stampInstanceScope(forkStamped, "t1");
 
         // And every single-task workflow has its first task completed and is signalled, and every forking
-        // workflow has branch b parked for recovery and swept, all under a context without a tenant
+        // workflow has branch b signalled, all under a context without a tenant
         completeFirstTaskThenSignalGo(singleUnstamped, "unstamped");
         completeFirstTaskThenSignalGo(singleStamped, "stamped");
-        parkBranchBThenSweep(forkUnstamped);
-        parkBranchBThenSweep(forkStamped);
+        signalBranchB(forkUnstamped);
+        signalBranchB(forkStamped);
 
         // Then the unstamped instances and all of their tasks are still in the default scope
         for (WorkflowInstanceId unstamped : List.of(singleUnstamped, forkUnstamped)) {
@@ -557,7 +548,7 @@ public class WorkflowScopeKeyIT {
         }
 
         // And the stamped instances keep t1, the tasks created before the stamp stay in the default scope, and the
-        // signal-resumed task and the recovered branch b task carry t1
+        // signal-resumed task and the branch b task carry t1
         for (WorkflowInstanceId stamped : List.of(singleStamped, forkStamped)) {
             assertThat(instanceScopeColumn(stamped)).isEqualTo("t1");
             assertThat(await(instanceRepository.findById(stamped)).orElseThrow().scopeKey())
@@ -701,14 +692,12 @@ public class WorkflowScopeKeyIT {
         await(host.workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
     }
 
-    private static void parkBranchBThenSweep(WorkflowInstanceId id) throws Exception {
-        await(pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
-                        + " current_step_id = 'task-b', wait_type = NULL, wait_key = NULL,"
-                        + " next_retry_at = $1, version = version + 1"
-                        + " WHERE workflow_id = $2 AND branch_id = 'b'")
-                .execute(Tuple.of(
-                        OffsetDateTime.ofInstant(Instant.now().minusSeconds(60), ZoneOffset.UTC), id.value())));
-        await(inContext(null, () -> recovery.sweepOnce(Instant.now(), 10)));
+    private static void signalBranchB(WorkflowInstanceId id) throws Exception {
+        await(inContext(
+                null,
+                () -> pool.withTransaction(
+                        tx -> txOperations.signal(id, "sig-b", "go", "k-sig-b-" + id.value(), "fork", "b", tx))));
+        await(host.workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
     }
 
     private static String instanceScopeColumn(WorkflowInstanceId id) throws Exception {

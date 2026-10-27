@@ -347,8 +347,6 @@ public final class ManagedDefinitionDatabase {
 
         dev.vertique.workflow.ops.TransactionalTaskCallbacks<io.vertx.sqlclient.SqlClient> taskCallbacks();
 
-        dev.vertique.workflow.ops.TransactionalTimerCallbacks<io.vertx.sqlclient.SqlClient> timerCallbacks();
-
         dev.vertique.workflow.timer.TimerStore<io.vertx.sqlclient.SqlClient> timerStore();
 
         WorkflowDefinitionPipeline definitionPipeline();

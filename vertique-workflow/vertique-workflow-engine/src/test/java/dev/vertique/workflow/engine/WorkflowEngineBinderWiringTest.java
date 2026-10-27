@@ -31,9 +31,9 @@ import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegist
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
+import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
-import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
@@ -62,9 +62,6 @@ import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStatus;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.tasks.TaskTransition;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import dev.vertique.workflow.timer.TimerStore;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -136,7 +133,6 @@ class WorkflowEngineBinderWiringTest {
             WorkflowOperations ops,
             TransactionalWorkflowOperations<SqlClient> txOps,
             TransactionalTaskCallbacks<SqlClient> taskCallbacks,
-            TransactionalTimerCallbacks<SqlClient> timerCallbacks,
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowHistoryRepository<SqlClient> history,
             WorkflowDedupRepository<SqlClient> dedup,
@@ -170,27 +166,6 @@ class WorkflowEngineBinderWiringTest {
                 new TimerNode("timer-node", COMPLETE_STEP, new TimerSpec.After(java.time.Duration.ofMinutes(1)));
         CompleteNode complete = new CompleteNode(COMPLETE_STEP);
         List<WorkflowNode> nodes = List.of(waitSignal, humanTask, timerNode, complete);
-        WorkflowPlan plan = new WorkflowPlan(
-                DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), waitSignal.stepId(), nodes, null);
-        return RuntimeWorkflow.of(
-                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
-    }
-
-    /**
-     * Builds a {@link RuntimeWorkflow} whose plan has a branch-owned {@link TimerNode} at step
-     * {@code "branch-timer-node"} advancing to the {@code "wait-signal"} {@link WaitSignalNode} —
-     * a non-terminal node — so a branch drive that fires this timer parks {@code WAITING} again
-     * instead of reaching a terminal status. Used by the branch-owned initializer-parity test so it
-     * does not also need to exercise join evaluation (which would require a resolvable
-     * {@link dev.vertique.workflow.plan.ForkNode}/{@link dev.vertique.workflow.plan.JoinNode} pair).
-     */
-    private static RuntimeWorkflow buildBranchTimerToWaitSignalRuntimeWorkflow(WorkflowCallbackRegistry callbacks) {
-        WaitSignalNode waitSignal = new WaitSignalNode(
-                "wait-signal", "approve", Object.class.getName(), new CallbackId("state-updater"), COMPLETE_STEP, null);
-        TimerNode branchTimerNode =
-                new TimerNode("branch-timer-node", "wait-signal", new TimerSpec.After(java.time.Duration.ofMinutes(1)));
-        CompleteNode complete = new CompleteNode(COMPLETE_STEP);
-        List<WorkflowNode> nodes = List.of(waitSignal, branchTimerNode, complete);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), waitSignal.stepId(), nodes, null);
         return RuntimeWorkflow.of(
@@ -273,7 +248,6 @@ class WorkflowEngineBinderWiringTest {
                 handle,
                 handle,
                 handle,
-                handle,
                 instances,
                 history,
                 dedup,
@@ -334,7 +308,6 @@ class WorkflowEngineBinderWiringTest {
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                 .build());
         return new Harness(
-                handle,
                 handle,
                 handle,
                 handle,
@@ -777,98 +750,11 @@ class WorkflowEngineBinderWiringTest {
                 })));
     }
 
-    // --- taskDueFired (instance-owned, no branch) ---
+    // --- due-date expiry of a branch-owned task (run by the executor's timer segment) ---
 
     @Test
-    @DisplayName("taskDueFired(): instance-owned no-branch due-date expiry binds via the binder")
-    void taskDueFired_instanceOwned_bindsViaBinder(Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        Harness h = buildHarness(propagator, holder);
-        var captured = captureAmbientOnUpdate(h.instances(), holder);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
-        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
-                .thenReturn(rw);
-
-        UUID taskId = UUID.randomUUID();
-        UUID dueTimerId = UUID.randomUUID();
-        WorkflowInstance inst =
-                instanceAt("human-task-due", WaitType.TASK, taskId.toString(), dueTimerId, tenantMetadata("T1"));
-        TaskRecord task = openTaskWithDueDate(taskId, inst.id(), dueTimerId);
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.timerStore().findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
-        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.taskStore().markExpired(eq(taskId), any(), eq(tx)))
-                .thenReturn(Future.succeededFuture(TaskTransition.APPLIED));
-
-        runOnDuplicated(vertx, v -> h.taskCallbacks()
-                .taskDueFired(inst.id(), taskId, tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    assertThat(captured.get())
-                            .as("instance fill (TenantCtx T1) must be observed inside the bound taskDueFired drive")
-                            .contains(new TenantCtx("T1"));
-                    ctx.completeNow();
-                })));
-    }
-
-    @Test
-    @DisplayName(
-            "taskDueFired(): branch-owned due-date expiry is NOT binder-bound; the branch carrier seam governs instead")
-    void taskDueFired_branchOwned_isNotBinderBound_branchCarrierGovernsInstead(Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        Harness h = buildHarness(propagator, holder);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
-        UUID taskId = UUID.randomUUID();
-        UUID dueTimerId = UUID.randomUUID();
-        UUID branchTokenId = UUID.randomUUID();
-        TaskRecord branchTask = openBranchTaskWithDueDate(taskId, workflowId, dueTimerId, branchTokenId);
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(branchTask)));
-        when(h.timerStore().findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
-        // Branch-owned path locks the task row first, then short-circuits to STALE_NOOP when the
-        // lock observes a non-OPEN status — this never reaches the instance-path bind.
-        TaskRecord closedBranchTask =
-                branchTaskWithDueDateInStatus(taskId, workflowId, dueTimerId, branchTokenId, TaskStatus.CANCELLED);
-        when(h.taskStore().lockForCompletion(taskId, tx))
-                .thenReturn(Future.succeededFuture(Optional.of(closedBranchTask)));
-
-        // The branch-owned route reads the instance without a lock only to check that this node can run its pin,
-        // before any write. The instance carries tenant metadata, so a fall-through to the instance-path bind would
-        // fill the ambient TenantCtx and fail the assertion below.
-        RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
-        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
-                .thenReturn(rw);
-        WorkflowInstance inst =
-                instanceAt("human-task-due", WaitType.TASK, taskId.toString(), dueTimerId, tenantMetadata("T1"));
-        when(h.instances().findById(workflowId, tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-
-        runOnDuplicated(vertx, v -> h.taskCallbacks()
-                .taskDueFired(workflowId, taskId, tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    assertThat(holder.current(TenantCtx.class))
-                            .as("no instance-path bind should have touched the ambient TenantCtx binding")
-                            .isEmpty();
-                    verify(h.taskStore(), never()).markExpired(any(), any(), any());
-                    ctx.completeNow();
-                })));
-    }
-
-    @Test
-    @DisplayName("taskDueFired(): branch-owned expiry on a node without the pinned plan writes nothing")
-    void taskDueFired_branchOwned_withoutPinnedPlan_writesNothing(Vertx vertx, VertxTestContext ctx) {
+    @DisplayName("dueFired(): branch-owned expiry on a node without the pinned plan writes nothing")
+    void dueFired_branchOwned_withoutPinnedPlan_writesNothing(Vertx vertx, VertxTestContext ctx) {
         DefaultContextHolder holder = new DefaultContextHolder();
         Harness h = buildHarness(TenantCtxCodec.propagator(holder), holder);
         SqlClient tx = ActiveTransactionClient.create();
@@ -885,8 +771,7 @@ class WorkflowEngineBinderWiringTest {
                 instanceAt("human-task-due", WaitType.TASK, taskId.toString(), dueTimerId, tenantMetadata("T1"));
         when(h.instances().findById(workflowId, tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
 
-        runOnDuplicated(vertx, v -> h.taskCallbacks()
-                .taskDueFired(workflowId, taskId, tx)
+        runOnDuplicated(vertx, v -> dueFired(h, workflowId, taskId, tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     assertThat(ar.failed()).isTrue();
                     assertThat(ar.cause()).isInstanceOf(WorkflowVersionNotRunnableException.class);
@@ -898,8 +783,8 @@ class WorkflowEngineBinderWiringTest {
     }
 
     @Test
-    @DisplayName("taskDueFired(): branch-owned expiry acts on the instance it resolved the plan for")
-    void taskDueFired_branchOwned_readsTheInstanceOnceBeforeItWrites(Vertx vertx, VertxTestContext ctx) {
+    @DisplayName("dueFired(): branch-owned expiry acts on the instance it resolved the plan for")
+    void dueFired_branchOwned_readsTheInstanceOnceBeforeItWrites(Vertx vertx, VertxTestContext ctx) {
         DefaultContextHolder holder = new DefaultContextHolder();
         Harness h = buildHarness(TenantCtxCodec.propagator(holder), holder);
         SqlClient tx = ActiveTransactionClient.create();
@@ -948,525 +833,12 @@ class WorkflowEngineBinderWiringTest {
 
         // The task row names a step the plan does not have, so the drive fails right after markExpired; what the
         // test observes is that nothing was read or resolved again after that write.
-        runOnDuplicated(vertx, v -> h.taskCallbacks()
-                .taskDueFired(workflowId, taskId, tx)
+        runOnDuplicated(vertx, v -> dueFired(h, workflowId, taskId, tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     assertThat(ar.failed()).isTrue();
                     verify(h.taskStore()).markExpired(eq(taskId), any(), eq(tx));
                     verify(h.instances(), times(1)).findById(workflowId, tx);
                     verify(h.registry(), times(1)).resolve(any(DefinitionKey.class));
-                    ctx.completeNow();
-                })));
-    }
-
-    @Test
-    @DisplayName("taskDueFired(): non-duplicated context + non-null instance metadata fails with IllegalStateException")
-    void taskDueFired_nonDuplicatedContextNonNullInstanceMetadata_throwsIllegalStateException(
-            Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        Harness h = buildHarness(propagator, holder);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        UUID taskId = UUID.randomUUID();
-        UUID dueTimerId = UUID.randomUUID();
-        WorkflowInstance inst =
-                instanceAt("human-task-due", WaitType.TASK, taskId.toString(), dueTimerId, tenantMetadata("T1"));
-        TaskRecord task = openTaskWithDueDate(taskId, inst.id(), dueTimerId);
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-
-        runOnNonDuplicated(vertx, v -> h.taskCallbacks()
-                .taskDueFired(inst.id(), taskId, tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    assertThat(ar.failed()).isTrue();
-                    assertThat(ar.cause()).isInstanceOf(IllegalStateException.class);
-                    ctx.completeNow();
-                })));
-    }
-
-    @Test
-    @DisplayName("taskDueFired(): non-duplicated context + NULL instance metadata succeeds as today (bind gate skips)")
-    void taskDueFired_nonDuplicatedContextNullInstanceMetadata_succeedsAsToday(Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        Harness h = buildHarness(propagator, holder);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        RuntimeWorkflow rw = buildDueDateRuntimeWorkflow(stubCallbacksWithDueMutator());
-        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
-                .thenReturn(rw);
-
-        UUID taskId = UUID.randomUUID();
-        UUID dueTimerId = UUID.randomUUID();
-        WorkflowInstance inst = instanceAt("human-task-due", WaitType.TASK, taskId.toString(), dueTimerId, null);
-        TaskRecord task = openTaskWithDueDate(taskId, inst.id(), dueTimerId);
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.timerStore().findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
-        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.taskStore().markExpired(eq(taskId), any(), eq(tx)))
-                .thenReturn(Future.succeededFuture(TaskTransition.APPLIED));
-        when(h.instances().updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
-
-        runOnNonDuplicated(vertx, v -> h.taskCallbacks()
-                .taskDueFired(inst.id(), taskId, tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    ctx.completeNow();
-                })));
-    }
-
-    // --- taskReminderFired (instance-owned, no branch) ---
-
-    @Test
-    @DisplayName("taskReminderFired(): instance-owned no-branch reminder fire binds via the binder")
-    void taskReminderFired_instanceOwned_bindsViaBinder(Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        Harness h = buildHarness(propagator, holder);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        RuntimeWorkflow rw = buildReminderRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
-                .thenReturn(rw);
-
-        UUID taskId = UUID.randomUUID();
-        UUID reminderTimerId = UUID.randomUUID();
-        WorkflowInstance inst =
-                instanceAt("human-task-reminder", WaitType.TASK, taskId.toString(), null, tenantMetadata("T1"));
-        TaskRecord task = minimalOpenTaskAtStep(taskId, inst.id(), "human-task-reminder");
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-
-        var captured = new java.util.concurrent.atomic.AtomicReference<Optional<TenantCtx>>();
-        when(h.taskStore().incrementRemindersFiredCount(taskId, tx)).thenAnswer(inv -> {
-            captured.set(holder.current(TenantCtx.class));
-            return Future.succeededFuture(Optional.of(1));
-        });
-
-        runOnDuplicated(vertx, v -> h.taskCallbacks()
-                .taskReminderFired(inst.id(), taskId, reminderTimerId, FIXED_NOW, tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    assertThat(captured.get())
-                            .as("instance fill (TenantCtx T1) must be observed inside the bound taskReminderFired"
-                                    + " drive")
-                            .contains(new TenantCtx("T1"));
-                    ctx.completeNow();
-                })));
-    }
-
-    @Test
-    @DisplayName("taskReminderFired(): branch-owned reminder fire is NOT binder-bound; the branch carrier seam governs"
-            + " instead")
-    void taskReminderFired_branchOwned_isNotBinderBound_branchCarrierGovernsInstead(Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        Harness h = buildHarness(propagator, holder);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
-        UUID taskId = UUID.randomUUID();
-        UUID reminderTimerId = UUID.randomUUID();
-        UUID branchTokenId = UUID.randomUUID();
-        TaskRecord branchTask = new TaskRecord(
-                taskId,
-                workflowId,
-                "branch-human-task-reminder",
-                new TaskAssignment.User("user-1"),
-                TaskStatus.OPEN,
-                List.of(new TaskDecisionDescriptor("approve", Object.class.getName(), COMPLETE_STEP)),
-                null,
-                null,
-                null,
-                null,
-                null,
-                FIXED_NOW,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                branchTokenId,
-                "fork-step",
-                "branch-1");
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(branchTask)));
-        // Branch has moved on (no longer found) — doBranchTaskReminderFired no-ops immediately,
-        // never reaching the instance-path bind.
-        when(h.branchTokens().findById(branchTokenId, tx)).thenReturn(Future.succeededFuture(Optional.empty()));
-
-        // No stub on instances.findById/updateOptimistic for the instance-path: if the branch-owned
-        // route incorrectly fell through to the instance-path bind, it would call
-        // instances.findById(workflowId, tx), which is unstubbed here and returns Mockito's default
-        // null-Future — surfacing as a NullPointerException that fails the test, proving the
-        // instance-path binder route was never taken for this branch-owned drive.
-        runOnDuplicated(vertx, v -> h.taskCallbacks()
-                .taskReminderFired(workflowId, taskId, reminderTimerId, FIXED_NOW, tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    assertThat(holder.current(TenantCtx.class))
-                            .as("no instance-path bind should have touched the ambient TenantCtx binding")
-                            .isEmpty();
-                    ctx.completeNow();
-                })));
-    }
-
-    @Test
-    @DisplayName("taskReminderFired(): non-duplicated context + non-null instance metadata fails with"
-            + " IllegalStateException")
-    void taskReminderFired_nonDuplicatedContextNonNullInstanceMetadata_throwsIllegalStateException(
-            Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        Harness h = buildHarness(propagator, holder);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        UUID taskId = UUID.randomUUID();
-        UUID reminderTimerId = UUID.randomUUID();
-        WorkflowInstance inst =
-                instanceAt("human-task-reminder", WaitType.TASK, taskId.toString(), null, tenantMetadata("T1"));
-        TaskRecord task = minimalOpenTaskAtStep(taskId, inst.id(), "human-task-reminder");
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-
-        runOnNonDuplicated(vertx, v -> h.taskCallbacks()
-                .taskReminderFired(inst.id(), taskId, reminderTimerId, FIXED_NOW, tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    assertThat(ar.failed()).isTrue();
-                    assertThat(ar.cause()).isInstanceOf(IllegalStateException.class);
-                    ctx.completeNow();
-                })));
-    }
-
-    @Test
-    @DisplayName("taskReminderFired(): non-duplicated context + NULL instance metadata succeeds as today (bind gate"
-            + " skips)")
-    void taskReminderFired_nonDuplicatedContextNullInstanceMetadata_succeedsAsToday(Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        Harness h = buildHarness(propagator, holder);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        RuntimeWorkflow rw = buildReminderRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
-                .thenReturn(rw);
-
-        UUID taskId = UUID.randomUUID();
-        UUID reminderTimerId = UUID.randomUUID();
-        WorkflowInstance inst = instanceAt("human-task-reminder", WaitType.TASK, taskId.toString(), null, null);
-        TaskRecord task = minimalOpenTaskAtStep(taskId, inst.id(), "human-task-reminder");
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.taskStore().incrementRemindersFiredCount(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(1)));
-
-        runOnNonDuplicated(vertx, v -> h.taskCallbacks()
-                .taskReminderFired(inst.id(), taskId, reminderTimerId, FIXED_NOW, tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    ctx.completeNow();
-                })));
-    }
-
-    // --- timerFired (instance-owned, standalone timer, no branch) ---
-
-    @Test
-    @DisplayName("timerFired(): instance-owned no-branch standalone timer binds via the binder")
-    void timerFired_instanceOwnedNoBranch_bindsViaBinder(Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        Harness h = buildHarness(propagator, holder);
-        var captured = captureAmbientOnUpdate(h.instances(), holder);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
-                .thenReturn(rw);
-
-        UUID timerId = UUID.randomUUID();
-        WorkflowInstance inst =
-                instanceAt("timer-node", WaitType.TIMER, timerId.toString(), null, tenantMetadata("T1"));
-        when(h.timerStore().findById(timerId, tx))
-                .thenReturn(Future.succeededFuture(Optional.of(instanceOwnedTimer(timerId, inst.id()))));
-        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-
-        runOnDuplicated(vertx, v -> h.timerCallbacks()
-                .timerFired(inst.id(), timerId, tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    assertThat(captured.get())
-                            .as("instance fill (TenantCtx T1) must be observed inside the bound timerFired drive")
-                            .contains(new TenantCtx("T1"));
-                    ctx.completeNow();
-                })));
-    }
-
-    // --- timerFiringFailed (instance-owned) ---
-
-    @Test
-    @DisplayName("timerFiringFailed(): instance-owned failure binds via the binder")
-    void timerFiringFailed_instanceOwned_bindsViaBinder(Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        Harness h = buildHarness(propagator, holder);
-        var captured = captureAmbientOnUpdate(h.instances(), holder);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        UUID timerId = UUID.randomUUID();
-        WorkflowInstance inst =
-                instanceAt("timer-node", WaitType.TIMER, timerId.toString(), null, tenantMetadata("T1"));
-        when(h.timerStore().lockForFiring(timerId, tx))
-                .thenReturn(Future.succeededFuture(Optional.of(instanceOwnedTimer(timerId, inst.id()))));
-        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.timerStore().markFailed(eq(timerId), any(), any(), eq(tx))).thenReturn(Future.succeededFuture());
-
-        runOnDuplicated(vertx, v -> h.timerCallbacks()
-                .timerFiringFailed(inst.id(), timerId, "TIMEOUT", "boom", tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    assertThat(captured.get())
-                            .as(
-                                    "instance fill (TenantCtx T1) must be observed inside the bound timerFiringFailed drive")
-                            .contains(new TenantCtx("T1"));
-                    ctx.completeNow();
-                })));
-    }
-
-    // --- Negative: branch-owned timer fire is NOT binder-bound (bind-once routing rule, C2) ---
-
-    @Test
-    @DisplayName("timerFired(): branch-owned timer fire is NOT binder-bound; the branch carrier seam governs instead")
-    void timerFired_branchOwned_isNotBinderBound_branchCarrierGovernsInstead(Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        Harness h = buildHarness(propagator, holder);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
-        UUID timerId = UUID.randomUUID();
-        UUID branchTokenId = UUID.randomUUID();
-
-        TimerRecord branchTimer = new TimerRecord(
-                timerId,
-                workflowId,
-                "branch-timer-node",
-                FIXED_NOW,
-                TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
-                FIXED_NOW,
-                null,
-                null,
-                null,
-                null,
-                TimerPurpose.STANDALONE,
-                null,
-                branchTokenId,
-                "fork-step",
-                "branch-1",
-                dev.vertique.core.context.DurableMetadata.empty());
-        when(h.timerStore().findById(timerId, tx)).thenReturn(Future.succeededFuture(Optional.of(branchTimer)));
-
-        // The branch token has moved on (status CANCELLED, no longer WAITING on this timer) so
-        // driveBranchTransitions is not exercised in this unit test — only that no instance-path
-        // bind occurred is asserted.
-        BranchToken branch = new BranchToken(
-                branchTokenId,
-                workflowId,
-                "fork-step",
-                "branch-1",
-                "branch-timer-node",
-                dev.vertique.workflow.state.BranchStatus.CANCELLED,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                0,
-                3,
-                null,
-                null,
-                null,
-                null,
-                0L,
-                FIXED_NOW,
-                FIXED_NOW,
-                tenantMetadata("BRANCH"));
-        when(h.branchTokens().findByIdForUpdate(branchTokenId, tx))
-                .thenReturn(Future.succeededFuture(Optional.of(branch)));
-        when(h.history().nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
-        when(h.history().append(any(), any())).thenReturn(Future.succeededFuture());
-
-        // No stub on instances.findById/updateOptimistic for the instance-path: if the branch-owned
-        // route incorrectly fell through to the instance-path bind, it would call
-        // instances.findById(workflowId, tx), which is unstubbed here and returns Mockito's default
-        // null-Future — surfacing as a NullPointerException that fails the test, proving the
-        // instance-path binder route was never taken for this branch-owned drive.
-        runOnDuplicated(vertx, v -> h.timerCallbacks()
-                .timerFired(workflowId, timerId, tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    assertThat(holder.current(TenantCtx.class))
-                            .as("no instance-path bind should have touched the ambient TenantCtx binding")
-                            .isEmpty();
-                    ctx.completeNow();
-                })));
-    }
-
-    // --- Positive: factory-assembled branch drive runs registered InboundContextInitializers too
-    // (review finding — the two-constructor factory split previously left BranchTransitionEngine's
-    // inboundExecScope null, so a factory-assembled engine dropped correlation seeding, and any
-    // other registered InboundContextInitializer, from every branch-owned drive) ---
-
-    @Test
-    @DisplayName("timerFired(): a factory-assembled engine given the initializer-set overload runs registered"
-            + " InboundContextInitializers (correlation seeding) on a BRANCH-owned drive too")
-    void timerFired_branchOwnedFactoryAssembledWithInitializerOverload_runsRegisteredInboundContextInitializers(
-            Vertx vertx, VertxTestContext ctx) {
-        DefaultContextHolder holder = new DefaultContextHolder();
-        DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
-        dev.vertique.correlation.CorrelationContextFactory correlationFactory =
-                new dev.vertique.correlation.CorrelationContextFactory(Optional.empty());
-        Set<dev.vertique.core.context.InboundContextInitializer> initializers =
-                Set.of(new dev.vertique.correlation.CorrelationContextSeeder(holder, correlationFactory));
-        Harness h = buildHarnessWithInitializers(propagator, holder, initializers);
-        SqlClient tx = ActiveTransactionClient.create();
-
-        // A branch-timer plan whose TimerNode advances to a non-terminal WaitSignalNode, so the
-        // driven branch parks WAITING again instead of reaching a terminal status — this avoids
-        // pulling join evaluation (ForkNode/JoinNode resolution) into this binder-wiring-focused
-        // test; only the branch drive's own context bind is under test here.
-        RuntimeWorkflow rw = buildBranchTimerToWaitSignalRuntimeWorkflow(stubCallbacks());
-        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
-                .thenReturn(rw);
-
-        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
-        UUID timerId = UUID.randomUUID();
-        UUID branchTokenId = UUID.randomUUID();
-
-        TimerRecord branchTimer = new TimerRecord(
-                timerId,
-                workflowId,
-                "branch-timer-node",
-                FIXED_NOW,
-                TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
-                FIXED_NOW,
-                null,
-                null,
-                null,
-                null,
-                TimerPurpose.STANDALONE,
-                null,
-                branchTokenId,
-                "fork-step",
-                "branch-1",
-                dev.vertique.core.context.DurableMetadata.empty());
-        when(h.timerStore().findById(timerId, tx)).thenReturn(Future.succeededFuture(Optional.of(branchTimer)));
-
-        // Branch token is RUNNING and parked at the branch-owned TimerNode step, waiting on this
-        // exact timer — doBranchStandaloneTimerFired advances it to "wait-signal" and drives.
-        BranchToken branch = new BranchToken(
-                branchTokenId,
-                workflowId,
-                "fork-step",
-                "branch-1",
-                "branch-timer-node",
-                dev.vertique.workflow.state.BranchStatus.RUNNING,
-                WaitType.TIMER,
-                timerId.toString(),
-                null,
-                null,
-                null,
-                null,
-                0,
-                3,
-                null,
-                null,
-                null,
-                null,
-                0L,
-                FIXED_NOW,
-                FIXED_NOW,
-                null);
-        when(h.branchTokens().findByIdForUpdate(branchTokenId, tx))
-                .thenReturn(Future.succeededFuture(Optional.of(branch)));
-
-        // Parent instance must carry the SAME id as workflowId (the timer's owning instance) —
-        // doBranchStandaloneTimerFired loads it via instances.findById(workflowId, tx).
-        WorkflowInstance inst = new WorkflowInstance(
-                workflowId,
-                DEFINITION_ID,
-                1L,
-                "plan-hash",
-                0L,
-                WorkflowStatus.WAITING,
-                null,
-                null,
-                COMPLETE_STEP,
-                WaitType.JOIN,
-                null,
-                null,
-                "{}",
-                null,
-                null,
-                FIXED_NOW,
-                FIXED_NOW,
-                tenantMetadata("T1"));
-        when(h.instances().findById(workflowId, tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-
-        when(h.history().nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
-        when(h.history().append(any(), any())).thenReturn(Future.succeededFuture());
-
-        var capturedCorrelation = new java.util.concurrent.atomic.AtomicReference<
-                Optional<dev.vertique.core.correlation.CorrelationContext>>();
-        doAnswer(inv -> {
-                    capturedCorrelation.set(holder.current(dev.vertique.core.correlation.CorrelationContext.class));
-                    return Future.succeededFuture(1);
-                })
-                .when(h.branchTokens())
-                .updateOptimistic(any(), anyLong(), any());
-
-        runOnDuplicated(vertx, v -> h.timerCallbacks()
-                .timerFired(workflowId, timerId, tx)
-                .onComplete(ar -> ctx.verify(() -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    assertThat(capturedCorrelation.get())
-                            .as("the registered CorrelationContextSeeder must have run and seeded a correlation"
-                                    + " inside the BRANCH-owned drive — proving the factory threads the same"
-                                    + " InboundExecutionContextScope into BranchTransitionEngine as it does into the"
-                                    + " binder-row WorkflowContextBinder")
-                            .isPresent();
-                    assertThat(capturedCorrelation.get().get().correlationId().source())
-                            .as("a freshly seeded correlation carries the seeded:<boundary> source marker")
-                            .startsWith("seeded:");
                     ctx.completeNow();
                 })));
     }
@@ -1871,6 +1243,32 @@ class WorkflowEngineBinderWiringTest {
 
     // --- Test helpers ---
 
+    /**
+     * Runs the due-date expiry of a task the way the executor's timer segment does: through the task-lifecycle service
+     * of the engine, with a binding that adds no context.
+     */
+    private static Future<TaskMutationResult> dueFired(
+            Harness h, WorkflowInstanceId workflowId, UUID taskId, SqlClient tx) {
+        try {
+            var field = h.taskCallbacks().getClass().getDeclaredField("taskLifecycle");
+            field.setAccessible(true);
+            TaskLifecycleService service = (TaskLifecycleService) field.get(h.taskCallbacks());
+            return service.dueFired(
+                    workflowId,
+                    taskId,
+                    new DriveBinding() {
+                        @Override
+                        public <T> Future<T> run(
+                                WorkflowInstance instance, java.util.function.Supplier<Future<T>> drive) {
+                            return drive.get();
+                        }
+                    },
+                    tx);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("The engine holds no task-lifecycle service", e);
+        }
+    }
+
     /** Builds a lenient, fully-stubbed callback registry covering every node in {@link #buildRuntimeWorkflow}. */
     private static WorkflowCallbackRegistry stubCallbacks() {
         WorkflowCallbackRegistry callbacks = org.mockito.Mockito.mock(
@@ -1913,61 +1311,6 @@ class WorkflowEngineBinderWiringTest {
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), humanTaskDue.stepId(), nodes, null);
         return RuntimeWorkflow.of(
                 plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
-    }
-
-    /**
-     * Builds a {@link RuntimeWorkflow} with a {@link HumanTaskNode} configured with a
-     * {@link ReminderSpec.OneShotOffsets} reminder schedule (step id {@code "human-task-reminder"}),
-     * for {@code taskReminderFired} binder-wiring tests.
-     */
-    private static RuntimeWorkflow buildReminderRuntimeWorkflow(WorkflowCallbackRegistry callbacks) {
-        HumanTaskNode humanTaskReminder = new HumanTaskNode(
-                "human-task-reminder",
-                new HumanTaskNode.AssignmentSpec.User("user-1"),
-                List.of(new HumanTaskNode.TaskDecision(
-                        "approve", Object.class.getName(), new CallbackId("decision-applicator"), COMPLETE_STEP)),
-                null,
-                null,
-                null,
-                new dev.vertique.workflow.plan.ReminderSpec.OneShotOffsets(List.of(java.time.Duration.ofMinutes(30))),
-                false);
-        CompleteNode complete = new CompleteNode(COMPLETE_STEP);
-        List<WorkflowNode> nodes = List.of(humanTaskReminder, complete);
-        WorkflowPlan plan = new WorkflowPlan(
-                DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), humanTaskReminder.stepId(), nodes, null);
-        return RuntimeWorkflow.of(
-                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
-    }
-
-    /**
-     * Builds an instance-owned {@link TaskRecord} in {@link TaskStatus#OPEN} status with a due-date
-     * timer configured, for {@code taskDueFired} binder-wiring tests.
-     */
-    private static TaskRecord openTaskWithDueDate(UUID taskId, WorkflowInstanceId workflowId, UUID dueDateTimerId) {
-        return new TaskRecord(
-                taskId,
-                workflowId,
-                "human-task-due",
-                new TaskAssignment.User("user-1"),
-                TaskStatus.OPEN,
-                List.of(new TaskDecisionDescriptor("approve", Object.class.getName(), COMPLETE_STEP)),
-                FIXED_NOW.plusSeconds(300), // dueAt
-                dueDateTimerId,
-                null, // completedAt
-                null, // cancelledAt
-                null, // expiredAt
-                FIXED_NOW, // updatedAt
-                null, // decisionName
-                null, // decisionPayloadJson
-                null, // completedBy
-                null, // cancelledBy
-                null, // reassignedBy
-                null, // cancellationReason
-                null, // reassignmentReason
-                null, // subjectVersionAtCreation
-                null, // branchTokenId
-                null, // forkStepId
-                null); // branchId
     }
 
     /**
@@ -2050,28 +1393,6 @@ class WorkflowEngineBinderWiringTest {
                 null); // branchId
     }
 
-    /** Builds a minimal instance-owned (non-branch) standalone {@link TimerRecord}. */
-    private static TimerRecord instanceOwnedTimer(UUID timerId, WorkflowInstanceId workflowId) {
-        return new TimerRecord(
-                timerId,
-                workflowId,
-                "timer-node",
-                FIXED_NOW,
-                TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
-                FIXED_NOW,
-                null,
-                null,
-                null,
-                null,
-                TimerPurpose.STANDALONE,
-                null,
-                null,
-                null,
-                null,
-                dev.vertique.core.context.DurableMetadata.empty());
-    }
-
     /** A {@link Harness} paired with the migration registry it was assembled with. */
     private record MigrationHarness(
             Harness harness, dev.vertique.workflow.migration.WorkflowMigrationRegistry migrationRegistry) {}
@@ -2117,7 +1438,6 @@ class WorkflowEngineBinderWiringTest {
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                 .build());
         Harness h = new Harness(
-                handle,
                 handle,
                 handle,
                 handle,

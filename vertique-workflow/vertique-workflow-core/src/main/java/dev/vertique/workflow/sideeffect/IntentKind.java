@@ -10,8 +10,9 @@ package dev.vertique.workflow.sideeffect;
  * implementation owns each intent. Exactly one recorder must be registered per kind; the
  * {@code RecorderRouter} enforces this invariant at construction time.
  *
- * <p>Cycle 1 only handles {@link #SERVICE} intents. {@link #WORKFLOW_TIMER} and
- * {@link #DELAYED_JOB} support is added in cycle 2. {@link #WORKFLOW_EVENT} is added in cycle 4.
+ * <p>Cycle 1 only handles {@link #SERVICE} intents. {@link #DELAYED_JOB} support is added in
+ * cycle 2. {@link #WORKFLOW_EVENT} is added in cycle 4. Workflow timers are not side-effect intents;
+ * the engine records them as timer commands.
  */
 public enum IntentKind {
     /**
@@ -19,12 +20,6 @@ public enum IntentKind {
      * The payload is published to the {@code workflow_outbox} as a {@code SERVICE} destination.
      */
     SERVICE,
-
-    /**
-     * Intent schedules a durable workflow timer (cycle 2+). Handled by the timer recorder
-     * in {@code vertique-workflow-delayed}.
-     */
-    WORKFLOW_TIMER,
 
     /**
      * Intent is delivered as a delayed job (cycle 2+). Not handled by the cycle-1 engine.

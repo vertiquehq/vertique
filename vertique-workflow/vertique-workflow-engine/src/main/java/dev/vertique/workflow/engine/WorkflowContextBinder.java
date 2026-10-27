@@ -30,8 +30,7 @@ import org.slf4j.LoggerFactory;
  * FR-WF-CTX-020/024/025).
  *
  * <p>Instance-owned single-path drives — signal, cancel, retry, migrate, {@code taskCompleted},
- * {@code taskReassigned}, {@code taskDueFired}, {@code taskReminderFired}, {@code timerFired}, and
- * {@code timerFiringFailed} — route through {@link #withBound}, which implements the
+ * {@code taskReassigned} — route through {@link #withBound}, which implements the
  * <b>bind gate</b> and <b>base-wins/instance-fill</b> model:
  *
  * <ul>

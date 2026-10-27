@@ -103,7 +103,6 @@ class TimerRecordMetadataTest {
                 "step-1",
                 FIRE_AT,
                 TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
                 SCHEDULED_AT,
                 null,
                 null,

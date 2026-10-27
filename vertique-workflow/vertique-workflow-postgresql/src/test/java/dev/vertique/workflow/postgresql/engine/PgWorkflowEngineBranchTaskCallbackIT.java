@@ -12,27 +12,28 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.contract.IdempotencyKeyed;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.engine.spi.RecordedTimer;
+import dev.vertique.workflow.engine.spi.TimerCommandSpec;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.RaceSafety;
+import dev.vertique.workflow.postgresql.executor.PgWorkflowCommandRepository;
 import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
 import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
-import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
-import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.JoinPolicyType;
@@ -45,8 +46,6 @@ import dev.vertique.workflow.tasks.TaskDecisionDescriptor;
 import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStatus;
 import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
@@ -56,11 +55,9 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
@@ -102,6 +99,7 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
     static WorkflowEngineHandle engine;
     static PgTaskStore taskStore;
     static PgTimerStore timerStore;
+    static PgWorkflowCommandRepository commandRepo;
     static PgBranchTokenRepository branchRepo;
     static PgWorkflowHistoryRepository historyRepo;
     static PgJoinStateRepository joinStateRepo;
@@ -203,32 +201,26 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
                 .build();
 
         PgDbExceptionMapper ex = new PgDbExceptionMapper();
-        PgWorkflowInstanceRepository instances = new PgWorkflowInstanceRepository(pool, ex);
         historyRepo = new PgWorkflowHistoryRepository(pool, ex);
-        PgWorkflowDedupRepository dedup = new PgWorkflowDedupRepository(pool, ex);
         branchRepo = new PgBranchTokenRepository(pool, ex);
         joinStateRepo = new PgJoinStateRepository(pool, ex);
-        PgJoinStateRepository joins = joinStateRepo;
         timerStore = new PgTimerStore(ex);
+        commandRepo = new PgWorkflowCommandRepository(pool, ex);
         taskStore = new PgTaskStore(pool, ex);
         // No-validator registry: branch-owned HumanTaskNode is accepted by the production validator
         // (gate lifted earlier in this PR), but skipping validation here keeps the test setup focused.
         registry = new DefaultWorkflowRegistry();
         registry.register(DEFINITION);
 
-        engine = PgWorkflowEngineTestSupport.create(
-                pool,
-                registry,
-                instances,
-                historyRepo,
-                dedup,
-                Set.of(),
-                Set.of(IntentKind.WORKFLOW_EVENT),
-                timerStore,
-                taskStore,
-                Clock.systemUTC(),
-                branchRepo,
-                joins);
+        // The executor runs every command of the database: the instances here are seeded, not started by the engine
+        engine = PgWorkflowEngineTestSupport.executorEngine(pool, vertx, registry)
+                .executorConfig(new WorkflowExecutorConfig(1, 8, 100, 60))
+                .build();
+        try {
+            engine.executor().start().toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new IllegalStateException("The executor of the test engine did not start", e);
+        }
         ctx.completeNow();
     }
 
@@ -417,31 +409,23 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
         return record;
     }
 
-    private TimerRecord seedTimer(
+    /** Records a due timer of the branch's task with its command, the way the engine does, and answers it. */
+    private RecordedTimer seedTimer(
             WorkflowInstanceId workflowId, UUID branchTokenId, String branchId, TimerPurpose purpose, UUID taskId) {
-        TimerRecord record = new TimerRecord(
-                UUID.randomUUID(),
+        TimerCommandSpec spec = new TimerCommandSpec(
                 workflowId,
-                "task-step",
-                Instant.now().plusSeconds(3600),
-                TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
-                Instant.now(),
-                null,
-                null,
-                null,
-                null,
                 purpose,
+                "task-step",
                 taskId,
                 branchTokenId,
                 "fork-step",
                 branchId,
-                DurableMetadata.empty());
-        pool.withTransaction(tx -> timerStore.insertScheduled(record, tx))
+                new TimerCommandSpec.FireTime.After(Duration.ofHours(1)),
+                List.of());
+        return pool.withTransaction(tx -> commandRepo.recordTimer(spec, tx))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
-        return record;
     }
 
     // Async helpers — return Future<...> so tests can compose them onto the engine's main future
@@ -631,8 +615,6 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
         // silently masking the per-branch advance behavior under test.
         BranchToken branchB = seedBranchWaiting(workflowId, "branch-b", BranchStatus.WAITING);
 
-        // Seed a reminder timer and a due-date timer
-        UUID dueDateTimerId = UUID.randomUUID();
         // Branch A waiting on a task that has a due-date timer
         BranchToken branchA = new BranchToken(
                 UUID.randomUUID(),
@@ -707,29 +689,9 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
                 .toCompletableFuture()
                 .join();
 
-        // 2. Insert the due-date timer (task_id non-null, matches the just-inserted task).
-        TimerRecord dueDateTimer = new TimerRecord(
-                dueDateTimerId,
-                workflowId,
-                "task-step",
-                Instant.now().minusSeconds(1),
-                TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
-                Instant.now().minusSeconds(100),
-                null,
-                null,
-                null,
-                null,
-                TimerPurpose.TASK_DUE,
-                task.taskId(),
-                branchA.id(),
-                "fork-step",
-                "branch-a",
-                DurableMetadata.empty());
-        pool.withTransaction(tx -> timerStore.insertScheduled(dueDateTimer, tx))
-                .toCompletionStage()
-                .toCompletableFuture()
-                .join();
+        // 2. Record the due-date timer with its command (task_id non-null, matches the just-inserted task).
+        UUID dueDateTimerId = seedTimer(workflowId, branchA.id(), "branch-a", TimerPurpose.TASK_DUE, task.taskId())
+                .timerId();
 
         // 3. Patch the task to point at the now-existing timer (satisfies the FK forward-direction).
         pool.preparedQuery("UPDATE workflow_tasks SET due_date_timer_id = $1 WHERE task_id = $2")
@@ -739,23 +701,21 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
                 .join();
 
         // Seed a reminder timer for the same task
-        TimerRecord reminderTimer =
+        RecordedTimer reminderTimer =
                 seedTimer(workflowId, branchA.id(), "branch-a", TimerPurpose.TASK_REMINDER, task.taskId());
 
         record Outcome(
-                TaskMutationResult result,
+                String dueCommand,
                 String taskStatus,
                 String reminderStatus,
                 long expiredCount,
                 BranchSnapshot branchA,
                 String siblingStatus) {}
 
-        // Call taskDueFired — the executor routes TASK_DUE timers through this entry point (see
-        // WorkflowTimerFireExecutor.dispatchTaskDueFired), not the generic timerFired path.
-        pool.withTransaction(tx -> engine.taskDueFired(workflowId, task.taskId(), tx))
-                .compose(result -> engine.executionProbe()
-                        .awaitIdle(workflowId, IDLE_TIMEOUT)
-                        .map(r -> result))
+        // The due date comes due: the executor runs its command
+        TimerCommandRows.makeDue(pool, dueDateTimerId)
+                .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                .compose(idle -> TimerCommandRows.commandState(pool, dueDateTimerId))
                 .compose(result -> taskStatusAsync(task.taskId())
                         .compose(taskStatus -> timerStatusAsync(reminderTimer.timerId())
                                 .compose(reminderStatus -> countHistoryAsync(
@@ -770,7 +730,7 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
                                                                 branchASnapshot,
                                                                 siblingStatus)))))))
                 .onComplete(ctx.succeeding(o -> ctx.verify(() -> {
-                    assertEquals(TaskMutationResult.APPLIED, o.result(), "due-date fire must be APPLIED");
+                    assertEquals("COMPLETE", o.dueCommand(), "the due-date fire must complete its command");
                     assertEquals("EXPIRED", o.taskStatus(), "task must be EXPIRED");
                     assertEquals("CANCELLED", o.reminderStatus(), "reminder timer must be CANCELLED");
                     assertTrue(o.expiredCount() >= 1L, "BRANCH_TASK_DUE_EXPIRED history must be appended");

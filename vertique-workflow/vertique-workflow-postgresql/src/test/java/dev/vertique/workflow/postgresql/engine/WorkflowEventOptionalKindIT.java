@@ -91,7 +91,7 @@ public class WorkflowEventOptionalKindIT {
 
     /**
      * A workflow with no reminders that completes immediately.
-     * No due-date timer is set, so no WORKFLOW_TIMER recorder is needed.
+     * No due-date timer is set, so no timer is recorded.
      */
     static final WorkflowDefinition<State, CompleteContract> COMPLETE_DEF = new WorkflowDefinition<>() {
         @Override

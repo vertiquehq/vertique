@@ -6,8 +6,8 @@ package dev.vertique.workflow.plan;
 /**
  * A plan node that suspends the workflow until a durable timer fires.
  *
- * <p>When the engine reaches this node it schedules a durable timer via the
- * {@link dev.vertique.workflow.sideeffect.IntentKind#WORKFLOW_TIMER} recorder, sets the instance
+ * <p>When the engine reaches this node it schedules a durable timer by recording a
+ * timer command, sets the instance
  * status to {@code WAITING} with {@code waitType="TIMER"}, and suspends until the timer fires.
  * When the timer fires, the engine transitions the instance to {@code RUNNING} and advances to
  * {@code nextStepId}.

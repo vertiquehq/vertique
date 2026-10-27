@@ -29,8 +29,5 @@ class WorkflowTimerCarriersTest {
         assertThat(descriptor.carrierId()).isEqualTo(timerId.toString());
         assertThat(descriptor.target().kind()).isEqualTo("workflow-timer");
         assertThat(descriptor.target().address()).isEqualTo(instance.value().toString());
-        assertThat(descriptor)
-                .as("the descriptor of the delayed-job release, which signed the metadata already stored")
-                .isEqualTo(dev.vertique.workflow.delayed.WorkflowTimerCarriers.of(timerId, instance));
     }
 }

@@ -268,7 +268,6 @@ public class PgWorkflowEngineWorkflowCancelCascadesIT {
                 "timer-step-" + branchId,
                 Instant.now().plusSeconds(3600),
                 TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
                 Instant.now(),
                 null,
                 null,

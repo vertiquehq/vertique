@@ -178,7 +178,7 @@ public class RecordedExecutionTypesIT {
                 .mapEmpty();
     }
 
-    /** Builds a scheduled timer carrying the given command link and no delayed-job execution. */
+    /** Builds a scheduled timer carrying the given command link. */
     private static TimerRecord timer(UUID timerId, WorkflowInstanceId workflowId, Long commandId) {
         return new TimerRecord(
                 timerId,
@@ -186,7 +186,6 @@ public class RecordedExecutionTypesIT {
                 "wait",
                 Instant.now().plusSeconds(60),
                 TimerStatus.SCHEDULED,
-                null, // delayedJobExecutionId
                 Instant.now(),
                 null,
                 null,
@@ -287,16 +286,16 @@ public class RecordedExecutionTypesIT {
     }
 
     @Test
-    @DisplayName("Timers carry their command link, and a delayed-job timer row reads back without one")
+    @DisplayName("Timers carry their command link, and a timer row of an earlier release reads back without one")
     void timerRecordsCarryTheirCommandLink(VertxTestContext ctx) {
-        // Given an instance, a timer with command 42 and no delayed-job execution, and a delayed-job timer row
+        // Given an instance, a timer with command 42, and a timer row of an earlier release, which names a delayed job
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
         UUID linkedId = UUID.randomUUID();
         UUID delayedId = UUID.randomUUID();
         UUID executionId = UUID.randomUUID();
 
         insertRunningInstance(workflowId)
-                // When the linked timer is inserted and read, and the delayed-job row is inserted by SQL and read
+                // When the linked timer is inserted and read, and the earlier row is inserted by SQL and read
                 .compose(v -> pool.withTransaction(tx -> timers.insertScheduled(timer(linkedId, workflowId, 42L), tx)))
                 .compose(v -> pool.preparedQuery("""
                                 INSERT INTO workflow_timers
@@ -306,11 +305,10 @@ public class RecordedExecutionTypesIT {
                                 """).execute(Tuple.of(delayedId, workflowId.value(), executionId)))
                 .compose(v -> pool.withTransaction(tx -> timers.findById(linkedId, tx)))
                 .compose(linked -> {
-                    // Then the linked timer reads its command and no execution, and the column holds 42
+                    // Then the linked timer reads its command, and the column holds 42
                     ctx.verify(() -> {
                         assertThat(linked).isPresent();
                         assertThat(linked.get().commandId()).isEqualTo(42L);
-                        assertThat(linked.get().delayedJobExecutionId()).isNull();
                     });
                     return pool.preparedQuery("SELECT command_id FROM workflow_timers WHERE timer_id = $1")
                             .execute(Tuple.of(linkedId));
@@ -320,10 +318,9 @@ public class RecordedExecutionTypesIT {
                             .isEqualTo(42L));
                     return pool.withTransaction(tx -> timers.findById(delayedId, tx));
                 })
-                // And the delayed-job row reads its execution id and no command
+                // And the earlier row reads and has no command
                 .onSuccess(delayed -> ctx.verify(() -> {
                     assertThat(delayed).isPresent();
-                    assertThat(delayed.get().delayedJobExecutionId()).isEqualTo(executionId);
                     assertThat(delayed.get().commandId()).isNull();
                     ctx.completeNow();
                 }))

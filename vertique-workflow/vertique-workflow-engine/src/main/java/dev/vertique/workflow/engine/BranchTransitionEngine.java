@@ -333,7 +333,7 @@ final class BranchTransitionEngine {
         // durable context the branch was forked under. bindFrom is authoritative: every
         // registered durable type absent from token.metadata() is cleared for the scope's
         // lifetime so that a subsequent mergeCaptured(...) inside the drive (e.g. timer-create
-        // capturing into the underlying delayed-job's metadata column) cannot accidentally pull
+        // capturing into the timer row's metadata column) cannot accidentally pull
         // in ambient context that did not cross the workflow boundary. Production callers reach
         // this on a duplicated context — the dispatcher's per-message duplicate is preserved
         // through pool.withTransaction by vertx-sql-client 5.x. Per FR-CTX-157b, bindFrom is
@@ -358,8 +358,7 @@ final class BranchTransitionEngine {
             // InboundContextInitializers (e.g. CorrelationContextSeeder) in one scope —
             // identical bindFrom semantics, plus first-ingress seeding for typed contexts
             // that have no durable-encoded value at the workflow boundary. installDurableAndRun
-            // implements the install/try/close shape shared with WorkflowContextBinder.withBound
-            // and PgWorkflowBranchRecoveryService.withBranchDurableBound.
+            // implements the install/try/close shape shared with WorkflowContextBinder.withBound.
             return inboundExecScope.installDurableAndRun(
                     meta,
                     DispatchBoundary.WORKFLOW,

@@ -284,10 +284,6 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-workflow-delayed</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>dev.vertique</groupId>
             <artifactId>vertique-workflow-tasks</artifactId>
         </dependency>
         <dependency>

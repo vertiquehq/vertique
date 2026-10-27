@@ -812,7 +812,6 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             timer.stepId(),
                             fireAt.toInstant(),
                             TimerStatus.SCHEDULED,
-                            null,
                             recordedAt.toInstant(),
                             null,
                             null,

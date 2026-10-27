@@ -16,7 +16,6 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.ops.StartCommand;
-import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
@@ -60,10 +59,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <ul>
  *   <li>handleTimerNode records a timer row and a {@code TIMER} command and transitions to WAITING with
  *       wait_type=TIMER.</li>
- *   <li>timerFired returns APPLIED for a slot match and advances the workflow to the next step; the timer's
- *       command then settles stale.</li>
- *   <li>timerFired returns STALE_NOOP for a non-WAITING instance.</li>
- *   <li>timerFired returns STALE_NOOP for a slot mismatch (wrong timer_id).</li>
+ *   <li>a due timer command fires its timer and advances the workflow to the next step.</li>
+ *   <li>a due timer command of a cancelled instance changes nothing.</li>
  * </ul>
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
@@ -313,14 +310,15 @@ public class PgWorkflowEngineTimerNodeIT {
     }
 
     /**
-     * timerFired for a slot match (WAITING/TIMER and wait_key == timerId) should:
-     * - return APPLIED
+     * A timer whose command comes due while the instance waits on it should:
+     * - run the timer command and mark the timer FIRED
      * - advance the workflow to COMPLETED
      * - append a TIMER_FIRED history entry
+     * - complete the command
      */
     @Test
-    @DisplayName("timerFired returns APPLIED for slot match and advances workflow to COMPLETED")
-    void timerFiredSlotMatchAdvancesWorkflow(VertxTestContext ctx) {
+    @DisplayName("a due timer command fires its timer and advances the workflow to COMPLETED")
+    void dueTimerCommandAdvancesWorkflow(VertxTestContext ctx) {
         String taskId = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "timer-node-test",
@@ -337,50 +335,33 @@ public class PgWorkflowEngineTimerNodeIT {
                 .compose(id -> {
                     UUID timerId = recordedTimerId.get();
                     assertNotNull(timerId, "timerId must be set after start");
-                    return pool.withTransaction(tx -> engine.timerFired(id, timerId, tx))
-                            .compose(fired -> engine.executionProbe()
-                                    .awaitIdle(id, IDLE_TIMEOUT)
-                                    .map(idle -> fired))
-                            .compose(result -> {
+                    return TimerCommandRows.makeDue(pool, timerId)
+                            .compose(done -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                            .compose(idle -> pool.withTransaction(tx -> instanceRepo.findById(id, tx)))
+                            .compose(optInst -> {
+                                ctx.verify(() -> {
+                                    assertTrue(optInst.isPresent(), "instance must exist");
+                                    assertEquals(
+                                            WorkflowStatus.COMPLETED,
+                                            optInst.get().status(),
+                                            "status must be COMPLETED after timer fires");
+                                });
+                                return pool.withTransaction(tx -> historyRepo.listByInstance(id, tx));
+                            })
+                            .compose(entries -> {
+                                ctx.verify(() -> assertTrue(
+                                        entries.stream().anyMatch(e -> e.entryType() == WorkflowEntryType.TIMER_FIRED),
+                                        "history must contain TIMER_FIRED entry"));
+                                return TimerCommandRows.status(pool, timerId);
+                            })
+                            .compose(timerStatus -> {
+                                ctx.verify(() -> assertEquals("FIRED", timerStatus, "the timer row must be FIRED"));
+                                return TimerCommandRows.commandState(pool, timerId);
+                            })
+                            .map(commandState -> {
                                 ctx.verify(() -> assertEquals(
-                                        TimerFiringResult.APPLIED, result, "timerFired must return APPLIED"));
-                                return pool.withTransaction(tx -> instanceRepo.findById(id, tx))
-                                        .compose(optInst -> {
-                                            ctx.verify(() -> {
-                                                assertTrue(optInst.isPresent(), "instance must exist");
-                                                var inst = optInst.get();
-                                                assertEquals(
-                                                        WorkflowStatus.COMPLETED,
-                                                        inst.status(),
-                                                        "status must be COMPLETED after timer fires");
-                                            });
-                                            return pool.withTransaction(tx -> historyRepo.listByInstance(id, tx))
-                                                    .compose(entries -> {
-                                                        ctx.verify(() -> {
-                                                            boolean hasTimerFired = entries.stream()
-                                                                    .anyMatch(e -> e.entryType()
-                                                                            == WorkflowEntryType.TIMER_FIRED);
-                                                            assertTrue(
-                                                                    hasTimerFired,
-                                                                    "history must contain TIMER_FIRED entry");
-                                                        });
-                                                        // The direct call left the timer's command behind: when it
-                                                        // comes due, the wait is gone and the command settles stale.
-                                                        return TimerCommandRows.makeDue(pool, timerId)
-                                                                .compose(done -> engine.executionProbe()
-                                                                        .awaitIdle(id, IDLE_TIMEOUT))
-                                                                .compose(idle ->
-                                                                        TimerCommandRows.commandState(pool, timerId))
-                                                                .map(commandState -> {
-                                                                    ctx.verify(() -> assertEquals(
-                                                                            "STALE",
-                                                                            commandState,
-                                                                            "the command of a timer fired directly"
-                                                                                    + " must settle stale"));
-                                                                    return null;
-                                                                });
-                                                    });
-                                        });
+                                        "COMPLETE", commandState, "the command of the fired timer must complete"));
+                                return null;
                             });
                 })
                 .onComplete(ar -> {
@@ -393,12 +374,12 @@ public class PgWorkflowEngineTimerNodeIT {
     }
 
     /**
-     * timerFired for a non-WAITING instance (e.g., CANCELLED) should return STALE_NOOP
-     * without mutating state.
+     * A timer of a cancelled instance is cancelled with it: when its command comes due, nothing runs and the instance
+     * stays cancelled.
      */
     @Test
-    @DisplayName("timerFired returns STALE_NOOP when instance status != WAITING")
-    void timerFiredStaleSNOopForNonWaiting(VertxTestContext ctx) {
+    @DisplayName("a due timer command of a cancelled instance changes nothing")
+    void dueTimerCommandOfCancelledInstanceChangesNothing(VertxTestContext ctx) {
         String taskId = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "timer-node-test",
@@ -415,72 +396,21 @@ public class PgWorkflowEngineTimerNodeIT {
                 .compose(id -> {
                     UUID timerId = recordedTimerId.get();
                     // Cancel the workflow first
-                    return engine.cancel(id, "test cancel").compose(v -> {
-                        return pool.withTransaction(tx -> engine.timerFired(id, timerId, tx))
-                                .compose(fired -> engine.executionProbe()
-                                        .awaitIdle(id, IDLE_TIMEOUT)
-                                        .map(idle -> fired))
-                                .map(result -> {
-                                    ctx.verify(() -> assertEquals(
-                                            TimerFiringResult.STALE_NOOP,
-                                            result,
-                                            "timerFired must return STALE_NOOP for cancelled instance"));
-                                    return null;
-                                });
-                    });
-                })
-                .onComplete(ar -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                    } else {
-                        ctx.completeNow();
-                    }
-                });
-    }
-
-    /**
-     * timerFired with a different timerId (slot mismatch) should return STALE_NOOP
-     * without mutating the workflow.
-     */
-    @Test
-    @DisplayName("timerFired returns STALE_NOOP for slot mismatch (different timer_id)")
-    void timerFiredStaleSNOopForSlotMismatch(VertxTestContext ctx) {
-        String taskId = UUID.randomUUID().toString();
-        StartCommand cmd = new StartCommand(
-                "timer-node-test",
-                FakeTimerContract.class.getName(),
-                new TimerTask(taskId),
-                java.util.UUID.randomUUID().toString(),
-                null,
-                null,
-                null,
-                null,
-                null);
-
-        startAndAwaitRecorded(cmd)
-                .compose(id -> {
-                    UUID wrongTimerId = UUID.randomUUID();
-                    return pool.withTransaction(tx -> engine.timerFired(id, wrongTimerId, tx))
-                            .compose(fired -> engine.executionProbe()
-                                    .awaitIdle(id, IDLE_TIMEOUT)
-                                    .map(idle -> fired))
-                            .compose(result -> {
+                    return engine.cancel(id, "test cancel")
+                            .compose(v -> TimerCommandRows.makeDue(pool, timerId))
+                            .compose(done -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                            .compose(idle -> pool.withTransaction(tx -> instanceRepo.findById(id, tx)))
+                            .compose(optInst -> {
                                 ctx.verify(() -> assertEquals(
-                                        TimerFiringResult.STALE_NOOP,
-                                        result,
-                                        "timerFired must return STALE_NOOP for wrong timer_id"));
-                                // Verify instance is still WAITING
-                                return pool.withTransaction(tx -> instanceRepo.findById(id, tx))
-                                        .map(optInst -> {
-                                            ctx.verify(() -> {
-                                                assertTrue(optInst.isPresent());
-                                                assertEquals(
-                                                        WorkflowStatus.WAITING,
-                                                        optInst.get().status(),
-                                                        "instance must still be WAITING");
-                                            });
-                                            return null;
-                                        });
+                                        WorkflowStatus.CANCELLED,
+                                        optInst.orElseThrow().status(),
+                                        "the cancelled instance must stay cancelled"));
+                                return TimerCommandRows.status(pool, timerId);
+                            })
+                            .map(timerStatus -> {
+                                ctx.verify(() -> assertEquals(
+                                        "CANCELLED", timerStatus, "the timer must be cancelled with the instance"));
+                                return null;
                             });
                 })
                 .onComplete(ar -> {

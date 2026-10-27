@@ -24,7 +24,6 @@ import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
-import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
@@ -43,9 +42,8 @@ import java.util.Set;
  * Dagger module for the portable workflow engine.
  *
  * <p>This module owns the engine-internal bindings that were previously declared by the dialect
- * module: it binds the four public ops/callback interfaces to the package-private
- * {@link WorkflowEngine}, binds the {@link WorkflowRecoveryBridge} SPI to its package-private
- * implementation, declares the {@code @WorkflowRecorders} multibinding, provides the engine-owned
+ * module: it binds the public ops/callback interfaces to the package-private
+ * {@link WorkflowEngine}, declares the {@code @WorkflowRecorders} multibinding, provides the engine-owned
  * default set of optional intent kinds, and declares the optional {@link WorkflowMigrationRegistry}
  * and {@link BeanValidator} bindings. Dialect modules {@code include} this module so they only
  * contribute the dialect-specific repository / store / runner bindings.
@@ -81,17 +79,6 @@ public abstract class WorkflowEngineModule {
     @Binds
     @Singleton
     abstract TransactionalWorkflowOperations<SqlClient> bindTxOps(WorkflowEngine impl);
-
-    /**
-     * Binds {@link WorkflowEngine} as the {@link TransactionalTimerCallbacks} implementation for the
-     * {@link SqlClient}-typed stack.
-     *
-     * @param impl the engine singleton
-     * @return the engine as the timer callbacks interface
-     */
-    @Binds
-    @Singleton
-    abstract TransactionalTimerCallbacks<SqlClient> bindTimerCallbacks(WorkflowEngine impl);
 
     /**
      * Binds {@link WorkflowEngine} as the {@link TransactionalTaskCallbacks} implementation for the
@@ -249,17 +236,6 @@ public abstract class WorkflowEngineModule {
      */
     @BindsOptionalOf
     abstract Vertx optionalVertx();
-
-    /**
-     * Binds {@link WorkflowRecoveryBridgeImpl} as the {@link WorkflowRecoveryBridge} SPI used by
-     * dialect-side branch recovery sweeps.
-     *
-     * @param impl the recovery bridge singleton
-     * @return the bridge implementation as the public SPI
-     */
-    @Binds
-    @Singleton
-    abstract WorkflowRecoveryBridge bindRecoveryBridge(WorkflowRecoveryBridgeImpl impl);
 
     /**
      * Declares the {@code @WorkflowRecorders}-qualified multibinding for side-effect recorders.

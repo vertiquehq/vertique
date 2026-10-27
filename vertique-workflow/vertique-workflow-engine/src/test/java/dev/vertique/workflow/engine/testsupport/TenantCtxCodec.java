@@ -19,8 +19,7 @@ import java.util.Set;
 /**
  * Test-only encoder/decoder pair and {@link DurableContextPropagator} factory for {@link TenantCtx}.
  *
- * <p>Modeled on {@code WorkflowTimerRecoveryDurableBindTest.propagatorWithStringEncoder}
- * (vertique-workflow-delayed) — shared across the durable-context test suites in this module so
+ * <p>Shared across the durable-context test suites in this module so
  * each test class does not re-declare the same anonymous encoder/decoder pair. Also reused by
  * {@code vertique-workflow-postgresql} via this module's test-jar (see {@link TenantCtx}'s
  * javadoc).

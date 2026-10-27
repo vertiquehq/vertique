@@ -8,7 +8,7 @@ import java.util.UUID;
 /**
  * Discriminator for the purpose of a timer row in {@code workflow_timers}.
  *
- * <p>Drives executor dispatch in {@code WorkflowTimerFireExecutor} and reminder cancel-cascade
+ * <p>Drives the dispatch of the timer command in the workflow executor and reminder cancel-cascade
  * lookups when a task transitions to a terminal status. The value is stored in the
  * {@code purpose} column of {@code workflow_timers} as a string.
  */

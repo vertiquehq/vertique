@@ -9,11 +9,10 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Typed payload for a {@code WORKFLOW_TIMER} side-effect intent.
+ * Typed payload that describes a workflow timer to schedule.
  *
- * <p>Lives in {@code workflow-core} (not {@code workflow-postgresql} or {@code workflow-delayed})
- * so that the producer (engine) and consumer (timer recorder) share the type without a
- * sibling-module dependency.
+ * <p>Lives in {@code workflow-core} (not {@code workflow-postgresql}) so that the engine and the
+ * storage module share the type without a sibling-module dependency.
  *
  * <p>The compact constructor enforces the pairing rules between {@link #purpose()} and
  * {@link #taskId()}: task-scoped purposes ({@link TimerPurpose#TASK_DUE} and

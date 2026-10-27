@@ -44,7 +44,6 @@ import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
-import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -183,7 +182,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * Collaborator owning the human-task lifecycle callback paths (PRD-WF-006, Slice C7). The
      * facade's {@code TransactionalTaskCallbacks} entrypoints
-     * ({@code taskCompleted}/{@code taskDueFired}/{@code taskReassigned}/{@code taskReminderFired})
+     * ({@code taskCompleted}/{@code taskReassigned})
      * delegate their bodies to this service. It drives the state machine forward after a task
      * mutation via the {@link WorkflowTransitionDriver} and {@link ForkJoinCoordinator}; the driver
      * reaches its task-creation helpers ({@code resolveAssignment}, {@code appendTaskCreatedHistory},
@@ -193,11 +192,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private final TaskLifecycleService taskLifecycle;
 
     /**
-     * Collaborator owning the timer-fire callback paths (PRD-WF-006, Slice C8). The facade's
-     * {@code TransactionalTimerCallbacks} entrypoints ({@code timerFired}/{@code timerFiringFailed})
-     * delegate their bodies to this service. It drives the state machine forward after a timer fires
-     * via the {@link WorkflowTransitionDriver} and {@link ForkJoinCoordinator}, and dispatches the
-     * single-path {@code TASK} due-date wait to {@link TaskLifecycleService} (so it injects the task
+     * Collaborator owning the timer-fire paths (PRD-WF-006, Slice C8). The executor runs a recorded
+     * timer command through it. It drives the state machine forward after a timer fires
+     * via the {@link WorkflowTransitionDriver} and {@link ForkJoinCoordinator}, and runs the
+     * task due-date and reminder fires of {@link TaskLifecycleService} (so it injects the task
      * service eagerly). The driver reaches the timer helper {@code resolveFireAt} through a lazy
      * {@code Provider<TimerLifecycleService>} that breaks the driver↔timer constructor cycle.
      */
@@ -576,7 +574,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 history,
                 branchTokens,
                 timerStore,
-                eventEmitter,
                 this.forkJoin,
                 this.driver,
                 this.taskLifecycle,
@@ -2136,36 +2133,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
-     * <p>Dispatched by {@link #timerFired} when a timer matches the {@code wait_type=TASK} +
-     * {@code wait_aux_id=timerId} slot. Steps:
-     * <ol>
-     *   <li>Lock the task row for completion.</li>
-     *   <li>If not OPEN → return {@link TaskMutationResult#STALE_NOOP}.</li>
-     *   <li>Mark task EXPIRED.</li>
-     *   <li>Apply the {@code onDueMutator} to the workflow state.</li>
-     *   <li>Optimistic UPDATE on workflow_instances to {@code dueNextStepId}.</li>
-     *   <li>Append {@code TASK_EXPIRED} history.</li>
-     *   <li>Drive transitions.</li>
-     * </ol>
-     *
-     * @param workflowId the workflow instance this task belongs to
-     * @param taskId     the stable UUID of the task whose due-date timer fired
-     * @param tx         the active transaction context
-     * @return a {@link Future} resolving to the mutation result
-     */
-    @Override
-    public Future<TaskMutationResult> taskDueFired(WorkflowInstanceId workflowId, UUID taskId, SqlClient tx) {
-        Future<TaskMutationResult> invalidClient = WorkflowTransactionClientGuard.reject("taskDueFired", tx);
-        if (invalidClient != null) {
-            return invalidClient;
-        }
-
-        return underExecutionLock(workflowId, tx, () -> taskLifecycle.taskDueFired(workflowId, taskId, tx));
-    }
-
-    /**
-     * {@inheritDoc}
-     *
      * <p>Steps:
      * <ol>
      *   <li>Non-locking task lookup to discover workflowId.</li>
@@ -2186,96 +2153,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         }
 
         return taskLifecycle.taskReassigned(cmd, tx);
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Cycle-4 reminder-fire handling: appends a {@code TASK_REMINDER_FIRED} history entry and
-     * emits a {@code WORKFLOW_EVENT} side-effect when the task is still
-     * {@link dev.vertique.workflow.tasks.TaskStatus#OPEN}. Returns a succeeded future for both
-     * the applied and no-op (task already closed) paths; the executor marks the timer
-     * {@code FIRED} unconditionally on a succeeded future.
-     *
-     * @param workflowId the owning workflow instance id
-     * @param taskId     the stable UUID of the task
-     * @param timerId    the UUID of the firing reminder timer
-     * @param tx         the active transaction context
-     * @return succeeded future on both applied and no-op paths; failed future on transient errors
-     */
-    @Override
-    public Future<Void> taskReminderFired(
-            WorkflowInstanceId workflowId, UUID taskId, UUID timerId, Instant scheduledFireAt, SqlClient tx) {
-        Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("taskReminderFired", tx);
-        if (invalidClient != null) {
-            return invalidClient;
-        }
-
-        return underExecutionLock(
-                workflowId,
-                tx,
-                () -> taskLifecycle.taskReminderFired(workflowId, taskId, timerId, scheduledFireAt, tx));
-    }
-
-    // --- TransactionalTimerCallbacks ---
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Reads the instance without locking (no FOR UPDATE), then classifies the wait slot:
-     * <ul>
-     *   <li>{@code wait_type=TIMER, wait_key=timerId} — standalone-timer path: advances to
-     *       {@code tn.nextStepId()} and appends {@code TIMER_FIRED}.</li>
-     *   <li>{@code wait_type=SIGNAL, wait_aux_id=timerId} — signal-timeout path: applies the
-     *       {@code onTimeout} mutator, advances to {@code timeoutNextStepId}, and appends
-     *       {@code TIMEOUT}.</li>
-     *   <li>Otherwise — {@link TimerFiringResult#STALE_NOOP}.</li>
-     * </ul>
-     *
-     * @param workflowId the workflow instance this timer belongs to
-     * @param timerId the stable UUID of the timer that fired
-     * @param tx the active transaction context; all writes must use this context
-     * @return a {@link Future} resolving to the firing result
-     */
-    @Override
-    public Future<TimerFiringResult> timerFired(WorkflowInstanceId workflowId, UUID timerId, SqlClient tx) {
-        Future<TimerFiringResult> invalidClient = WorkflowTransactionClientGuard.reject("timerFired", tx);
-        if (invalidClient != null) {
-            return invalidClient;
-        }
-
-        return underExecutionLock(workflowId, tx, () -> timerLifecycle.timerFired(workflowId, timerId, tx));
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Lock-order: acquires the {@code workflow_timers} row lock first via
-     * {@link TimerStore#lockForFiring}, then reads the instance. On slot match, marks the timer
-     * {@code FAILED}, appends {@code TIMER_FAILED} history, and transitions the
-     * workflow to {@code FAILED}. On slot mismatch or non-WAITING instance, marks the timer
-     * {@code FAILED} with {@code "TIMER_INCONSISTENCY: ..."} and returns
-     * {@link TimerFiringResult#STALE_NOOP} without mutating the workflow instance.
-     *
-     * @param workflowId the workflow instance this timer belongs to
-     * @param timerId the stable UUID of the timer that failed to fire
-     * @param errorType the error category reported by the delayed job executor
-     * @param errorMessage human-readable description of the failure cause
-     * @param tx the active transaction context; all writes must use this context
-     * @return a {@link Future} resolving to the firing result
-     */
-    @Override
-    public Future<TimerFiringResult> timerFiringFailed(
-            WorkflowInstanceId workflowId, UUID timerId, String errorType, String errorMessage, SqlClient tx) {
-        Future<TimerFiringResult> invalidClient = WorkflowTransactionClientGuard.reject("timerFiringFailed", tx);
-        if (invalidClient != null) {
-            return invalidClient;
-        }
-
-        return underExecutionLock(
-                workflowId,
-                tx,
-                () -> timerLifecycle.timerFiringFailed(workflowId, timerId, errorType, errorMessage, tx));
     }
 
     // --- Internal helpers ---
@@ -2401,8 +2278,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * {@link BranchStatus#CANCELLED} in {@link #cancel(WorkflowInstanceId, String, SqlClient)}).
      *
      * <p>Timers are cancelled first (by id, one per row lock) so that any concurrent
-     * {@code WorkflowTimerFireExecutor} path — which holds a {@code workflow_timers} lock before
-     * calling back into the engine — cannot race the branch-token update and deadlock.
+     * timer command, which holds a {@code workflow_timers} lock before it calls into the engine,
+     * cannot race the branch-token update and deadlock.
      *
      * <p>Package-visible for integration testing; not part of any public API.
      *

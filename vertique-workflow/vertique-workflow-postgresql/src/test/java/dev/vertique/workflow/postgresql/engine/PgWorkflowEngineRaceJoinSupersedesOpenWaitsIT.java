@@ -263,7 +263,6 @@ public class PgWorkflowEngineRaceJoinSupersedesOpenWaitsIT {
                 "timer-step",
                 Instant.now().plusSeconds(3600),
                 TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
                 Instant.now(),
                 null,
                 null,

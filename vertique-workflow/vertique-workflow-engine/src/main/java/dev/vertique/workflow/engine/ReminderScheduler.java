@@ -37,7 +37,7 @@ import java.util.UUID;
  *
  * <p>The {@link ReminderEmission} record and reminder-kind constants are co-located here because
  * they originate in reminder scheduling logic, even though they are also referenced by the
- * {@link WorkflowEngine#taskReminderFired} method (which remains on the facade until Slice C7).
+ * {@link TaskLifecycleService#reminderFired} method (which remains on the facade until Slice C7).
  * Both are package-private, so {@link WorkflowEngine} can still read them directly.
  *
  * <p>This class is a leaf in the dependency graph: it depends on the history repository SPI,
@@ -51,7 +51,7 @@ final class ReminderScheduler {
 
     // --- Reminder-kind constants (part of the v1 wire contract for TASK_REMINDER events;
     //     see vertique-workflow/vertique-workflow-events/src/main/resources/META-INF/vertique/module.md).
-    // Package-private so WorkflowEngine.taskReminderFired
+    // Package-private so TaskLifecycleService.reminderFired
     //     can read them without duplication until that method moves in Slice C7. ---
 
     /** Attribute value for {@code ONE_SHOT_OFFSET}-mode reminders in the {@code TASK_REMINDER} event. */
@@ -93,7 +93,7 @@ final class ReminderScheduler {
      * Schedules all initial reminder timers declared on {@code htn.reminders()} for a newly-created
      * task. For {@link ReminderSpec.OneShotOffsets}, one timer is scheduled per offset. For
      * {@link ReminderSpec.RecurringInterval}, only the first interval timer is scheduled; subsequent
-     * ones are scheduled by {@link WorkflowEngine#taskReminderFired} as each fires. When
+     * ones are scheduled by {@link TaskLifecycleService#reminderFired} as each fires. When
      * {@code reminders} is {@code null}, this is a no-op.
      *
      * <p>All initial reminders are anchored to the same {@code taskCreatedAt} instant captured by
@@ -101,7 +101,7 @@ final class ReminderScheduler {
      * exact {@code created_at + offset} (no slippage from intermediate work between task INSERT and
      * reminder scheduling) and the first {@link ReminderSpec.RecurringInterval} fire is at exact
      * {@code created_at + interval}. Subsequent recurring fires re-anchor in
-     * {@code taskReminderFired} off the previous timer's persisted {@code fire_at}.
+     * {@code reminderFired} off the previous timer's persisted {@code fire_at}.
      *
      * @param inst          the workflow instance that owns the task
      * @param htn           the human-task node that declared the reminder spec
@@ -124,7 +124,7 @@ final class ReminderScheduler {
             }
             return chain;
         } else if (spec instanceof ReminderSpec.RecurringInterval ri) {
-            // Only the first interval is scheduled; subsequent ones are chained in taskReminderFired.
+            // Only the first interval is scheduled; subsequent ones are chained in reminderFired.
             return scheduleReminderTimer(inst, htn, taskId, taskCreatedAt.plus(ri.interval()), tx);
         }
         return Future.succeededFuture();
@@ -305,10 +305,10 @@ final class ReminderScheduler {
         });
     }
 
-    // --- Package-private types used by WorkflowEngine.taskReminderFired ---
+    // --- Package-private types used by TaskLifecycleService.reminderFired ---
 
     /**
-     * Pair returned by the {@code taskReminderFired} per-spec branch: the future that schedules the
+     * Pair returned by the {@code reminderFired} per-spec branch: the future that schedules the
      * next recurring reminder timer (or {@link Future#succeededFuture()} for terminal/one-shot
      * branches), and the attribute map for the {@code TASK_REMINDER} event.
      *

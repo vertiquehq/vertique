@@ -10,31 +10,14 @@ import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.failureO
 import static dev.vertique.workflow.postgresql.executor.RecordedSignalIT.signal;
 import static dev.vertique.workflow.postgresql.executor.RecordedSignalIT.waitFor;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 
-import dev.vertique.context.InboundDispatchScope;
-import dev.vertique.context.InboundExecutionContextScope;
 import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.DurableCarrierDescriptor;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.DurableTarget;
 import dev.vertique.db.IsolationLevel;
-import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
-import dev.vertique.job.JobExecution;
-import dev.vertique.job.JobRepository;
-import dev.vertique.job.JobState;
-import dev.vertique.job.JobType;
-import dev.vertique.job.ProgressSnapshot;
-import dev.vertique.workflow.delayed.job.WorkflowTimerFireJob;
-import dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryConfig;
-import dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryService;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.exception.WorkflowTaskNotWaitingException;
 import dev.vertique.workflow.history.PendingCommand;
@@ -55,7 +38,6 @@ import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.Definition;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.History;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.Signal;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.SignalFixture;
-import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -67,15 +49,11 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.annotation.Nullable;
-import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -399,7 +377,6 @@ public class TimerCommandIT {
                 assertThat(settled.availableAt()).isEqualTo(settled.fireAt());
                 TimerRecordRow row = timers.timerRowOf(settled);
                 assertThat(row.commandId()).isEqualTo(settled.id());
-                assertThat(row.delayedJobExecutionId()).isNull();
                 assertThat(row.status()).isEqualTo("FIRED");
 
                 // And it settled within two seconds of its fire time, though nothing polled
@@ -568,20 +545,6 @@ public class TimerCommandIT {
             WorkflowInstanceId id = f.waiting(full, "deferred");
             TimerRow timer = timers.only(id, "FIRE");
 
-            // And the delayed timer recovery service with a short grace, whose job lookup reports a dead-lettered job
-            JobRepository jobs = mock(JobRepository.class);
-            when(jobs.findById(any())).thenReturn(Future.succeededFuture(Optional.of(deadLetteredJob())));
-            WorkflowTimerFireJob fireJob = mock(WorkflowTimerFireJob.class);
-            WorkflowTimerRecoveryService recovery = new WorkflowTimerRecoveryService(
-                    full.pool,
-                    new PgTimerStore(new PgDbExceptionMapper()),
-                    jobs,
-                    fireJob,
-                    () -> full.engine,
-                    new WorkflowTimerRecoveryConfig(100, Duration.ofMillis(200)),
-                    Clock.systemUTC(),
-                    new InboundExecutionContextScope(new InboundDispatchScope(), f.fixture.propagator(), Set.of()));
-
             // And the timer is due but deferred as not runnable for longer than that grace
             hidden.startExecutor();
             try {
@@ -591,15 +554,10 @@ public class TimerCommandIT {
                         .equals("DEFERRED"));
                 ExecutorFixture.sleep(1000);
 
-                // When the recovery service runs
-                await(recovery.reconcile());
-
-                // Then it did not touch the timer or fail the instance
+                // Then the deferral did not touch the timer or fail the instance
                 assertThat(f.fixture.instanceOf(id).status()).isEqualTo("WAITING");
                 assertThat(timers.byId(timer.id()).state()).isEqualTo("DEFERRED");
                 assertThat(timers.timerRowOf(timer).status()).isEqualTo("SCHEDULED");
-                verifyNoInteractions(jobs);
-                verify(fireJob, never()).enqueue(any(), any(), any());
             } finally {
                 hidden.stopExecutor();
             }
@@ -653,9 +611,6 @@ public class TimerCommandIT {
             assertThat(nextRow.commandId()).isEqualTo(next.id());
             assertThat(nextRow.status()).isEqualTo("SCHEDULED");
             assertThat(nextRow.purpose()).isEqualTo("TASK_REMINDER");
-
-            // And no timer of the task is scheduled through a delayed job
-            assertThat(timers.delayedJobTimers(task.id())).isZero();
         }
     }
 
@@ -767,32 +722,6 @@ public class TimerCommandIT {
         }));
     }
 
-    private static JobExecution deadLetteredJob() {
-        Instant now = Instant.now();
-        return new JobExecution(
-                UUID.randomUUID(),
-                "job-dead-lettered",
-                JobType.DELAYED,
-                "vertique.workflow.timer.fire",
-                "default",
-                JobState.DEAD_LETTER,
-                0,
-                5,
-                null,
-                0,
-                null,
-                now,
-                now,
-                null,
-                null,
-                null,
-                null,
-                ProgressSnapshot.EMPTY,
-                Map.of(),
-                Map.of(),
-                DurableMetadata.empty());
-    }
-
     // --- Observation and manipulation of timer rows ---
 
     /** A {@code TIMER} row of {@code workflow_commands}, as the tests read it. */
@@ -816,7 +745,6 @@ public class TimerCommandIT {
             UUID timerId,
             String status,
             @Nullable Long commandId,
-            @Nullable UUID delayedJobExecutionId,
             String purpose,
             @Nullable JsonObject metadata) {}
 
@@ -872,7 +800,7 @@ public class TimerCommandIT {
             }
             Row row = await(f.fixture
                             .observer()
-                            .preparedQuery("SELECT timer_id, status, command_id, delayed_job_execution_id, purpose,"
+                            .preparedQuery("SELECT timer_id, status, command_id, purpose,"
                                     + " metadata FROM workflow_timers WHERE timer_id = $1")
                             .execute(Tuple.of(command.timerId())))
                     .iterator()
@@ -881,17 +809,8 @@ public class TimerCommandIT {
                     row.getUUID("timer_id"),
                     row.getString("status"),
                     row.getLong("command_id"),
-                    row.getUUID("delayed_job_execution_id"),
                     row.getString("purpose"),
                     (JsonObject) row.getValue("metadata"));
-        }
-
-        /** The number of timer rows of the instance that name a delayed-job execution. */
-        long delayedJobTimers(WorkflowInstanceId id) {
-            return f.scalar(
-                    "SELECT count(*) FROM workflow_timers WHERE workflow_id = $1 AND delayed_job_execution_id IS NOT"
-                            + " NULL",
-                    id);
         }
 
         /** Makes the command due now: its fire time and availability, and its timer row's fire time, are the clock. */
@@ -947,7 +866,6 @@ public class TimerCommandIT {
             assertThat(target.getString("forkStepId")).isNull();
             assertThat(target.getJsonArray("signalNames").getList()).containsExactlyInAnyOrder((Object[]) signalNames);
             assertThat(timerRowOf(timeout).commandId()).isEqualTo(timeout.id());
-            assertThat(timerRowOf(timeout).delayedJobExecutionId()).isNull();
         }
 
         private static final String SELECT_TIMER = "SELECT id, seq, timer_kind, state, timer_id, task_id, target_json,"

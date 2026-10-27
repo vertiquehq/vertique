@@ -30,22 +30,16 @@ import dev.vertique.inboxoutbox.OutboxService;
 import dev.vertique.inboxoutbox.postgresql.PgInboxOutboxRepository;
 import dev.vertique.inboxoutbox.postgresql.TransactionalMessagingPostgresqlModule;
 import dev.vertique.inboxoutbox.services.TransactionalMessagingServiceModule;
-import dev.vertique.job.JobRepository;
 import dev.vertique.job.cron.dagger.CronPersistenceModule;
-import dev.vertique.job.delayed.dagger.DelayedJobModule;
-import dev.vertique.job.postgresql.PgJobRepository;
+import dev.vertique.job.postgresql.JobPostgresqlModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.services.DispatchModule;
 import dev.vertique.workflow.client.WorkflowClientFactory;
-import dev.vertique.workflow.delayed.compose.WorkflowDelayedComposeValidator;
-import dev.vertique.workflow.delayed.di.WorkflowDelayedModule;
-import dev.vertique.workflow.delayed.job.WorkflowTimerFireExecutor;
 import dev.vertique.workflow.di.WorkflowExecutorConfigModule;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
-import dev.vertique.workflow.postgresql.recovery.WorkflowBranchRecoveryModule;
 import dev.vertique.workflow.services.compose.WorkflowOutboxComposeValidator;
 import dev.vertique.workflow.services.di.WorkflowServicesModule;
 import dev.vertique.workflow.tasks.TaskService;
@@ -70,14 +64,13 @@ import java.util.Set;
  * phases: this graph includes no JSON runtime module, so no {@code CONFIGURE}-phase step installs a
  * JSON profile as the process codec and JSON runs on Vert.x's raw semantics; the {@code VALIDATE}-phase
  * {@code ComposeValidationStep} forces construction of every {@code ComposeValidator} — including
- * the {@link WorkflowDelayedComposeValidator} (contributed by {@link WorkflowDelayedModule}) and
- * the {@link WorkflowTasksComposeValidator} (contributed by {@link WorkflowTasksModule}) — so those
- * fail-fast startup contracts still run without any hand-written call; the
+ * the {@link WorkflowTasksComposeValidator} (contributed by {@link WorkflowTasksModule}) — so that
+ * fail-fast startup contract still runs without any hand-written call; the
  * {@link WorkflowOutboxComposeValidator} (contributed by {@link WorkflowServicesModule}) runs as a
  * per-plan definition validator whenever the workflow registry builds a plan;
  * the {@code MIGRATE}-phase {@code FlywayMigrationStartupStep} contributed by {@link DbFlywayModule}
  * runs schema migrations; then the verticles deploy ({@code INFRA} management verticle, then
- * {@code SERVICES} stub services + signal contributor + timer pollers + outbox relay, the latter
+ * {@code SERVICES} stub services + signal contributor + workflow executor + outbox relay, the latter
  * brought up by the {@code ServiceDeploymentStartupStep} contributed by {@link DispatchModule}).
  *
  * <p>This is a <strong>non-HTTP</strong> example — it deploys no HTTP/EDGE verticle.
@@ -105,13 +98,8 @@ import java.util.Set;
  *       workflow executor, which the engine deploys in the {@code SERVICES} phase.</li>
  *   <li>{@link WorkflowServicesModule} — outbox recorder + signal contributor + compose
  *       validator.</li>
- *   <li>{@link WorkflowDelayedModule} — timer recorder, fire-job executor, and recovery
- *       verticle; requires {@link DelayedJobModule} as a peer module in the component.</li>
- *   <li>{@link DelayedJobModule} — {@link dev.vertique.job.delayed.DelayedJobService},
- *       {@link dev.vertique.job.delayed.DelayedJobClientFactory}, poller deployments, and the
- *       {@link dev.vertique.job.JobRepository} binding (via included
- *       {@link dev.vertique.job.postgresql.JobPostgresqlModule}). Required by
- *       {@link WorkflowDelayedModule}.</li>
+ *   <li>{@link CronPersistenceModule} and {@link JobPostgresqlModule} — the cron scheduler and the
+ *       {@link dev.vertique.job.JobRepository} binding that the inbox/outbox relay requires.</li>
  *   <li>{@code GeneratedWorkflowTypeCatalogModule} — the type catalog the annotation processor
  *       generates from the {@code @WorkflowContract} and {@code @WorkflowType} classes of this
  *       module; every component that registers or loads workflow definitions includes it.</li>
@@ -155,11 +143,9 @@ import java.util.Set;
             TransactionalMessagingServiceModule.class,
             WorkflowPostgresqlModule.class,
             WorkflowExecutorConfigModule.class,
-            WorkflowBranchRecoveryModule.class,
             WorkflowServicesModule.class,
-            WorkflowDelayedModule.class,
-            DelayedJobModule.class,
             CronPersistenceModule.class,
+            JobPostgresqlModule.class,
             GeneratedWorkflowTypeCatalogModule.class,
             OrderFulfillmentDefinitionModule.class,
             OrderFulfillmentFanOutDefinitionModule.class,
@@ -277,25 +263,4 @@ public interface AppComponent extends VertiqueApplicationComponent {
      * @return the stub fraud-screening service
      */
     StubFraudService stubFraudService();
-
-    /**
-     * Returns the job repository for test-level job inspection and claiming.
-     *
-     * @return the job repository
-     */
-    JobRepository jobRepository();
-
-    /**
-     * Returns the PostgreSQL job repository for test-level claiming by queue.
-     *
-     * @return the PostgreSQL job repository
-     */
-    PgJobRepository pgJobRepository();
-
-    /**
-     * Returns the workflow timer fire executor for manual test-driving of timer jobs.
-     *
-     * @return the timer fire executor
-     */
-    WorkflowTimerFireExecutor workflowTimerFireExecutor();
 }

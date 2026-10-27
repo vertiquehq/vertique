@@ -4,22 +4,19 @@
 package dev.vertique.workflow.ops;
 
 import io.vertx.core.Future;
-import java.time.Instant;
-import java.util.UUID;
 
 /**
  * INTERNAL SPI — consumed only by {@code vertique-workflow-tasks}; never exposed to application
  * code directly.
  *
  * <p>Provides transactional callbacks that the task-service layer invokes when a human task is
- * completed or reassigned, and when a due-date timer fires for a task. Each method is called
+ * completed or reassigned. Each method is called
  * inside an existing database transaction opened by the caller; implementations must not open
  * their own transactions.
  *
  * <p>This interface is generic over the transaction context type {@code TX} so that the
  * PostgreSQL implementation can use {@code SqlClient} without the core module depending on the
- * pg-client library. This mirrors the design of
- * {@link TransactionalTimerCallbacks}.
+ * pg-client library.
  *
  * <p>Application code must never call these methods directly. They are part of the internal wiring
  * between the task-service layer and the workflow engine.
@@ -66,35 +63,6 @@ public interface TransactionalTaskCallbacks<TX> {
     Future<TaskMutationResult> taskCompleted(TaskCompletionCommand cmd, TX tx);
 
     /**
-     * Called by the due-date timer executor when a task's due-date timer fires.
-     *
-     * <p>The engine transitions the task to {@link dev.vertique.workflow.tasks.TaskStatus#EXPIRED},
-     * applies the {@code onDueMutator} to the workflow state, advances to the
-     * {@code dueNextStepId}, and appends a {@code TASK_EXPIRED} history entry — all within the
-     * caller's transaction.
-     *
-     * <p>Result contract:
-     * <ul>
-     *   <li>{@link TaskMutationResult#APPLIED} — the task was expired and the workflow advanced.</li>
-     *   <li>{@link TaskMutationResult#STALE_NOOP} — the workflow has legitimately moved past this
-     *       wait by the time the timer fires. The implementation returns this when any of the
-     *       following holds: the task row no longer exists, is no longer
-     *       {@link dev.vertique.workflow.tasks.TaskStatus#OPEN}, the task does not belong to the
-     *       supplied {@code workflowId}, the workflow instance is no longer
-     *       {@code WAITING/TASK} with a matching {@code wait_key=taskId}, or the task's stored
-     *       {@code due_date_timer_id} no longer matches the instance's {@code wait_aux_id}.</li>
-     * </ul>
-     *
-     * <p>This is the <em>only</em> method that may return {@link TaskMutationResult#STALE_NOOP}.
-     *
-     * @param workflowId the workflow instance this task belongs to
-     * @param taskId the stable UUID of the task whose due-date timer fired
-     * @param tx the active transaction context; all writes must use this context
-     * @return a {@link Future} resolving to the mutation result
-     */
-    Future<TaskMutationResult> taskDueFired(WorkflowInstanceId workflowId, UUID taskId, TX tx);
-
-    /**
      * Called by the task service when an actor requests a task reassignment.
      *
      * <p>The engine updates the task assignment, records the {@code reassignedBy} actor and
@@ -124,33 +92,4 @@ public interface TransactionalTaskCallbacks<TX> {
      * @return a {@link Future} resolving to the mutation result
      */
     Future<TaskMutationResult> taskReassigned(TaskReassignmentCommand cmd, TX tx);
-
-    /**
-     * Invoked by the timer-fire executor when a {@link dev.vertique.workflow.timer.TimerPurpose#TASK_REMINDER}-purpose
-     * timer fires.
-     *
-     * <p>Returns {@link io.vertx.core.Future#succeededFuture()} for both the "applied" path
-     * (history entry appended + {@link dev.vertique.workflow.events.WorkflowEventType#TASK_REMINDER}
-     * event emitted) and the "no-op" path (task already in a terminal status). The executor
-     * unconditionally calls {@code timerStore.markFired} on a succeeded future. There is no
-     * {@link TaskMutationResult#STALE_NOOP} path because a reminder firing on a closed task is a
-     * normal outcome, not a timer inconsistency. Failed futures are propagated and trigger
-     * delayed-job retry.
-     *
-     * <p>For {@link dev.vertique.workflow.plan.ReminderSpec.RecurringInterval} reminders the engine
-     * uses {@code scheduledFireAt} as the anchor for the next interval — the next reminder is
-     * scheduled at {@code scheduledFireAt + interval}, NOT {@code now + interval}, so executor
-     * delays do not accumulate as drift across many fires.
-     *
-     * @param workflowId       the owning workflow instance id
-     * @param taskId           the stable UUID of the task (durable reminder identity)
-     * @param timerId          the UUID of the firing timer
-     * @param scheduledFireAt  the firing timer's persisted {@code fire_at} instant; used as the
-     *     anchor for the next recurring reminder so cadence stays steady across executor delays
-     * @param tx               the active transaction context; all writes must use this context
-     * @return a succeeded future on both the applied and no-op paths; a failed future on
-     *     transient errors
-     */
-    Future<Void> taskReminderFired(
-            WorkflowInstanceId workflowId, UUID taskId, UUID timerId, Instant scheduledFireAt, TX tx);
 }

@@ -73,11 +73,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * that transition only), with instance metadata filling only namespaces absent from the carrier.
  *
  * <p>Uses a single-branch fork ({@code wait-a} signal wait → {@code dispatch-a} service dispatch
- * → {@code complete-a} → join → {@code done}), mirroring {@code PgWorkflowBranchRecoveryServiceIT}'s
- * {@code AC2_DEFINITION} shape. A capturing {@code SERVICE} recorder reads the currently-bound
- * durable context via {@link DurableContextPropagator#mergeCaptured} — exactly like
- * {@code Ac2CapturingServiceRecorder} — so each test can assert on the effective document the
- * branch's dispatch actually saw.
+ * → {@code complete-a} → join → {@code done}). A capturing {@code SERVICE} recorder reads the
+ * currently-bound durable context via {@link DurableContextPropagator#mergeCaptured}, so each test can assert on the
+ * effective document the branch's dispatch actually saw.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)

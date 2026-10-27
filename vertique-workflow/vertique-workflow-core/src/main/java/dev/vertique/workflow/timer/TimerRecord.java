@@ -14,9 +14,9 @@ import java.util.UUID;
  * Immutable snapshot of a workflow timer row from the {@code workflow_timers} table.
  *
  * <p>Each timer is associated with exactly one workflow instance and step. The timer is
- * scheduled when the engine enters a timer-wait or signal-with-timeout step. When the timer
- * fires, the {@code vertique-workflow-delayed} module invokes the engine's
- * {@link dev.vertique.workflow.ops.TransactionalTimerCallbacks} to resume the workflow.
+ * scheduled when the engine enters a timer-wait or signal-with-timeout step. It is linked to a
+ * timer command; when the command comes due, the workflow executor fires the timer and resumes the
+ * workflow.
  *
  * <p>The {@link #purpose()} and {@link #taskId()} fields are paired: task-scoped purposes
  * ({@link TimerPurpose#TASK_DUE}, {@link TimerPurpose#TASK_REMINDER}) require a non-null
@@ -25,12 +25,8 @@ import java.util.UUID;
  * enforces this at construction time.
  *
  * <p>The {@link #metadata()} field carries durable propagation context in wire-format key/value
- * pairs (FR-CTX-178). It is set at timer-create time by
- * {@link dev.vertique.workflow.delayed.recorder.WorkflowTimerSideEffectRecorder} via
- * {@code DurableContextPropagator.mergeCaptured(..., DELAYED_JOB)} and is the recovery-state
- * copy of the durable metadata: if the underlying delayed-job execution is lost and the timer
- * is re-enqueued by the recovery sweep, this field is copied into the replacement
- * {@code job_executions.metadata} row so the durable context survives the re-enqueue hop.
+ * pairs (FR-CTX-178). It is captured when the timer is scheduled, and the executor binds it when
+ * the timer's command runs, so the durable context survives the wait.
  *
  * @param timerId              stable UUID identifying this timer; primary key in
  *     {@code workflow_timers}
@@ -38,8 +34,6 @@ import java.util.UUID;
  * @param stepId               the plan step id that created this timer
  * @param fireAt               the UTC instant at which the timer is scheduled to fire
  * @param status               current lifecycle status of the timer
- * @param delayedJobExecutionId the delayed-job execution id used to schedule and (if needed)
- *     cancel the underlying delayed job; null for a timer that is linked to a command instead
  * @param scheduledAt          UTC timestamp when the timer row was inserted
  * @param firedAt              UTC timestamp when the timer was successfully fired; null unless
  *     {@code status == FIRED}
@@ -73,7 +67,6 @@ public record TimerRecord(
         String stepId,
         Instant fireAt,
         TimerStatus status,
-        @Nullable UUID delayedJobExecutionId,
         Instant scheduledAt,
         @Nullable Instant firedAt,
         @Nullable Instant cancelledAt,
@@ -95,7 +88,6 @@ public record TimerRecord(
      * @param stepId the creating step
      * @param fireAt the scheduled fire instant
      * @param status the lifecycle status
-     * @param delayedJobExecutionId the delayed-job execution id
      * @param scheduledAt the insert timestamp
      * @param firedAt the fire timestamp, or null
      * @param cancelledAt the cancel timestamp, or null
@@ -114,7 +106,6 @@ public record TimerRecord(
             String stepId,
             Instant fireAt,
             TimerStatus status,
-            @Nullable UUID delayedJobExecutionId,
             Instant scheduledAt,
             @Nullable Instant firedAt,
             @Nullable Instant cancelledAt,
@@ -132,7 +123,6 @@ public record TimerRecord(
                 stepId,
                 fireAt,
                 status,
-                delayedJobExecutionId,
                 scheduledAt,
                 firedAt,
                 cancelledAt,

@@ -7,7 +7,6 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import io.vertx.core.Future;
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -114,28 +113,6 @@ public interface BranchTokenRepository<TX> {
      */
     Future<Optional<BranchToken>> findByWaitForBranch(
             WorkflowInstanceId workflowId, String forkStepId, String branchId, String waitType, String waitKey, TX tx);
-
-    /**
-     * Returns RETRY_SCHEDULED branch tokens whose retry time is at or before {@code now}, ordered by
-     * retry time ascending.
-     *
-     * @param now   the current time
-     * @param limit maximum rows to return
-     * @param tx    the active transaction
-     * @return a {@link Future} of due branch tokens
-     */
-    Future<List<BranchToken>> findRecoverable(Instant now, int limit, TX tx);
-
-    /**
-     * Returns RUNNING branch tokens whose last update is older than {@code before}, ordered by
-     * update time ascending.
-     *
-     * @param before stale-threshold timestamp
-     * @param limit  maximum rows to return
-     * @param tx     the active transaction
-     * @return a {@link Future} of stale RUNNING branch tokens
-     */
-    Future<List<BranchToken>> findStaleRunning(Instant before, int limit, TX tx);
 
     /**
      * Returns branch tokens with the given status, ordered by creation time, up to {@code limit}

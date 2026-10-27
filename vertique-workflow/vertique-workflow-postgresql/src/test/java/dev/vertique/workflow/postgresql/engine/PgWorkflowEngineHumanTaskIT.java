@@ -1568,17 +1568,16 @@ public class PgWorkflowEngineHumanTaskIT {
     }
 
     // =========================================================================
-    // Stale taskDueFired
+    // Stale due date
     // =========================================================================
 
     /**
-     * Completing the task first and then calling {@code taskDueFired} directly returns
-     * {@link TaskMutationResult#STALE_NOOP} with no {@code TASK_EXPIRED} history entry and no
-     * workflow transition.
+     * Completing the task first cancels its due date: the timer and its command are cancelled, and a due date that
+     * comes due afterwards produces no {@code TASK_EXPIRED} history entry and no workflow transition.
      */
     @Test
-    @DisplayName("stale taskDueFired: completing task before due-date fires returns STALE_NOOP")
-    void staleTaskDueFired(VertxTestContext ctx) {
+    @DisplayName("stale due date: completing the task before the due date cancels it")
+    void staleDueDate(VertxTestContext ctx) {
         TaskState state = TaskState.of("stale-due-" + UUID.randomUUID());
 
         startWorkflow("human-task-due-date-test", state)
@@ -1602,17 +1601,19 @@ public class PgWorkflowEngineHumanTaskIT {
                                         .map(idle -> applied))
                                 .compose(r -> {
                                     ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, r));
-                                    // Now invoke taskDueFired directly
-                                    return pool.withTransaction(tx -> engine.taskDueFired(workflowId, taskId, tx));
+                                    // The due date is cancelled with the task, and stays so when its time comes
+                                    return TimerCommandRows.status(pool, timerId);
                                 })
-                                .compose(stale -> engine.executionProbe()
-                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
-                                        .map(idle -> stale))
-                                .compose(staleResult -> {
+                                .compose(timerStatus -> {
                                     ctx.verify(() -> assertEquals(
-                                            TaskMutationResult.STALE_NOOP,
-                                            staleResult,
-                                            "taskDueFired on completed task must return STALE_NOOP"));
+                                            "CANCELLED", timerStatus, "completing the task cancels its due date"));
+                                    return TimerCommandRows.makeDue(pool, timerId);
+                                })
+                                .compose(due -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                                .compose(idle -> TimerCommandRows.status(pool, timerId))
+                                .compose(timerStatus -> {
+                                    ctx.verify(() -> assertEquals(
+                                            "CANCELLED", timerStatus, "a cancelled due date is not fired when due"));
                                     return countHistoryEntries(workflowId, WorkflowEntryType.TASK_EXPIRED);
                                 })
                                 .map(count -> {

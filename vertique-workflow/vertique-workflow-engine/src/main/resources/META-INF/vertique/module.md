@@ -122,7 +122,7 @@ back while the task is `COMPLETING` (see Timers as commands), so a due date that
 A segment that enters a timed wait records the wait's timer itself: a timer node, a signal timeout, a task's due date and a task's
 reminder, on an instance or on a branch. Each timer is a `workflow_timers` row linked by `command_id` and a `TIMER` command in the
 instance's queue, inserted together under the execution lock through `WorkflowCommandRepository.recordTimer`. No timer is a delayed
-job and no engine path emits a `WORKFLOW_TIMER` intent. The command's timer kind follows the timer's purpose: `FIRE` (timer node),
+job and no engine path records a timer as a side-effect intent. The command's timer kind follows the timer's purpose: `FIRE` (timer node),
 `TIMEOUT` (signal timeout), `DUE` (due date) and `REMINDER` (reminder). Its `fire_at` is read once from the database clock when the
 command is recorded and never changes; `available_at` equals it at the insert. A delay in the plan counts on the database
 clock; an absolute instant already in the past is taken as the time of recording. A segment that leaves a wait cancels the timer and
@@ -157,10 +157,8 @@ stripped from the metadata, from the command's own context and from the instance
 carries an identity snapshot binds no security context. The command itself stores no context. A branch timer binds the branch token's
 carrier, as every branch drive does.
 
-A direct call of the public timer and task callbacks (`timerFired`, `taskDueFired`, `taskReminderFired`) still runs under the execution
-lock and the ambient bind of earlier releases; the command of such a timer later settles `STALE`. The delayed-job timer machinery of
-`vertique-workflow-delayed` is no longer invoked for new timers; it only touches timer rows of earlier releases that name a delayed job
-and no command.
+There is no public timer callback: a timer fires only as its `TIMER` command, and the same holds for a task's due date and reminders.
+A branch failure inside a segment is handled by the segment's outcome and the command's retry, so there is no branch recovery sweep.
 
 ### Transaction Ownership
 
@@ -184,8 +182,8 @@ refused with reason `PINNED_INSTANCES`. Timers fire as `TIMER` commands in the e
 workflow change, through `WorkflowCommandRepository.lockInstance`, so one transaction at a time changes an instance and
 appends to its history. This covers a new instance's `start` (the lock of the new id, after the lock-free checks and
 before the dedup claim; a replay of a start that already exists takes none), the three `signal` forms, `cancel`, `retry`,
-both `migrate` forms, the four task callbacks (`taskCompleted` and `taskReassigned` take it for the instance of the task
-they look up), the two timer callbacks, and both `WorkflowRecoveryBridge` methods. A caller waits for a busy instance for
+both `migrate` forms, and the two task callbacks (`taskCompleted` and `taskReassigned` take it for the instance of the task
+they look up). A caller waits for a busy instance for
 at most `workflow.recording.lockTimeoutMs` (default 5000); a timeout or a deadlock fails the call with
 `WorkflowPersistenceException` whose `retryable()` is true and rolls the caller's transaction back, so retry the whole
 transaction. The lock lasts until the transaction ends, and taking it again inside the same transaction costs nothing.
@@ -240,11 +238,10 @@ inside its savepoint, that signal and every other signal the wait accepts are se
 segment commits at the wait; each then runs as the executing command of its own segment. A parked signal that is deadline-blocked at
 the wait stays parked. When a segment ends the instance, its parked signals are `REJECTED` with the reason "instance ended".
 `START`, `SIGNAL`, `COMPLETION` and `TIMER` segments call `ParkedSignals.drain` after their drive, outside the savepoint of the executing command. Flows that run
-inline in the caller's transaction (retries, migrations, direct calls of the timer and task callbacks, and branch continuations through the fork/join
+inline in the caller's transaction (retries, migrations, direct calls of the task callbacks, and branch continuations through the fork/join
 coordinator) apply the parked signals of the waits they reach at the end of the drive, after everything the drive wrote
 (`WorkflowTransitionDriver.afterInlineDrive`); a transaction whose caller drains itself is left alone, so a parked signal is applied
-exactly once and never nested inside another command's savepoint. Branch recovery through `WorkflowRecoveryBridge` does not drain; a signal
-parked for a branch it drives is applied by the next drive that ends at the instance.
+exactly once and never nested inside another command's savepoint.
 
 Every recording call refuses a signal name, fork step id or branch id of more than 255 characters with a value-free
 `WorkflowInvalidPayloadException`. Applying a recorded signal binds the instance's stored carrier without its identity-snapshot namespace,
@@ -365,7 +362,6 @@ validation. Keyed validation is the bounded path.
 public interface WorkflowEngineHandle
         extends WorkflowOperations,
                 TransactionalWorkflowOperations<SqlClient>,
-                TransactionalTimerCallbacks<SqlClient>,
                 TransactionalTaskCallbacks<SqlClient> {
     WorkflowExecutionProbe executionProbe();
     WorkflowExecutorControl executor();
@@ -422,18 +418,12 @@ WorkflowEngineHandle engine = WorkflowEngineFactory.create(WorkflowEngineParts.b
         .build());
 ```
 
-The `WorkflowRecoveryBridge` is a Dagger-bound SPI: `WorkflowEngineModule` binds
-`WorkflowRecoveryBridgeImpl` as `WorkflowRecoveryBridge`. Code that needs a bridge obtains it via
-a Dagger component that installs `WorkflowPostgresqlModule` (which transitively includes
-`WorkflowEngineModule`). There is no factory accessor for the bridge.
-
 ### WorkflowEngineModule
 
 Dagger module owning the engine-internal bindings:
 
-- Binds `WorkflowEngine` as `WorkflowOperations`, `TransactionalWorkflowOperations<SqlClient>`,
-  `TransactionalTimerCallbacks<SqlClient>`, and `TransactionalTaskCallbacks<SqlClient>`.
-- Binds `WorkflowRecoveryBridgeImpl` as `WorkflowRecoveryBridge`.
+- Binds `WorkflowEngine` as `WorkflowOperations`, `TransactionalWorkflowOperations<SqlClient>`, and
+  `TransactionalTaskCallbacks<SqlClient>`.
 - Contributes the `workflow-executor` `VerticleDeployment` to `Set<VerticleDeployment>` (see Executor): the `SERVICES` phase,
   priority 100, `workflow.executor.instances` instances on the event loop. The configuration is the optional
   `WorkflowExecutorConfig`; install `WorkflowExecutorConfigModule` (workflow-core) to read it from `workflow.executor`, or the
@@ -476,11 +466,11 @@ public interface AppComponent {
 
 `migrate(id, targetScope, targetVersion)` (and the transactional form with a trailing transaction) resolves the target in `targetScope`, which must be the instance's start scope or the default scope. Before it looks up the handler it refuses a target of another contract with `WorkflowDefinitionContractMismatchException`, and a target whose state class differs from the source's and does not extend it (or any differing state class when no `WorkflowStateCompatibility` is bound) with `WorkflowDefinitionException`, and a target version that this node evaluated as failing (see Failing scope rows) with `WorkflowDefinitionFailingException`, before any write; refusal messages name the definition key and repeat caller-supplied scope and id only in bounded form, never a state class name; it then finds the handler by both scopes and re-pins the instance's definition scope to the target. `migrate(id, targetVersion)` keeps meaning the instance's definition scope.
 
-Work this node cannot run. A key that the node's registry holds no plan for is not runnable on that node, whether or not another node can run it (a rolling deploy publishes a version that reaches the other nodes as a committed record before they have its code; a failing scope row has no registered plan at all). The plan lookup then fails with `WorkflowVersionNotRunnableException`: a start that resolves to such a key (explicit version or activation record) creates no instance and no start dedup row, and a task completion, a typed-client query, retry, migration (its source or its target), the join advance and branch recovery leave the instance, its history and its dedup rows as they were, because the caller's transaction rolls back (inside a timer transaction a join advance that resolves the plan again would commit, but it cannot fail there today: it uses the pin the caller already resolved, and migration refuses an instance with active branches). A signal (including the branch-aware forms) needs no plan to be recorded, so a node without the pinned code records it like any other node; an executor of a node that cannot run the plan defers the recorded command (a deferral spends no attempt) and a node that can run it applies it. A timer (a standalone or signal-timeout timer, a task due date or a task reminder, on an instance or on a branch) is a `TIMER` command, so the executor of a node that cannot run its plan defers it like any other command and a node that can run it fires it; a deferral spends no attempt and never fails the instance, however long it lasts. A direct call of a timer callback leaves the same rows and the task's reminder counter as they were for a different reason: it resolves the pinned plan before its first write, and the delayed-job timer executor of an earlier release's timer row queues its job again in the same transaction, which commits only that job bookkeeping while the timer row stays `SCHEDULED`. Branch recovery leaves the token scheduled for a node that has the code. No node marks an instance failed because it cannot run its pin, while `query(id)` still reads the stored instance and history without the plan, and only the contract-checked `query(id, contractName)` fails the same way, because it needs the pinned plan to compare contracts. A node whose deployed code lacks a non-retired version still fails startup with `CODE_UNAVAILABLE`, so deployments are roll-forward only: the not-runnable failures occur on nodes that are already running when another node publishes or activates.
+Work this node cannot run. A key that the node's registry holds no plan for is not runnable on that node, whether or not another node can run it (a rolling deploy publishes a version that reaches the other nodes as a committed record before they have its code; a failing scope row has no registered plan at all). The plan lookup then fails with `WorkflowVersionNotRunnableException`: a start that resolves to such a key (explicit version or activation record) creates no instance and no start dedup row, and a task completion, a typed-client query, retry, migration (its source or its target), and the join advance leave the instance, its history and its dedup rows as they were, because the caller's transaction rolls back (inside a timer transaction a join advance that resolves the plan again would commit, but it cannot fail there today: it uses the pin the caller already resolved, and migration refuses an instance with active branches). A signal (including the branch-aware forms) needs no plan to be recorded, so a node without the pinned code records it like any other node; an executor of a node that cannot run the plan defers the recorded command (a deferral spends no attempt) and a node that can run it applies it. A timer (a standalone or signal-timeout timer, a task due date or a task reminder, on an instance or on a branch) is a `TIMER` command, so the executor of a node that cannot run its plan defers it like any other command and a node that can run it fires it; a deferral spends no attempt and never fails the instance, however long it lasts. A direct call of a timer callback leaves the same rows and the task's reminder counter as they were for a different reason: it resolves the pinned plan before its first write, and the delayed-job timer executor of an earlier release's timer row queues its job again in the same transaction, which commits only that job bookkeeping while the timer row stays `SCHEDULED`. Branch recovery leaves the token scheduled for a node that has the code. No node marks an instance failed because it cannot run its pin, while `query(id)` still reads the stored instance and history without the plan, and only the contract-checked `query(id, contractName)` fails the same way, because it needs the pinned plan to compare contracts. A node whose deployed code lacks a non-retired version still fails startup with `CODE_UNAVAILABLE`, so deployments are roll-forward only: the not-runnable failures occur on nodes that are already running when another node publishes or activates.
 
-Every lookup of an instance's plan (signals, tasks, timers, retries, branch and join recovery, queries and migration) resolves the instance's full pin: its definition scope, definition id and definition version. An instance pinned to a definition scope never runs the plan that another scope holds under the same id and version, and migration resolves its target version in the instance's definition scope. The lifecycle, the startup restoration and the propagation pass register, mark and remove a runtime under the scope of the stored row they apply.
+Every lookup of an instance's plan (signals, tasks, timers, retries, branch and join continuations, queries and migration) resolves the instance's full pin: its definition scope, definition id and definition version. An instance pinned to a definition scope never runs the plan that another scope holds under the same id and version, and migration resolves its target version in the instance's definition scope. The lifecycle, the startup restoration and the propagation pass register, mark and remove a runtime under the scope of the stored row they apply.
 
-Every event and side-effect correlation the engine records, single-path and branch, takes both scopes from the owning instance row, so events and outbox records name the scopes the instance really holds rather than a default. A branch drive reads them from the instance; `WorkflowRecoveryBridge.driveRecoveredBranch` loads the owning instance to do so.
+Every event and side-effect correlation the engine records, single-path and branch, takes both scopes from the owning instance row, so events and outbox records name the scopes the instance really holds rather than a default. A branch drive reads them from the instance.
 
 ### Activation Records And The Current Version
 
@@ -754,39 +744,10 @@ The bound `WorkflowDefinitionRegistryView` is a read-only view of one node:
 The startup step, the lifecycle operations of this node (`publish`, `deprecate`, `retire`, `reinstate`) and the
 poller feed the view. The view reflects this node only; another node can differ until its own pass has run.
 
-### WorkflowRecoveryBridge
-
-```java
-public interface WorkflowRecoveryBridge {
-    Future<BranchToken> driveRecoveredBranch(
-            BranchToken token,
-            String parentStateJson,
-            @Nullable String parentSubjectVersion,
-            RuntimeWorkflow rw,
-            SqlClient tx);
-
-    Future<Void> evaluateRecoveredBranchIfTerminal(
-            WorkflowInstance inst, BranchToken branch, RuntimeWorkflow rw, SqlClient tx);
-
-    void validateRecoveryPlan(WorkflowInstance inst, RuntimeWorkflow rw);
-}
-```
-
-Public SPI exposing exactly the three operations a dialect-side branch recovery sweep needs, without
-widening the visibility of the package-private `BranchTransitionEngine` or `ForkJoinCoordinator`.
-Bound by `WorkflowEngineModule` to its package-private implementation; adapter recovery services
-inject this interface.
-
-The bridge is pure orchestration — it performs no transaction management and owns no durable context
-scope. Each method takes the execution lock of the branch's instance inside the caller's transaction first (a no-op
-when the caller already holds it). The adapter recovery service retains ownership of the transaction boundary, the
-`DurableContextScope` bind, and optimistic-concurrency retries.
-
 ### WorkflowContextBinder
 
 Package-private binder-row seam that binds effective durable context for **instance-owned,
-single-path drives**: `signal`, `cancel`, `retry`, `migrate`, `taskCompleted`, `taskReassigned`,
-`taskDueFired`, `taskReminderFired`, `timerFired`, and `timerFiringFailed`. It implements the bind
+single-path drives**: `signal`, `cancel`, `retry`, `migrate`, `taskCompleted`, and `taskReassigned`. It implements the bind
 gate and the base-wins/instance-fill composition described in `dev.vertique:vertique-workflow-core`
 § Durable Context on the Instance:
 
@@ -859,8 +820,7 @@ Future<BranchToken> driveBranchTransitions(
 
 By default the drive binds `token.metadata()` — the branch token's own persisted carrier. When
 `effectiveBaseOverride` is non-null, the drive binds that pre-merged document instead of
-`token.metadata()`. Two callers pass a non-null override: branch recovery (the sweep's own
-carrier-row instance fill) and the branch-targeted explicit-carrier signal path (an explicit signal
+`token.metadata()`. One caller passes a non-null override: the branch-targeted explicit-carrier signal path (an explicit signal
 carrier that must win over the branch token for that one transition). Every other call site passes
 `null`, preserving the original token-metadata bind unchanged.
 
@@ -1022,14 +982,10 @@ parameterized over `<TX>` (typically `SqlClient`):
 | `WorkflowHistoryRepository<TX>` | History append, next-sequence generation, and two list variants (recent, all) |
 | `WorkflowDedupRepository<TX>` | Start lookup and race-safe claim/resolve by start scope for start, race-safe claim/resolve for signal (scoped and unscoped), task completion/reassignment, and service dispatch; `findTaskCompletion(taskId, key, tx)` reads, without writing, the fingerprint of a committed completion (the lock-free duplicate lookup) |
 | `TaskReservations<TX>` | `markCompleting(taskId, commandId, tx)` moves an `OPEN` task to `COMPLETING` and stores the completion command as its owner; `reopen(taskId, commandId, tx)` moves a `COMPLETING` task owned by that command back to `OPEN` and clears the owner. Both are compare-and-set and answer `false` when the task is not in the expected state. Engine-internal wiring, not application API; `TaskStore` is unchanged |
-| `BranchTokenRepository<TX>` | Fork/join branch token CRUD, status queries, and recovery queries |
+| `BranchTokenRepository<TX>` | Fork/join branch token CRUD and status queries |
 | `JoinStateRepository<TX>` | Fork/join state insert, read variants, open-for-workflow list, and the optimistic `decide` CAS |
 | `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping. The client it hands the work is a `SqlConnection` whose `transaction()` reports the underlying pending transaction; the deadline-guarded connection of `vertique-db` meets that. Its internal overload `inTransaction(level, deadline, work)` bounds the transaction (the executor's segment deadline) and returns `TransactionDeadlineExceededException` unchanged; the default fails with `UnsupportedOperationException` without running the work |
 | `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked, not-yet-available and stuck commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `findEarliestAvailabilityDelayMs()` is the executor's scalar scheduling hint, separate from the bounded diagnostic lists. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock. The executor's members: `recordStart` inserts a `START` command in the caller's transaction; `peek(limit)` reads the claimable heads without locks; `defer(head)` defers a head the node cannot run in one self-contained transaction and returns the new deferral count, or `0` when it wrote nothing (busy lock, no longer claimable, already deferred into the future, or the instance pinned otherwise than the head observed); `claim(head, claimedBy, leaseSeconds, maxAttempts)` is one self-contained transaction that tries the lock, locks the row, checks `claimable` again and settles an ended instance's command, dead-letters a command that spent `maxAttempts`, or claims (the three-argument overload never dead-letters); `retryTransient` and `failCommand` are the dispositions of a failed segment (the first locks only the command row, the second tries the execution lock in a transaction of its own); `findStuck` and `countQueue` read the stuck report and the queue snapshot; `fence`, `complete` and `reject` run in the segment's transaction, fenced on the command being `CLAIMED` with the claim's token (`complete` and `reject` return the number of rows updated, and `0` means the claim no longer stands); `release` returns a claim whose segment did not run to `PENDING` with its attempt restored, in one statement that takes no lock. The signal members: `declaredSignalNames(pin, forkStepId, branchId, tx)` reads the names the pinned definition row declares for the addressed wait (empty when the row stores no declaration); `raiseOpenSignals(id, limit, tx)` creates the instance's queue row when missing and raises its open-signal count with one conditional update (`false` when the limit is reached); `lowerOpenSignals` undoes a raise; `recordSignal(...)` inserts the `SIGNAL` command with its name and address as target and its explicit carrier; `recordCompletion(instance, taskId, dedupKey, payloadJson, targetJson, tx)` inserts the `COMPLETION` command that owns a task's reservation; `recordTimer(spec, tx)` inserts a timer row and the `TIMER` command that fires it (the fire time comes from the database clock, a timeout stores the wait it belongs to as its target, and the timer row keeps the recording drive's durable context without an identity snapshot) and returns the timer id, the command id and the fire time; `reject(id, token, lastError, tx)`, `stale(...)` and `park(...)` settle or park the claimed command (`park` restores the attempt the claim spent); `parkedSignalsAt`, `parkedSignals`, `readParked`, `settleParked` and `requeueParked` read and settle parked commands in the segment's transaction without a claim token (`requeueParked` is the guarded `PARKED` to `PENDING` write that keeps position, id, attempts and counters); `deadlineBlocked` answers the deadline guard; `wasParked` tells whether a command was parked before. Every write that takes a `SIGNAL` out of its open states lowers the open-signal count in the same statement |
-
-The adapter also provides:
-- A `WorkflowRecoveryBridge` is already bound by `WorkflowEngineModule`; no adapter re-binding needed.
-- The adapter recovery service injects `WorkflowRecoveryBridge` to drive recovered branches.
 
 Register the SPI bindings in the adapter's Dagger module, then `include = {WorkflowEngineModule.class}`:
 

@@ -387,38 +387,22 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
                                 workflowId, dev.vertique.workflow.timer.TimerPurpose.TASK_REMINDER, "branch-a")
                         .compose(reminderId -> {
                             assertNotNull(reminderId, "branch-a must have a reminder timer to fire");
-                            // Look up the task id + scheduled fire time so we can call the
-                            // executor-equivalent entry point. TASK_REMINDER timers route through
-                            // taskReminderFired in WorkflowTimerFireExecutor, not the generic
-                            // timerFired path.
-                            return pool.preparedQuery(
-                                            "SELECT task_id, fire_at FROM workflow_timers WHERE timer_id = $1")
-                                    .execute(Tuple.of(reminderId))
-                                    .compose(rs -> {
-                                        var row = rs.iterator().next();
-                                        UUID taskId = row.getUUID("task_id");
-                                        java.time.Instant fireAt =
-                                                row.getOffsetDateTime("fire_at").toInstant();
-                                        return pool.withTransaction(tx -> engine.taskReminderFired(
-                                                        workflowId, taskId, reminderId, fireAt, tx))
-                                                .compose(v ->
-                                                        engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
-                                                .compose(v -> pool.preparedQuery("SELECT COUNT(*) FROM workflow_history"
-                                                                + " WHERE workflow_id = $1 AND entry_type = $2")
-                                                        .execute(Tuple.of(
-                                                                workflowId.value(),
-                                                                dev.vertique.workflow.state.WorkflowEntryType
-                                                                        .BRANCH_TASK_REMINDER_FIRED
-                                                                        .name()))
-                                                        .map(r -> r.iterator()
-                                                                .next()
-                                                                .getLong(0)))
-                                                .compose(firedCount -> countTimersAsync(
-                                                                workflowId,
-                                                                dev.vertique.workflow.timer.TimerPurpose.TASK_REMINDER,
-                                                                "branch-a")
-                                                        .map(remCount -> new Outcome(firedCount, remCount)));
-                                    });
+                            // The reminder comes due: the executor runs its command as a segment.
+                            return TimerCommandRows.makeDue(pool, reminderId)
+                                    .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                                    .compose(v -> pool.preparedQuery("SELECT COUNT(*) FROM workflow_history"
+                                                    + " WHERE workflow_id = $1 AND entry_type = $2")
+                                            .execute(Tuple.of(
+                                                    workflowId.value(),
+                                                    dev.vertique.workflow.state.WorkflowEntryType
+                                                            .BRANCH_TASK_REMINDER_FIRED
+                                                            .name()))
+                                            .map(r -> r.iterator().next().getLong(0)))
+                                    .compose(firedCount -> countTimersAsync(
+                                                    workflowId,
+                                                    dev.vertique.workflow.timer.TimerPurpose.TASK_REMINDER,
+                                                    "branch-a")
+                                            .map(remCount -> new Outcome(firedCount, remCount)));
                         }))
                 .onComplete(ctx.succeeding(o -> ctx.verify(() -> {
                     assertTrue(o.firedCount() >= 1L, "BRANCH_TASK_REMINDER_FIRED history must be appended");

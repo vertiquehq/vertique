@@ -13,11 +13,11 @@ SPDX-License-Identifier: EUPL-1.2
 > is a declared dependency, but no type of this module references Flyway: the application supplies the
 > migration runner.
 
-`vertique-workflow-postgresql` is the **PostgreSQL adapter** for the Vertique Workflow engine. It provides PostgreSQL implementations of the engine's internal repository and transaction-runner SPIs, owns the schema and Flyway migrations, and supplies Pg-specific query, retention, and recovery services. `WorkflowMigrationsModule` declares those migrations as the `workflow` migration instance for named Flyway instances, and the optional `db.schemas.workflow` setting places every workflow table in one schema for the migrations and for all nine stores.
+`vertique-workflow-postgresql` is the **PostgreSQL adapter** for the Vertique Workflow engine. It provides PostgreSQL implementations of the engine's internal repository and transaction-runner SPIs, owns the schema and Flyway migrations, and supplies Pg-specific query and retention services. `WorkflowMigrationsModule` declares those migrations as the `workflow` migration instance for named Flyway instances, and the optional `db.schemas.workflow` setting places every workflow table in one schema for the migrations and for all nine stores.
 
 For the dialect-neutral orchestration logic — `WorkflowEngine`, the 6 SPI interfaces (`WorkflowInstanceRepository`, `WorkflowHistoryRepository`, `WorkflowDedupRepository`, `BranchTokenRepository`, `JoinStateRepository`, `WorkflowTransactionRunner`), `RecorderRouter`, `WorkflowReminderComposeValidator`, and the Dagger module that binds `WorkflowOperations` — see `dev.vertique:vertique-workflow-engine`.
 
-Install this module when workflows must survive process restarts, run across more than one node, or coordinate with transactional outbox and delayed-job modules. `WorkflowPostgresqlModule` includes `WorkflowEngineModule` transitively, so consumer wiring is unchanged — no `@Component` edits are required.
+Install this module when workflows must survive process restarts, run across more than one node, or coordinate with the transactional outbox module. `WorkflowPostgresqlModule` includes `WorkflowEngineModule` transitively, so consumer wiring is unchanged — no `@Component` edits are required.
 
 ---
 
@@ -34,11 +34,10 @@ Install this module when workflows must survive process restarts, run across mor
 | `WorkflowTransactionRunner<SqlClient>` | Pg implementation of the engine's transaction seam, including the deadline overload the executor's segments run through (`TransactionBuilder.deadline`; `TransactionDeadlineExceededException` passes the workflow exception mapping unchanged) |
 | Query services | `PgWorkflowInstanceQueryService` — read model for workflow instances and branch state |
 | Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep; the application drives the batch loop and cadence, there is no built-in scheduler. It archives and purges through the scoped `PgWorkflowRetentionRepository`, so it follows the same placement |
-| Recovery service | `PgWorkflowBranchRecoveryService` — opt-in cluster-singleton branch recovery cron |
 | Migration declaration | `WorkflowMigrationsModule` — contributes the `workflow` `MigrationDefinition` (`classpath:db/migration/workflow`) with `@IntoSet`; see [Flyway Configuration](#flyway-configuration) |
 | Flyway schema | Shipped `V1__create_workflow_tables.sql` plus the additive `V002__workflow_definitions_and_scopes.sql` and `V003__recorded_execution.sql` |
 
-The module `includes WorkflowEngineModule`, which provides the `WorkflowOperations` binding and recorder-router wiring. It also includes `WorkflowMigrationsModule` and `DbSchemasModule` (the optional `DbSchemas` binding). It does not deliver downstream service calls or execute delayed jobs by itself; those are separate modules.
+The module `includes WorkflowEngineModule`, which provides the `WorkflowOperations` binding and recorder-router wiring. It also includes `WorkflowMigrationsModule` and `DbSchemasModule` (the optional `DbSchemas` binding). It does not deliver downstream service calls by itself; that is a separate module. Branch failures need no recovery service: a failed segment rolls back and its command is retried.
 
 > **Two similarly named modules.** `WorkflowMigrationsModule` (plural, in `dev.vertique.workflow.postgresql.engine`) declares the *database schema* migrations of this module for Flyway. `WorkflowMigrationModule` (singular, in `dev.vertique:vertique-workflow-core`) is the optional wiring for *in-flight workflow definition migration*, which moves running instances from one definition version to another. They are unrelated; install the second only when you use in-flight migration (see [Required App Wiring](#required-app-wiring)).
 
@@ -73,7 +72,7 @@ public PgWorkflowDefinitionRegistryStore(
 ```
 
 - **Unmapped means unchanged.** The constructors without `DbSchemas` leave every table unqualified, so the workflow tables resolve through the connection's default schema. With no `workflow` entry in the `DbSchemas` passed to the other constructor, the SQL is the same as theirs.
-- **Mapped means every reference is qualified.** The `DbSchemas` constructors qualify every workflow table reference, in every statement, with the schema that `schemas` maps to `workflow`. This covers lifecycle, history, dedup, branch and join, task, timer, definition registry, query, recovery and retention statements, including the joins and subqueries between workflow tables (the task insert's scope subselect on `workflow_instances` and the narrowed instances projection that `PgTaskStore.findByFilter` joins for a subject filter among them) and the pin-admission and retirement-guard statements that read `workflow_definitions` and `workflow_instances`. Statements are built once at construction.
+- **Mapped means every reference is qualified.** The `DbSchemas` constructors qualify every workflow table reference, in every statement, with the schema that `schemas` maps to `workflow`. This covers lifecycle, history, dedup, branch and join, task, timer, definition registry, query and retention statements, including the joins and subqueries between workflow tables (the task insert's scope subselect on `workflow_instances` and the narrowed instances projection that `PgTaskStore.findByFilter` joins for a subject filter among them) and the pin-admission and retirement-guard statements that read `workflow_definitions` and `workflow_instances`. Statements are built once at construction.
 - **Invalid mappings fail at construction.** A schema that is not a single valid PostgreSQL identifier (or is reserved by PostgreSQL) throws `IllegalArgumentException` when the store is created, before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`).
 - **Column qualifiers are never schema-qualified.** Qualifiers inside the SQL, such as `workflow_dedup.workflow_id` in the dedup upsert, name the table within the statement. SQL in this document is shown with unqualified table names.
 - **Transactions are unchanged.** Placement changes only where tables are named. Every method that takes a `SqlClient` still runs on the client the caller passes, so workflow rows commit or roll back with the application's and the outbox's own writes.
@@ -94,7 +93,7 @@ Each workflow operation opens a Postgres transaction via the `WorkflowTransactio
 
 The engine stores serialized workflow state as JSON. The Java state type comes from the registered workflow plan.
 
-In-flight instances are pinned to the definition version and plan hash recorded at start. They do not silently move to a newer definition. The pin includes the definition scope, and branch recovery resolves the plan of the pinned definition scope, id and version. A node whose registry holds no plan for the pin fails the sweep of that token with `WorkflowVersionNotRunnableException`: the transaction rolls back, the token stays `RETRY_SCHEDULED` for a node that has the code, and the instance is not failed.
+In-flight instances are pinned to the definition version and plan hash recorded at start. They do not silently move to a newer definition. The pin includes the definition scope, and every drive of the instance resolves the plan of the pinned definition scope, id and version. A node whose registry holds no plan for the pin does not run the instance's commands: its executor defers them for a node that has the code, and the instance is not failed.
 
 The `WorkflowTransactionRunner` in this module delegates to `vertique-db-core`'s `TransactionBuilder`. Write paths run at the connection's default isolation (0 `SET TRANSACTION` statements); the `query()` read path uses `REPEATABLE READ` (1 statement, no `READ ONLY`).
 
@@ -111,7 +110,7 @@ The module owns workflow persistence tables, including:
 | `workflow_instances` | Current snapshot of each workflow instance; includes `metadata JSONB` for the durable context captured once at start |
 | `workflow_history` | Append-only engine history |
 | `workflow_dedup` | Idempotency and signal deduplication, keyed by `(kind, scope_key, dedup_namespace, key)` |
-| `workflow_timers` | Durable timer state; includes `metadata JSONB` for durable context. This row is the authoritative source of timer status. A timer recorded by a segment links to its `TIMER` command by `command_id` and names no delayed job; `vertique-workflow-delayed` reconciles only the rows of earlier releases, which name a delayed job and no command. |
+| `workflow_timers` | Durable timer state; includes `metadata JSONB` for durable context. This row is the authoritative source of timer status. A timer recorded by a segment links to its `TIMER` command by `command_id` and names no delayed job. The `delayed_job_execution_id` column stays, nullable and unwritten. |
 | `workflow_tasks` | Human task rows |
 | `workflow_branch_tokens` | Active branch execution state; includes `metadata JSONB` for durable context |
 | `workflow_join_states` | Fan-in state for fork/join workflows |
@@ -141,7 +140,7 @@ The migration files live with the module under `db/migration/workflow`. The ship
 - `workflow_tasks.status` admits `COMPLETING` (the check `workflow_tasks_status_check` is replaced), and `reservation_command_id BIGINT` and `require_version_stability BOOLEAN` are added, both nullable; existing tasks read null. A task being completed is `COMPLETING` and `reservation_command_id` names its `COMPLETION` command (whose `task_id` and `target_json`, holding the decision, the reviewed subject version and the completing actor, say what it completes); a new task writes `require_version_stability` from its plan and the payload schema of each decision into `decisions_snapshot_json`.
 - `workflow_timers.delayed_job_execution_id` becomes nullable and `command_id BIGINT` is added.
 
-The command log is written and read by `PgWorkflowCommandRepository`: the execution probe reads it ('Execution probe' below), a recorded start inserts its `START` command, and the executor claims and completes commands ('Executor commands' below). The same repository takes the per-instance execution lock and allocates positions in `workflow_command_queues` ('Lock-Order Requirements' below). The stores read these columns: an instance row with `status = 'PENDING'` and null `state_json` and `current_step_id` reads as a `WorkflowInstance` (it is not terminal); a `COMPLETING` task reads back with its `reservationCommandId`, `reassign` refuses it as if it were already completed and `markCompleted` completes it (it also still completes an `OPEN` task, for callers of the `TaskStore` SPI; the engine completes only a reserved task); `insertOpen` writes `require_version_stability` from `TaskRecord.requireVersionStability()`, and a row reads it back as `null` when the column is null; the decisions snapshot stores `payloadSchema` per decision only when present and reads it back as null when absent; `PgTimerStore` writes and reads `command_id` and `delayed_job_execution_id`, which is null for a timer linked to a command, and its `markCancelled` also sets the linked command `CANCELLED` (clearing its claim) when that command is still unsettled, in the same statement, while `findRecoverableScheduled` returns only the rows of earlier releases: scheduled, naming a delayed job, linked to no command. `PgWorkflowInstanceRepository` writes `PENDING` for a recorded start (and counts it as a live pin, as does the registry store's retirement count); `PgTaskReservations` writes `COMPLETING` and its reopening, and `PgWorkflowCommandRepository.recordTimer` writes a timer row and its `TIMER` command together ('Timer commands' below). Every optimistic update of an instance also writes its subject columns, because the first segment of a start resolves the subject.
+The command log is written and read by `PgWorkflowCommandRepository`: the execution probe reads it ('Execution probe' below), a recorded start inserts its `START` command, and the executor claims and completes commands ('Executor commands' below). The same repository takes the per-instance execution lock and allocates positions in `workflow_command_queues` ('Lock-Order Requirements' below). The stores read these columns: an instance row with `status = 'PENDING'` and null `state_json` and `current_step_id` reads as a `WorkflowInstance` (it is not terminal); a `COMPLETING` task reads back with its `reservationCommandId`, `reassign` refuses it as if it were already completed and `markCompleted` completes it (it also still completes an `OPEN` task, for callers of the `TaskStore` SPI; the engine completes only a reserved task); `insertOpen` writes `require_version_stability` from `TaskRecord.requireVersionStability()`, and a row reads it back as `null` when the column is null; the decisions snapshot stores `payloadSchema` per decision only when present and reads it back as null when absent; `PgTimerStore` writes and reads `command_id` and no longer reads or writes `delayed_job_execution_id` (the column stays, nullable and unwritten), and its `markCancelled` also sets the linked command `CANCELLED` (clearing its claim) when that command is still unsettled, in the same statement. `PgWorkflowInstanceRepository` writes `PENDING` for a recorded start (and counts it as a live pin, as does the registry store's retirement count); `PgTaskReservations` writes `COMPLETING` and its reopening, and `PgWorkflowCommandRepository.recordTimer` writes a timer row and its `TIMER` command together ('Timer commands' below). Every optimistic update of an instance also writes its subject columns, because the first segment of a start resolves the subject.
 
 The script sets `SET LOCAL lock_timeout = '30s'` and takes `ACCESS EXCLUSIVE` locks for the `ALTER`s until the migration commits; every statement is `IF [NOT] EXISTS` or drops before it creates, so a failed run can be repeated. Stop every node of the previous release before the first node of this release applies it. Existing rows keep their values.
 
@@ -381,7 +380,7 @@ Add optional modules based on behavior:
 
 | Behavior | Add |
 |---|---|
-| Timer steps, signal timeouts, task due dates and reminders | Nothing to add: they are `TIMER` commands that the executor runs (`WorkflowDelayedModule` only recovers the timers of earlier releases) |
+| Timer steps, signal timeouts, task due dates and reminders | Nothing to add: they are `TIMER` commands that the executor runs |
 | Human task service API | `WorkflowTasksModule` |
 | External workflow event stream | `WorkflowEventsModule` |
 | YAML/JSON definition loading | `WorkflowDefinitionModule` |
@@ -457,7 +456,6 @@ Tests that run no engine build a probe from a pool with `PgExecutionProbeSupport
 | `WorkflowInstanceQueryService`, `WorkflowRetentionService` | Singleton | Services over the same scoped instances (as is the branch query service), so queries, archive and purge follow the placement |
 | `Set<MigrationDefinition>` | `@IntoSet` | The `workflow` declaration from `WorkflowMigrationsModule`: location `classpath:db/migration/workflow`, no dependencies |
 
-The branch-recovery cron installed by `WorkflowBranchRecoveryModule` reaches the same scoped repositories, so recovery sweeps follow the placement too.
 
 **Compatibility note.** The nine concrete store types are now provided by explicit `@Provides` methods. A component that installs this module and also provides any of them itself sees a duplicate binding; remove its own provider. The `@Inject` constructors remain for components that do not install this module; they leave the SQL unqualified.
 
@@ -488,7 +486,7 @@ Important guarantees:
 - A workflow transition and its side-effect records commit or roll back together.
 - Waiting workflows resume from the persisted snapshot.
 - Signals and task actions are deduplicated.
-- Timers are commands of the executor and survive restarts with the command log; timers of earlier releases are recovered by `workflow-delayed` when that module is installed.
+- Timers are commands of the executor and survive restarts with the command log.
 - Outbox relay retries may redeliver messages; workflow signal and task APIs are designed for idempotent callers.
 
 The engine does not depend on in-memory workflow state for correctness.
@@ -509,8 +507,7 @@ transaction that changes an instance takes it first (`PgWorkflowCommandRepositor
 time changes an instance and appends to its history. The wait applies `workflow.recording.lockTimeoutMs` (default 5000, at
 least 1) to that one acquisition and restores the caller's own `lock_timeout` in the same statement, so it never leaks into
 the rest of the caller's transaction. A timeout (`55P03`) or a deadlock (`40P01`) fails the call with
-`WorkflowPersistenceException` with `retryable()` true, and PostgreSQL rolls the caller's transaction back. The branch
-recovery sweep takes the lock of a branch's instance, as a requester, before it locks the branch row.
+`WorkflowPersistenceException` with `retryable()` true, and PostgreSQL rolls the caller's transaction back.
 `tryLockInstance` takes the lock without waiting. `nextQueueSequence` allocates from `workflow_command_queues` under the
 lock, creating the queue row on first touch (the first value is 1); a rolled-back transaction gives its value back.
 
@@ -529,7 +526,6 @@ Common side-effect modules:
 | Side effect | Module |
 |---|---|
 | Service dispatch outbox entries | `workflow-services` |
-| Timer delayed jobs (earlier releases only) | `workflow-delayed` |
 | External workflow events | `workflow-events` |
 
 Missing required recorders fail the transition. Optional event recording may be absent unless the registered workflows require reminders.
@@ -554,15 +550,9 @@ This module implements the workflow-side durable context propagation surfaces fo
 
 **Branch drive:** `BranchTransitionEngine.driveBranchTransitions` binds `token.metadata()` at the start of every per-branch drive via `InboundExecutionContextScope.installDurable(metadata, DispatchBoundary.WORKFLOW)`. The bind covers timer-step, signal-step, service-dispatch, and decision step types and closes on `Future.eventually(...)`. The substrate helper wraps the authoritative `DurableContextPropagator.bindFrom(...)` — every registered durable type absent from `token.metadata()` is cleared for the drive's scope so a downstream `mergeCaptured(...)` (e.g. the timer metadata a timer command records) cannot pick up ambient context that did not cross the workflow boundary. After the durable bind, registered `InboundContextInitializer`s run (notably the correlation seeder), so a branch whose metadata carries no encoded `CorrelationContext` still gets one bound for the duration of the drive. Empty metadata still triggers the bind. Production reaches branch-drive on a duplicated context: dispatcher entry points (event bus, Kafka per-record, cron callback, service-method invoker) are all duplicates, and `vertx-sql-client` 5.x preserves the caller's duplicate through `pool.withTransaction(tx -> …)`. `installDurable` propagates the strict `bindFrom` invariant — `IllegalStateException` on a non-duplicated Vert.x context — so tests that call into the engine directly from a JUnit thread must first switch to a duplicate.
 
-`driveBranchTransitions` accepts an additional `@Nullable DurableMetadata effectiveBaseOverride` parameter. When non-`null` — as supplied by branch recovery below, and by a branch-targeted explicit signal carrier — the drive binds that already-merged effective document instead of raw `token.metadata()`. This is the seam every branch-owned drive routes through under the bind-once routing rule: it is never additionally wrapped by the instance-path `WorkflowContextBinder`, so a branch-owned drive is bound exactly once.
-
-**Branch recovery — instance-fill seam:** `PgWorkflowBranchRecoveryService.withBranchDurableBound` wraps every per-branch advance in both the `processDue` path (due branches) and the `processStale` path (stale-RUNNING branches) via the same `InboundExecutionContextScope.installDurable(...)` helper, so the recovery sweep gets the same initializer fan-out as the live drive. Branches advance sequentially within one sweep so scopes do not overlap.
-
-Before each row's scope opens, the sweep loads the owning `WorkflowInstance` (a non-locking `findById`, preserving the `workflow_timers → workflow_tasks → workflow_branch_tokens → workflow_instances` lock order — no new `FOR UPDATE`) and computes `effectiveBase = token.metadata().merge(instance.metadata(), MergePolicy.CALLER_WINS)`. When the instance carrier is `null` this is a no-op merge — `effectiveBase` equals `token.metadata()` unchanged, byte-identical to pre-feature behavior. When the instance carrier is non-`null`, it fills any namespace absent from the branch token — the mechanism that closes a namespace hole in a token that was forked during a context-degraded drive (a transport relay that lost a namespace, or a pre-feature fork). `effectiveBase` is passed as `driveBranchTransitions`'s `effectiveBaseOverride`, so the token's own carrier remains authoritative for every namespace it already carries. A bind failure is isolated to that row's advance failure; the sweep continues with the next row.
+`driveBranchTransitions` accepts an additional `@Nullable DurableMetadata effectiveBaseOverride` parameter. When non-`null` — as supplied by a branch-targeted explicit signal carrier — the drive binds that already-merged effective document instead of raw `token.metadata()`. This is the seam every branch-owned drive routes through under the bind-once routing rule: it is never additionally wrapped by the instance-path `WorkflowContextBinder`, so a branch-owned drive is bound exactly once.
 
 **Timer metadata:** a timer recorded by a segment stores the durable context of that drive in `workflow_timers.metadata`, signed for the `workflow-timer` carrier (`WorkflowTimerCarriers` in this module, the same kind and address earlier releases used) and without the identity-snapshot namespace; the timer's command stores no context. The `TIMER` segment that fires the timer binds the metadata as an executor drive, which strips the namespace from metadata written by earlier releases too.
-
-**Timer recovery (earlier releases):** `WorkflowTimerRecoveryService.withTimerDurableBound` similarly uses `installDurable(row.metadata(), DispatchBoundary.DELAYED_JOB)` for the terminal `timerFiringFailed` paths (DEAD_LETTER / SUCCEEDED / CANCELLED), so the cron sweep clearing ambient context still gets a freshly seeded `CorrelationContext` for the `WORKFLOW_FAILED` outbox emission when the timer row's metadata carries no correlation.
 
 **Metadata immutability:** Once written at fork, `workflow_branch_tokens.metadata` is never overwritten. Demotion to retry-scheduled or terminal failure preserves the original value.
 

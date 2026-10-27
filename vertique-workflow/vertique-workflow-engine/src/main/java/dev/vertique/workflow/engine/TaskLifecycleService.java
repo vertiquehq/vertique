@@ -82,7 +82,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -96,10 +95,10 @@ import org.slf4j.LoggerFactory;
  *   <li>{@link #taskCompleted} — records a task completion behind a reservation of the task; {@link #runCompletion}
  *       applies it in an executor segment through {@link #doCompleteTaskBound} (single-path) or
  *       {@link #doBranchCompleteTask} (branch-owned).</li>
- *   <li>{@link #taskDueFired} / {@link #doTaskDueFiredBound} / {@link #advanceForDueExpired} /
+ *   <li>{@link #dueFired} / {@link #doTaskDueFiredBound} / {@link #advanceForDueExpired} /
  *       {@link #doBranchTaskDueFired} — due-date expiry.</li>
  *   <li>{@link #taskReassigned} — task reassignment.</li>
- *   <li>{@link #taskReminderFired} / {@link #doTaskReminderFiredBound} /
+ *   <li>{@link #reminderFired} / {@link #doTaskReminderFiredBound} /
  *       {@link #doBranchTaskReminderFired} — reminder firing.</li>
  *   <li>The task helpers {@link #buildTaskRecord} (static), {@link #resolveAssignment},
  *       {@link #cancelTaskOwnedTimers}, {@link #appendTaskCreatedHistory},
@@ -107,8 +106,8 @@ import org.slf4j.LoggerFactory;
  * </ul>
  *
  * <p>The facade's {@code TransactionalTaskCallbacks} entrypoints
- * ({@code taskCompleted}/{@code taskDueFired}/{@code taskReassigned}/{@code taskReminderFired})
- * delegate their bodies to this service. Payload validation/coercion and plan-hash checks reuse the
+ * ({@code taskCompleted}/{@code taskReassigned}) delegate their bodies to this service, and
+ * the executor runs {@link #dueFired} and {@link #reminderFired} for the timer commands of a task. Payload validation/coercion and plan-hash checks reuse the
  * shared {@link WorkflowPayloads} utilities.
  *
  * <p><b>Driver↔task cycle-break.</b> This service drives the state machine forward after a task
@@ -161,7 +160,7 @@ final class TaskLifecycleService {
     /**
      * Binder-row seam for the instance-owned (non-branch) task drives: {@link #doCompleteTask},
      * {@link #taskReassigned} (which has no branch fork at all — every reassignment is
-     * instance-owned), {@link #taskDueFired}, and {@link #taskReminderFired}. The branch-owned
+     * instance-owned), {@link #dueFired}, and {@link #reminderFired}. The branch-owned
      * paths ({@link #doBranchCompleteTask} and the due/reminder branch forks) MUST NOT use this
      * binder — the bind-once routing rule reserves branch-owned drives for the
      * {@link BranchTransitionEngine} carrier seam. Never {@code null} — the engine assembly seam
@@ -1372,10 +1371,10 @@ final class TaskLifecycleService {
     }
 
     /**
-     * Branch path for {@link #taskDueFired}: fires a branch-owned task's due-date timer.
+     * Branch path for {@link #dueFired}: fires a branch-owned task's due-date timer.
      *
      * <p>The due-date timer is identified by {@link TaskRecord#dueDateTimerId()}, which the caller
-     * matched to route here. The timer row is already locked by {@code WorkflowTimerFireExecutor}.
+     * matched to route here. The timer row is already locked by the timer command that runs this path.
      *
      * <p>Lock order: {@code workflow_timers} (already locked by the executor) →
      * {@code workflow_tasks} → {@code workflow_branch_tokens} → {@code workflow_instances}
@@ -1465,7 +1464,7 @@ final class TaskLifecycleService {
                                 return Future.<TaskMutationResult>failedFuture(
                                         new WorkflowDefinitionException("Expected HumanTaskNode with due-date at step '"
                                                 + task.stepId()
-                                                + "' during branch taskDueFired"));
+                                                + "' during branch dueFired"));
                             }
 
                             // Apply onDueMutator to parent state — mirrors single-path
@@ -1515,7 +1514,7 @@ final class TaskLifecycleService {
                                                                     new WorkflowConflictException(
                                                                             "Optimistic concurrency conflict"
                                                                                     + " on branch token"
-                                                                                    + " during taskDueFired"));
+                                                                                    + " during dueFired"));
                                                         }
                                                         // Update parent instance state.
                                                         return instances
@@ -1528,7 +1527,7 @@ final class TaskLifecycleService {
                                                                                         "Optimistic concurrency"
                                                                                                 + " conflict on parent"
                                                                                                 + " instance during"
-                                                                                                + " branch taskDueFired"));
+                                                                                                + " branch dueFired"));
                                                                     }
                                                                     // updatedInstForDue carries the
                                                                     // post-onDueMutator
@@ -1546,7 +1545,7 @@ final class TaskLifecycleService {
     }
 
     /**
-     * Branch path for {@link #taskReminderFired}: appends a
+     * Branch path for {@link #reminderFired}: appends a
      * {@link WorkflowEntryType#BRANCH_TASK_REMINDER_FIRED} history entry when a reminder fires on
      * a branch-owned task.
      *
@@ -1603,9 +1602,8 @@ final class TaskLifecycleService {
                     // Resolve the HumanTaskNode to get reminder spec for next scheduling.
                     WorkflowNode node = rw.nodeById().get(task.stepId());
                     if (!(node instanceof HumanTaskNode htn)) {
-                        return Future.<Void>failedFuture(
-                                new WorkflowDefinitionException("Expected HumanTaskNode at step '" + task.stepId()
-                                        + "' during branch taskReminderFired"));
+                        return Future.<Void>failedFuture(new WorkflowDefinitionException(
+                                "Expected HumanTaskNode at step '" + task.stepId() + "' during branch reminderFired"));
                     }
                     ReminderSpec spec = htn.reminders();
                     if (spec == null) {
@@ -1624,7 +1622,7 @@ final class TaskLifecycleService {
                                     tx)
                             .compose(v -> {
                                 // Build the same TASK_REMINDER emission shape the single-path produces
-                                // (taskReminderFired single-path branch). Branch-owned task reminders
+                                // (reminderFired single-path branch). Branch-owned task reminders
                                 // must be observable to external consumers identically to single-path;
                                 // only the history-entry type differs.
                                 ReminderScheduler.ReminderEmission emission =
@@ -1733,30 +1731,7 @@ final class TaskLifecycleService {
     // --- Task due-date expiry ---
 
     /**
-     * Fires a task's due-date timer.
-     *
-     * <p>Steps:
-     * <ol>
-     *   <li>Lock the task row for completion.</li>
-     *   <li>If not OPEN → return {@link TaskMutationResult#STALE_NOOP}.</li>
-     *   <li>Mark task EXPIRED.</li>
-     *   <li>Apply the {@code onDueMutator} to the workflow state.</li>
-     *   <li>Optimistic UPDATE on workflow_instances to {@code dueNextStepId}.</li>
-     *   <li>Append {@code TASK_EXPIRED} history.</li>
-     *   <li>Drive transitions.</li>
-     * </ol>
-     *
-     * @param workflowId the workflow instance this task belongs to
-     * @param taskId     the stable UUID of the task whose due-date timer fired
-     * @param tx         the active transaction context
-     * @return a {@link Future} resolving to the mutation result
-     */
-    Future<TaskMutationResult> taskDueFired(WorkflowInstanceId workflowId, UUID taskId, SqlClient tx) {
-        return dueFired(workflowId, taskId, this::ambientBinding, tx);
-    }
-
-    /**
-     * Fires a task's due date like {@link #taskDueFired}, binding the durable context of an instance-owned expiry with
+     * Fires a task's due date, binding the durable context of an instance-owned expiry with
      * the given binding.
      *
      * @param workflowId the workflow instance this task belongs to
@@ -1811,7 +1786,7 @@ final class TaskLifecycleService {
 
     /**
      * Executes the due-date expiry drive body after the instance-owned binder-row bind is in
-     * effect. Extracted so {@link #taskDueFired} can pass it to
+     * effect. Extracted so {@link #dueFired} can pass it to
      * {@link WorkflowContextBinder#withBound} as a {@link java.util.function.Supplier}.
      *
      * <p>Step 2: cancel pending reminder timers FIRST (acquires REMINDER timer row locks ahead of
@@ -1852,7 +1827,7 @@ final class TaskLifecycleService {
     }
 
     /**
-     * Helper for {@link #taskDueFired}: applies the {@code onDueMutator} to state, advances the
+     * Helper for {@link #dueFired}: applies the {@code onDueMutator} to state, advances the
      * instance to {@code dueNextStepId}, appends {@code TASK_EXPIRED} history, and drives further
      * transitions. Called only after the wait-slot match has been validated.
      *
@@ -1893,14 +1868,14 @@ final class TaskLifecycleService {
                 .withError(null, null)
                 .withUpdatedAt(now);
 
-        // Reminder timers were already cancelled by the caller (taskDueFired) BEFORE the task row
-        // lock was acquired — see taskDueFired for the lock-order rationale.
+        // Reminder timers were already cancelled by the caller (dueFired) BEFORE the task row
+        // lock was acquired — see dueFired for the lock-order rationale.
         return instances
                 .updateOptimistic(advanced, prevVersion, tx)
                 .compose(rowCount -> {
                     if (rowCount == 0) {
                         return Future.<Void>failedFuture(new WorkflowConflictException(
-                                "Optimistic concurrency conflict during taskDueFired for task '" + taskId + "'"));
+                                "Optimistic concurrency conflict during dueFired for task '" + taskId + "'"));
                     }
                     WorkflowActor expiredBy = new WorkflowActor.System("due-date-expired");
                     return history.nextSequence(inst.id(), tx).compose(seq -> {
@@ -2075,29 +2050,7 @@ final class TaskLifecycleService {
     // --- Task reminder firing ---
 
     /**
-     * Fires a task reminder.
-     *
-     * <p>Cycle-4 reminder-fire handling: appends a {@code TASK_REMINDER_FIRED} history entry and
-     * emits a {@code WORKFLOW_EVENT} side-effect when the task is still
-     * {@link dev.vertique.workflow.tasks.TaskStatus#OPEN}. Returns a succeeded future for both
-     * the applied and no-op (task already closed) paths; the executor marks the timer
-     * {@code FIRED} unconditionally on a succeeded future.
-     *
-     * @param workflowId the owning workflow instance id
-     * @param taskId     the stable UUID of the task
-     * @param timerId    the UUID of the firing reminder timer
-     * @param scheduledFireAt the {@code fire_at} of the firing timer (anchors the next interval)
-     * @param tx         the active transaction context
-     * @return succeeded future on both applied and no-op paths; failed future on transient errors
-     */
-    Future<Void> taskReminderFired(
-            WorkflowInstanceId workflowId, UUID taskId, UUID timerId, Instant scheduledFireAt, SqlClient tx) {
-        return reminderFired(workflowId, taskId, timerId, scheduledFireAt, this::ambientBinding, tx)
-                .mapEmpty();
-    }
-
-    /**
-     * Fires a task reminder like {@link #taskReminderFired}, binding the durable context of an instance-owned reminder
+     * Fires a task reminder, binding the durable context of an instance-owned reminder
      * with the given binding, and tells whether the reminder applied to a task that is still open and awaited.
      *
      * @param workflowId      the owning workflow instance id
@@ -2156,11 +2109,11 @@ final class TaskLifecycleService {
 
     /**
      * Executes the reminder-fire drive body after the instance-owned binder-row bind is in effect.
-     * Extracted so {@link #taskReminderFired} can pass it to
+     * Extracted so {@link #reminderFired} can pass it to
      * {@link WorkflowContextBinder#withBound} as a {@link java.util.function.Supplier}.
      *
      * @param workflowId      the owning workflow instance id
-     * @param task            the task record fetched by {@link #taskReminderFired}
+     * @param task            the task record fetched by {@link #reminderFired}
      * @param inst            the loaded (WAITING/TASK-slot-matched) instance snapshot
      * @param timerId         the UUID of the firing reminder timer
      * @param scheduledFireAt the {@code fire_at} of the firing timer (anchors the next interval)
@@ -2190,7 +2143,7 @@ final class TaskLifecycleService {
         WorkflowNode node = rw.nodeById().get(task.stepId());
         if (!(node instanceof HumanTaskNode htn)) {
             return Future.failedFuture(new WorkflowDefinitionException(
-                    "Expected HumanTaskNode at step '" + task.stepId() + "' during taskReminderFired"));
+                    "Expected HumanTaskNode at step '" + task.stepId() + "' during reminderFired"));
         }
         ReminderSpec spec = htn.reminders();
         if (spec == null) {
@@ -2278,11 +2231,6 @@ final class TaskLifecycleService {
     }
 
     // --- Internal helpers ---
-
-    /** The binding of a caller of the engine's callbacks: the ambient context with the instance's own. */
-    private <T> Future<T> ambientBinding(WorkflowInstance instance, Supplier<Future<T>> drive) {
-        return contextBinder.withBound(instance, null, drive);
-    }
 
     /**
      * Resolves the runtime workflow for {@code inst} and enforces the plan-hash drift guard

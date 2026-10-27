@@ -40,9 +40,9 @@ public interface WorkflowSideEffectRecorder<TX> {
      * an outbox row) that a relay process will deliver after the transaction commits.
      *
      * <p>Most recorders produce no actionable output beyond confirming persistence and should return
-     * {@link RecorderResult#empty()}. Recorders that schedule durable timers (e.g., the
-     * {@link IntentKind#WORKFLOW_TIMER} recorder) return {@link RecorderResult#ofTimer(java.util.UUID)}
-     * so the caller can correlate the timer id with the workflow instance wait state.
+     * {@link RecorderResult#empty()}. Recorders that schedule durable timers return
+     * {@link RecorderResult#ofTimer(java.util.UUID)} so the caller can correlate the timer id with the
+     * workflow instance wait state.
      *
      * @param intent the side-effect intent to record
      * @param tx the active transaction context; all writes must use this context

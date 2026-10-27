@@ -208,14 +208,14 @@ class WorkflowEventSideEffectRecorderTest {
         }
 
         @Test
-        @DisplayName("WORKFLOW_TIMER kind — returns failed Future without calling publish")
-        void record_timerKind_failsFutureNoPublish() {
-            WorkflowSideEffectIntent intent = intentWithKind(IntentKind.WORKFLOW_TIMER);
+        @DisplayName("DELAYED_JOB kind — returns failed Future without calling publish")
+        void record_delayedJobKind_failsFutureNoPublish() {
+            WorkflowSideEffectIntent intent = intentWithKind(IntentKind.DELAYED_JOB);
 
             Future<RecorderResult> result = recorder.record(intent, tx);
 
             assertThat(result.failed()).isTrue();
-            assertThat(result.cause()).isInstanceOf(IllegalStateException.class).hasMessageContaining("WORKFLOW_TIMER");
+            assertThat(result.cause()).isInstanceOf(IllegalStateException.class).hasMessageContaining("DELAYED_JOB");
             verify(outboxService, never()).publish(any(), any());
         }
     }

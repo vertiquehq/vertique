@@ -16,7 +16,6 @@ import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
-import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.executor.ExecutionLockTestSupport.Assembly;
@@ -25,13 +24,11 @@ import dev.vertique.workflow.postgresql.executor.ExecutionLockTestSupport.LockSt
 import dev.vertique.workflow.postgresql.executor.ExecutionLockTestSupport.TickContract;
 import dev.vertique.workflow.postgresql.executor.ExecutionLockTestSupport.TwoSessions;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.tasks.TaskAssignment;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Pool;
-import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
 import java.time.Duration;
 import java.util.List;
@@ -115,14 +112,7 @@ class ExecutionLockCoverageIT {
                 new EntryPoint("migrate", ExecutionLockCoverageIT::migrate),
                 new EntryPoint("migrate to a scope", ExecutionLockCoverageIT::migrateToScope),
                 new EntryPoint("task completed", ExecutionLockCoverageIT::taskCompleted),
-                new EntryPoint("task due fired", ExecutionLockCoverageIT::taskDueFired),
-                new EntryPoint("task reassigned", ExecutionLockCoverageIT::taskReassigned),
-                new EntryPoint("task reminder fired", ExecutionLockCoverageIT::taskReminderFired),
-                new EntryPoint("timer fired", ExecutionLockCoverageIT::timerFired),
-                new EntryPoint("timer firing failed", ExecutionLockCoverageIT::timerFiringFailed),
-                new EntryPoint("recovered branch driven", ExecutionLockCoverageIT::driveRecoveredBranch),
-                new EntryPoint(
-                        "recovered branch evaluated", ExecutionLockCoverageIT::evaluateRecoveredBranchIfTerminal));
+                new EntryPoint("task reassigned", ExecutionLockCoverageIT::taskReassigned));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -175,10 +165,6 @@ class ExecutionLockCoverageIT {
 
     private static TransactionalTaskCallbacks<SqlClient> tasks(Assembly a) {
         return a.component().taskCallbacks();
-    }
-
-    private static TransactionalTimerCallbacks<SqlClient> timers(Assembly a) {
-        return a.component().timerCallbacks();
     }
 
     private static Call start(Assembly a) {
@@ -247,67 +233,11 @@ class ExecutionLockCoverageIT {
         return new Call(id, tx -> tasks(a).taskCompleted(command, tx).map(result -> id));
     }
 
-    private static Call taskDueFired(Assembly a) {
-        WorkflowInstanceId id = a.startTask();
-        UUID taskId = a.waitKeyOf(id);
-        return new Call(id, tx -> tasks(a).taskDueFired(id, taskId, tx).map(result -> id));
-    }
-
     private static Call taskReassigned(Assembly a) {
         WorkflowInstanceId id = a.startTask();
         UUID taskId = a.waitKeyOf(id);
         TaskReassignmentCommand command = new TaskReassignmentCommand(
                 taskId, new TaskAssignment.Role("legal"), new WorkflowActor.User("bob"), key(), "coverage");
         return new Call(id, tx -> tasks(a).taskReassigned(command, tx).map(result -> id));
-    }
-
-    private static Call taskReminderFired(Assembly a) {
-        WorkflowInstanceId id = a.startTask();
-        UUID taskId = a.waitKeyOf(id);
-        Row reminder = a.timerOf(id, "TASK_REMINDER");
-        UUID timerId = reminder.getUUID("timer_id");
-        java.time.Instant fireAt = reminder.getOffsetDateTime("fire_at").toInstant();
-        return new Call(id, tx -> tasks(a).taskReminderFired(id, taskId, timerId, fireAt, tx)
-                .map(v -> id));
-    }
-
-    private static Call timerFired(Assembly a) {
-        WorkflowInstanceId id = a.startTimer();
-        UUID timerId = a.waitKeyOf(id);
-        return new Call(id, tx -> timers(a).timerFired(id, timerId, tx).map(result -> id));
-    }
-
-    private static Call timerFiringFailed(Assembly a) {
-        WorkflowInstanceId id = a.startTimer();
-        UUID timerId = a.waitKeyOf(id);
-        return new Call(id, tx -> timers(a)
-                .timerFiringFailed(id, timerId, "ERROR", "coverage", tx)
-                .map(result -> id));
-    }
-
-    private static Call driveRecoveredBranch(Assembly a) {
-        WorkflowInstanceId id = a.startFork();
-        a.setBranchStatus(id, "a", "RUNNING");
-        var token = a.branchToken(id, "a");
-        WorkflowInstance instance =
-                await(a.component().instances().findById(id)).orElseThrow();
-        var runtime = a.runtime(ExecutionLockTestSupport.FORK, 1L);
-        return new Call(id, tx -> a.component()
-                .recoveryBridge()
-                .driveRecoveredBranch(token, instance.stateJson(), null, runtime, tx, null)
-                .map(driven -> id));
-    }
-
-    private static Call evaluateRecoveredBranchIfTerminal(Assembly a) {
-        WorkflowInstanceId id = a.startFork();
-        a.setBranchStatus(id, "a", "FAILED");
-        var token = a.branchToken(id, "a");
-        WorkflowInstance instance =
-                await(a.component().instances().findById(id)).orElseThrow();
-        var runtime = a.runtime(ExecutionLockTestSupport.FORK, 1L);
-        return new Call(id, tx -> a.component()
-                .recoveryBridge()
-                .evaluateRecoveredBranchIfTerminal(instance, token, runtime, tx)
-                .map(v -> id));
     }
 }

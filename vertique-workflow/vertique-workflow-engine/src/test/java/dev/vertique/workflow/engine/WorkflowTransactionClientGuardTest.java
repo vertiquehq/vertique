@@ -90,7 +90,6 @@ class WorkflowTransactionClientGuardTest {
 
     private static final WorkflowInstanceId INSTANCE = new WorkflowInstanceId(UUID.randomUUID());
     private static final UUID TASK_ID = UUID.randomUUID();
-    private static final UUID TIMER_ID = UUID.randomUUID();
     private static final WorkflowActor ACTOR = new WorkflowActor.User("alice");
     private static final DurableMetadata CARRIER =
             DurableMetadata.of(TenantCtxCodec.NAMESPACE, new JsonObject().put("tenantId", "CARRIER"));
@@ -178,21 +177,12 @@ class WorkflowTransactionClientGuardTest {
                         (engine, client) -> engine.taskCompleted(
                                 new TaskCompletionCommand(TASK_ID, "approve", Map.of(), "task-key", ACTOR, null),
                                 client)),
-                new EngineOperation("taskDueFired", (engine, client) -> engine.taskDueFired(INSTANCE, TASK_ID, client)),
                 new EngineOperation(
                         "taskReassigned",
                         (engine, client) -> engine.taskReassigned(
                                 new TaskReassignmentCommand(
                                         TASK_ID, new TaskAssignment.User("bob"), ACTOR, "task-key", null),
-                                client)),
-                new EngineOperation(
-                        "taskReminderFired",
-                        (engine, client) -> engine.taskReminderFired(INSTANCE, TASK_ID, TIMER_ID, FIXED_NOW, client)),
-                new EngineOperation("timerFired", (engine, client) -> engine.timerFired(INSTANCE, TIMER_ID, client)),
-                new EngineOperation(
-                        "timerFiringFailed",
-                        (engine, client) ->
-                                engine.timerFiringFailed(INSTANCE, TIMER_ID, "ERROR", "failure message", client)));
+                                client)));
 
         List<InvalidClient> clients = List.of(
                 new InvalidClient("a pool", () -> mock(Pool.class)),
