@@ -316,7 +316,7 @@ public class DefinitionOwnershipIT {
             assertThat(claimed.token()).isNotBlank();
             assertThat(claimed.planHash()).isNotBlank();
 
-            // And that claim is older than twice the staleness bound when tenant-b then publishes the same id and
+            // And that claim is older than the publication claim timeout when tenant-b then publishes the same id and
             // version
             fixture.ageClaim(nodeA.app().workflowDefinitionsConfig(), tenantA, claimed.token());
             await(nodeB.service().publish(tenantB));

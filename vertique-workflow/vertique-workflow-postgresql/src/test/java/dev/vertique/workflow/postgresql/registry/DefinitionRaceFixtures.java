@@ -242,9 +242,9 @@ final class DefinitionRaceFixtures {
             return rows;
         }
 
-        /** Ages one outstanding claim past twice the staleness bound without touching any other row. */
+        /** Ages one outstanding claim past the publication claim timeout without touching any other row. */
         void ageClaim(WorkflowDefinitionsConfig config, DefinitionKey key, String token) {
-            long ageSeconds = 2 * config.maxStalenessSeconds() + 60;
+            long ageSeconds = config.publicationClaimTimeoutSeconds() + 60;
             await(admin().preparedQuery("""
                             UPDATE workflow_definitions
                             SET status_changed_at = clock_timestamp() - ($5::bigint * interval '1 second')

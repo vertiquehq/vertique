@@ -412,7 +412,7 @@ Code registers itself from the deployed application, so `load` and `publish` app
 |---|---|---|
 | `publish` | `CANDIDATE` to `AVAILABLE` through `PUBLISHING` | `STALE_CLAIM`, `DRIFT`, `LOADER_MISSING`, `INVALID_TRANSITION` |
 | `deprecate` | `AVAILABLE` to `DEPRECATED` | `INVALID_TRANSITION` (also for the default scope's current version) |
-| `retire` | `CANDIDATE`, or a cooled `DEPRECATED` row, to `RETIRED` | `COOLING`, `PINNED_INSTANCES`, `INVALID_TRANSITION` (also for the default scope's current version) |
+| `retire` | `CANDIDATE`, or a `DEPRECATED` row, to `RETIRED` | `PINNED_INSTANCES`, `INVALID_TRANSITION` (also for the default scope's current version) |
 | `reinstate` | `DEPRECATED` or `RETIRED` to `AVAILABLE` | `CODE_UNAVAILABLE`, `DRIFT`, `LOADER_MISSING`, `INVALID_TRANSITION` |
 
 `activate`, `deactivateDefault` and `follow` change the activation records, not the status of a definition row. `reinstate` returns a version to `AVAILABLE` and never makes it current.
@@ -428,9 +428,9 @@ synchronous exceptions.
   reason `DEPRECATED`. Signals, timers and resumes of instances already pinned to the version keep working.
   Deprecating a version leaves every other version available; the default scope's current version cannot be
   deprecated until another version is activated or `deactivateDefault` clears its record.
-- **Cooling window.** A deprecated version cannot retire until `workflow.definitions.maxStalenessSeconds` (default 30)
-  has passed on the database clock. After that, retirement is refused with `PINNED_INSTANCES` while any `RUNNING`,
-  `WAITING` or `COMPENSATING` instance, archived ones included, is pinned to the exact version.
+- **No cooling window.** A deprecated version retires as soon as no instance is pinned to it, however recently it was
+  deprecated. Retirement is refused with `PINNED_INSTANCES` while any `PENDING`, `RUNNING`, `WAITING` or `COMPENSATING`
+  instance, archived ones included, is pinned to the exact version.
 - **Reinstatement.** `reinstate` of a retired version needs an executable source: the deployed code for a code version, the
   stored text for a document. A deprecated version is still registered, so its reinstatement only clears the deprecation
   mark. Either way the version becomes `AVAILABLE`.
@@ -476,7 +476,7 @@ The same procedure applies to a packaged document with `activateOnDeploy: false`
 
 Deployments are roll-forward only. A node whose code lacks a version that is not retired fails application startup with `CODE_UNAVAILABLE`: the node does not start, and none of its workflows run. Three cases are therefore unsupported: an old-code node that restarts or autoscales after a newer version was published, a rollback of the code past a version that has live instances, and rolling code back to 0.3.0. Old nodes that stay up keep serving, but starts that resolve to the newer version fail with the not-runnable error, which is retryable only against a node that has the code.
 
-Activating the previous version again changes only which version new starts use; it does not let an old-code node restart, because the startup check looks at the published row, not at the activation. To undo a bad rollout, activate the previous version and then retire the newer one once the cooling window has passed and no instance is pinned to it, or deploy a corrected version. To keep a rollback possible, deploy with `activateOnDeploy` set to `false`, activate once every node runs the new code, and retire the new version promptly if you abandon it.
+Activating the previous version again changes only which version new starts use; it does not let an old-code node restart, because the startup check looks at the published row, not at the activation. To undo a bad rollout, activate the previous version and then retire the newer one once no instance is pinned to it, or deploy a corrected version. To keep a rollback possible, deploy with `activateOnDeploy` set to `false`, activate once every node runs the new code, and retire the new version promptly if you abandon it.
 
 #### Work a node cannot run
 
@@ -492,7 +492,7 @@ To remove a definition id or a version, in order:
 
 1. Make sure no activation record names the version. For the default scope's current version, call `deactivateDefault(id)` (or activate another version); for a non-default scope's record, `activate` another version or `follow`. After `deactivateDefault`, starts without a version fail with `WorkflowNoCurrentVersionException` in every scope that follows the default.
 2. `deprecate` each version. New explicit starts and migrations are refused; pinned instances keep running.
-3. Wait out the cooling window, then `retire` each version once no instance is pinned to it. `retire` is refused with `COOLING` or `PINNED_INSTANCES` until then, so treat it as retryable.
+3. `retire` each version once no instance is pinned to it. `retire` is refused with `PINNED_INSTANCES` until then, so treat it as retryable.
 4. Remove the definition class in a later deployment.
 
 `query(id)` reads the instance and its history from the database and does not need the pinned plan, so a finished instance of a retired version stays readable after its class is removed. A typed client's `query(id, contractName)` compares the client's contract with the pinned plan's contract; a node without that plan cannot vouch for the contract and refuses with the not-runnable error.
@@ -527,8 +527,8 @@ Future<Void> published = definitionService
 // version is refused until deactivateDefault("order-fulfillment") or another activation moves the record.
 Future<Void> deprecated = definitionService.deprecate(v1);
 
-// Later, after the cooling window and once no instance is pinned. Until then this
-// fails with reason COOLING or PINNED_INSTANCES, so treat it as retryable.
+// Later, once no instance is pinned. Until then this fails with reason
+// PINNED_INSTANCES, so treat it as retryable.
 Future<Void> retired = definitionService.retire(v1)
         .onFailure(failure -> {
             if (failure instanceof WorkflowDefinitionLifecycleException e) {
@@ -585,9 +585,6 @@ format, an unattributed direct registration, and a lock timeout):
 
 Each node polls the table and applies differences, so a change committed on one node reaches the others.
 
-- **Cadence.** The period is `workflow.definitions.maxStalenessSeconds` (default 30 seconds). The real bound is the
-  cadence plus the time one pass needs to apply; a row that keeps failing gives no bound. The first pass runs one period
-  after startup.
 - **`pollNow()`.** `WorkflowDefinitionPropagationPoller.pollNow()` runs one pass immediately and returns its `Future`.
   A call while a pass runs returns that pass. The future succeeds even when some rows failed, and fails only when the
   table cannot be read.
@@ -646,7 +643,7 @@ Each node polls the table and applies differences, so a change committed on one 
 
 | Key | Default | Meaning |
 |---|---|---|
-| `workflow.definitions.maxStalenessSeconds` | `30` | Poll period, cooling window before retirement, and (doubled) the age of an abandoned publication claim |
+| `workflow.definitions.publicationClaimTimeoutSeconds` | `60` | At least 1: the age in seconds at which a `PUBLISHING` claim is stale, so another `publish` takes it over and startup resets it. Replaces the former staleness-seconds key of the same group, which is no longer read |
 | `workflow.definitions.maxDocumentSizeBytes` | `262144` | Largest runtime `load` input, in bytes (L); the stored form is capped at floor(3L/2) UTF-8 bytes and L code points |
 
 Both keys are optional. To read them from configuration, install `WorkflowDefinitionsConfigModule` together with
@@ -816,7 +813,7 @@ is registered, and a static source failing a limit fails startup naming the reso
   hash is the old one. Prefer a new version over editing a deployed one.
 - **Rollback or old-code restart.** A node that restarts on code lacking a version the database holds as live fails startup
   with `CODE_UNAVAILABLE`. Deployments are roll-forward only (see [Roll-forward only](#roll-forward-only)).
-- **Deleting a version.** To remove a version's code safely: `deprecate` it, wait out the cooling window, `retire` it
+- **Deleting a version.** To remove a version's code safely: `deprecate` it, `retire` it
   while no instance is pinned, then remove the code in a later deployment.
 - **Finish the rolling upgrade first.** `retire` and `reinstate` rely on every node taking the shared id lock when it
   admits a pin, so use them only once all nodes run 0.4.0.
@@ -852,8 +849,8 @@ is registered, and a static source failing a limit fails startup naming the reso
 
 ### 8. Configuration
 
-Two optional keys, `workflow.definitions.maxStalenessSeconds` (30) and `workflow.definitions.maxDocumentSizeBytes` (262144).
-Existing configuration needs no change. See [Configuration](#configuration).
+Optional keys include `workflow.definitions.publicationClaimTimeoutSeconds` (60, replacing the former staleness-seconds key) and `workflow.definitions.maxDocumentSizeBytes` (262144).
+An application that still sets the former staleness-seconds key gets the default for the new one, so rename it. See [Configuration](#configuration).
 
 ## Scope Keys On Instances And Tasks
 

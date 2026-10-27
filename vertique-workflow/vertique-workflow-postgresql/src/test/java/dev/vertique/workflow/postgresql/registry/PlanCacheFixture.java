@@ -225,12 +225,7 @@ final class PlanCacheFixture implements AutoCloseable {
     private boolean closed;
 
     private PlanCacheFixture(
-            Vertx vertx,
-            PostgresContainer db,
-            int maxEntries,
-            int poolSize,
-            int acquisitionTimeoutSeconds,
-            int maxStalenessSeconds) {
+            Vertx vertx, PostgresContainer db, int maxEntries, int poolSize, int acquisitionTimeoutSeconds) {
         this.vertx = vertx;
         this.admin = pool(vertx, db, 4, 0);
         resetTables();
@@ -244,7 +239,6 @@ final class PlanCacheFixture implements AutoCloseable {
                                 .put(
                                         "definitions",
                                         new JsonObject()
-                                                .put("maxStalenessSeconds", maxStalenessSeconds)
                                                 .put("planCache", new JsonObject().put("maxEntries", maxEntries)))
                                 .put("executor", new JsonObject().put("pollIntervalMs", 100)));
         WorkflowDefinitionSource none = List::of;
@@ -271,21 +265,7 @@ final class PlanCacheFixture implements AutoCloseable {
      */
     static PlanCacheFixture open(
             Vertx vertx, PostgresContainer db, int maxEntries, int poolSize, int acquisitionTimeoutSeconds) {
-        return new PlanCacheFixture(vertx, db, maxEntries, poolSize, acquisitionTimeoutSeconds, 3600);
-    }
-
-    /**
-     * Starts the graph as {@link #open} does, with the definition staleness bound set to the given seconds instead of
-     * one no test outlasts.
-     */
-    static PlanCacheFixture open(
-            Vertx vertx,
-            PostgresContainer db,
-            int maxEntries,
-            int poolSize,
-            int acquisitionTimeoutSeconds,
-            int maxStalenessSeconds) {
-        return new PlanCacheFixture(vertx, db, maxEntries, poolSize, acquisitionTimeoutSeconds, maxStalenessSeconds);
+        return new PlanCacheFixture(vertx, db, maxEntries, poolSize, acquisitionTimeoutSeconds);
     }
 
     private static Pool pool(Vertx vertx, PostgresContainer db, int size, int acquisitionTimeoutSeconds) {

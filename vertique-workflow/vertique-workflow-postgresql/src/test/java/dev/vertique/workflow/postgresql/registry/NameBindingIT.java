@@ -145,8 +145,7 @@ public class NameBindingIT {
     @Test
     @DisplayName("after the move, logically bound instances resume and a retired version does not block startup")
     void movingAnnotatedTypesKeepsLogicallyBoundVersions(Vertx vertx) {
-        JsonObject config = new JsonObject()
-                .put("workflow", new JsonObject().put("definitions", new JsonObject().put("maxStalenessSeconds", 1)));
+        JsonObject config = new JsonObject();
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, DEFINITION_ID);
 

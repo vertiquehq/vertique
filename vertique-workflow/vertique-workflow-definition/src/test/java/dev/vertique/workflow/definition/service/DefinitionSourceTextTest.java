@@ -402,8 +402,8 @@ public class DefinitionSourceTextTest {
         CapturingStore capturingStore = new CapturingStore();
         DurableReaderGraph graph = DaggerDefinitionSourceTextTest_DurableReaderGraph.builder()
                 .vertxModule(new VertxModule(vertx, new JsonObject()))
-                .capturingStoreModule(new CapturingStoreModule(
-                        capturingStore.store, new WorkflowDefinitionsConfig(30, DEFAULT_LIMIT)))
+                .capturingStoreModule(
+                        new CapturingStoreModule(capturingStore.store, new WorkflowDefinitionsConfig(DEFAULT_LIMIT)))
                 .build();
 
         Future<Void> work = Future.succeededFuture();

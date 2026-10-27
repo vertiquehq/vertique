@@ -56,8 +56,7 @@ public class DefinitionStateIT {
     @Test
     @DisplayName("evicted plans are retained nowhere outside the plan cache")
     void evictedPlansAreRetainedNowhereOutsideThePlanCache(Vertx vertx) {
-        try (PlanCacheFixture fixture =
-                PlanCacheFixture.open(vertx, db, MAX_ENTRIES, 10, 0, BACKGROUND_PERIOD_SECONDS)) {
+        try (PlanCacheFixture fixture = PlanCacheFixture.open(vertx, db, MAX_ENTRIES, 10, 0)) {
             // Given a plan cache of 100 plans and 150 versions of one acme document stored after the node started,
             // with the node left alone for several periods of any background definition work it may have
             List<DefinitionKey> versions = new ArrayList<>();

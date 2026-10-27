@@ -756,9 +756,9 @@ instance unchanged. Signals, timers and resumption of instances already pinned t
 are unaffected. Both checks read the row, so a deprecation committed on any node is seen by the next start and the next
 migration on every node; the plan cache keeps no copy of the status.
 
-`WorkflowDefinitionLifecycle.retire` retires a CANDIDATE version, or a DEPRECATED one after the cooling window (the
-configured staleness bound) once no RUNNING, WAITING or COMPENSATING instance, archived or not, is pinned to it; the
-store checks status, cooling and the pin count in one transaction, so a refusal is typed (`COOLING`, `PINNED_INSTANCES`,
+`WorkflowDefinitionLifecycle.retire` retires a CANDIDATE version, or a DEPRECATED one as soon as no PENDING, RUNNING, WAITING or COMPENSATING instance, archived or not, is pinned to it,
+however recently it was deprecated; the
+store checks status and the pin count in one transaction, so a refusal is typed (`PINNED_INSTANCES`,
 or `INVALID_TRANSITION` for any other status). A retired row is refused by pin admission as a lifecycle failure. The node
 holds no runtime to remove: a plan that the plan cache still holds is not used for a retired row, because a start
 reads the row. Managed operations are serialized per definition id on the node.

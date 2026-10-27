@@ -653,13 +653,13 @@ public class MixedDefinitionBootstrapIT {
                     documentBytes(nearId, 1, StaleNearV1.class),
                     DocumentFormat.YAML,
                     source("stale-near", loadedAt)));
-            long bound = first.app().workflowDefinitionsConfig().maxStalenessSeconds();
-            long staleAgeSeconds = 2 * bound + 60;
-            // Ten seconds short of twice the bound leaves the margin that the boot needs on the database clock
-            long nearlyStaleAgeSeconds = 2 * bound - 10;
+            long bound = first.app().workflowDefinitionsConfig().publicationClaimTimeoutSeconds();
+            long staleAgeSeconds = bound + 60;
+            // Ten seconds short of the bound leaves the margin that the boot needs on the database clock
+            long nearlyStaleAgeSeconds = bound - 10;
             first.close();
 
-            // And that other id left claimed past twice the bound, next to a stale tenant claim on the id of a
+            // And that other id left claimed past the claim timeout, next to a stale tenant claim on the id of a
             // code definition
             scenario.claimWithoutCompleting(claimedKey);
             scenario.ageStatus(claimedKey, staleAgeSeconds);
@@ -667,7 +667,7 @@ public class MixedDefinitionBootstrapIT {
                     staleTenant, codeId, 1, "5".repeat(64), "PUBLISHING", documentText(codeId, 1, StaleCodeV1.class));
             scenario.ageStatus(tenantClaimKey, staleAgeSeconds);
 
-            // And a global claim just younger than twice the bound, and a tenant claim made just now
+            // And a global claim just younger than the claim timeout, and a tenant claim made just now
             scenario.claimWithoutCompleting(nearKey);
             scenario.ageStatus(nearKey, nearlyStaleAgeSeconds);
             scenario.seedDocument("tenant-fresh", freshId, 1, "3".repeat(64), "PUBLISHING", "workflow: {}\n");
@@ -695,7 +695,7 @@ public class MixedDefinitionBootstrapIT {
             assertThat(tenantAfter.status()).isEqualTo("CANDIDATE");
             assertThat(tenantAfter.publishToken()).isNull();
 
-            // And the claim just younger than twice the bound and the fresh claim are left exactly as they were,
+            // And the claim just younger than the claim timeout and the fresh claim are left exactly as they were,
             // with their tokens and change times
             assertThat(scenario.stored(nearId, 1)).isEqualTo(nearBefore);
             assertThat(scenario.stored("tenant-fresh", freshId, 1)).isEqualTo(freshBefore);
@@ -886,7 +886,6 @@ public class MixedDefinitionBootstrapIT {
             assertThat(scenario.stored(scope, deprecatedId, 1).status()).isEqualTo("DEPRECATED");
             Boot node = scenario.node(none(), unobserved());
             // And one reconciliation, which applies the rows of the scope that startup does not read
-            long coolingSeconds = node.app().workflowDefinitionsConfig().maxStalenessSeconds();
 
             // When the candidate is activated
             await(node.app().definitionService().publish(candidateKey));
@@ -904,8 +903,7 @@ public class MixedDefinitionBootstrapIT {
             assertThat(DefinitionScenario.planOf(node.app().workflowRegistry(), activeKey))
                     .isNotNull();
 
-            // When the deprecated row is retired after its cooling window
-            scenario.ageStatus(deprecatedKey, coolingSeconds + 60);
+            // When the deprecated row is retired
             await(node.app().definitionService().retire(deprecatedKey));
 
             // Then it is RETIRED
@@ -1097,10 +1095,10 @@ public class MixedDefinitionBootstrapIT {
             Stored codeRow = scenario.stored(codeId, 1);
             assertThat(codeRow.kind()).isEqualTo("CODE");
             assertThat(codeRow.planHash()).isEqualTo(codeHash);
-            long staleAgeSeconds = 2 * started.app().workflowDefinitionsConfig().maxStalenessSeconds() + 60;
+            long staleAgeSeconds = started.app().workflowDefinitionsConfig().publicationClaimTimeoutSeconds() + 60;
             started.close();
 
-            // Given a tenant claim on another id left past twice the bound, and a shared admission holder on that id
+            // Given a tenant claim on another id left past the claim timeout, and a shared admission holder on that id
             scenario.seedDocument(resetTenant, resetId, 1, "4".repeat(64), "PUBLISHING", "workflow: {}\n");
             scenario.ageStatus(resetKey, staleAgeSeconds);
             Stored claimBefore = scenario.stored(resetTenant, resetId, 1);

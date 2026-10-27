@@ -321,9 +321,9 @@ public class BoundedStartupIT {
         return started;
     }
 
-    /** The configuration with the propagation period raised so the poller never runs in a test. */
+    /** The configuration of the node under test, with the default-scope build at startup set when given. */
     private static JsonObject config(Boolean buildDefaultScopeDocuments) {
-        JsonObject definitions = new JsonObject().put("maxStalenessSeconds", 3600);
+        JsonObject definitions = new JsonObject();
         if (buildDefaultScopeDocuments != null)
             definitions.put("buildDefaultScopeDocumentsAtStartup", buildDefaultScopeDocuments);
         return new JsonObject()

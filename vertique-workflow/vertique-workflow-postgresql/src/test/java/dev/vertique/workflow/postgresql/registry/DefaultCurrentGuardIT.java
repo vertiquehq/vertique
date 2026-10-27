@@ -221,10 +221,8 @@ public class DefaultCurrentGuardIT {
             // Then no record of the id remains
             assertThat(scenario.activations(null, id)).isEmpty();
 
-            // When version 1 is deprecated, its status time is moved past the cooling bound, and it is retired
+            // When version 1 is deprecated, and it is retired
             await(scenario.service().deprecate(key));
-            long coolingSeconds = node.app().workflowDefinitionsConfig().maxStalenessSeconds();
-            database.ageStatus(key, coolingSeconds + 60);
             await(scenario.service().retire(key));
 
             // Then the row is retired

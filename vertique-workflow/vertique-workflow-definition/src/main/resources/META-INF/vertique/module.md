@@ -318,8 +318,8 @@ the stored text for a document that builds), and a deprecated version back by ch
 The returned Future fails with `CODE_UNAVAILABLE`, `DRIFT`,
 `LOADER_MISSING` or `INVALID_TRANSITION`, and service metadata reports the committed status.
 
-`retire(DefinitionKey)` retires a candidate version, or a deprecated one after the cooling window with no live pinned
-instance, and reports RETIRED in service metadata and lists; the returned Future fails with `COOLING`,
+`retire(DefinitionKey)` retires a candidate version, or a deprecated one with no live pinned
+instance, however recently it was deprecated, and reports RETIRED in service metadata and lists; the returned Future fails with
 `PINNED_INSTANCES` or `INVALID_TRANSITION`. Retiring a version changes only its own row, even when id, version and hash
 are equal to those of another scope's. A scope's activation record can still name a version that is retired, because
 only the default scope's current version is protected; a start without a version in that scope then fails until the
@@ -357,7 +357,7 @@ arguments are failed Futures. Previously started instances keep their pinned ver
 
 `WorkflowDefinitionsConfig` supplies runtime input limit L (default 262144 bytes). Install the opt-in
 `WorkflowDefinitionsConfigModule` with the canonical `ConfigParsingModule` to parse
-`workflow.definitions.maxDocumentSizeBytes` and `maxStalenessSeconds`, or bind the typed config directly.
+`workflow.definitions.maxDocumentSizeBytes`, `buildDefaultScopeDocumentsAtStartup`, `planCache.maxEntries` and `publicationClaimTimeoutSeconds`, or bind the typed config directly.
 The default applies without a parser binding. The YAML scanner's code-point limit is L; nesting,
 expression limits, and collection-alias settings remain independent.
 

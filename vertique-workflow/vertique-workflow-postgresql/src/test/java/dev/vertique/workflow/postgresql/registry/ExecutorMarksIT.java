@@ -236,11 +236,7 @@ public class ExecutorMarksIT {
     private static Node node(
             DefinitionScenario database, Vertx vertx, WorkflowDefinitionSqlObserver observer, Deployment deployment) {
         JsonObject config = new JsonObject()
-                .put(
-                        "workflow",
-                        new JsonObject()
-                                .put("definitions", new JsonObject().put("maxStalenessSeconds", 3600))
-                                .put("executor", new JsonObject().put("pollIntervalMs", 100)));
+                .put("workflow", new JsonObject().put("executor", new JsonObject().put("pollIntervalMs", 100)));
         Boot boot = database.nodeOf(pool -> ExecutorMarksGraph.build(
                 vertx,
                 observer.observe(pool),

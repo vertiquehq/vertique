@@ -180,13 +180,10 @@ public class DefinitionReinstatementIT {
             assertThat(scenario.instanceCount(id)).isEqualTo(1);
             assertThat(scenario.livePinCount(id, 1, hash)).isZero();
 
-            // When the same component deprecates the version, its cooling window passes by the database clock and it
-            // is retired with no pin
-            long coolingSeconds = restarted.app().workflowDefinitionsConfig().maxStalenessSeconds();
+            // When the same component deprecates the version, it is retired with no pin
             await(service.deactivateDefault(id));
             await(service.deprecate(key));
             assertThat(scenario.stored(id, 1).status()).isEqualTo("DEPRECATED");
-            scenario.ageStatus(key, coolingSeconds + 60);
             await(service.retire(key));
 
             // Then the removal succeeds and the row is retired
@@ -234,7 +231,6 @@ public class DefinitionReinstatementIT {
             assertThat(scenario.stored(missingId, 2)).isEqualTo(neighbourBefore);
 
             // Given a tenant that retired the id and a second tenant that has since published the same id
-            long coolingSeconds = node.app().workflowDefinitionsConfig().maxStalenessSeconds();
             TenantRowSeed.seed(
                     node.app(),
                     "tenant-one",
@@ -243,7 +239,6 @@ public class DefinitionReinstatementIT {
                     DefinitionStatus.CANDIDATE);
             await(service.publish(tenantOneKey));
             await(service.deprecate(tenantOneKey));
-            scenario.ageStatus(tenantOneKey, coolingSeconds + 60);
             await(service.retire(tenantOneKey));
             TenantRowSeed.seed(
                     node.app(),
@@ -341,10 +336,9 @@ public class DefinitionReinstatementIT {
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
             scenario.ownRows(id, driftId);
 
-            // Given a document that a first node loaded, activated, deprecated, cooled and retired
+            // Given a document that a first node loaded, activated, deprecated and retired
             Boot first = scenario.node(none());
             WorkflowDefinitionService firstService = first.app().definitionService();
-            long coolingSeconds = first.app().workflowDefinitionsConfig().maxStalenessSeconds();
             String loadedHash = await(firstService.load(
                             WorkflowScopes.DEFAULT,
                             documentBytes(id, 1, ReinstatedDocV1.class),
@@ -353,7 +347,6 @@ public class DefinitionReinstatementIT {
                     .planHash();
             await(firstService.publish(key));
             await(firstService.deprecate(key));
-            scenario.ageStatus(key, coolingSeconds + 60);
             await(firstService.retire(key));
             assertThat(scenario.stored(id, 1).status()).isEqualTo("RETIRED");
             assertThat(scenario.stored(id, 1).planHash()).isEqualTo(loadedHash);
@@ -425,11 +418,9 @@ public class DefinitionReinstatementIT {
             assertThat(ManagedDefinitionDatabase.currentStatus(restarted.app(), id, 1))
                     .isEqualTo(ActivationStatus.AVAILABLE);
 
-            // When the same component deprecates it, its cooling window passes by the database clock and it is
-            // retired with no pin
+            // When the same component deprecates it, it is retired with no pin
             assertThat(scenario.instanceCount(id)).isZero();
             await(service.deprecate(key));
-            scenario.ageStatus(key, coolingSeconds + 60);
             await(service.retire(key));
 
             // Then the removal succeeds and the row is retired
@@ -648,7 +639,6 @@ public class DefinitionReinstatementIT {
             Boot node = scenario.node(none());
             WorkflowRegistry registry = node.app().workflowRegistry();
             WorkflowDefinitionService service = node.app().definitionService();
-            long coolingSeconds = node.app().workflowDefinitionsConfig().maxStalenessSeconds();
 
             // Given a tenant that retired the id
             byte[] staleDocument = documentBytes(id, 1, StaleDocV1.class);
@@ -664,7 +654,6 @@ public class DefinitionReinstatementIT {
                     .planHash();
             await(service.publish(tenantOneKey));
             await(service.deprecate(tenantOneKey));
-            scenario.ageStatus(tenantOneKey, coolingSeconds + 60);
             await(service.retire(tenantOneKey));
             Stored retiredBefore = scenario.stored("tenant-one", id, 1);
             assertThat(retiredBefore.status()).isEqualTo("RETIRED");
@@ -793,13 +782,13 @@ public class DefinitionReinstatementIT {
             scenario.ownRows(id);
             AppComponent app = scenario.node(none()).app();
             WorkflowDefinitionRegistryStore store = app.definitionRegistryStore();
-            long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
+            long claimTimeoutSeconds = app.workflowDefinitionsConfig().publicationClaimTimeoutSeconds();
 
             for (String holding : List.of("AVAILABLE", "DEPRECATED", "PUBLISHING", "STALE PUBLISHING")) {
                 // Given a retired global document and a second tenant that holds the id in the status under test
                 scenario.seedDocument(WorkflowScopes.DEFAULT, id, 1, hash, "RETIRED", text);
                 scenario.seedDocument("tenant-two", id, 1, hash, holding.replace("STALE ", ""), text);
-                if (holding.startsWith("STALE")) scenario.ageStatus(holderKey, 2 * coolingSeconds + 60);
+                if (holding.startsWith("STALE")) scenario.ageStatus(holderKey, claimTimeoutSeconds + 60);
                 Stored holderBefore = scenario.stored("tenant-two", id, 1);
 
                 // When the store is asked to reinstate the retired version, bypassing the lifecycle
@@ -833,7 +822,6 @@ public class DefinitionReinstatementIT {
             Boot node = scenario.node(none());
             WorkflowRegistry registry = node.app().workflowRegistry();
             WorkflowDefinitionService service = node.app().definitionService();
-            long coolingSeconds = node.app().workflowDefinitionsConfig().maxStalenessSeconds();
 
             // Given version 1 retired and version 2 active, both documents
             String hash1 = await(service.load(
@@ -850,7 +838,6 @@ public class DefinitionReinstatementIT {
                     source("lower-v2", loadedAt)));
             await(service.publish(v2));
             await(service.deprecate(v1));
-            scenario.ageStatus(v1, coolingSeconds + 60);
             await(service.retire(v1));
             RuntimeWorkflow activeRuntime =
                     DefinitionScenario.planOf(registry, new DefinitionKey(WorkflowScopes.DEFAULT, id, 2));

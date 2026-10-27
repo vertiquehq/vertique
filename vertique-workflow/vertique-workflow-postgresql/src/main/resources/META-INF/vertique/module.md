@@ -165,8 +165,8 @@ size cap. The adapter enforces the shared `WorkflowDefinitionsConfig` policy at 
 Runtime document load writes a CANDIDATE. Publication uses a fresh UUID claim (`publish_token`, present exactly while the
 status is `PUBLISHING`), local registration, then a fenced completion that makes the row `AVAILABLE`; obsolete completions fail and obsolete releases are no-ops. Every definition
 mutation takes an id-derived transaction advisory lock followed by ordered locks on all rows of that
-id. Claim ages use PostgreSQL wall clock after lock acquisition, with twice `maxStalenessSeconds`
-(default 30 seconds) as the stale age. These locks serialize each store transaction, not the whole
+id. Claim ages use PostgreSQL wall clock after lock acquisition, with `publicationClaimTimeoutSeconds`
+(default 60 seconds) as the stale age: a claim is stale when its age is at least that value. These locks serialize each store transaction, not the whole
 cross-node compilation operation. Before every mutating lock acquisition, the store sets transaction-
 local `lock_timeout` to `30000ms`; this bounds each advisory or row-lock wait independently. A timeout
 rolls back the transaction, releases its locks, and clears the local setting when the connection is
@@ -188,8 +188,7 @@ reinstatement: the store does not check that an executable source exists or that
 before it calls the store. Like every registry mutation (see `retire` below), the transaction runs at READ COMMITTED whatever the
 server default.
 
-`retire(key)` moves a CANDIDATE row, or a DEPRECATED row past the cooling window (`maxStalenessSeconds`, database
-clock), to RETIRED. Every registry mutation runs at READ COMMITTED, whatever the server default, so the pin count sees
+`retire(key)` moves a CANDIDATE row, or a DEPRECATED row, to RETIRED, however recently it was deprecated. Every registry mutation runs at READ COMMITTED, whatever the server default, so the pin count sees
 every row and pin committed while the mutation waited for the id lock. Under the id lock it checks the row, the status, and for a
 DEPRECATED row the cooling age and then the exact-version count of PENDING, RUNNING, WAITING and COMPENSATING instances (archived
 rows included), in that order; a CANDIDATE row is retired without the pin check because a candidate is not admitted for
@@ -212,7 +211,7 @@ while nodes running the previous code are still up, and activate it once every n
 `putActivation`, `removeActivation` and `listActivations` maintain `workflow_definition_activations`. A write runs like every registry mutation, under the id lock at READ COMMITTED: `putActivation` requires the target row `(target_scope_key, id, version)` to exist and be `AVAILABLE` (a refusal is `INVALID_TRANSITION` naming the target key), refuses with `WorkflowDefinitionContractMismatchException` a scope's record that names a default-scope version of another contract than the scope's own rows of the id, and then inserts or replaces the scope's record; `removeActivation` deletes it and accepts an absent record. The default-current guard lives in `transition` and `retire`: in the same transaction and after the lock was granted, a default-scope row is refused with `INVALID_TRANSITION` while the default scope's record of the id names its version, so a concurrent activation and deprecation serialize on the lock and the record never ends on a deprecated target. Rows of other scopes are not guarded. Delete a record with `removeActivation` (or `deactivateDefault` through the lifecycle) before deleting the definition rows it names, and note that tests or tools that delete definition rows directly must remove the id's records first because of the restricting foreign key.
 
 Activation records reach the other nodes of the same database through the engine's propagation pass: each pass reads
-`listActivations(null)` once, and the cadence is `workflow.definitions.maxStalenessSeconds`, so an `activate`, `follow` or
+`listActivations(null)` once, so an `activate`, `follow` or
 `deactivateDefault` committed on one node changes which version a start selects on the others within that bound plus the apply
 time. Records are durable and restored into the node's view at startup; a start never reads `workflow_definition_activations`.
 

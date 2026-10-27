@@ -468,7 +468,6 @@ public class StartSelectionIT {
                     .put(
                             "workflow",
                             new JsonObject()
-                                    .put("definitions", new JsonObject().put("maxStalenessSeconds", 3600))
                                     .put("executor", new JsonObject().put("pollIntervalMs", 100))
                                     .put("recording", recording));
             WorkflowDefinitionSqlObserver observer = new WorkflowDefinitionSqlObserver();

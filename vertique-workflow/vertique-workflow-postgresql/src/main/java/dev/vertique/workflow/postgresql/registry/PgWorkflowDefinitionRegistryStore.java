@@ -96,7 +96,6 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private final String sqlRelease;
     private final String sqlTransition;
     private final String sqlRetire;
-    private final String sqlCooling;
     private final String sqlCountNonTerminal;
     private final String sqlLockRows;
     private final String sqlPutActivation;
@@ -191,7 +190,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " AND kind='DOCUMENT' AND scope_key <> 'default'";
 
         this.sqlResetStale = "UPDATE " + definitions
-                + " SET status='CANDIDATE', publish_token=NULL, status_changed_at=clock_timestamp() WHERE definition_id=$1 AND status='PUBLISHING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2)";
+                + " SET status='CANDIDATE', publish_token=NULL, status_changed_at=clock_timestamp() WHERE definition_id=$1 AND status='PUBLISHING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= $2::numeric";
 
         this.sqlUpdateProvenance = "UPDATE " + definitions
                 + " SET source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$9 WHERE "
@@ -214,15 +213,11 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         this.sqlRetire = "UPDATE " + definitions + " SET status='RETIRED', status_changed_at=clock_timestamp() WHERE "
                 + KEY + " AND status=$4";
 
-        this.sqlCooling =
-                "SELECT (clock_timestamp() - status_changed_at) < ($4::bigint * interval '1 second') AS cooling FROM "
-                        + definitions + " WHERE " + KEY;
-
         this.sqlCountNonTerminal = "SELECT count(*) AS total FROM " + instances
                 + " WHERE definition_id = $1 AND definition_version = $2 AND definition_scope_key = $3 AND status IN ('PENDING','RUNNING','WAITING','COMPENSATING')";
 
         this.sqlLockRows = "SELECT " + LOCKED_COLUMNS
-                + ", publish_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM "
+                + ", publish_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= $2::numeric AS stale FROM "
                 + definitions
                 + " WHERE definition_id=$1 ORDER BY scope_key, definition_version FOR UPDATE";
 
@@ -443,7 +438,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             // DefinitionKey enforces the id constraints; the scope and version are irrelevant here.
             new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
             return mutate(definitionId, (tx, rows) -> tx.preparedQuery(sqlResetStale)
-                    .execute(Tuple.of(definitionId, config.maxStalenessSeconds()))
+                    .execute(Tuple.of(definitionId, config.publicationClaimTimeoutSeconds()))
                     .mapEmpty());
         });
     }
@@ -530,7 +525,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 if (!"CANDIDATE".equals(status) && !"DEPRECATED".equals(status))
                     throw invalid(key, "cannot retire status " + status);
                 // The default-current guard comes first. Only a deprecated version can be pinned by instances, so a
-                // candidate skips cooling and the count.
+                // candidate skips the count.
                 return guardDefaultCurrent(tx, key)
                         .compose(ignored ->
                                 "DEPRECATED".equals(status) ? guardDeprecated(tx, key) : Future.<Void>succeededFuture())
@@ -702,27 +697,15 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     /**
-     * Refuses a deprecated row that is still cooling, then one that is still pinned. Both reads run after the
-     * locks were acquired, so they see everything committed while the lock was awaited.
+     * Refuses a deprecated row that is still pinned. The read runs after the locks were acquired, so it sees
+     * everything committed while the lock was awaited.
      */
     private Future<Void> guardDeprecated(SqlConnection tx, DefinitionKey key) {
-        return tx.preparedQuery(sqlCooling)
-                .execute(parameters(key).addLong(config.maxStalenessSeconds()))
-                .compose(result -> {
-                    if (result.iterator().next().getBoolean("cooling"))
-                        throw conflict(
-                                Reason.COOLING,
-                                key,
-                                "deprecated less than " + config.maxStalenessSeconds()
-                                        + " seconds ago, so it is still cooling");
-                    return countNonTerminal(tx, key);
-                })
-                .map(pinned -> {
-                    if (pinned > 0)
-                        throw conflict(
-                                Reason.PINNED_INSTANCES, key, "pinned by " + pinned + " non-terminal instance(s)");
-                    return (Void) null;
-                });
+        return countNonTerminal(tx, key).map(pinned -> {
+            if (pinned > 0)
+                throw conflict(Reason.PINNED_INSTANCES, key, "pinned by " + pinned + " non-terminal instance(s)");
+            return (Void) null;
+        });
     }
 
     /**
@@ -938,7 +921,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
     private Future<RowSet<Row>> lockedRows(SqlConnection tx, String definitionId) {
         return DefinitionIdLock.acquire(tx, definitionId).compose(ignored -> tx.preparedQuery(sqlLockRows)
-                .execute(Tuple.of(definitionId, config.maxStalenessSeconds())));
+                .execute(Tuple.of(definitionId, config.publicationClaimTimeoutSeconds())));
     }
 
     private <T> Future<T> transaction(String id, Function<SqlConnection, Future<T>> action) {

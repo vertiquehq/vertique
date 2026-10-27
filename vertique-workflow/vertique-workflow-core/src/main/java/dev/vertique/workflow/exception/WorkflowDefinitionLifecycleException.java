@@ -12,7 +12,6 @@ public class WorkflowDefinitionLifecycleException extends WorkflowDefinitionExce
         INVALID_TRANSITION,
         STALE_CLAIM,
         PINNED_INSTANCES,
-        COOLING,
         DRIFT,
         LOADER_MISSING,
         CODE_UNAVAILABLE,

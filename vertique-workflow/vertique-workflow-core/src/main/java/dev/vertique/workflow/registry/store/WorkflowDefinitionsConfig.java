@@ -10,10 +10,8 @@ import dev.vertique.core.exception.ConfigurationException;
 import jakarta.annotation.Nullable;
 
 /**
- * Shared document admission policy, registry propagation cadence and plan cache size.
+ * Shared document admission policy, plan cache size and publication claim timeout.
  *
- * @param maxStalenessSeconds how long, in seconds, a node may go without reconciling its registry with the table; at
- *     least 1
  * @param maxDocumentSizeBytes the largest accepted document, in code points; positive, with a representable stored
  *     envelope
  * @param planCacheMaxEntries the most document plans the plan cache keeps resident ({@code
@@ -21,19 +19,26 @@ import jakarta.annotation.Nullable;
  * @param buildDefaultScopeDocumentsAtStartup whether startup builds the plan of every live default-scope document
  *     into the plan cache ({@code workflow.definitions.buildDefaultScopeDocumentsAtStartup}), so that a document that
  *     does not build fails startup; default {@code false}, when such a document is built on first use instead
+ * @param publicationClaimTimeoutSeconds how long, in seconds, a {@code PUBLISHING} claim is held before another
+ *     publish call may take it over and startup resets it to {@code CANDIDATE} ({@code
+ *     workflow.definitions.publicationClaimTimeoutSeconds}); at least 1, default
+ *     {@value #DEFAULT_PUBLICATION_CLAIM_TIMEOUT_SECONDS}
  */
 public record WorkflowDefinitionsConfig(
-        long maxStalenessSeconds,
         int maxDocumentSizeBytes,
         int planCacheMaxEntries,
-        boolean buildDefaultScopeDocumentsAtStartup) {
+        boolean buildDefaultScopeDocumentsAtStartup,
+        long publicationClaimTimeoutSeconds) {
 
     /** The default size of the plan cache. */
     public static final int DEFAULT_PLAN_CACHE_MAX_ENTRIES = 500;
 
+    /** The default publication claim timeout, in seconds. */
+    public static final long DEFAULT_PUBLICATION_CLAIM_TIMEOUT_SECONDS = 60;
+
     public WorkflowDefinitionsConfig {
-        if (maxStalenessSeconds <= 0)
-            throw new ConfigurationException("workflow.definitions.maxStalenessSeconds must be positive");
+        if (publicationClaimTimeoutSeconds <= 0)
+            throw new ConfigurationException("workflow.definitions.publicationClaimTimeoutSeconds must be positive");
         if (maxDocumentSizeBytes <= 0 || maxDocumentSizeBytes + ((long) maxDocumentSizeBytes / 2) > Integer.MAX_VALUE)
             throw new ConfigurationException(
                     "workflow.definitions.maxDocumentSizeBytes must be positive with a representable stored envelope");
@@ -42,37 +47,26 @@ public record WorkflowDefinitionsConfig(
     }
 
     /**
-     * Creates a configuration that builds no default-scope document at startup.
+     * Creates a configuration with the default plan cache size, no default-scope build at startup and the default
+     * publication claim timeout.
      *
-     * @param maxStalenessSeconds how long a node may go without reconciling its registry, in seconds
-     * @param maxDocumentSizeBytes the largest accepted document
-     * @param planCacheMaxEntries the most document plans the plan cache keeps resident
-     */
-    public WorkflowDefinitionsConfig(long maxStalenessSeconds, int maxDocumentSizeBytes, int planCacheMaxEntries) {
-        this(maxStalenessSeconds, maxDocumentSizeBytes, planCacheMaxEntries, false);
-    }
-
-    /**
-     * Creates a configuration with the default plan cache size.
-     *
-     * @param maxStalenessSeconds how long a node may go without reconciling its registry, in seconds
      * @param maxDocumentSizeBytes the largest accepted document
      */
-    public WorkflowDefinitionsConfig(long maxStalenessSeconds, int maxDocumentSizeBytes) {
-        this(maxStalenessSeconds, maxDocumentSizeBytes, DEFAULT_PLAN_CACHE_MAX_ENTRIES, false);
+    public WorkflowDefinitionsConfig(int maxDocumentSizeBytes) {
+        this(maxDocumentSizeBytes, DEFAULT_PLAN_CACHE_MAX_ENTRIES, false, DEFAULT_PUBLICATION_CLAIM_TIMEOUT_SECONDS);
     }
 
     @JsonCreator
     static WorkflowDefinitionsConfig fromJson(
-            @JsonProperty("maxStalenessSeconds") @Nullable Long seconds,
             @JsonProperty("maxDocumentSizeBytes") @Nullable Integer bytes,
             @JsonProperty("planCache") @Nullable JsonNode planCache,
-            @JsonProperty("buildDefaultScopeDocumentsAtStartup") @Nullable Boolean buildDefaultScopeDocuments) {
+            @JsonProperty("buildDefaultScopeDocumentsAtStartup") @Nullable Boolean buildDefaultScopeDocuments,
+            @JsonProperty("publicationClaimTimeoutSeconds") @Nullable Long claimTimeoutSeconds) {
         return new WorkflowDefinitionsConfig(
-                seconds == null ? 30 : seconds,
                 bytes == null ? 262144 : bytes,
                 planCacheMaxEntries(planCache),
-                buildDefaultScopeDocuments != null && buildDefaultScopeDocuments);
+                buildDefaultScopeDocuments != null && buildDefaultScopeDocuments,
+                claimTimeoutSeconds == null ? DEFAULT_PUBLICATION_CLAIM_TIMEOUT_SECONDS : claimTimeoutSeconds);
     }
 
     private static int planCacheMaxEntries(@Nullable JsonNode planCache) {
@@ -86,7 +80,7 @@ public record WorkflowDefinitionsConfig(
     }
 
     public static WorkflowDefinitionsConfig defaults() {
-        return new WorkflowDefinitionsConfig(30, 262144, DEFAULT_PLAN_CACHE_MAX_ENTRIES, false);
+        return new WorkflowDefinitionsConfig(262144);
     }
 
     public int maxStoredDocumentSizeBytes() {
