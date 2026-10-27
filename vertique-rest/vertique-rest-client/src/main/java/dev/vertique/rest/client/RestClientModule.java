@@ -90,10 +90,10 @@ public abstract class RestClientModule {
     /**
      * Declares the empty-by-default multibinding for system-owned REST client context capturers.
      *
-     * <p>Framework modules (e.g. {@code rest-audit}) contribute capturers via:
+     * <p>Framework modules contribute capturers via:
      * <pre>{@code
      * @Provides @IntoSet
-     * static RestClientContextCapturer<?> auditCapturer(AuditContextCapturer capturer) {
+     * static RestClientContextCapturer<?> myCapturer(MyContextCapturer capturer) {
      *     return capturer;
      * }
      * }</pre>

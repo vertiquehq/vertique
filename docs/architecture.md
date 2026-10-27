@@ -81,7 +81,7 @@ depends on it.
 
 `vertique-mcp-core` owns the transport-neutral MCP lifecycle and extension contracts.
 It depends on foundation and security APIs, never HTTP, protocol, observability, or
-enterprise audit implementations. `vertique-mcp-server` owns the Router-mounted MCP
+audit implementations. `vertique-mcp-server` owns the Router-mounted MCP
 transport composition and consumes that core API plus the existing REST security
 seams. It also consumes `vertique-rate-limit-core` and `vertique-resilience`
 exactly as the REST adapters already do for the shared APIs. Observer adapters depend

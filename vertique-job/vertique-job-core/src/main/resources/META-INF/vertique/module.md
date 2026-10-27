@@ -398,7 +398,7 @@ swallowed; later listeners still run.
 
 ```java
 @Provides @IntoSet
-static JobExecutionStateTransitionListener auditJobsListener(AuditJobsStateTransitionListener l) {
+static JobExecutionStateTransitionListener myListener(MyStateTransitionListener l) {
     return l;
 }
 ```
