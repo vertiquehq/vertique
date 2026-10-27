@@ -67,7 +67,7 @@ The recommended pattern for pulling a Vault secret into the tree without writing
       {
         "name": "vault-app",
         "type": "vault",
-        "address": "http://vault:8200",
+        "address": "https://vault:8200",
         "paths": [{ "path": "secret/app", "prefix": "db." }]
       }
     ]
@@ -87,7 +87,7 @@ The full per-source configuration block under `config.propertySources[*]`:
 {
   "name":           "vault-app",
   "type":           "vault",
-  "address":        "http://vault:8200",
+  "address":        "https://vault:8200",
   "namespace":      "my-ns",
   "auth": {
     "method":       "token",
@@ -102,13 +102,15 @@ The full per-source configuration block under `config.propertySources[*]`:
 }
 ```
 
+A plain `http://` address is accepted but sends the Vault token in cleartext. Use `https://` in production.
+
 ### Top-Level Fields
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `type` | Yes | — | Must be `"vault"` |
 | `name` | No | `vault[{index}]` | Source instance name for diagnostics |
-| `address` | Yes | — | Vault base URL (e.g. `http://vault:8200`) |
+| `address` | Yes | — | Vault base URL (e.g. `https://vault:8200`) |
 | `namespace` | No | none | Vault Enterprise namespace |
 | `auth` | No | token-from-env | Auth configuration object; see Auth Methods below |
 | `paths` | Yes | — | Non-empty array of path entries |
@@ -218,7 +220,7 @@ To use the source, add `vertique-config-vault` to the application's `pom.xml` an
       {
         "name":    "vault-app",
         "type":    "vault",
-        "address": "http://vault:8200",
+        "address": "https://vault:8200",
         "paths":   [{ "path": "secret/app", "prefix": "app." }]
       }
     ]
