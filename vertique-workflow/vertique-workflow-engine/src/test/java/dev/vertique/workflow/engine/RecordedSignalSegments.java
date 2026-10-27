@@ -66,6 +66,33 @@ final class RecordedSignalSegments {
             String dedupKey,
             @Nullable String explicitCarrierJson,
             SqlClient tx) {
+        return run(engine, instance, signalName, payload, dedupKey, explicitCarrierJson, null, tx);
+    }
+
+    /**
+     * Runs the segment of an instance-addressed signal that was recorded with a durable context.
+     *
+     * @param engine the engine assembled by the factory
+     * @param instance the instance, as it is read when the segment starts
+     * @param signalName the signal's name
+     * @param payload the signal's payload
+     * @param dedupKey the signal's idempotency key
+     * @param explicitCarrierJson the explicit carrier as recorded, or {@code null}
+     * @param contextJson the durable context captured when the signal was recorded, in the carrier wrapper, or
+     *     {@code null}
+     * @param tx the segment's transaction handle
+     * @return a future that succeeds when the segment applied the signal and fails with the failure of the segment, or
+     *     with an {@link AssertionError} when it settled the command any other way
+     */
+    static Future<Void> run(
+            TransactionalWorkflowOperations<SqlClient> engine,
+            WorkflowInstance instance,
+            String signalName,
+            Object payload,
+            String dedupKey,
+            @Nullable String explicitCarrierJson,
+            @Nullable String contextJson,
+            SqlClient tx) {
         CommandHead head = new CommandHead(
                 1L,
                 instance.id(),
@@ -82,7 +109,8 @@ final class RecordedSignalSegments {
                 Json.encode(payload),
                 new JsonObject().put("name", signalName).encode(),
                 dedupKey,
-                explicitCarrierJson);
+                explicitCarrierJson,
+                contextJson);
         return ((WorkflowEngine) engine)
                 .segments()
                 .run(head, claim, command, tx, MAX_STEPS)

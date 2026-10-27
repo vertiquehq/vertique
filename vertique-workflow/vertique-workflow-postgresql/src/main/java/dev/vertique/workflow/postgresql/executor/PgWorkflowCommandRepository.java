@@ -3,6 +3,9 @@
 
 package dev.vertique.workflow.postgresql.executor;
 
+import dev.vertique.context.DurableContextPropagator;
+import dev.vertique.core.context.DispatchBoundary;
+import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgTableNames;
@@ -102,6 +105,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final String readParkedRow;
     private final String blockedByDeadline;
     private final String parkedBefore;
+    private final @Nullable DurableContextPropagator propagator;
 
     /**
      * Creates a repository whose tables are not schema-qualified, so they resolve through the connection's default
@@ -138,6 +142,28 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
      */
     public PgWorkflowCommandRepository(
             Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas, WorkflowRecordingConfig recording) {
+        this(pool, exceptionMapper, schemas, recording, null);
+    }
+
+    /**
+     * Creates a repository that also stores, with every command it records, the durable context its propagator
+     * captures at that moment (without an identity snapshot).
+     *
+     * @param pool            the connection pool the reads borrow from
+     * @param exceptionMapper the mapper used to translate SQL errors into typed exceptions
+     * @param schemas         the schema placement; an empty mapping leaves table names unqualified
+     * @param recording       the recording configuration, whose lock timeout bounds {@link #lockInstance}
+     * @param propagator      the propagator that captures the recording caller's durable context, or {@code null} to
+     *                        store no context
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment identifier
+     */
+    public PgWorkflowCommandRepository(
+            Pool pool,
+            PgDbExceptionMapper exceptionMapper,
+            DbSchemas schemas,
+            WorkflowRecordingConfig recording,
+            @Nullable DurableContextPropagator propagator) {
+        this.propagator = propagator;
         this.pool = pool;
         this.exceptionMapper = exceptionMapper;
         this.queries = new PgCommandProbeQueries(new CommandEligibilitySql(schemas));
@@ -152,9 +178,9 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         String commands = eligibility.commandsTable();
         String instances = PgTableNames.qualify(schemas, "workflow", "workflow_instances");
         this.insertStart = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
-                + " (workflow_id, seq, kind, state, recorded_at, available_at, payload_json, dedup_key, target_json)"
-                + " SELECT $1, $2, 'START', 'PENDING', recorded.at, recorded.at, $3::jsonb, $4, $5::jsonb FROM recorded"
-                + " RETURNING id";
+                + " (workflow_id, seq, kind, state, recorded_at, available_at, payload_json, dedup_key, target_json,"
+                + " context_json) SELECT $1, $2, 'START', 'PENDING', recorded.at, recorded.at, $3::jsonb, $4,"
+                + " $5::jsonb, $6::jsonb FROM recorded RETURNING id";
         this.peekHeads = "SELECT c.id, c.workflow_id, c.kind, i.definition_scope_key, i.definition_id,"
                 + " i.definition_version, i.plan_hash, i.status IN " + ENDED + " AS instance_ended FROM " + commands
                 + " c JOIN " + instances
@@ -208,7 +234,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 "SELECT kind FROM " + commands + " WHERE id = $1 AND state = 'CLAIMED' AND claim_token = $2 FOR UPDATE";
         this.fenceCommand =
                 "SELECT c.id, c.payload_json::text AS payload_json, c.target_json::text AS target_json, c.dedup_key,"
-                        + " c.explicit_carrier_json::text AS explicit_carrier_json FROM "
+                        + " c.explicit_carrier_json::text AS explicit_carrier_json, c.context_json::text AS context_json FROM "
                         + commands
                         + " c WHERE c.id = $1 AND c.state = 'CLAIMED' AND c.claim_token = $2 AND "
                         + eligibility.atHead("c")
@@ -235,8 +261,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 "UPDATE " + queues + " SET open_signals = open_signals - 1 WHERE workflow_id = $1 AND open_signals > 0";
         this.insertSignal = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
                 + " (workflow_id, seq, kind, state, recorded_at, available_at, payload_json, dedup_key, target_json,"
-                + " explicit_carrier_json) SELECT $1, $2, 'SIGNAL', 'PENDING', recorded.at, recorded.at, $3::jsonb,"
-                + " $4, $5::jsonb, $6::jsonb FROM recorded RETURNING id";
+                + " explicit_carrier_json, context_json) SELECT $1, $2, 'SIGNAL', 'PENDING', recorded.at, recorded.at,"
+                + " $3::jsonb, $4, $5::jsonb, $6::jsonb, $7::jsonb FROM recorded RETURNING id";
         this.declaredNames = "SELECT signal_names_json::text AS names FROM "
                 + PgTableNames.qualify(schemas, "workflow", "workflow_definitions")
                 + " WHERE scope_key = $1 AND definition_id = $2 AND definition_version = $3";
@@ -249,8 +275,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         this.parkedAll = parked + " ORDER BY c.seq";
         this.readParkedRow =
                 "SELECT c.payload_json::text AS payload_json, c.target_json::text AS target_json, c.dedup_key,"
-                        + " c.explicit_carrier_json::text AS explicit_carrier_json FROM " + commands
-                        + " c WHERE c.workflow_id = $1 AND c.id = $2 AND c.state = 'PARKED'";
+                        + " c.explicit_carrier_json::text AS explicit_carrier_json, c.context_json::text AS context_json FROM "
+                        + commands + " c WHERE c.workflow_id = $1 AND c.id = $2 AND c.state = 'PARKED'";
         this.parkedBefore = "SELECT EXISTS (SELECT 1 FROM " + history
                 + " WHERE workflow_id = $1 AND entry_type = 'SIGNAL_PARKED' AND (payload_json->>'commandId')::bigint = $2)"
                 + " AS parked";
@@ -299,9 +325,29 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         return nextQueueSequence(instance, tx)
                 .compose(seq -> tx.preparedQuery(insertStart)
                         .execute(Tuple.of(
-                                instance.value(), seq, jsonValue(payloadJson), idempotencyKey, jsonValue(targetJson))))
+                                instance.value(),
+                                seq,
+                                jsonValue(payloadJson),
+                                idempotencyKey,
+                                jsonValue(targetJson),
+                                capturedContext(instance, seq))))
                 .map(rows -> rows.iterator().next().getLong("id"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordStart")));
+    }
+
+    /**
+     * The durable context the recording caller has bound, encoded for the carrier of the command row at {@code seq}
+     * and without an identity snapshot, as the carrier wrapper; {@code null} when the capture is empty.
+     */
+    private @Nullable Object capturedContext(WorkflowInstanceId instance, long seq) {
+        if (propagator == null) {
+            return null;
+        }
+        DurableMetadata captured = propagator
+                .mergeCaptured(
+                        DurableMetadata.empty(), DispatchBoundary.WORKFLOW, CommandContextCarrier.of(instance, seq))
+                .without(CommandContextCarrier.IDENTITY_SNAPSHOT_NAMESPACE);
+        return captured.isEmpty() ? null : captured.toCarrier();
     }
 
     /** A JSON text as the value the PostgreSQL client binds to a {@code jsonb} parameter, so it is stored as JSON. */
@@ -554,7 +600,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             row.getString("payload_json"),
                             row.getString("target_json"),
                             row.getString("dedup_key"),
-                            row.getString("explicit_carrier_json")));
+                            row.getString("explicit_carrier_json"),
+                            row.getString("context_json")));
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands fence")));
     }
@@ -680,7 +727,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                 jsonValue(payloadJson),
                                 dedupKey,
                                 target,
-                                jsonValue(explicitCarrierJson))))
+                                jsonValue(explicitCarrierJson),
+                                capturedContext(instance, seq))))
                 .map(rows -> rows.iterator().next().getLong("id"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordSignal")));
     }
@@ -741,7 +789,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             row.getString("payload_json"),
                             row.getString("target_json"),
                             row.getString("dedup_key"),
-                            row.getString("explicit_carrier_json")));
+                            row.getString("explicit_carrier_json"),
+                            row.getString("context_json")));
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands readParked")));
     }

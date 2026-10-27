@@ -4,7 +4,9 @@
 package dev.vertique.workflow.postgresql.engine;
 
 import dev.vertique.context.DurableContextPropagator;
+import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
@@ -239,6 +241,7 @@ public final class PgWorkflowEngineTestSupport {
             Optional<WorkflowMigrationRegistry> migrationRegistryOpt) {
         return startedEngine(
                 pool,
+                propagator,
                 WorkflowEngineParts.builder()
                         .txRunner(runnerFor(pool))
                         .registry(registry)
@@ -298,6 +301,7 @@ public final class PgWorkflowEngineTestSupport {
             Optional<BeanValidator> beanValidator) {
         return startedEngine(
                 pool,
+                propagator,
                 WorkflowEngineParts.builder()
                         .txRunner(runnerFor(pool))
                         .registry(registry)
@@ -336,6 +340,7 @@ public final class PgWorkflowEngineTestSupport {
             Optional<WorkflowStateCompatibility> stateCompatibility) {
         return startedEngine(
                 pool,
+                null,
                 WorkflowEngineParts.builder()
                         .txRunner(runnerFor(pool))
                         .registry(registry)
@@ -419,11 +424,19 @@ public final class PgWorkflowEngineTestSupport {
      * run it with the wrong plan. The executor stops itself once the engine's pool is closed, so a test that closes its
      * pool at the end leaves nothing running.
      */
-    private static WorkflowEngineHandle startedEngine(Pool pool, WorkflowEngineParts.Builder parts) {
+    private static WorkflowEngineHandle startedEngine(
+            Pool pool, DurableContextPropagator propagator, WorkflowEngineParts.Builder parts) {
         AtomicReference<WorkflowEngineHandle> handle = new AtomicReference<>();
         java.util.Set<java.util.UUID> own = java.util.concurrent.ConcurrentHashMap.newKeySet();
-        WorkflowCommandRepository<SqlClient> commands =
-                ownStartsOnly(new PgWorkflowCommandRepository(pool, new PgDbExceptionMapper()), own, handle);
+        WorkflowCommandRepository<SqlClient> commands = ownStartsOnly(
+                new PgWorkflowCommandRepository(
+                        pool,
+                        new PgDbExceptionMapper(),
+                        DbSchemas.empty(),
+                        WorkflowRecordingConfig.defaults(),
+                        propagator),
+                own,
+                handle);
         boolean mocked = Mockito.mockingDetails(pool).isMock();
         WorkflowEngineHandle engine = WorkflowEngineFactory.create(parts.commands(commands)
                 .vertx(mocked ? null : ownerOf(pool))
@@ -572,6 +585,7 @@ public final class PgWorkflowEngineTestSupport {
         private WorkflowRecordingConfig recordingConfig;
         private WorkflowDefinitionRegistryStore definitionStore;
         private DurableContextPropagator propagator;
+        private Set<InboundContextInitializer> inboundContextInitializers = Set.of();
         private Set<WorkflowExecutorObserver> executorObservers = Set.of();
         private CommandWakeups commandWakeups = CommandWakeups.none();
         private UnaryOperator<WorkflowTransactionRunner<SqlClient>> runnerDecorator = UnaryOperator.identity();
@@ -625,6 +639,12 @@ public final class PgWorkflowEngineTestSupport {
             return this;
         }
 
+        /** The first-ingress initializers that run after every durable bind; none by default. */
+        public ExecutorEngine inboundContextInitializers(Set<InboundContextInitializer> initializers) {
+            this.inboundContextInitializers = initializers;
+            return this;
+        }
+
         /** Wraps the transaction runner that {@code runnerFor(Pool)} builds. */
         public ExecutorEngine runnerDecorator(UnaryOperator<WorkflowTransactionRunner<SqlClient>> decorator) {
             this.runnerDecorator = decorator;
@@ -647,7 +667,8 @@ public final class PgWorkflowEngineTestSupport {
             PgDbExceptionMapper ex = new PgDbExceptionMapper();
             WorkflowEngineParts.Builder parts = WorkflowEngineParts.builder()
                     .txRunner(runnerDecorator.apply(runnerFor(pool)))
-                    .commands(commandsDecorator.apply(new PgWorkflowCommandRepository(pool, ex)))
+                    .commands(commandsDecorator.apply(new PgWorkflowCommandRepository(
+                            pool, ex, DbSchemas.empty(), WorkflowRecordingConfig.defaults(), propagator)))
                     .registry(registry)
                     .instances(new PgWorkflowInstanceRepository(pool, ex))
                     .history(new PgWorkflowHistoryRepository(pool, ex))
@@ -660,7 +681,7 @@ public final class PgWorkflowEngineTestSupport {
                     .recorders(recorders)
                     .optionalIntentKinds(Set.of(IntentKind.WORKFLOW_EVENT))
                     .propagator(propagator)
-                    .inboundContextInitializers(Set.of())
+                    .inboundContextInitializers(inboundContextInitializers)
                     .typeNames(typeNamesOf(registry))
                     .definitionStore(
                             definitionStore != null

@@ -49,7 +49,8 @@ final class Dispositions {
 
     /**
      * Whether the failure is a transient one: a connection failure, a timeout, a serialization failure, a deadlock,
-     * a lock timeout or an optimistic conflict of the instance.
+     * a lock timeout, an optimistic conflict of the instance, or an executor context that is not clean (a security
+     * context or a deferred-execution origin already bound: the fault is the executor's environment, not the instance).
      *
      * <p>The workflow mapping stage returns the first four as a retryable {@link WorkflowPersistenceException} and the
      * optimistic conflict as a {@link WorkflowConflictException}; the database-layer types are accepted as well for a
@@ -60,6 +61,9 @@ final class Dispositions {
      * @return {@code true} if the segment is retried without spending its attempt
      */
     static boolean isTransient(Throwable failure) {
+        if (causeOfType(failure, ExecutorContextNotCleanException.class) != null) {
+            return true;
+        }
         if (failure instanceof WorkflowPersistenceException persistence) {
             return persistence.retryable();
         }

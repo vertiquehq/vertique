@@ -19,6 +19,13 @@ import dev.vertique.context.DurableContextMetadataRegistry;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.context.InboundDispatchScope;
 import dev.vertique.context.InboundExecutionContextScope;
+import dev.vertique.core.context.ContextDecodeResult;
+import dev.vertique.core.context.ContextValue;
+import dev.vertique.core.context.DeferredExecutionOrigin;
+import dev.vertique.core.context.DurableContextMetadataDecoder;
+import dev.vertique.core.context.DurableContextMetadataEncoder;
+import dev.vertique.core.context.DurableDecodeContext;
+import dev.vertique.core.context.DurableEncodeContext;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.correlation.CorrelationContext;
@@ -27,6 +34,11 @@ import dev.vertique.correlation.CorrelationContextDurableDecoder;
 import dev.vertique.correlation.CorrelationContextDurableEncoder;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.correlation.CorrelationContextSeeder;
+import dev.vertique.security.PrincipalRef;
+import dev.vertique.security.PrincipalType;
+import dev.vertique.security.SecurityContext;
+import dev.vertique.security.SecurityContexts;
+import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -36,13 +48,18 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
+import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import jakarta.annotation.Nullable;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -104,6 +121,300 @@ class WorkflowContextBinderTest {
         DurableContextPropagator propagator =
                 new DurableContextPropagator(registry, holder, new ContextScopeBinder(holder));
         return new InboundExecutionContextScope(new InboundDispatchScope(), propagator, Set.of());
+    }
+
+    // --- Recorded base of an executor drive ---
+
+    private static final long COMMAND_SEQ = 4217L;
+
+    private static final String IDENTITY_NAMESPACE = "identity-snapshot";
+
+    /** What an operation saw bound while it ran. */
+    private record Effective(Optional<String> correlation, Optional<String> tenant, Optional<String> identity) {}
+
+    /** The identity snapshot a durable document can carry. */
+    private record IdentityCtx(String subject) implements ContextValue {}
+
+    /** A binder over real codecs for correlation, tenant and identity, with an ambient context to ignore. */
+    private static final class Harness {
+        final DefaultContextHolder holder = new DefaultContextHolder();
+        final CorrelationContextFactory correlations = new CorrelationContextFactory(Optional.empty());
+        final InboundExecutionContextScope scope;
+        final WorkflowContextBinder binder;
+
+        Harness() {
+            DurableContextMetadataRegistry registry = new DurableContextMetadataRegistry(
+                    Set.of(TenantCtxCodec.encoder(), new CorrelationContextDurableEncoder(), identityEncoder()),
+                    Set.of(
+                            TenantCtxCodec.decoder(),
+                            new CorrelationContextDurableDecoder(correlations),
+                            identityDecoder()));
+            DurableContextPropagator propagator =
+                    new DurableContextPropagator(registry, holder, new ContextScopeBinder(holder));
+            this.scope = spy(new InboundExecutionContextScope(new InboundDispatchScope(), propagator, Set.of()));
+            this.binder = new WorkflowContextBinder(propagator, scope, holder);
+        }
+
+        DurableMetadata correlation(String id) {
+            return new CorrelationContextDurableEncoder()
+                    .encode(
+                            correlations.create(
+                                    new CorrelationIdentifier("req-" + id, "test"),
+                                    new CorrelationIdentifier(id, "test")),
+                            new DurableEncodeContext("test"));
+        }
+
+        /** Binds the ambient context on the current context, as a dirty caller would have it. */
+        void bindAmbient() {
+            holder.bind(
+                    CorrelationContext.class,
+                    correlations.create(
+                            new CorrelationIdentifier("req-A", "test"), new CorrelationIdentifier("A", "test")));
+            holder.bind(TenantCtx.class, new TenantCtx("AMBIENT"));
+        }
+
+        Effective observed() {
+            return new Effective(
+                    holder.current(CorrelationContext.class)
+                            .map(c -> c.correlationId().value()),
+                    holder.current(TenantCtx.class).map(TenantCtx::tenantId),
+                    holder.current(IdentityCtx.class).map(IdentityCtx::subject));
+        }
+
+        /**
+         * Runs an executor bind on a context that has the ambient correlation A and tenant AMBIENT bound, and returns
+         * what the operation saw.
+         */
+        Effective bind(
+                Vertx vertx,
+                @Nullable DurableMetadata explicit,
+                @Nullable DurableMetadata recorded,
+                @Nullable DurableMetadata instanceCarrier)
+                throws Exception {
+            CompletableFuture<Effective> result = new CompletableFuture<>();
+            runOnDuplicated(vertx, v -> {
+                bindAmbient();
+                try {
+                    binder.withRecordedBase(
+                                    instanceWithMetadata(instanceCarrier),
+                                    COMMAND_SEQ,
+                                    explicit,
+                                    recorded,
+                                    () -> Future.succeededFuture(observed()))
+                            .onComplete(ar -> {
+                                if (ar.succeeded()) {
+                                    result.complete(ar.result());
+                                } else {
+                                    result.completeExceptionally(ar.cause());
+                                }
+                            });
+                } catch (Throwable t) {
+                    result.completeExceptionally(t);
+                }
+            });
+            return result.get(10, TimeUnit.SECONDS);
+        }
+    }
+
+    private static DurableMetadata tenant(String id) {
+        return DurableMetadata.of(TenantCtxCodec.NAMESPACE, JsonObject.of("tenantId", id));
+    }
+
+    private static DurableMetadata identity(String subject) {
+        return DurableMetadata.of(IDENTITY_NAMESPACE, JsonObject.of("subject", subject));
+    }
+
+    private static DurableContextMetadataEncoder<IdentityCtx> identityEncoder() {
+        return new DurableContextMetadataEncoder<>() {
+            @Override
+            public Class<IdentityCtx> type() {
+                return IdentityCtx.class;
+            }
+
+            @Override
+            public String namespace() {
+                return IDENTITY_NAMESPACE;
+            }
+
+            @Override
+            public DurableMetadata encode(IdentityCtx value, DurableEncodeContext context) {
+                return identity(value.subject());
+            }
+        };
+    }
+
+    private static DurableContextMetadataDecoder<IdentityCtx> identityDecoder() {
+        return new DurableContextMetadataDecoder<>() {
+            @Override
+            public Class<IdentityCtx> type() {
+                return IdentityCtx.class;
+            }
+
+            @Override
+            public String namespace() {
+                return IDENTITY_NAMESPACE;
+            }
+
+            @Override
+            public ContextDecodeResult<IdentityCtx> decode(DurableMetadata metadata, DurableDecodeContext context) {
+                return metadata.body(IDENTITY_NAMESPACE)
+                        .map(body -> body.getString("subject"))
+                        .map(IdentityCtx::new)
+                        .map(ContextDecodeResult::of)
+                        .orElseGet(ContextDecodeResult::empty);
+            }
+        };
+    }
+
+    private static SecurityContext securityContext() {
+        return SecurityContexts.unauthenticated(new SecurityIdentity(
+                new PrincipalRef(PrincipalType.USER, "user-77", Map.of()),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty()));
+    }
+
+    @Test
+    @DisplayName("an executor bind takes the explicit carrier, else the recorded context, else the instance carrier")
+    void recordedBasePrecedenceAndGate(Vertx vertx) throws Exception {
+        // Given recorded context {corr:X}, explicit carrier {corr:E}, instance carrier {corr:I, tenant:T} and an
+        // ambient context {corr:A, tenant:AMBIENT} that must never be a base
+        Harness h = new Harness();
+        DurableMetadata explicit = h.correlation("E");
+        DurableMetadata recorded = h.correlation("X");
+        DurableMetadata instance = h.correlation("I").merge(tenant("T"), DurableMetadata.MergePolicy.FAIL_ON_CONFLICT);
+
+        // When the drive runs with explicit, recorded and instance; recorded and instance; and instance only
+        Effective withAll = h.bind(vertx, explicit, recorded, instance);
+        Effective withRecorded = h.bind(vertx, null, recorded, instance);
+        Effective withInstance = h.bind(vertx, null, null, instance);
+
+        // Then the effective correlation is E, X and I, the instance fills tenant T each time, ambient never appears
+        assertThat(withAll.correlation())
+                .as("explicit, recorded, instance: corr")
+                .contains("E");
+        assertThat(withAll.tenant()).as("explicit, recorded, instance: tenant").contains("T");
+        assertThat(withRecorded.correlation()).as("recorded, instance: corr").contains("X");
+        assertThat(withRecorded.tenant()).as("recorded, instance: tenant").contains("T");
+        assertThat(withInstance.correlation()).as("instance only: corr").contains("I");
+        assertThat(withInstance.tenant()).as("instance only: tenant").contains("T");
+
+        // And with no explicit carrier, recorded context or instance carrier nothing is bound and nothing is seeded
+        Harness dark = new Harness();
+        Effective none = dark.bind(vertx, null, null, null);
+        assertThat(none.correlation()).as("no source: ambient left as it was").contains("A");
+        assertThat(none.tenant()).as("no source: ambient left as it was").contains("AMBIENT");
+        verify(dark.scope, never()).installDurable(any(), any());
+        verify(dark.scope, never()).installDurableAndRun(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName(
+            "an executor bind fails closed when a security context or a deferred-execution origin is already bound")
+    void executorBindFailsClosedWhenSecurityContextOrOriginIsBound(Vertx vertx) throws Exception {
+        // Given recorded context {corr:X}, and three contexts: one with a security context bound, one with a
+        // deferred-execution origin bound and a clean one
+        DeferredExecutionOrigin origin = DeferredExecutionOrigin.of("delayed-job", "order-42");
+        Harness onSecurity = new Harness();
+        Harness onOrigin = new Harness();
+        Harness onClean = new Harness();
+
+        // When the executor entry point binds and runs a counting operation on each
+        BindOutcome securityCase =
+                bindOn(vertx, onSecurity, h -> h.holder.bind(SecurityContext.class, securityContext()));
+        BindOutcome originCase = bindOn(vertx, onOrigin, h -> h.holder.bind(DeferredExecutionOrigin.class, origin));
+        BindOutcome cleanCase = bindOn(vertx, onClean, h -> {});
+
+        // Then on the security context the future fails naming instance and sequence, the operation never ran, no
+        // scope was installed and the security context is still the one that was bound
+        assertThat(securityCase.failure())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(securityCase.instanceId())
+                .hasMessageContaining(String.valueOf(COMMAND_SEQ))
+                .hasMessageNotContaining("user-77");
+        assertThat(securityCase.invocations()).isZero();
+        assertThat(securityCase.securityAfter()).isPresent();
+        assertThat(securityCase.during().correlation()).as("nothing installed").isEmpty();
+        verify(onSecurity.scope, never()).installDurable(any(), any());
+        verify(onSecurity.scope, never()).installDurableAndRun(any(), any(), any());
+
+        // And likewise on the origin, which is still the bound one
+        assertThat(originCase.failure())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(originCase.instanceId())
+                .hasMessageContaining(String.valueOf(COMMAND_SEQ))
+                .hasMessageNotContaining("order-42");
+        assertThat(originCase.invocations()).isZero();
+        assertThat(originCase.originAfter()).contains(origin);
+        assertThat(originCase.during().correlation()).as("nothing installed").isEmpty();
+        verify(onOrigin.scope, never()).installDurable(any(), any());
+        verify(onOrigin.scope, never()).installDurableAndRun(any(), any(), any());
+
+        // And on the clean context the operation ran once with corr X
+        assertThat(cleanCase.failure()).isNull();
+        assertThat(cleanCase.invocations()).isEqualTo(1);
+        assertThat(cleanCase.during().correlation()).contains("X");
+    }
+
+    @Test
+    @DisplayName(
+            "an executor bind strips the identity snapshot from the explicit carrier, the recorded context and the instance")
+    void executorBindStripsTheIdentitySnapshotFromEverySource(Vertx vertx) throws Exception {
+        // Given each source in turn carrying an identity snapshot next to tenant T
+        Harness h = new Harness();
+        DurableMetadata withSnapshot =
+                tenant("T").merge(identity("user-77"), DurableMetadata.MergePolicy.FAIL_ON_CONFLICT);
+
+        // When the drive binds it as the explicit carrier, as the recorded context and as the instance carrier
+        Effective viaExplicit = h.bind(vertx, withSnapshot, null, null);
+        Effective viaRecorded = h.bind(vertx, null, withSnapshot, null);
+        Effective viaInstance = h.bind(vertx, null, null, withSnapshot);
+
+        // Then tenant T is bound and no identity is
+        for (Effective seen : java.util.List.of(viaExplicit, viaRecorded, viaInstance)) {
+            assertThat(seen.tenant()).contains("T");
+            assertThat(seen.identity()).isEmpty();
+        }
+    }
+
+    /** What an executor bind did on one context. */
+    private record BindOutcome(
+            @Nullable Throwable failure,
+            int invocations,
+            Effective during,
+            Optional<SecurityContext> securityAfter,
+            Optional<DeferredExecutionOrigin> originAfter,
+            String instanceId) {}
+
+    /** Binds recorded context {corr:X} through the executor entry point on a context prepared by {@code prepare}. */
+    private static BindOutcome bindOn(Vertx vertx, Harness h, java.util.function.Consumer<Harness> prepare)
+            throws Exception {
+        CompletableFuture<BindOutcome> result = new CompletableFuture<>();
+        AtomicInteger invocations = new AtomicInteger();
+        WorkflowInstance instance = instanceWithMetadata(null);
+        runOnDuplicated(vertx, v -> {
+            prepare.accept(h);
+            Effective[] during = {new Effective(Optional.empty(), Optional.empty(), Optional.empty())};
+            Future<Effective> bound;
+            try {
+                bound = h.binder.withRecordedBase(instance, COMMAND_SEQ, null, h.correlation("X"), () -> {
+                    invocations.incrementAndGet();
+                    during[0] = h.observed();
+                    return Future.succeededFuture(during[0]);
+                });
+            } catch (Throwable t) {
+                result.completeExceptionally(t);
+                return;
+            }
+            bound.onComplete(ar -> result.complete(new BindOutcome(
+                    ar.cause(),
+                    invocations.get(),
+                    ar.succeeded() ? ar.result() : h.observed(),
+                    h.holder.current(SecurityContext.class),
+                    h.holder.current(DeferredExecutionOrigin.class),
+                    instance.id().value().toString())));
+        });
+        return result.get(10, TimeUnit.SECONDS);
     }
 
     // --- Null-object noop() ---

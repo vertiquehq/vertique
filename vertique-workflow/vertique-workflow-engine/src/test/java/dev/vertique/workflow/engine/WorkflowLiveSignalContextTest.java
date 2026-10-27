@@ -204,7 +204,7 @@ class WorkflowLiveSignalContextTest {
     }
 
     @Test
-    @DisplayName("signal(): live ambient correlation B wins over the instance's persisted correlation A,"
+    @DisplayName("signal(): the signal's recorded correlation B wins over the instance's persisted correlation A,"
             + " and instance fill supplies tenant T")
     void signal_liveAmbientCorrelationNoExplicitCarrier_ambientWinsAndInstanceFillsTenant(
             Vertx vertx, VertxTestContext ctx) {
@@ -239,19 +239,31 @@ class WorkflowLiveSignalContextTest {
                 .updateOptimistic(any(), anyLong(), any());
 
         runOnDuplicated(vertx, v -> {
-            // Deliver the signal under a fresh ambient correlation B — no explicit carrier.
-            CorrelationContext ambientCorrelationB = h.correlationFactory()
+            // Apply a signal that was recorded under correlation B — no explicit carrier. The executor has no
+            // caller to capture from, so B arrives as the signal's recorded context.
+            CorrelationContext recordedCorrelationB = h.correlationFactory()
                     .create(new CorrelationIdentifier("req-B", "test"), new CorrelationIdentifier("corr-B", "test"));
-            h.holder().bind(CorrelationContext.class, ambientCorrelationB);
+            String recordedContext = new CorrelationContextDurableEncoder()
+                    .encode(recordedCorrelationB, new dev.vertique.core.context.DurableEncodeContext("test"))
+                    .toCarrier()
+                    .encode();
 
-            RecordedSignalSegments.run(h.txOps(), inst, "approve", tx)
+            RecordedSignalSegments.run(
+                            h.txOps(),
+                            inst,
+                            "approve",
+                            new io.vertx.core.json.JsonObject(),
+                            "dedup-1",
+                            null,
+                            recordedContext,
+                            tx)
                     .onComplete(ar -> ctx.verify(() -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());
                             return;
                         }
                         assertThat(capturedCorrelation.get())
-                                .as("ambient correlation B must be authoritative over the instance's persisted"
+                                .as("recorded correlation B must be authoritative over the instance's persisted"
                                         + " correlation A")
                                 .isPresent();
                         assertThat(capturedCorrelation

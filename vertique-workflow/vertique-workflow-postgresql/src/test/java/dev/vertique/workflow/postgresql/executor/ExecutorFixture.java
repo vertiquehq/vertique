@@ -12,16 +12,25 @@ import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DurableContextMetadataRegistry;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.context.ContextDecodeResult;
+import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.context.ContextScopes;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.context.DurableContextMetadataDecoder;
 import dev.vertique.core.context.DurableContextMetadataEncoder;
 import dev.vertique.core.context.DurableDecodeContext;
 import dev.vertique.core.context.DurableEncodeContext;
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.context.InboundContextInitializationContext;
+import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.IsolationLevel;
 import dev.vertique.db.exception.TransactionDeadlineExceededException;
 import dev.vertique.db.postgresql.PgConnectOptionsFactory;
+import dev.vertique.security.PrincipalRef;
+import dev.vertique.security.PrincipalType;
+import dev.vertique.security.SecurityContext;
+import dev.vertique.security.SecurityContexts;
+import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.contract.SignalDedupKey;
@@ -339,6 +348,7 @@ final class ExecutorFixture implements AutoCloseable {
         private boolean recordDeadlines;
         private boolean holdFirstDeadlineCall;
         private boolean carryContext;
+        private Set<InboundContextInitializer> initializers = Set.of();
         private int poolSize = -1;
         private int maxAttempts = 5;
         private long transientBackoffBaseMs = 200;
@@ -403,6 +413,16 @@ final class ExecutorFixture implements AutoCloseable {
         /** The engine captures and binds the durable context of the fixture's propagator. */
         NodeSpec carryContext() {
             this.carryContext = true;
+            return this;
+        }
+
+        /**
+         * The engine carries the fixture's durable context and runs an initializer that rebuilds a security context
+         * from any identity snapshot a bound durable document holds, as an installed identity carriage does.
+         */
+        NodeSpec identityCarriage() {
+            this.carryContext = true;
+            this.initializers = Set.of(new IdentityReconstruction());
             return this;
         }
 
@@ -556,6 +576,7 @@ final class ExecutorFixture implements AutoCloseable {
             }
             if (carryContext) {
                 engine.propagator(propagator);
+                engine.inboundContextInitializers(initializers);
             }
             if (recordDeadlines) {
                 engine.runnerDecorator(delegate -> {
@@ -1696,6 +1717,42 @@ final class ExecutorFixture implements AutoCloseable {
                 correlation.close();
             });
         }
+
+        /**
+         * Binds the authenticated caller's durable context as {@link #authenticatedCaller} does, and also a security
+         * context for the caller, then runs {@code work}.
+         *
+         * @param work the work to run while the contexts are bound
+         * @param <T>  the result type
+         * @return the work's result
+         */
+        <T> Future<T> securedCaller(java.util.function.Supplier<Future<T>> work) {
+            var security = holder.bind(SecurityContext.class, securityContextOf(SUBJECT));
+            return authenticatedCaller(work).onComplete(ignored -> security.close());
+        }
+    }
+
+    /**
+     * Stands for the identity carriage's first-ingress initializer: whenever a bound durable document holds an
+     * identity snapshot and no security context is bound yet, it binds a security context for the snapshot's subject.
+     */
+    final class IdentityReconstruction implements InboundContextInitializer {
+        @Override
+        public ContextHolder.Scope initialize(InboundContextInitializationContext context) {
+            if (holder.current(SecurityContext.class).isPresent()) {
+                return ContextScopes.noop();
+            }
+            return holder.current(IdentitySnapshotCtx.class)
+                    .map(snapshot -> holder.bind(SecurityContext.class, securityContextOf(snapshot.subject())))
+                    .orElseGet(ContextScopes::noop);
+        }
+    }
+
+    /** An authenticated security context of the user. */
+    static SecurityContext securityContextOf(String subject) {
+        PrincipalRef user = new PrincipalRef(PrincipalType.USER, subject, Map.of());
+        return SecurityContexts.unauthenticated(
+                new SecurityIdentity(user, Optional.empty(), Optional.empty(), Optional.empty()));
     }
 
     IdentityFixture identity() {

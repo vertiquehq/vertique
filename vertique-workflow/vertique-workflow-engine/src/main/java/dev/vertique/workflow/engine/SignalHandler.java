@@ -42,7 +42,6 @@ import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
-import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
@@ -195,6 +194,34 @@ final class SignalHandler {
             Object payload,
             SqlClient tx,
             @Nullable DurableMetadata effectiveBaseOverride) {
+        return applyBranchSignal(inst, waiting, rw, signalName, payload, tx, effectiveBaseOverride, 0L);
+    }
+
+    /**
+     * Applies a recorded signal to a waiting branch, binding the branch's durable context as an executor drive: the
+     * identity-snapshot namespace is stripped from the bound document and the drive is refused when a security context
+     * or a deferred-execution origin is already bound.
+     *
+     * @param inst the parent workflow instance whose state the updater mutates
+     * @param waiting the branch token currently waiting for the signal
+     * @param rw the resolved runtime workflow
+     * @param signalName the name of the signal being delivered
+     * @param payload the incoming signal payload; coerced to the declared type
+     * @param tx the active transaction
+     * @param effectiveBaseOverride the merged explicit carrier and instance fill to bind instead of the branch token's
+     *     own carrier, or {@code null}
+     * @param commandId the id of the signal command, for the failure of a refused bind
+     * @return a {@link Future} that completes when the branch resumption (and any join) is applied
+     */
+    Future<Void> applyBranchSignal(
+            WorkflowInstance inst,
+            BranchToken waiting,
+            RuntimeWorkflow rw,
+            String signalName,
+            Object payload,
+            SqlClient tx,
+            @Nullable DurableMetadata effectiveBaseOverride,
+            long commandId) {
         WorkflowNode node = rw.nodeById().get(waiting.currentStepId());
         if (!(node instanceof WaitSignalNode wsn) || !signalName.equals(wsn.signalName())) {
             return Future.failedFuture(new WorkflowDefinitionException("Branch '" + waiting.branchId()
@@ -261,14 +288,15 @@ final class SignalHandler {
                                         ? null
                                         : updatedInst.subjectRef().version();
                                 return branchEngine
-                                        .driveBranchTransitions(
+                                        .driveExecutorBranchTransitions(
                                                 cleared,
                                                 updatedInst.stateJson(),
                                                 parentSubjectVersionForBranch,
                                                 rw,
                                                 BranchTransitionEngine.InstanceScope.of(updatedInst),
                                                 tx,
-                                                effectiveBaseOverride)
+                                                effectiveBaseOverride,
+                                                commandId)
                                         .compose(advanced -> {
                                             if (ForkJoinCoordinator.isBranchTerminal(advanced.status())) {
                                                 WorkflowNode forkPlanNode =
@@ -633,22 +661,23 @@ final class SignalHandler {
             SqlClient tx) {
         Object raw;
         DurableMetadata carrier;
+        DurableMetadata recorded;
         try {
             raw = command.payloadJson() == null ? null : Json.decodeValue(command.payloadJson());
-            carrier = command.explicitCarrierJson() == null
-                    ? null
-                    : DurableMetadata.fromCarrier(new JsonObject(command.explicitCarrierJson()));
+            carrier = WorkflowContextBinder.decodeCarrier(command.explicitCarrierJson());
+            recorded = WorkflowContextBinder.decodeCarrier(command.contextJson());
         } catch (RuntimeException e) {
             return Future.failedFuture(new WorkflowInvalidPayloadException(
                     "The recorded signal '" + EchoedNames.bounded(signal.name()) + "' cannot be read", List.of()));
         }
-        // The instance carrier of an instance recorded before the identity snapshot was dropped may still hold one; no
-        // drive may bind an identity from it.
-        WorkflowInstance bindable = withoutIdentity(inst);
+        // The binder strips the identity snapshot from every source it binds, so no drive binds an identity from the
+        // explicit carrier, the recorded context or an instance carrier recorded before the snapshot was dropped.
         if (!signal.branchAddressed()) {
-            return contextBinder.withBound(
-                    bindable,
+            return contextBinder.withRecordedBase(
+                    inst,
+                    command.commandId(),
                     carrier,
+                    recorded,
                     () -> doApplySignal(
                             inst,
                             new SignalDeliveryContext(
@@ -660,42 +689,14 @@ final class SignalHandler {
                     new WorkflowSignalRejectedException("Instance '" + inst.id().value()
                             + "' has no branch waiting for signal '" + EchoedNames.bounded(signal.name()) + "'"));
         }
+        // A branch drive never binds the recorded context: the explicit carrier with the instance fill, else the
+        // branch token's own carrier.
         DurableMetadata effectiveBase = carrier == null
                 ? null
-                : bindable.metadata() == null
+                : inst.metadata() == null
                         ? carrier
-                        : carrier.merge(bindable.metadata(), DurableMetadata.MergePolicy.CALLER_WINS);
-        return applyBranchSignal(inst, waiting, rw, signal.name(), raw, tx, effectiveBase);
-    }
-
-    /** The instance as a drive may bind it: its carrier without the identity-snapshot namespace. */
-    private static WorkflowInstance withoutIdentity(WorkflowInstance inst) {
-        DurableMetadata metadata = inst.metadata();
-        if (metadata == null || !metadata.has(WorkflowEngine.IDENTITY_SNAPSHOT_NAMESPACE)) {
-            return inst;
-        }
-        DurableMetadata stripped = metadata.without(WorkflowEngine.IDENTITY_SNAPSHOT_NAMESPACE);
-        return new WorkflowInstance(
-                inst.id(),
-                inst.definitionId(),
-                inst.definitionVersion(),
-                inst.planHash(),
-                inst.version(),
-                inst.status(),
-                inst.businessKey(),
-                inst.subjectRef(),
-                inst.currentStepId(),
-                inst.waitType(),
-                inst.waitKey(),
-                inst.waitAuxId(),
-                inst.stateJson(),
-                inst.errorType(),
-                inst.errorMessage(),
-                inst.createdAt(),
-                inst.updatedAt(),
-                stripped.isEmpty() ? null : stripped,
-                inst.scopeKey(),
-                inst.definitionScopeKey());
+                        : carrier.merge(inst.metadata(), DurableMetadata.MergePolicy.CALLER_WINS);
+        return applyBranchSignal(inst, waiting, rw, signal.name(), raw, tx, effectiveBase, command.commandId());
     }
 
     private Future<WorkflowSegments.Outcome> park(

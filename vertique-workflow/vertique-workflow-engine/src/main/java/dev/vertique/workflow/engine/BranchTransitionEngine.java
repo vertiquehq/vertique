@@ -128,6 +128,9 @@ final class BranchTransitionEngine {
      */
     private final dev.vertique.context.InboundExecutionContextScope inboundExecScope;
 
+    /** The binder an executor branch drive binds through; {@code null} when no propagator or scope is wired. */
+    private final WorkflowContextBinder executorBinder;
+
     /**
      * Creates a new engine.
      *
@@ -160,6 +163,9 @@ final class BranchTransitionEngine {
         this.clock = clock;
         this.propagator = propagator;
         this.inboundExecScope = inboundExecScope;
+        this.executorBinder = propagator == null || inboundExecScope == null
+                ? null
+                : new WorkflowContextBinder(propagator, inboundExecScope);
     }
 
     /**
@@ -232,6 +238,55 @@ final class BranchTransitionEngine {
             InstanceScope instanceScope,
             SqlClient tx,
             @Nullable DurableMetadata effectiveBaseOverride) {
+        return driveBranchTransitions(
+                token, parentStateJson, parentSubjectVersion, rw, instanceScope, tx, effectiveBaseOverride, null);
+    }
+
+    /**
+     * Drives a branch token for the executor: the same as {@link #driveBranchTransitions} except that the document
+     * to bind (the override, else the token's carrier) goes through the binder's executor entry, which strips the
+     * identity-snapshot namespace from it and refuses the drive when a security context or a deferred-execution
+     * origin is already bound on the current context.
+     *
+     * @param token the branch token to drive
+     * @param parentStateJson the parent instance's {@code state_json} at dispatch time
+     * @param parentSubjectVersion the parent instance's subject-ref version, or {@code null}
+     * @param rw the resolved runtime workflow
+     * @param instanceScope the definition scope and start scope of the owning instance
+     * @param tx the active transaction
+     * @param effectiveBaseOverride the document to bind instead of the token's carrier, or {@code null}
+     * @param commandId the id of the command whose operation runs, for the failure of a refused bind
+     * @return a {@link Future} of the post-drive {@link BranchToken} snapshot
+     */
+    Future<BranchToken> driveExecutorBranchTransitions(
+            BranchToken token,
+            String parentStateJson,
+            @Nullable String parentSubjectVersion,
+            RuntimeWorkflow rw,
+            InstanceScope instanceScope,
+            SqlClient tx,
+            @Nullable DurableMetadata effectiveBaseOverride,
+            long commandId) {
+        return driveBranchTransitions(
+                token,
+                parentStateJson,
+                parentSubjectVersion,
+                rw,
+                instanceScope,
+                tx,
+                effectiveBaseOverride,
+                Long.valueOf(commandId));
+    }
+
+    private Future<BranchToken> driveBranchTransitions(
+            BranchToken token,
+            String parentStateJson,
+            @Nullable String parentSubjectVersion,
+            RuntimeWorkflow rw,
+            InstanceScope instanceScope,
+            SqlClient tx,
+            @Nullable DurableMetadata effectiveBaseOverride,
+            @Nullable Long executorCommandId) {
         // Bind the branch's persisted durable metadata for the entire drive so every transition
         // — service dispatch, timer side-effects, signals, tasks, decisions — sees exactly the
         // durable context the branch was forked under. bindFrom is authoritative: every
@@ -250,6 +305,13 @@ final class BranchTransitionEngine {
         // token.metadata() is never null — BranchToken's compact constructor normalizes a null
         // metadata argument to DurableMetadata.empty() — so no empty-doc fallback is needed here.
         DurableMetadata meta = effectiveBaseOverride != null ? effectiveBaseOverride : token.metadata();
+        if (executorCommandId != null && executorBinder != null) {
+            return executorBinder.withExecutorDocument(
+                    token.workflowId(),
+                    executorCommandId,
+                    meta,
+                    () -> step(token, parentStateJson, parentSubjectVersion, rw, instanceScope, tx));
+        }
         if (inboundExecScope != null) {
             // Substrate lifecycle helper composes propagator.bindFrom AND any registered
             // InboundContextInitializers (e.g. CorrelationContextSeeder) in one scope —

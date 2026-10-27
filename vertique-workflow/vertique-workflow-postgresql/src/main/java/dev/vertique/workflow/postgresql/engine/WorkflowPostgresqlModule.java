@@ -7,6 +7,7 @@ import dagger.Binds;
 import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
+import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.db.DbSchemas;
 import dev.vertique.db.DbSchemasModule;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
@@ -296,6 +297,7 @@ public abstract class WorkflowPostgresqlModule {
      * @param mapper  the PostgreSQL failure mapper
      * @param schemas the optional schema placement; absent means unqualified table names
      * @param recording the optional recording configuration; defaults apply when absent
+     * @param propagator the propagator that captures the durable context stored with each recorded command
      * @return the scoped PostgreSQL command repository
      */
     @Provides
@@ -304,12 +306,14 @@ public abstract class WorkflowPostgresqlModule {
             Pool pool,
             PgDbExceptionMapper mapper,
             Optional<DbSchemas> schemas,
-            Optional<WorkflowRecordingConfig> recording) {
+            Optional<WorkflowRecordingConfig> recording,
+            DurableContextPropagator propagator) {
         return new PgWorkflowCommandRepository(
                 pool,
                 mapper,
                 schemas.orElseGet(DbSchemas::empty),
-                recording.orElseGet(WorkflowRecordingConfig::defaults));
+                recording.orElseGet(WorkflowRecordingConfig::defaults),
+                propagator);
     }
 
     // --- Store SPI bindings ---

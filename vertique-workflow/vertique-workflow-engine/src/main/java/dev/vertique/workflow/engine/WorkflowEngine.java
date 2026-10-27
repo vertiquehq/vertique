@@ -1239,9 +1239,22 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             } catch (Exception e) {
                 return Future.failedFuture(e);
             }
+            DurableMetadata recorded;
+            try {
+                recorded = WorkflowContextBinder.decodeCarrier(command.contextJson());
+            } catch (RuntimeException e) {
+                return Future.failedFuture(
+                        new IllegalStateException("The recorded context of command " + command.commandId()
+                                + " of workflow instance " + inst.id().value() + " cannot be read"));
+            }
             return driver.withStepCap(
                             tx, maxSteps, () -> signalHandler.parkedSignals().managing(tx, () -> contextBinder
-                                    .withBound(inst, null, () -> startSegment(inst, rw, claim, command, tx))
+                                    .withRecordedBase(
+                                            inst,
+                                            command.commandId(),
+                                            null,
+                                            recorded,
+                                            () -> startSegment(inst, rw, claim, command, tx))
                                     .compose(done ->
                                             signalHandler.parkedSignals().drain(inst.id(), tx))))
                     .map(v -> WorkflowSegments.Outcome.APPLIED);

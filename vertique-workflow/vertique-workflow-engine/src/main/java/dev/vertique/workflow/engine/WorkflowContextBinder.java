@@ -3,13 +3,20 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.context.InboundExecutionContextScope;
+import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.context.DeferredExecutionOrigin;
 import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.DurableMetadata.MergePolicy;
+import dev.vertique.security.SecurityContext;
+import dev.vertique.workflow.engine.executor.ExecutorContextNotCleanException;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.state.WorkflowInstance;
 import io.vertx.core.Future;
+import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -53,6 +60,15 @@ import org.slf4j.LoggerFactory;
  * instead closes via {@link Future#eventually} so the binding survives the async drive and unwinds
  * on both success and failure (PRD NFR-WF-CTX-007 / FR-CTX-157b strictness propagation).
  *
+ * <p>Executor drives route through {@link #withRecordedBase} (and, for a branch drive,
+ * {@link #withExecutorDocument}) instead. They bind only durable context and never an identity: the base is the
+ * explicit carrier, else the operation's own recorded context, else nothing (the ambient context is never a base),
+ * the instance carrier fills with {@link MergePolicy#CALLER_WINS}, the identity-snapshot namespace is stripped from
+ * every source, and the bind is refused, without running the operation, when a {@link SecurityContext} or a
+ * {@link DeferredExecutionOrigin} is already bound on the current context. The registered initializers run as for
+ * every durable bind; with no identity-snapshot namespace in the bound document the identity initializer has nothing
+ * to rebuild an identity from.
+ *
  * <p>This class is a <b>binder-row</b> seam only — it must never be invoked for a branch-owned
  * drive (fork continuation, branch-targeted signal/timer/task). Those bind through
  * {@link BranchTransitionEngine#driveBranchTransitions}'s own carrier seam instead (the bind-once
@@ -65,6 +81,7 @@ final class WorkflowContextBinder {
 
     private final DurableContextPropagator propagator;
     private final InboundExecutionContextScope inboundExecScope;
+    private final ContextHolder holder;
 
     /**
      * Constructs the binder.
@@ -76,8 +93,22 @@ final class WorkflowContextBinder {
      */
     @Inject
     WorkflowContextBinder(DurableContextPropagator propagator, InboundExecutionContextScope inboundExecScope) {
+        this(propagator, inboundExecScope, new DefaultContextHolder());
+    }
+
+    /**
+     * Constructs the binder with the holder an executor bind reads to find an identity or an origin that is already
+     * bound.
+     *
+     * @param propagator       durable context propagator; must not be {@code null}
+     * @param inboundExecScope substrate lifecycle helper; must not be {@code null}
+     * @param holder           the context holder the propagator binds into; must not be {@code null}
+     */
+    WorkflowContextBinder(
+            DurableContextPropagator propagator, InboundExecutionContextScope inboundExecScope, ContextHolder holder) {
         this.propagator = Objects.requireNonNull(propagator, "propagator");
         this.inboundExecScope = Objects.requireNonNull(inboundExecScope, "inboundExecScope");
+        this.holder = Objects.requireNonNull(holder, "holder");
     }
 
     /**
@@ -104,6 +135,7 @@ final class WorkflowContextBinder {
     private WorkflowContextBinder() {
         this.propagator = null;
         this.inboundExecScope = null;
+        this.holder = null;
     }
 
     /**
@@ -152,6 +184,99 @@ final class WorkflowContextBinder {
         logFillIfAny(base, effective, instance);
 
         return inboundExecScope.installDurableAndRun(effective, DispatchBoundary.WORKFLOW, drive);
+    }
+
+    /**
+     * Binds the recorded context of one executor operation and runs {@code drive} inside it, in a fresh scope that is
+     * closed on every exit path.
+     *
+     * <p>The base is the explicit carrier when present, else the operation's recorded context, else nothing; the
+     * instance carrier fills what the base lacks. The identity-snapshot namespace is stripped from all three. When all
+     * three are absent nothing is bound and {@code drive} runs as it would without a binder. The ambient context is
+     * never a base.
+     *
+     * @param instance        the loaded workflow instance; its carrier is the fill
+     * @param commandId       the id of the command whose operation runs, for the failure message
+     * @param explicitCarrier the signal's explicit carrier, or {@code null}
+     * @param recordedContext the context recorded with the operation, or {@code null}
+     * @param drive           the operation
+     * @param <T>             the result type
+     * @return the future of the operation; failed with {@link ExecutorContextNotCleanException}, the operation not
+     *     run and nothing bound, when a security context or a deferred-execution origin is already bound
+     */
+    <T> Future<T> withRecordedBase(
+            WorkflowInstance instance,
+            long commandId,
+            @Nullable DurableMetadata explicitCarrier,
+            @Nullable DurableMetadata recordedContext,
+            Supplier<Future<T>> drive) {
+        Objects.requireNonNull(instance, "instance");
+        Objects.requireNonNull(drive, "drive");
+        if (this == NOOP) {
+            return drive.get();
+        }
+        DurableMetadata instanceMetadata = withoutIdentity(instance.metadata());
+        DurableMetadata base = withoutIdentity(explicitCarrier != null ? explicitCarrier : recordedContext);
+        DurableMetadata effective;
+        if (base == null) {
+            effective = instanceMetadata;
+        } else {
+            effective = instanceMetadata == null ? base : base.merge(instanceMetadata, MergePolicy.CALLER_WINS);
+            logFillIfAny(base, effective, instance);
+        }
+        return runOnExecutor(instance.id(), commandId, effective, drive);
+    }
+
+    /**
+     * Binds a complete durable document for an executor drive that has already decided its base (a branch drive), with
+     * the identity-snapshot namespace stripped and the same refusal as {@link #withRecordedBase}.
+     *
+     * @param instance  the id of the instance the drive belongs to
+     * @param commandId the id of the command whose operation runs, for the failure message
+     * @param document  the document to bind
+     * @param drive     the drive
+     * @param <T>       the result type
+     * @return the future of the drive
+     */
+    <T> Future<T> withExecutorDocument(
+            WorkflowInstanceId instance, long commandId, DurableMetadata document, Supplier<Future<T>> drive) {
+        Objects.requireNonNull(document, "document");
+        Objects.requireNonNull(drive, "drive");
+        if (this == NOOP) {
+            return drive.get();
+        }
+        return runOnExecutor(instance, commandId, withoutIdentity(document), drive);
+    }
+
+    private <T> Future<T> runOnExecutor(
+            WorkflowInstanceId instance,
+            long commandId,
+            @Nullable DurableMetadata effective,
+            Supplier<Future<T>> drive) {
+        if (holder.current(SecurityContext.class).isPresent()
+                || holder.current(DeferredExecutionOrigin.class).isPresent()) {
+            return Future.failedFuture(
+                    new ExecutorContextNotCleanException(instance.value().toString(), commandId));
+        }
+        if (effective == null) {
+            return drive.get();
+        }
+        return inboundExecScope.installDurableAndRun(effective, DispatchBoundary.WORKFLOW, drive);
+    }
+
+    /**
+     * Decodes a durable carrier stored as JSON text.
+     *
+     * @param json the stored text, or {@code null}
+     * @return the document, or {@code null} for an absent carrier
+     * @throws RuntimeException if the text is not a durable carrier
+     */
+    static @Nullable DurableMetadata decodeCarrier(@Nullable String json) {
+        return json == null ? null : DurableMetadata.fromCarrier(new JsonObject(json));
+    }
+
+    private static @Nullable DurableMetadata withoutIdentity(@Nullable DurableMetadata metadata) {
+        return metadata == null ? null : metadata.without(WorkflowEngine.IDENTITY_SNAPSHOT_NAMESPACE);
     }
 
     /**
