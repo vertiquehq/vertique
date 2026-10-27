@@ -4,6 +4,7 @@
 package dev.vertique.workflow.engine.executor;
 
 import dev.vertique.workflow.engine.executor.WorkflowSegments.Warm;
+import dev.vertique.workflow.engine.executor.WorkflowSegments.Warm.Marks;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.types.EchoedNames;
@@ -23,7 +24,8 @@ import org.slf4j.LoggerFactory;
  * <p>A candidate whose instance has ended is kept first, without any plan lookup: its claim settles it without a plan,
  * so a removed plan cannot leave it unsettled and it is never deferred. Only a candidate on a live instance is warmed,
  * through {@link WorkflowSegments#warm}, which loads its plan into the node's plan cache when the node does not hold
- * it and holds the plan for the segment; one this node cannot run is deferred instead of claimed.
+ * it and holds the plan for the segment; one this node cannot run is deferred instead of claimed, and the failing marks
+ * the warm-up found are written after the deferral.
  *
  * <p>A peeked command whose plan could not be read for a reason that says nothing about the plan, such as a failed
  * row read, is skipped for this peek and logged at debug level with its ids only, never a payload; nothing is claimed,
@@ -39,8 +41,9 @@ final class CommandPeek {
      * @param head    the peeked command
      * @param release gives up the hold; idempotent. The executor runs it when the command is not claimed, and when its
      *                segment ends
+     * @param marks   what the warm-up found out about failing versions; its write runs once the segment has ended
      */
-    record WarmedHead(CommandHead head, Runnable release) {}
+    record WarmedHead(CommandHead head, Runnable release, Marks marks) {}
 
     /**
      * What a peek came to.
@@ -99,7 +102,7 @@ final class CommandPeek {
     }
 
     private static Slot ended(CommandHead head) {
-        return new Slot(new WarmedHead(head, () -> {}), false);
+        return new Slot(new WarmedHead(head, () -> {}, Marks.NONE), false);
     }
 
     /** Warms the plans of a command on a live instance and defers the command when this node cannot run it. */
@@ -118,10 +121,12 @@ final class CommandPeek {
             Warm warm = result.result();
             switch (warm.status()) {
                 case RESIDENT -> {
-                    return Future.succeededFuture(new Slot(new WarmedHead(head, warm.release()), false));
+                    return Future.succeededFuture(new Slot(new WarmedHead(head, warm.release(), warm.marks()), false));
                 }
                 case NOT_RUNNABLE -> {
-                    return deferral.defer(head).map(deferred -> new Slot(null, deferred));
+                    // the marks are written after the deferral has committed, and never change its outcome
+                    return deferral.defer(head)
+                            .compose(deferred -> warm.marks().run().map(new Slot(null, deferred)));
                 }
                 default -> {
                     skipped(head);

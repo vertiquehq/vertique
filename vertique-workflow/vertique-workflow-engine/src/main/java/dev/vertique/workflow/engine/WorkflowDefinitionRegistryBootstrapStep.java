@@ -111,7 +111,6 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     private final DefaultWorkflowDefinitionRegistryView view;
     private final DefinitionActivations activations;
     private final WorkflowTypeNames typeNames;
-    private final FailingDefinitions failing;
     private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
     private final Provider<PlanCache> planCache;
     private final boolean buildDefaultScopeDocuments;
@@ -127,7 +126,6 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             DefaultWorkflowDefinitionRegistryView view,
             DefinitionActivations activations,
             WorkflowTypeNames typeNames,
-            FailingDefinitions failing,
             Optional<WorkflowPlanSchemaProducer> schemaProducer,
             Provider<PlanCache> planCache,
             Optional<WorkflowDefinitionsConfig> config) {
@@ -135,7 +133,6 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         this.planCache = planCache;
         this.buildDefaultScopeDocuments = config.map(WorkflowDefinitionsConfig::buildDefaultScopeDocumentsAtStartup)
                 .orElse(false);
-        this.failing = failing;
         this.typeNames = typeNames;
         this.activations = activations;
         this.view = view;
@@ -693,7 +690,10 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             PersistedDefinitionLoader loader = matches.getFirst();
             return store.findDocument(key)
                     .compose(document -> work(() -> restored(local, loader, record, document)))
-                    .compose(restored -> recordEvaluation(record, restored.failure())
+                    .compose(restored -> planCache
+                            .get()
+                            .marks()
+                            .record(record, restored.failure())
                             .compose(ignored -> fillRestored(local, record, restored))
                             .map(ignored -> Optional.ofNullable(restored.verified())));
         });
@@ -806,20 +806,6 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                     printable(key));
             return DefinitionFailure.of(Rule.STATE_TYPE_NOT_EXTENDED);
         }
-    }
-
-    /**
-     * Keeps this node's evaluation of the row and writes it to the table when it differs from the stored mark, which
-     * clears a mark whose conflict is gone.
-     */
-    private Future<Void> recordEvaluation(WorkflowDefinitionRecord record, @Nullable DefinitionFailure evaluated) {
-        DefinitionKey key = record.key();
-        if (WorkflowScopes.DEFAULT.equals(key.scopeKey())) return Future.succeededFuture();
-        if (evaluated == null) failing.clear(key);
-        else failing.mark(key, evaluated, record.contractName());
-        DefinitionFailure stored = record.failure();
-        boolean unchanged = evaluated == null ? stored == null : stored != null && stored.rule() == evaluated.rule();
-        return unchanged ? Future.succeededFuture() : store.recordFailure(key, evaluated);
     }
 
     /** The key in a form that is safe to log: bounded and without control characters. */

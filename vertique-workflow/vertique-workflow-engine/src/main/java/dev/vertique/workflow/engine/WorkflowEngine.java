@@ -93,6 +93,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -386,7 +387,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 executorControl,
                 WorkflowRecordingConfig.defaults(),
                 reservations,
-                Optional.empty());
+                Optional.empty(),
+                key -> Optional.empty());
     }
 
     /**
@@ -435,7 +437,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes. The {@code executionProbe} parameter is the probe the handle exposes. The {@code commands} parameter is the
      * command repository whose execution lock every instance-changing entry point takes. The {@code reservations}
      * parameter reserves a task for a recorded completion; the {@code schemaProducer} parameter, when present, supplies
-     * the payload schemas a new task's decision snapshot stores.
+     * the payload schemas a new task's decision snapshot stores. The {@code failingMarks} parameter reads this node's
+     * evaluation of a version of a scope other than the default one, which a migration into it is refused for.
      *
      * <p>Package-visible (not {@code private}) so the factory in the same package can invoke it; it
      * is not part of any production API.
@@ -472,7 +475,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             Supplier<WorkflowExecutorControl> executorControl,
             WorkflowRecordingConfig recordingConfig,
             TaskReservations<SqlClient> reservations,
-            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+            Optional<WorkflowPlanSchemaProducer> schemaProducer,
+            Function<DefinitionKey, Optional<DefinitionFailure>> failingMarks) {
         this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
         this.maxOpenSignals = recordingConfig.maxOpenSignalsPerInstance();
         this.executionProbe = executionProbe;
@@ -615,7 +619,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 clock,
                 builtContextBinder,
                 stateCompatibility,
-                failing,
+                failingMarks,
                 commands);
     }
 

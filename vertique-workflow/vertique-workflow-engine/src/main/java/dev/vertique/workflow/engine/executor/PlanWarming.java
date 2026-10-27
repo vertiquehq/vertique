@@ -4,17 +4,21 @@
 package dev.vertique.workflow.engine.executor;
 
 import dev.vertique.workflow.engine.executor.WorkflowSegments.Warm;
+import dev.vertique.workflow.engine.executor.WorkflowSegments.Warm.Marks;
 import dev.vertique.workflow.engine.executor.WorkflowSegments.Warm.Status;
+import dev.vertique.workflow.engine.registry.FailingMarks;
 import dev.vertique.workflow.engine.registry.PlanCache;
 import dev.vertique.workflow.engine.registry.PlanFailures;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,6 +29,11 @@ import org.slf4j.LoggerFactory;
  * hash the head names is not the one the instance runs, so the command is not runnable here. A migration also loads
  * the plan of its target. A plan that cannot run, because no row supplies it or it failed to build, makes the command
  * not runnable; a failure to read it says nothing about the plan and leaves the command for the next peek.
+ *
+ * <p>The warm-up also takes the evaluation of each plan it holds that came from the plan cache, see
+ * {@link FailingMarks}: the failure of the version the command is pinned to, which the segment of a start refuses, and
+ * the writes of the marks the evaluations differ in, which the executor runs once the segment or the deferral has
+ * ended. A name binding that no class resolves makes the command not runnable and is written the same way.
  */
 final class PlanWarming {
 
@@ -48,30 +57,30 @@ final class PlanWarming {
             // a pin no key can name cannot be loaded, so no node can run it
             return Future.succeededFuture(Warm.of(Status.NOT_RUNNABLE));
         }
-        List<Runnable> holds = new ArrayList<>(2);
+        Warming warming = new Warming(cache);
         Future<Warm> warmed;
         try {
             warmed = registry.load(pin).compose(plan -> {
                 if (!Deferral.matches(plan, head)) {
                     return Future.succeededFuture(Warm.of(Status.NOT_RUNNABLE));
                 }
-                hold(cache, holds, pin, plan);
+                warming.hold(pin, plan, true);
                 DefinitionKey target = target(head);
                 if (target == null) {
-                    return Future.succeededFuture(resident(holds));
+                    return Future.succeededFuture(warming.resident());
                 }
                 return registry.load(target).map(targetPlan -> {
-                    hold(cache, holds, target, targetPlan);
-                    return resident(holds);
+                    warming.hold(target, targetPlan, false);
+                    return warming.resident();
                 });
             });
         } catch (RuntimeException e) {
             warmed = Future.failedFuture(e);
         }
         return warmed.recover(failure -> {
-            release(holds);
+            warming.release();
             if (PlanFailures.isNotRunnable(failure)) {
-                return Future.succeededFuture(Warm.of(Status.NOT_RUNNABLE));
+                return Future.succeededFuture(Warm.of(Status.NOT_RUNNABLE, warming.unresolved(failure)));
             }
             log.debug("A plan could not be loaded for command {}", head.commandId(), failure);
             return Future.succeededFuture(Warm.of(Status.UNAVAILABLE));
@@ -94,21 +103,68 @@ final class PlanWarming {
         }
     }
 
-    private static void hold(@Nullable PlanCache cache, List<Runnable> holds, DefinitionKey key, RuntimeWorkflow plan) {
-        if (cache != null) {
+    /** The plans a warm-up holds and the evaluations of their versions. */
+    private static final class Warming {
+
+        private final @Nullable PlanCache cache;
+        private final List<Runnable> holds = new ArrayList<>(2);
+        private final List<Supplier<Future<Void>>> writes = new ArrayList<>(2);
+        private @Nullable DefinitionFailure failing;
+
+        Warming(@Nullable PlanCache cache) {
+            this.cache = cache;
+        }
+
+        /** Holds the plan and takes the evaluation of its version, which is the pinned one when {@code pinned}. */
+        void hold(DefinitionKey key, RuntimeWorkflow plan, boolean pinned) {
+            if (cache == null) {
+                return;
+            }
             PlanCache.Hold hold = cache.hold(key, plan);
             holds.add(hold::release);
+            cache.evaluation(key).ifPresent(evaluation -> {
+                if (pinned) {
+                    failing = evaluation.failure().orElse(null);
+                }
+                writes.add(() -> cache.marks().write(key, evaluation));
+            });
         }
-    }
 
-    private static Warm resident(List<Runnable> holds) {
-        List<Runnable> taken = List.copyOf(holds);
-        return new Warm(Status.RESIDENT, () -> release(taken));
-    }
+        Warm resident() {
+            List<Runnable> taken = List.copyOf(holds);
+            return new Warm(Status.RESIDENT, () -> release(taken), marks(List.copyOf(writes)));
+        }
 
-    private static void release(List<Runnable> holds) {
-        for (Runnable hold : holds) {
-            hold.run();
+        /** The marks of a warm-up that failed with the load failure: the evaluations taken, and a binding's own. */
+        Marks unresolved(Throwable failure) {
+            List<Supplier<Future<Void>>> all = new ArrayList<>(writes);
+            if (cache != null && failure instanceof FailingMarks.UnresolvedBindingException binding) {
+                all.add(() -> cache.marks().write(binding.key(), binding.evaluation()));
+            }
+            return marks(all);
+        }
+
+        void release() {
+            release(holds);
+        }
+
+        private Marks marks(List<Supplier<Future<Void>>> toWrite) {
+            if (toWrite.isEmpty()) {
+                return new Marks(failing, Future::succeededFuture);
+            }
+            return new Marks(failing, () -> {
+                Future<Void> chain = Future.succeededFuture();
+                for (Supplier<Future<Void>> write : toWrite) {
+                    chain = chain.compose(ignored -> write.get());
+                }
+                return chain;
+            });
+        }
+
+        private static void release(List<Runnable> holds) {
+            for (Runnable hold : holds) {
+                hold.run();
+            }
         }
     }
 }

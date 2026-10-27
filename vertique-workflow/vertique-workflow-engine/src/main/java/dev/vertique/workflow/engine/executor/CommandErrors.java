@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine.executor;
 
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.types.EchoedNames;
 import java.util.Locale;
 
@@ -41,6 +42,8 @@ public final class CommandErrors {
         INSTANCE_CANCELLED,
         /** This node holds no plan for the instance's pin, so the command was deferred. */
         NOT_RUNNABLE,
+        /** A start resolved to a version this node evaluated as failing, so it was refused. */
+        DEFINITION_FAILING,
         /** A signal names no wait of the definition version its instance is pinned to. */
         UNDECLARED_SIGNAL,
         /** A branch-addressed signal arrived after its branch was superseded or ended. */
@@ -175,6 +178,20 @@ public final class CommandErrors {
                 Reason.NOT_RUNNABLE,
                 token(kind) + " command was deferred: this node holds no runnable plan for the instance's pinned"
                         + " definition");
+    }
+
+    /**
+     * The value for a command refused because the version it runs is failing on this node.
+     *
+     * @param kind the command kind
+     * @param rule the rule the version breaks
+     * @return the stored value
+     */
+    public static String definitionFailing(String kind, DefinitionFailure.Rule rule) {
+        return format(
+                Reason.DEFINITION_FAILING,
+                token(kind) + " command was refused: the definition version it runs is failing (" + rule
+                        + ") and does not accept new starts");
     }
 
     /**

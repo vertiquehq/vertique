@@ -8,8 +8,11 @@ import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
+import java.util.function.Supplier;
 
 /**
  * INTERNAL: the engine's side of a segment, which the executor reaches through this seam so that the engine's
@@ -58,8 +61,36 @@ public interface WorkflowSegments {
      * @param status  whether the command can run here
      * @param release gives up the hold on the plans the warm-up took; idempotent, and a no-op unless the status is
      *                {@link Status#RESIDENT}
+     * @param marks   what the warm-up found out about failing versions
      */
-    record Warm(Status status, Runnable release) {
+    record Warm(Status status, Runnable release, Marks marks) {
+
+        /**
+         * What a warm-up found out about whether the versions it loaded are failing.
+         *
+         * @param failing the failure the version the command is pinned to is evaluated with, or {@code null} when it
+         *                is not failing
+         * @param write   writes the evaluations to the rows when they differ from the stored marks; called once the
+         *                command's segment or deferral has ended, and its future never fails
+         */
+        public record Marks(@Nullable DefinitionFailure failing, Supplier<Future<Void>> write) {
+
+            /** No version is failing and nothing is to be written. */
+            public static final Marks NONE = new Marks(null, Future::succeededFuture);
+
+            /**
+             * Writes the marks; a failure is the writer's to log, so the returned future never fails.
+             *
+             * @return a future that completes when the writes have ended
+             */
+            public Future<Void> run() {
+                try {
+                    return write.get().recover(failure -> Future.succeededFuture());
+                } catch (RuntimeException e) {
+                    return Future.succeededFuture();
+                }
+            }
+        }
 
         /** The status of a warm-up. */
         public enum Status {
@@ -83,7 +114,18 @@ public interface WorkflowSegments {
          * @return the result
          */
         public static Warm of(Status status) {
-            return new Warm(status, NOTHING);
+            return new Warm(status, NOTHING, Marks.NONE);
+        }
+
+        /**
+         * A warm-up that holds no plan and has marks to write.
+         *
+         * @param status the status
+         * @param marks  the marks
+         * @return the result
+         */
+        public static Warm of(Status status, Marks marks) {
+            return new Warm(status, NOTHING, marks);
         }
     }
 

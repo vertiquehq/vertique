@@ -6,6 +6,7 @@ package dev.vertique.workflow.engine;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.Savepoints;
+import dev.vertique.workflow.engine.registry.FailingMarks;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
@@ -16,6 +17,7 @@ import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -25,11 +27,13 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.inject.Inject;
+import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -74,7 +78,7 @@ final class MigrationExecutor {
     private final dev.vertique.workflow.migration.WorkflowMigrationRegistry migrationRegistry;
 
     private final WorkflowRegistry registry;
-    private final FailingDefinitions failing;
+    private final Function<DefinitionKey, Optional<DefinitionFailure>> failing;
     private final WorkflowInstanceRepository<SqlClient> instances;
     private final WorkflowHistoryRepository<SqlClient> history;
     private final WorkflowCommandRepository<SqlClient> commands;
@@ -123,12 +127,11 @@ final class MigrationExecutor {
      *     when durable-context wiring is not exercised)
      * @param stateCompatibility the state comparison applied when the source and target state classes differ;
      *     empty refuses such a migration
-     * @param failing this node's evaluation of the scope rows that deployed code conflicts with; a migration into
-     *     a version it holds is refused
+     * @param failing this node's evaluation of the versions of the scopes other than the default one that deployed code
+     *     conflicts with; a migration into a version it reports as failing is refused
      * @param commands the command repository whose execution lock a migration takes before it reads or writes the
      *     instance
      */
-    @Inject
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
             WorkflowRegistry registry,
@@ -139,7 +142,7 @@ final class MigrationExecutor {
             Clock clock,
             WorkflowContextBinder contextBinder,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
-            FailingDefinitions failing,
+            Function<DefinitionKey, Optional<DefinitionFailure>> failing,
             WorkflowCommandRepository<SqlClient> commands) {
         // migrationRegistryOpt is null only from test-only constructors that delegate with null;
         // Dagger always provides a non-null Optional via @BindsOptionalOf.
@@ -154,6 +157,48 @@ final class MigrationExecutor {
         this.clock = clock;
         this.contextBinder = contextBinder;
         this.stateCompatibility = stateCompatibility != null ? stateCompatibility : Optional.empty();
+    }
+
+    /**
+     * Constructs the migration executor with the failing marks of the node's plan cache, read when a migration runs.
+     *
+     * @param migrationRegistryOpt the optional migration registry
+     * @param registry the workflow registry
+     * @param instances the instance repository
+     * @param history the history repository
+     * @param branchTokens the branch-token repository; may be {@code null}
+     * @param driver the transition driver
+     * @param clock the clock
+     * @param contextBinder the binder-row seam
+     * @param stateCompatibility the state comparison; empty refuses a migration between differing state classes
+     * @param marks the failing marks, resolved when a migration runs because building them builds the plan cache
+     * @param commands the command repository whose execution lock a migration takes
+     */
+    @Inject
+    MigrationExecutor(
+            Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
+            WorkflowRegistry registry,
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            @jakarta.annotation.Nullable BranchTokenRepository<SqlClient> branchTokens,
+            WorkflowTransitionDriver driver,
+            Clock clock,
+            WorkflowContextBinder contextBinder,
+            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
+            Provider<FailingMarks> marks,
+            WorkflowCommandRepository<SqlClient> commands) {
+        this(
+                migrationRegistryOpt,
+                registry,
+                instances,
+                history,
+                branchTokens,
+                driver,
+                clock,
+                contextBinder,
+                stateCompatibility,
+                key -> marks.get().find(key),
+                commands);
     }
 
     /**
@@ -191,7 +236,7 @@ final class MigrationExecutor {
                 clock,
                 contextBinder,
                 stateCompatibility,
-                new FailingDefinitions(),
+                key -> Optional.empty(),
                 commands);
     }
 
@@ -485,7 +530,7 @@ final class MigrationExecutor {
             return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_NOT_ADMITTED));
         }
         // A version this node evaluated as failing admits no new work either.
-        if (failing.find(targetKey).isPresent()) {
+        if (failing.apply(targetKey).isPresent()) {
             return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_NOT_ADMITTED));
         }
         // A deprecated target admits no new work; refuse before any handler call or write.

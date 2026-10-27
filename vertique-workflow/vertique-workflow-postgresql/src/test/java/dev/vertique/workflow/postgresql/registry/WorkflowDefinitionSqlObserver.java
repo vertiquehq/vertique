@@ -45,6 +45,13 @@ final class WorkflowDefinitionSqlObserver {
             new java.util.concurrent.atomic.AtomicInteger();
     private final java.util.concurrent.atomic.AtomicInteger activationWrites =
             new java.util.concurrent.atomic.AtomicInteger();
+    private final AtomicBoolean failNextFailureMarkWrite = new AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicInteger injectedFailureMarkWrites =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger failureMarkWrites =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.regex.Pattern FAILURE_MARK_WRITE = java.util.regex.Pattern.compile(
+            "update\\s+(?:\"?[\\w$]+\"?\\.)?\"?workflow_definitions\"?\\s+set\\s+failure_reason\\b");
     private static final java.util.regex.Pattern ACTIVATION_WRITE = java.util.regex.Pattern.compile(
             "(insert\\s+into|update|merge\\s+into)\\s+(?:\"?[\\w$]+\"?\\.)?\"?workflow_definition_activations\"?\\b");
 
@@ -101,6 +108,30 @@ final class WorkflowDefinitionSqlObserver {
     /** How many statements that insert or update an activation record this observer has seen issued. */
     int activationWrites() {
         return activationWrites.get();
+    }
+
+    /**
+     * Fails the next statement that writes a definition row's failing mark, once, with a non-transient database error.
+     * Other statements, among them the executor's own, are not affected.
+     */
+    void failNextFailureMarkWrite() {
+        failNextFailureMarkWrite.set(true);
+    }
+
+    /** How many times {@link #failNextFailureMarkWrite} has made a statement fail. */
+    int injectedFailureMarkWrites() {
+        return injectedFailureMarkWrites.get();
+    }
+
+    /** How many statements that write a failing mark this observer has seen issued, the failed ones included. */
+    int failureMarkWrites() {
+        return failureMarkWrites.get();
+    }
+
+    private static boolean isFailureMarkWrite(String sql) {
+        return FAILURE_MARK_WRITE
+                .matcher(sql.toLowerCase(Locale.ROOT).replaceAll("\\s+", " "))
+                .find();
     }
 
     private static boolean isActivationWrite(String sql) {
@@ -162,6 +193,7 @@ final class WorkflowDefinitionSqlObserver {
         if (sql != null) {
             statements.add(sql);
             if (isActivationWrite(sql)) activationWrites.incrementAndGet();
+            if (isFailureMarkWrite(sql)) failureMarkWrites.incrementAndGet();
             long sticky = stickyShortenedLockTimeoutMillis;
             if (isDefinitionLockTimeout(sql)
                     && (sticky > 0 || shortenDefinitionLockTimeout.compareAndSet(true, false))) {
@@ -223,6 +255,13 @@ final class WorkflowDefinitionSqlObserver {
                 injectedActivationFailures.incrementAndGet();
                 return Future.failedFuture(
                         new PgException("controlled activation write failure", "ERROR", "XX000", null));
+            }
+            if (method.getName().equals("execute")
+                    && isFailureMarkWrite(sql)
+                    && failNextFailureMarkWrite.compareAndSet(true, false)) {
+                injectedFailureMarkWrites.incrementAndGet();
+                return Future.failedFuture(
+                        new PgException("controlled failure mark write failure", "ERROR", "XX000", null));
             }
             if (method.getName().equals("execute")
                     && sql.toLowerCase(Locale.ROOT).contains("pg_advisory_xact_lock")

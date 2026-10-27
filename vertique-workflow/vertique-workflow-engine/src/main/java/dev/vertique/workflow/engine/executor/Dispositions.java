@@ -8,6 +8,7 @@ import dev.vertique.db.exception.PessimisticLockingFailureException;
 import dev.vertique.db.exception.TransactionDeadlineExceededException;
 import dev.vertique.db.exception.TransientDataAccessException;
 import dev.vertique.workflow.exception.WorkflowConflictException;
+import dev.vertique.workflow.exception.WorkflowDefinitionFailingException;
 import dev.vertique.workflow.exception.WorkflowPersistenceException;
 
 /**
@@ -15,7 +16,7 @@ import dev.vertique.workflow.exception.WorkflowPersistenceException;
  *
  * <p>A failure is read as the transaction runner returns it, after both of its mapping stages. It is, in this order:
  * a deadline overrun (crash-like: no disposition, the attempt stays spent), a step-limit overrun (the instance is
- * failed), a transient failure (the command is rescheduled without spending its attempt) or anything else, which a
+ * failed), the refusal of a start of a failing version (the instance is failed), a transient failure (the command is rescheduled without spending its attempt) or anything else, which a
  * retry repeats (the command and its instance are failed).
  */
 final class Dispositions {
@@ -101,6 +102,16 @@ final class Dispositions {
      */
     static StepLimitExceededException stepLimit(Throwable failure) {
         return causeOfType(failure, StepLimitExceededException.class);
+    }
+
+    /**
+     * The refusal of a start of a failing version the failure is, or is caused by.
+     *
+     * @param failure the failure
+     * @return the refusal, or {@code null}
+     */
+    static WorkflowDefinitionFailingException definitionFailing(Throwable failure) {
+        return causeOfType(failure, WorkflowDefinitionFailingException.class);
     }
 
     private static <T extends Throwable> T causeOfType(Throwable failure, Class<T> type) {

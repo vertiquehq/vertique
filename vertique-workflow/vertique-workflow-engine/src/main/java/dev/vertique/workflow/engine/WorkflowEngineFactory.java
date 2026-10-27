@@ -164,6 +164,15 @@ public final class WorkflowEngineFactory {
                         "Could not seed the definition activation view; it stays empty until the store answers ({})",
                         failure.getClass().getSimpleName()));
         WorkflowExecutorControl[] executorHolder = new WorkflowExecutorControl[1];
+        // The plan cache of a factory-built engine has the default size and no observers, so it emits no cache events.
+        PlanCache planCache = PlanCache.bound(
+                parts.definitionStore(),
+                Set.of(),
+                registry,
+                parts.vertx(),
+                parts.schemaProducer(),
+                WorkflowDefinitionsConfig.DEFAULT_PLAN_CACHE_MAX_ENTRIES,
+                Set.of());
         WorkflowEngine engine = new WorkflowEngine(
                 txRunner,
                 registry,
@@ -196,16 +205,8 @@ public final class WorkflowEngineFactory {
                 () -> executorHolder[0],
                 parts.recordingConfig(),
                 parts.taskReservations(),
-                parts.schemaProducer());
-        // The plan cache of a factory-built engine has the default size and no observers, so it emits no cache events.
-        PlanCache planCache = PlanCache.bound(
-                parts.definitionStore(),
-                Set.of(),
-                registry,
-                parts.vertx(),
                 parts.schemaProducer(),
-                WorkflowDefinitionsConfig.DEFAULT_PLAN_CACHE_MAX_ENTRIES,
-                Set.of());
+                planCache.marks()::find);
         executorHolder[0] = new WorkflowExecutor(
                 parts.vertx(),
                 parts.executorConfig(),

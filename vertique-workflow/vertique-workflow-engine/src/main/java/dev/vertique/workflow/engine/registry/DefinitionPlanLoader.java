@@ -5,14 +5,20 @@ package dev.vertique.workflow.engine.registry;
 
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.DefinitionPublication;
+import dev.vertique.workflow.engine.registry.FailingMarks.Evaluation;
+import dev.vertique.workflow.engine.registry.FailingMarks.UnresolvedBindingException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException;
+import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry.StateComparison;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.DeclaredSignalNames;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
+import dev.vertique.workflow.registry.store.DefinitionFailure.Rule;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
@@ -20,6 +26,7 @@ import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -44,6 +51,11 @@ import org.slf4j.LoggerFactory;
  * build, by the store's fill that only writes while the names are null and the plan hash is still the built one. The
  * fill is a short statement of its own after the build, never inside a transaction of the caller, and a failure of
  * it is logged and does not fail the load.
+ *
+ * <p>A version of a scope other than the default one is also evaluated for failing, see {@link FailingMarks}. A name
+ * binding that no class resolves builds no plan and fails the load with a
+ * {@link FailingMarks.UnresolvedBindingException}. A state type that no longer extends the default scope's builds the
+ * plan all the same, flagged as failing in the {@link Evaluation} that comes with it.
  *
  * <p>A row that does not exist, that is not an available or deprecated document, or whose text vanished meanwhile
  * fails the load with {@link WorkflowDefinitionNotFoundException}. A document that does not compile, a recorded name
@@ -85,6 +97,14 @@ public final class DefinitionPlanLoader {
         this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
     }
 
+    /**
+     * A built plan with its evaluation.
+     *
+     * @param plan       the plan
+     * @param evaluation the evaluation of the plan, or {@code null} for a version of the default scope
+     */
+    record Loaded(RuntimeWorkflow plan, @Nullable Evaluation evaluation) {}
+
     /** What the build produced: the plan and, for a legacy row, the columns to fill. */
     private record Built(
             RuntimeWorkflow plan,
@@ -98,17 +118,80 @@ public final class DefinitionPlanLoader {
      * @return a future of the plan; see the class description for how it fails
      */
     public Future<RuntimeWorkflow> load(DefinitionKey key) {
+        return loadEvaluated(key).map(Loaded::plan);
+    }
+
+    /** Reads the row of the key, builds its plan and evaluates it; fails as {@link #load}. */
+    Future<Loaded> loadEvaluated(DefinitionKey key) {
         Objects.requireNonNull(key, "key");
         return store.find(key).compose(found -> {
             WorkflowDefinitionRecord record = found.filter(DefinitionPlanLoader::buildable)
                     .orElseThrow(() -> new WorkflowDefinitionNotFoundException(key));
             PersistedDefinitionLoader loader = DefinitionPublication.loaderFor(loaders, record);
-            DefinitionPublication.requireBoundNamesResolve(builder.typeNames(), record);
+            boolean scoped = !WorkflowScopes.DEFAULT.equals(key.scopeKey());
+            try {
+                DefinitionPublication.requireBoundNamesResolve(builder.typeNames(), record);
+            } catch (WorkflowUnknownTypeNameException unresolved) {
+                if (!scoped) {
+                    throw unresolved;
+                }
+                // nothing is compiled: no class is loaded by a name that no longer resolves
+                throw new UnresolvedBindingException(
+                        unresolved,
+                        key,
+                        new Evaluation(DefinitionFailure.of(Rule.NAME_BINDING_UNRESOLVED), null, record.failure()));
+            }
             return store.findDocument(key)
                     .compose(document -> work(() -> build(
                             loader, record, document.orElseThrow(() -> new WorkflowDefinitionNotFoundException(key)))))
-                    .compose(built -> backfill(record, built).map(built.plan()));
+                    .compose(built -> backfill(record, built)
+                            .map(new Loaded(built.plan(), scoped ? evaluate(built.plan(), record.failure()) : null)));
         });
+    }
+
+    /** The default scope's state type name that a plan of the id is compared with, or {@code null} when there is none. */
+    @Nullable
+    String defaultStateTypeName(String definitionId) {
+        return builder.defaultStateTypeName(definitionId).orElse(null);
+    }
+
+    /** Evaluates the plan of a version of a scope other than the default one against the default scope now. */
+    private Evaluation evaluate(RuntimeWorkflow plan, @Nullable DefinitionFailure stored) {
+        StateComparison comparison = builder.compareWithDefault(plan);
+        DefinitionFailure failure = failureOf(comparison);
+        if (failure != null) {
+            log.warn(
+                    "Definition scope '{}' id '{}' version {} is failing: its state type does not extend the default"
+                            + " scope's",
+                    EchoedNames.bounded(plan.definitionScopeKey()),
+                    EchoedNames.bounded(plan.plan().definitionId()),
+                    plan.plan().definitionVersion());
+        }
+        return new Evaluation(failure, comparison.defaultStateTypeName(), stored);
+    }
+
+    /**
+     * Evaluates a plan whose evaluation the cache no longer has. The row's stored mark is not known any more, so the
+     * evaluation is taken to match it and nothing is written for it.
+     */
+    Evaluation evaluateUnstored(RuntimeWorkflow plan) {
+        StateComparison comparison = builder.compareWithDefault(plan);
+        DefinitionFailure failure = failureOf(comparison);
+        return new Evaluation(failure, comparison.defaultStateTypeName(), failure);
+    }
+
+    /** Evaluates the plan again, against the default scope as it is now. */
+    void reevaluate(Evaluation evaluation, RuntimeWorkflow plan) {
+        StateComparison comparison = builder.compareWithDefault(plan);
+        evaluation.reevaluate(failureOf(comparison), comparison.defaultStateTypeName());
+    }
+
+    private static @Nullable DefinitionFailure failureOf(StateComparison comparison) {
+        return comparison.accepted() ? null : DefinitionFailure.of(Rule.STATE_TYPE_NOT_EXTENDED);
+    }
+
+    WorkflowDefinitionRegistryStore store() {
+        return store;
     }
 
     private static boolean buildable(WorkflowDefinitionRecord record) {

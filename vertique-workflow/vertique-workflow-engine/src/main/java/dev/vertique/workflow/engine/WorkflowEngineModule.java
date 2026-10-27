@@ -20,6 +20,7 @@ import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
 import dev.vertique.workflow.engine.executor.HoldingSegments;
 import dev.vertique.workflow.engine.executor.WorkflowExecutor;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
+import dev.vertique.workflow.engine.registry.FailingMarks;
 import dev.vertique.workflow.engine.registry.PlanCache;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
@@ -153,6 +154,18 @@ public abstract class WorkflowEngineModule {
                 schemaProducer,
                 config.orElseGet(WorkflowDefinitionsConfig::defaults).planCacheMaxEntries(),
                 observers);
+    }
+
+    /**
+     * Provides the failing marks of the plan cache, which a migration reads when it runs.
+     *
+     * @param cache the plan cache
+     * @return the marks
+     */
+    @Provides
+    @Singleton
+    static FailingMarks failingMarks(PlanCache cache) {
+        return cache.marks();
     }
 
     /**

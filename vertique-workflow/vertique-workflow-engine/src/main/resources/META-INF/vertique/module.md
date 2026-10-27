@@ -678,6 +678,25 @@ when it is published, with `WorkflowUnknownTypeNameException`, and the row stays
   `WorkflowDefinitionFailingException` naming the scope, the definition key and the rule. The check runs after the replay
   check, so a repeat of an earlier start still returns its instance, and before the version is resolved from the
   registry. Other scopes, and the default scope's versions, are not affected.
+- **Evaluation on the executor.** The executor decides for itself, from the plan it builds for a command, whether the
+  scope row the command runs is failing. A name binding that no class resolves builds no plan: the command is deferred as
+  not runnable (no attempt is spent) and the row is marked `NAME_BINDING_UNRESOLVED` once the deferral has committed. A
+  state class that no longer extends the default scope's builds the plan and flags it: a `START` of the flagged version
+  fails its command and its instance with the reason code `DEFINITION_FAILING` (the stored reason names the rule and never
+  a state class or document content; the instance's failed history entry is written, and the
+  `WorkflowDefinitionFailingException` is logged at warning level), while every other command of the version, signals,
+  completions, timers, retries and migrations out of it, runs unchanged, so running instances keep resuming. A migration
+  into a flagged version is rejected like one into a marked version. A flag is kept with the plan in the plan cache and is
+  evaluated again, in place, when the default scope's state type name that the operation reads differs from the name it
+  was evaluated against. A version of the default scope is never flagged or marked. The record-time refusal above reads
+  only the reconciliation pass's evaluation, so a start recorded before this node has evaluated the version fails when the
+  executor runs it.
+- **Mark writes.** When the executor's outcome differs from the mark the row stored when the plan was built, it writes or
+  clears the mark with `recordFailure` in a statement of its own, after the command's segment or deferral has ended and
+  never inside its transaction. The write is best effort: a failure is logged at warning level with the key only and
+  dropped, the command's outcome is unchanged, nothing retries it, and the next command that finds the outcome different
+  writes again; once a write succeeds, later commands write nothing. The node that evaluated last wins. The stored mark
+  feeds listings only.
 - **Default scope unaffected.** A failing scope row never blocks the registration of a default scope version of the same
   id, at startup or when a default version is published later; only the scope-owned rows that registered plainly take part
   in that comparison.
@@ -964,6 +983,9 @@ command it peeks on a live instance through `load`, so a node runs a document ve
   document does not compile, a recorded type name no class resolves, no loader supports its format, or the rebuilt hash
   differs from the stored one. An absent row, a row that is not `AVAILABLE` or `DEPRECATED`, a failure to read the row, a
   timeout and every `Error` are never remembered, so the next request reads again.
+- **Failing flag.** An entry of a scope other than the default one carries the evaluation of its plan (see Failing scope
+  rows): the flag, the default scope's state type name it was evaluated against and the mark the row stored when the plan was
+  built. A name binding that no class resolves is remembered as a failure like any other that does not build.
 - **Size.** At most `workflow.definitions.planCache.maxEntries` plans (default 500) stay resident; remembered failures count as entries. The cache reports each miss, each successful and each failed
   load and each size eviction to the `Set<CacheObserver>` under the name `workflow-plans`, and nothing for a hit.
 - **Startup builds nothing into it by default.** Startup builds the code definitions and the packaged documents, which the

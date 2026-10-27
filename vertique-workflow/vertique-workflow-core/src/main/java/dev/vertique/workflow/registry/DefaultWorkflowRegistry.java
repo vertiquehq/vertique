@@ -1151,6 +1151,75 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         }
     }
 
+    /**
+     * The result of comparing a scope-owned plan with the default scope's definition of its id.
+     *
+     * @param defaultStateTypeName the logical state type name of the default scope's definition the plan was compared
+     *     with, or {@code null} when the default scope holds none
+     * @param accepted {@code true} when {@link #register(String, WorkflowDefinition)} would not refuse the plan's state
+     *     type for being incompatible with the default scope's
+     */
+    public record StateComparison(
+            @jakarta.annotation.Nullable String defaultStateTypeName, boolean accepted) {}
+
+    /**
+     * Compares the state type of a scope-owned plan with the default scope's definition of the same id, the
+     * comparison that {@link #register(String, WorkflowDefinition)} makes and {@link #registerFailing} skips.
+     *
+     * <p>INTERNAL: the engine's plan cache evaluates the plans it builds with it; applications never call it.
+     *
+     * @param scopeOwned the plan of a version of a scope other than the default one
+     * @return the comparison; accepted when the default scope holds no definition of the id
+     */
+    public StateComparison compareWithDefault(RuntimeWorkflow scopeOwned) {
+        Objects.requireNonNull(scopeOwned, "scopeOwned");
+        rwLock.readLock().lock();
+        try {
+            var defaults = byDefinition.get(
+                    new ScopedId(WorkflowScopes.DEFAULT, scopeOwned.plan().definitionId()));
+            if (defaults == null || defaults.isEmpty()) {
+                return new StateComparison(null, true);
+            }
+            RuntimeWorkflow defaultRw = defaults.firstEntry().getValue();
+            try {
+                requireExtension(
+                        defaultRw,
+                        scopeOwned,
+                        scopeOwned.definitionScopeKey(),
+                        scopeOwned.plan().definitionId(),
+                        scopeOwned.plan().definitionVersion());
+                return new StateComparison(defaultRw.plan().stateTypeName(), true);
+            } catch (WorkflowDefinitionException refused) {
+                return new StateComparison(defaultRw.plan().stateTypeName(), false);
+            }
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * The logical state type name of the default scope's definition of the id, which a scope-owned plan is compared
+     * with.
+     *
+     * <p>INTERNAL: the engine's plan cache reads it to see whether an earlier {@linkplain #compareWithDefault
+     * comparison} is still current; applications never call it.
+     *
+     * @param definitionId the definition id
+     * @return the name, or empty when the default scope holds no definition of the id
+     */
+    public Optional<String> defaultStateTypeName(String definitionId) {
+        Objects.requireNonNull(definitionId, "definitionId");
+        rwLock.readLock().lock();
+        try {
+            var defaults = byDefinition.get(new ScopedId(WorkflowScopes.DEFAULT, definitionId));
+            return defaults == null || defaults.isEmpty()
+                    ? Optional.empty()
+                    : Optional.of(defaults.firstEntry().getValue().plan().stateTypeName());
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
     private RuntimeWorkflow lookup(String scopeKey, String definitionId, long version) {
         rwLock.readLock().lock();
         try {

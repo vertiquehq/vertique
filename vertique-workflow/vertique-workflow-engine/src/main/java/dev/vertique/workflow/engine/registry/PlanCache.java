@@ -6,6 +6,8 @@ package dev.vertique.workflow.engine.registry;
 import dev.vertique.cache.caffeine.ObjectCache;
 import dev.vertique.cache.caffeine.ObjectCaches;
 import dev.vertique.cache.spi.CacheObserver;
+import dev.vertique.workflow.engine.registry.DefinitionPlanLoader.Loaded;
+import dev.vertique.workflow.engine.registry.FailingMarks.Evaluation;
 import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.DocumentPlanSource;
@@ -14,6 +16,7 @@ import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -35,6 +38,10 @@ import org.slf4j.LoggerFactory;
  * that needs a plan across a transaction takes a {@linkplain #hold hold} on it: a held plan is answered by
  * {@link #resident} until the hold is released, whatever the cache did.
  *
+ * <p>An entry of a scope other than the default one comes with the {@link Evaluation} of its plan, see
+ * {@link FailingMarks}. The evaluation is made against the default scope's state type name at the time of the build and
+ * is made again, in place, when {@link #evaluation} finds that name changed.
+ *
  * <p>The cache reports every miss, successful and failed load and size eviction to its observers and nothing for a
  * hit.
  */
@@ -45,12 +52,13 @@ public final class PlanCache implements DocumentPlanSource {
     /** The cache name its events carry. */
     public static final String NAME = "workflow-plans";
 
-    /** A plan held across a segment, and by how many holders. */
-    private record Held(RuntimeWorkflow plan, int holders) {}
+    /** A plan held across a segment with its evaluation, and by how many holders. */
+    private record Held(Loaded loaded, int holders) {}
 
     private final DefinitionPlanLoader loader;
-    private final ObjectCache<DefinitionKey, RuntimeWorkflow> cache;
+    private final ObjectCache<DefinitionKey, Loaded> cache;
     private final ConcurrentHashMap<DefinitionKey, Held> held = new ConcurrentHashMap<>();
+    private final FailingMarks marks;
 
     /**
      * Creates the cache.
@@ -63,6 +71,16 @@ public final class PlanCache implements DocumentPlanSource {
     public PlanCache(DefinitionPlanLoader loader, long maxEntries, Set<CacheObserver> observers) {
         this.loader = Objects.requireNonNull(loader, "loader");
         this.cache = ObjectCaches.create(NAME, maxEntries, PlanFailures::isDeterministic, observers);
+        this.marks = new FailingMarks(loader.store(), this);
+    }
+
+    /**
+     * The failing marks of the plans this cache builds.
+     *
+     * @return the marks
+     */
+    public FailingMarks marks() {
+        return marks;
     }
 
     /**
@@ -102,7 +120,8 @@ public final class PlanCache implements DocumentPlanSource {
     @Override
     public Future<RuntimeWorkflow> load(DefinitionKey key) {
         Objects.requireNonNull(key, "key");
-        return cache.getOrLoad(key, () -> loader.load(key).onFailure(failure -> warnOnce(key, failure)));
+        return cache.getOrLoad(key, () -> loader.loadEvaluated(key).onFailure(failure -> warnOnce(key, failure)))
+                .map(Loaded::plan);
     }
 
     /**
@@ -125,11 +144,35 @@ public final class PlanCache implements DocumentPlanSource {
     @Override
     public Optional<RuntimeWorkflow> resident(DefinitionKey key) {
         Objects.requireNonNull(key, "key");
+        return Optional.ofNullable(loadedOf(key)).map(Loaded::plan);
+    }
+
+    private @Nullable Loaded loadedOf(DefinitionKey key) {
         Held holding = held.get(key);
         if (holding != null) {
-            return Optional.of(holding.plan());
+            return holding.loaded();
         }
-        return cache.getIfPresent(key);
+        return cache.getIfPresent(key).orElse(null);
+    }
+
+    /**
+     * The evaluation of the plan this cache holds for a key, made again first when the default scope's state type
+     * name is no longer the one it was made against. Nothing is loaded.
+     *
+     * @param key the scope, definition id and version
+     * @return the evaluation, or empty when the cache holds no plan of the key or the key is of the default scope
+     */
+    public Optional<Evaluation> evaluation(DefinitionKey key) {
+        Objects.requireNonNull(key, "key");
+        Loaded loaded = loadedOf(key);
+        if (loaded == null || loaded.evaluation() == null) {
+            return Optional.empty();
+        }
+        Evaluation evaluation = loaded.evaluation();
+        if (!Objects.equals(loader.defaultStateTypeName(key.definitionId()), evaluation.defaultStateTypeName())) {
+            loader.reevaluate(evaluation, loaded.plan());
+        }
+        return Optional.of(evaluation);
     }
 
     /**
@@ -152,14 +195,18 @@ public final class PlanCache implements DocumentPlanSource {
     public Hold hold(DefinitionKey key, RuntimeWorkflow plan) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(plan, "plan");
-        held.merge(key, new Held(plan, 1), (current, added) -> new Held(current.plan(), current.holders() + 1));
+        Loaded loaded = cache.getIfPresent(key)
+                .filter(entry -> entry.plan() == plan)
+                .orElseGet(() -> new Loaded(
+                        plan, WorkflowScopes.DEFAULT.equals(key.scopeKey()) ? null : loader.evaluateUnstored(plan)));
+        held.merge(key, new Held(loaded, 1), (current, added) -> new Held(current.loaded(), current.holders() + 1));
         AtomicBoolean released = new AtomicBoolean();
         return () -> {
             if (released.compareAndSet(false, true)) {
                 held.computeIfPresent(
                         key,
                         (k, current) ->
-                                current.holders() <= 1 ? null : new Held(current.plan(), current.holders() - 1));
+                                current.holders() <= 1 ? null : new Held(current.loaded(), current.holders() - 1));
             }
         };
     }

@@ -4,6 +4,7 @@
 package dev.vertique.workflow.engine.executor;
 
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
+import dev.vertique.workflow.engine.executor.WorkflowSegments.Warm.Marks;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
@@ -398,6 +399,7 @@ final class ExecutorLoop {
     private Future<Boolean> claim(CommandPeek.WarmedHead warmed) {
         CommandHead head = warmed.head();
         Runnable releasePlans = warmed.release();
+        Marks marks = warmed.marks();
         long claimStartNanos = System.nanoTime();
         Future<Optional<ClaimedCommand>> claimed;
         try {
@@ -428,7 +430,7 @@ final class ExecutorLoop {
                         release();
                         return true;
                     }
-                    startSegment(head, claim, claimStartNanos, releasePlans);
+                    startSegment(head, claim, claimStartNanos, releasePlans, marks);
                     return true;
                 })
                 .recover(failure -> {
@@ -443,13 +445,14 @@ final class ExecutorLoop {
                 });
     }
 
-    private void startSegment(CommandHead head, ClaimedCommand claim, long claimStartNanos, Runnable releasePlans) {
+    private void startSegment(
+            CommandHead head, ClaimedCommand claim, long claimStartNanos, Runnable releasePlans, Marks marks) {
         ContextInternal segmentContext = root.duplicate();
         segmentContext.runOnContext(ignored -> {
             Future<Void> done;
             try {
                 done = Objects.requireNonNull(
-                        segmentRunner.run(head, claim, claimStartNanos),
+                        segmentRunner.run(head, claim, claimStartNanos, marks.failing()),
                         "the segment returned null instead of a future");
             } catch (Exception | LinkageError | AssertionError e) {
                 done = Future.failedFuture(e);
@@ -462,10 +465,13 @@ final class ExecutorLoop {
                             instanceId,
                             result.cause().getClass().getName());
                 }
-                release();
-                if (running) {
-                    kick();
-                }
+                // the marks are written after the segment has ended, and never change its outcome
+                marks.run().onComplete(written -> {
+                    release();
+                    if (running) {
+                        kick();
+                    }
+                });
             });
         });
     }

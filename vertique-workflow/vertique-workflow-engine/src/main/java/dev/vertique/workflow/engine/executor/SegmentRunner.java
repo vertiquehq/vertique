@@ -9,13 +9,17 @@ import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DispositionResult;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.exception.WorkflowDefinitionFailingException;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.CommandSettled;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.TransientRetry;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -39,6 +43,8 @@ import org.slf4j.LoggerFactory;
  *       stays spent and the claim lapses at the end of its lease; the failure is not logged as an error;</li>
  *   <li>a transient failure: the command is rescheduled with a capped backoff and the attempt its claim spent is
  *       restored, in one transaction that locks only the command row;</li>
+ *   <li>a start of a version evaluated as failing: the command and its instance are failed, as for any other
+ *       deterministic failure, with the refusal as the reason;</li>
  *   <li>any other failure, and a step-limit overrun: the command is failed, and for a start, a retry or a timer its
  *       instance, in a transaction of its own that tries the execution lock until one margin before the lease ends and
  *       then releases the claim with its attempt restored, because the failure recurs on the next claim. A signal, a
@@ -107,14 +113,17 @@ final class SegmentRunner {
      * @param head           the peeked command
      * @param claim          the claim
      * @param claimStartNanos the monotonic reading taken before the claim was sent
+     * @param failing        the failure the version the command is pinned to is evaluated with, or {@code null}; a
+     *                       start of a failing version is failed without running
      * @return a future that completes when the segment is over
      */
-    Future<Void> run(CommandHead head, ClaimedCommand claim, long claimStartNanos) {
+    Future<Void> run(
+            CommandHead head, ClaimedCommand claim, long claimStartNanos, @Nullable DefinitionFailure failing) {
         long lease = TimeUnit.SECONDS.toNanos(config.leaseSeconds());
         long margin = TimeUnit.MILLISECONDS.toNanos(config.marginMs());
         Instants instants = new Instants(
                 claimStartNanos + lease, claimStartNanos + lease - 2 * margin, claimStartNanos + lease - margin);
-        return attempt(head, claim, instants)
+        return attempt(head, claim, instants, failing)
                 .<Void>compose(step -> {
                     switch (step) {
                         case COMPLETED -> emitSettled(claim, "COMPLETE", claimStartNanos);
@@ -134,7 +143,8 @@ final class SegmentRunner {
     /** The monotonic instants of one claim: the end of the lease, the busy-lock give-up and the segment deadline. */
     private record Instants(long leaseEnd, long giveUp, long deadline) {}
 
-    private Future<Step> attempt(CommandHead head, ClaimedCommand claim, Instants instants) {
+    private Future<Step> attempt(
+            CommandHead head, ClaimedCommand claim, Instants instants, @Nullable DefinitionFailure failing) {
         long now = System.nanoTime();
         if (now - instants.giveUp() >= 0) {
             return release(claim, instants).map(Step.RELEASE);
@@ -146,18 +156,19 @@ final class SegmentRunner {
         }
         Future<Step> step;
         try {
-            step = runner.inTransaction(null, Duration.ofNanos(remaining), tx -> body(head, claim, tx));
+            step = runner.inTransaction(null, Duration.ofNanos(remaining), tx -> body(head, claim, failing, tx));
         } catch (RuntimeException e) {
             step = Future.failedFuture(e);
         }
         return step.compose(result -> switch (result) {
-            case BUSY -> pause(BUSY_RETRY_MS).compose(ignored -> attempt(head, claim, instants));
+            case BUSY -> pause(BUSY_RETRY_MS).compose(ignored -> attempt(head, claim, instants, failing));
             case RELEASE -> release(claim, instants).map(Step.RELEASE);
             default -> Future.succeededFuture(result);
         });
     }
 
-    private Future<Step> body(CommandHead head, ClaimedCommand claim, SqlClient tx) {
+    private Future<Step> body(
+            CommandHead head, ClaimedCommand claim, @Nullable DefinitionFailure failing, SqlClient tx) {
         return commands.tryLockInstance(claim.workflowId(), tx).compose(locked -> {
             if (!locked) {
                 return Future.succeededFuture(Step.BUSY);
@@ -165,6 +176,12 @@ final class SegmentRunner {
             return commands.fence(claim, tx).compose(fenced -> {
                 if (fenced.isEmpty()) {
                     return Future.succeededFuture(Step.RELEASE);
+                }
+                if (failing != null && "START".equals(claim.kind())) {
+                    // a new start never runs a version this node evaluated as failing; the failure is deterministic
+                    return Future.failedFuture(new WorkflowDefinitionFailingException(
+                            new DefinitionKey(head.definitionScopeKey(), head.definitionId(), head.definitionVersion()),
+                            failing));
                 }
                 return segments.run(head, claim, fenced.get(), tx, config.maxStepsPerSegment())
                         .compose(outcome -> switch (outcome) {
@@ -216,6 +233,20 @@ final class SegmentRunner {
                     claim,
                     CommandErrors.Reason.STEP_LIMIT,
                     CommandErrors.stepLimit(claim.kind(), limit.cap()),
+                    instants,
+                    claimStartNanos);
+        }
+        WorkflowDefinitionFailingException refused = Dispositions.definitionFailing(failure);
+        if (refused != null) {
+            log.warn(
+                    "Command {} was refused and failed: {} ({})",
+                    claim.commandId(),
+                    refused.getClass().getName(),
+                    refused.rule());
+            return fail(
+                    claim,
+                    CommandErrors.Reason.DEFINITION_FAILING,
+                    CommandErrors.definitionFailing(claim.kind(), refused.rule()),
                     instants,
                     claimStartNanos);
         }
