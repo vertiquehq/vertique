@@ -29,6 +29,7 @@ SPDX-License-Identifier: EUPL-1.2
     </properties>
 
     <dependencies>
+        <!-- Test only: the contract test renders the filtered README template the way the archetype plugin does. -->
         <dependency>
             <groupId>org.apache.velocity</groupId>
             <artifactId>velocity-engine-core</artifactId>

@@ -29,8 +29,8 @@ for name in sys.argv[2:]:
     try:
         suite = ET.parse(reports[0]).getroot()
         tests, failures, errors, skipped = (int(suite.attrib[key]) for key in ('tests', 'failures', 'errors', 'skipped'))
-        if suite.tag != 'testsuite' or tests <= 0 or failures != 0 or errors != 0 or skipped >= tests:
-            raise ValueError('no executed tests or failures/errors present')
+        if suite.tag != 'testsuite' or tests <= 0 or failures != 0 or errors != 0 or skipped != 0:
+            raise ValueError('no executed tests, or failures, errors or skipped tests present')
     except (ET.ParseError, KeyError, ValueError) as exc:
         sys.exit(f'{name}: invalid report: {exc}')
     print(f'{name}: tests={tests}, failures={failures}, errors={errors}, skipped={skipped}')

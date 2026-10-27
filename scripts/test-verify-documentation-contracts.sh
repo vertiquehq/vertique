@@ -13,7 +13,7 @@ done
 check() { bash scripts/verify-documentation-contracts.sh --check-reports "$fixture" >/dev/null 2>&1; }
 check
 report="$fixture/module/target/surefire-reports/TEST-example.${classes[0]}.xml"
-for xml in '<testsuite tests="0" failures="0" errors="0" skipped="0"/>' '<testsuite tests="2" failures="1" errors="0" skipped="0"/>' '<testsuite tests="2" failures="0" errors="1" skipped="0"/>' '<testsuite tests="2" failures="0" errors="0" skipped="2"/>' '<broken'; do
+for xml in '<testsuite tests="0" failures="0" errors="0" skipped="0"/>' '<testsuite tests="2" failures="1" errors="0" skipped="0"/>' '<testsuite tests="2" failures="0" errors="1" skipped="0"/>' '<testsuite tests="2" failures="0" errors="0" skipped="2"/>' '<testsuite tests="2" failures="0" errors="0" skipped="1"/>' '<broken'; do
   printf '%s\n' "$xml" > "$report"
   if check; then echo "Invalid report accepted: $xml" >&2; exit 1; fi
 done

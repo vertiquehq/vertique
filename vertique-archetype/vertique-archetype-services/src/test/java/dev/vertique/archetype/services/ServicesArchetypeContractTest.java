@@ -194,8 +194,8 @@ class ServicesArchetypeContractTest {
             new Dependency("org.junit.jupiter", "junit-jupiter", null, "test"));
 
     /**
-     * The complete dependency contract of the archetype module itself, in declaration order: one
-     * Surefire harness edge plus the frozen §4.5 staging set that populates the isolated
+     * The complete dependency contract of the archetype module itself, in declaration order: two
+     * test-harness edges (Velocity, which renders the README template, and Surefire) plus the frozen §4.5 staging set that populates the isolated
      * integration-test repository. The list is exhaustive so a staging edge cannot be added or
      * dropped silently — a missing edge would let the nested build fall back to a coordinate this
      * reactor did not produce.
