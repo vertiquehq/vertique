@@ -27,7 +27,7 @@ class PayloadValidationTest {
     private static final String SENTINEL = "ZZSENTINEL";
 
     private final PayloadSchemaCache cache = new PayloadSchemaCache();
-    private final WorkflowPayloadSchemas schemas;
+    private final AwaitedSchemas schemas;
 
     PayloadValidationTest() {
         DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
@@ -45,7 +45,7 @@ class PayloadValidationTest {
         registry.register(
                 Definitions.withStartAndDecisions(ID, 1L, ValidationPayloads.RequiredComment.class, decisions));
         registry.register(Definitions.withDecisionUnderSecondContract(NO_START_ID, 1L, Void.class));
-        schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        schemas = AwaitedSchemas.of(registry, cache);
     }
 
     private PayloadValidationResult validateApprove(JsonObject payload) {
@@ -306,7 +306,7 @@ class PayloadValidationTest {
                         .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "null-start", 1L))
                         .startPayloadType())
                 .isNull();
-        WorkflowPayloadSchemas nullStartSchemas = new DefaultWorkflowPayloadSchemas(nullStartRegistry, nullStartCache);
+        AwaitedSchemas nullStartSchemas = AwaitedSchemas.of(nullStartRegistry, nullStartCache);
 
         // When: a missing, an empty and a non-empty start payload are validated
         PayloadValidationResult missing =

@@ -56,7 +56,7 @@ class CatalogCoherenceTest {
         // Given: a definition registered for (shared, 1) with a decision that requires alpha
         DefaultWorkflowRegistry registry = registryWithALaterValidator();
         registry.register(Definitions.withDecision(SHARED_ID, 1L, ValidationPayloads.FirstChoice.class));
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
         Optional<WorkflowDefinitionDescriptor> before =
                 schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, SHARED_ID, 1L));
         assertThat(before).isPresent();
@@ -97,7 +97,7 @@ class CatalogCoherenceTest {
     void definitionRejectedByALaterValidatorIsNotDescribable() {
         // Given: a registry whose later validator rejects the definition after the schema validator accepted it
         DefaultWorkflowRegistry registry = registryWithALaterValidator();
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
 
         // When: that definition is registered
         assertThatThrownBy(() -> registry.register(

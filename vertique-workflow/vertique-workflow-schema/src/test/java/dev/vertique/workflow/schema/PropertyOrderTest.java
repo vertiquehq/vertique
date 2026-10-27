@@ -113,7 +113,7 @@ class PropertyOrderTest {
         var registry =
                 Registries.withSchemaValidator(cache, profiles, PayloadSchemaTestProfiles.systemProfile("replaced"));
         registry.register(Definitions.withStart("replaced", 1L, OrderedPayloads.Replaced.class));
-        var schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        var schemas = AwaitedSchemas.of(registry, cache);
 
         // When: the start payload is described
         PayloadSchema schema = schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, "replaced", 1L))
@@ -136,7 +136,7 @@ class PropertyOrderTest {
         decisions.put("jackson", ObjectNode.class);
         var registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.withDecisions("open", 1L, decisions));
-        var schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        var schemas = AwaitedSchemas.of(registry, cache);
 
         // When: the definition is described
         List<DecisionDescriptor> described = schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, "open", 1L))
@@ -160,7 +160,7 @@ class PropertyOrderTest {
         // Given: a decision typed with the record that has an explicit order
         var registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.withDecision("ordered", 1L, OrderedPayloads.Ordered.class));
-        var schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        var schemas = AwaitedSchemas.of(registry, cache);
 
         // When: the decision is looked up
         PayloadSchema schema = schemas.decision(
@@ -206,7 +206,7 @@ class PropertyOrderTest {
     private PayloadSchema startPayloadOf(Class<?> type) {
         var registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.withStart("order", 1L, type));
-        return new DefaultWorkflowPayloadSchemas(registry, cache)
+        return AwaitedSchemas.of(registry, cache)
                 .describe(new DefinitionKey(WorkflowScopes.DEFAULT, "order", 1L))
                 .orElseThrow()
                 .startPayload();

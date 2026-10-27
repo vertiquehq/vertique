@@ -6,8 +6,7 @@ package dev.vertique.workflow.schema;
 import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.json.schema.validation.PathForm;
 import dev.vertique.json.schema.validation.ViolationDetails;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -15,6 +14,7 @@ import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
+import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.OutputUnit;
 import jakarta.annotation.Nullable;
@@ -27,11 +27,14 @@ import java.util.Optional;
 /**
  * Assembles descriptors from the workflow registry and the schemas cached at registration.
  *
- * <p>The service is stateless. It resolves the pinned definition from the registry, walks the human tasks in plan
+ * <p>The service is stateless and holds no plan after a call. It loads the pinned definition through
+ * {@link WorkflowRegistry#load(DefinitionKey)}, so a version that is not resident is built on demand, then walks the human tasks in plan
  * order and their decisions in declaration order, and looks each payload type up in the cache by its logical name.
  * It never loads a class and never generates a schema. A definition that is registered but has no cached schema for
  * one of its payload types means the registration validator was not installed for the registry; that is reported as
- * an {@link IllegalStateException} rather than as an unknown definition.
+ * an {@link IllegalStateException} that fails the returned future rather than being thrown from the call, and not
+ * as an unknown definition. A version that no row supplies is an unknown definition; any other load failure fails
+ * the future with the load's own failure.
  *
  * <p>Validation resolves the same keys, then runs the compiled validator held by the cache entry inside a window of
  * its pattern-input guard. Nothing is generated, compiled or loaded per call, and the submitted payload is only read.
@@ -69,56 +72,58 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
     }
 
     @Override
-    public Optional<WorkflowDefinitionDescriptor> describe(DefinitionKey key) {
-        return resolve(key).map(workflow -> {
-            Class<?> startType = workflow.startPayloadType();
-            PayloadSchema start = startType == null ? null : schemaOf(typeNames.nameOf(startType));
-            List<HumanTaskStepDescriptor> steps = new ArrayList<>();
-            for (WorkflowNode node : workflow.plan().nodes()) {
-                if (node instanceof HumanTaskNode task) {
-                    List<DecisionDescriptor> decisions = new ArrayList<>();
-                    for (HumanTaskNode.TaskDecision decision : task.decisions()) {
-                        decisions.add(descriptorOf(decision));
+    public Future<Optional<WorkflowDefinitionDescriptor>> describe(DefinitionKey key) {
+        return resolve(key)
+                .map(found -> found.map(workflow -> {
+                    Class<?> startType = workflow.startPayloadType();
+                    PayloadSchema start = startType == null ? null : schemaOf(typeNames.nameOf(startType));
+                    List<HumanTaskStepDescriptor> steps = new ArrayList<>();
+                    for (WorkflowNode node : workflow.plan().nodes()) {
+                        if (node instanceof HumanTaskNode task) {
+                            List<DecisionDescriptor> decisions = new ArrayList<>();
+                            for (HumanTaskNode.TaskDecision decision : task.decisions()) {
+                                decisions.add(descriptorOf(decision));
+                            }
+                            steps.add(new HumanTaskStepDescriptor(task.stepId(), decisions));
+                        }
                     }
-                    steps.add(new HumanTaskStepDescriptor(task.stepId(), decisions));
-                }
+                    return new WorkflowDefinitionDescriptor(key.definitionId(), key.definitionVersion(), start, steps);
+                }));
+    }
+
+    @Override
+    public Future<Optional<DecisionDescriptor>> decision(DefinitionKey key, String stepId, String decisionName) {
+        return resolve(key).map(found -> found.flatMap(workflow -> findDecision(workflow, stepId, decisionName))
+                .map(this::descriptorOf));
+    }
+
+    @Override
+    public Future<PayloadValidationResult> validateDecision(
+            DefinitionKey key, String stepId, String decisionName, @Nullable JsonObject payload) {
+        return resolve(key).map(workflow -> {
+            if (workflow.isEmpty()) {
+                return single(UNKNOWN_DEFINITION, DEFINITION_TYPE);
             }
-            return new WorkflowDefinitionDescriptor(key.definitionId(), key.definitionVersion(), start, steps);
+            Optional<HumanTaskNode.TaskDecision> decision = findDecision(workflow.get(), stepId, decisionName);
+            if (decision.isEmpty()) {
+                return single(UNKNOWN_DECISION, DECISION_TYPE);
+            }
+            return validatePayload(decision.get().payloadTypeName(), payload, VOID_DECISION_PAYLOAD);
         });
     }
 
     @Override
-    public Optional<DecisionDescriptor> decision(DefinitionKey key, String stepId, String decisionName) {
-        return resolve(key)
-                .flatMap(workflow -> findDecision(workflow, stepId, decisionName))
-                .map(this::descriptorOf);
-    }
-
-    @Override
-    public PayloadValidationResult validateDecision(
-            DefinitionKey key, String stepId, String decisionName, @Nullable JsonObject payload) {
-        Optional<RuntimeWorkflow> workflow = resolve(key);
-        if (workflow.isEmpty()) {
-            return single(UNKNOWN_DEFINITION, DEFINITION_TYPE);
-        }
-        Optional<HumanTaskNode.TaskDecision> decision = findDecision(workflow.get(), stepId, decisionName);
-        if (decision.isEmpty()) {
-            return single(UNKNOWN_DECISION, DECISION_TYPE);
-        }
-        return validatePayload(decision.get().payloadTypeName(), payload, VOID_DECISION_PAYLOAD);
-    }
-
-    @Override
-    public PayloadValidationResult validateStart(DefinitionKey key, @Nullable JsonObject payload) {
-        Optional<RuntimeWorkflow> workflow = resolve(key);
-        if (workflow.isEmpty()) {
-            return single(UNKNOWN_DEFINITION, DEFINITION_TYPE);
-        }
-        Class<?> startType = workflow.get().startPayloadType();
-        if (startType == null) {
-            return new PayloadValidationResult(List.of());
-        }
-        return validatePayload(typeNames.nameOf(startType), payload, VOID_START_PAYLOAD);
+    public Future<PayloadValidationResult> validateStart(DefinitionKey key, @Nullable JsonObject payload) {
+        return resolve(key).map(workflow -> {
+            if (workflow.isEmpty()) {
+                return single(UNKNOWN_DEFINITION, DEFINITION_TYPE);
+            }
+            Class<?> startType = workflow.get().startPayloadType();
+            if (startType == null) {
+                return new PayloadValidationResult(List.of());
+            }
+            return validatePayload(typeNames.nameOf(startType), payload, VOID_START_PAYLOAD);
+        });
     }
 
     private static Optional<HumanTaskNode.TaskDecision> findDecision(
@@ -168,12 +173,12 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
         return VOID_PRIMITIVE.equals(typeName) || VOID_WRAPPER.equals(typeName);
     }
 
-    private Optional<RuntimeWorkflow> resolve(DefinitionKey key) {
-        try {
-            return Optional.of(registry.resolve(key));
-        } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException e) {
-            return Optional.empty();
-        }
+    private Future<Optional<RuntimeWorkflow>> resolve(DefinitionKey key) {
+        return registry.load(key)
+                .map(Optional::of)
+                .recover(failure -> failure instanceof WorkflowDefinitionNotFoundException
+                        ? Future.succeededFuture(Optional.empty())
+                        : Future.failedFuture(failure));
     }
 
     private DecisionDescriptor descriptorOf(HumanTaskNode.TaskDecision decision) {

@@ -48,7 +48,7 @@ class DefaultWorkflowPlanSchemaProducerTest {
                 .isEqualTo("integer");
 
         // And: it equals the schema that start validation uses for the same key
-        JsonObject validated = new DefaultWorkflowPayloadSchemas(registry, cache)
+        JsonObject validated = AwaitedSchemas.of(registry, cache)
                 .describe(KEY)
                 .orElseThrow()
                 .startPayload()

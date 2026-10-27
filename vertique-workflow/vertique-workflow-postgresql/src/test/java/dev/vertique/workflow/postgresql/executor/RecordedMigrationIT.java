@@ -137,6 +137,51 @@ public class RecordedMigrationIT {
     }
 
     @Test
+    @DisplayName("a migration whose handler declares other state types than the definitions is rejected")
+    void migrationWithAHandlerOfOtherStateTypesIsRejectedWithTheInstanceUnchanged() {
+        Versioned v1 = versioned(1, true);
+        try (SignalFixture f = new SignalFixture(db.toPoolConfig(), v1, List.of("paid", "note"))) {
+            // Given an instance waiting on version 1, version 2 available, and a handler to version 2 whose source
+            // and target state types are not the state types of the two definitions
+            seed(f, versioned(2, true), List.of("paid", "note"));
+            Node node = f.node("engine")
+                    .migrations(new DefaultWorkflowMigrationRegistry(
+                            Set.<WorkflowMigrationHandler<?, ?>>of(handler(
+                                    ID,
+                                    1,
+                                    2,
+                                    Other.class,
+                                    Other.class,
+                                    (state, ctx) -> MigrationResult.anchorAtInitial(new Other(state.ref())))),
+                            f.registry))
+                    .build();
+            WorkflowInstanceId id = f.waiting(node, "mismatched-types");
+            JsonObject before = f.snapshot(id);
+            JsonObject pinBefore = pin(f, id);
+
+            // When the migration to version 2 is recorded and the instance runs until idle
+            migrate(f, node, id, 2);
+            assertThat(migrationOf(f, id).state()).isEqualTo("PENDING");
+            f.idle(node, id);
+
+            // Then the command is rejected with the state type reason and a sanitized, code-prefixed message
+            CommandRow migration = migrationOf(f, id);
+            assertThat(migration.state()).isEqualTo("REJECTED");
+            assertThat(migration.lastError())
+                    .startsWith("MIGRATION_REJECTED: ")
+                    .contains("state types do not match")
+                    .doesNotContain(Other.class.getName(), Other.class.getSimpleName(), State.class.getSimpleName());
+            History rejected = f.entry(id, "COMMAND_REJECTED", migration.id());
+            assertThat(rejected.text()).doesNotContain(Other.class.getName(), Other.class.getSimpleName(), "Exception");
+
+            // And the instance snapshot and pin are unchanged and it was not migrated or failed
+            assertThat(f.snapshot(id)).isEqualTo(before);
+            assertThat(pin(f, id)).isEqualTo(pinBefore);
+            assertThat(f.fixture.historyOf(id)).doesNotContain("FAILED", "WORKFLOW_MIGRATED");
+        }
+    }
+
+    @Test
     @DisplayName("the same migration is recorded once while one is pending, and a different one is refused")
     void aPendingMigrationIsRecordedOnceAndAnotherTargetIsRefused() {
         Versioned v1 = versioned(1, true);

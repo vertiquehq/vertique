@@ -10,11 +10,12 @@ import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
-import dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import java.lang.reflect.Proxy;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -30,16 +31,14 @@ import org.junit.jupiter.api.Test;
  *   <li>Single valid handler registered → {@code find(...)} returns it.</li>
  *   <li>Duplicate {@code (defId, from, target)} triple → constructor throws
  *       {@link WorkflowDefinitionException}.</li>
- *   <li>Source version unregistered at construction time → constructor succeeds (deferred);
- *       {@code find()} returns empty.</li>
- *   <li>Target version unregistered at construction time → constructor succeeds (deferred);
- *       {@code find()} returns empty.</li>
- *   <li>Handler state-type mismatch against the registered plan → {@code find()} throws
- *       {@link WorkflowDefinitionException} (deferred check).</li>
+ *   <li>Source or target version not resident → constructor succeeds and {@code find()} still
+ *       returns the handler: the lookup resolves no plan.</li>
+ *   <li>Handler state type that differs from the registered plan → {@code find()} still returns the
+ *       handler; the state-type check happens where the migration executes.</li>
  *   <li>{@code fromVersion >= targetVersion} → constructor throws {@link WorkflowDefinitionException}.</li>
  *   <li>Multiple non-overlapping handlers → all registered successfully.</li>
- *   <li>Handler registered with only v1 → construction succeeds; {@code find()} returns empty
- *       until v2 is dynamically activated; returns handler after activation.</li>
+ *   <li>Handler registered with only v1 → construction succeeds; {@code find()} returns the
+ *       handler before and after v2 is dynamically activated.</li>
  * </ul>
  */
 class WorkflowMigrationRegistryTest {
@@ -386,6 +385,30 @@ class WorkflowMigrationRegistryTest {
         }
 
         @Test
+        @DisplayName("find(...) returns the handler without resolving either plan when neither version is resident")
+        void findReturnsTheHandlerWhenNeitherVersionIsResident() {
+            // Given: a handler for order-saga 1 -> 2 and a registry that holds neither version and fails the test
+            // if the lookup asks it for a plan
+            AtomicInteger planLookups = new AtomicInteger();
+            WorkflowRegistry emptyRegistry = (WorkflowRegistry) Proxy.newProxyInstance(
+                    WorkflowRegistry.class.getClassLoader(),
+                    new Class<?>[] {WorkflowRegistry.class},
+                    (proxy, method, args) -> {
+                        planLookups.incrementAndGet();
+                        throw new AssertionError("find must not ask the registry for a plan: " + method.getName());
+                    });
+            WorkflowMigrationHandler<StateV2, StateV2> handler = orderSagaV1toV2Handler();
+            DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(handler), emptyRegistry);
+
+            // When: the handler is looked up
+            Optional<WorkflowMigrationHandler<?, ?>> found = reg.find("default", "order-saga", 1L, "default", 2L);
+
+            // Then: the handler is returned and no plan was resolved
+            assertThat(found).isPresent().containsSame(handler);
+            assertThat(planLookups).hasValue(0);
+        }
+
+        @Test
         @DisplayName("all() returns a collection with the single handler")
         void allReturnsSingleElement() {
             WorkflowRegistry wfReg = registryWith(orderSagaV1Def(), orderSagaV2Def());
@@ -416,12 +439,12 @@ class WorkflowMigrationRegistryTest {
     }
 
     @Nested
-    @DisplayName("Unregistered version validation — deferred to find()")
+    @DisplayName("Unregistered versions — find() returns the handler regardless")
     class UnregisteredVersionValidation {
 
         @Test
-        @DisplayName("source version not in registry → construction succeeds; find() returns empty")
-        void sourceVersionUnregisteredDoesNotThrowAtConstructionButFindReturnsEmpty() {
+        @DisplayName("source version not in registry → construction succeeds; find() returns the handler")
+        void sourceVersionUnregisteredDoesNotThrowAtConstructionAndFindReturnsTheHandler() {
             // Only v2 registered; handler migrates from v1 → v2; v1 is absent
             WorkflowRegistry wfReg = registryWith(orderSagaV2Def());
             WorkflowMigrationHandler<StateV2, StateV2> handler = orderSagaV1toV2Handler();
@@ -429,13 +452,15 @@ class WorkflowMigrationRegistryTest {
             // Construction must not throw — version check is deferred
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(handler), wfReg);
 
-            // find() returns empty because source version v1 is not registered
-            assertThat(reg.find("default", "order-saga", 1L, "default", 2L)).isEmpty();
+            // find() returns the handler although source version v1 is not registered
+            assertThat(reg.find("default", "order-saga", 1L, "default", 2L))
+                    .isPresent()
+                    .containsSame(handler);
         }
 
         @Test
-        @DisplayName("target version not in registry → construction succeeds; find() returns empty")
-        void targetVersionUnregisteredDoesNotThrowAtConstructionButFindReturnsEmpty() {
+        @DisplayName("target version not in registry → construction succeeds; find() returns the handler")
+        void targetVersionUnregisteredDoesNotThrowAtConstructionAndFindReturnsTheHandler() {
             // Only v1 registered; handler migrates from v1 → v2; v2 is absent
             WorkflowRegistry wfReg = registryWith(orderSagaV1Def());
             WorkflowMigrationHandler<StateV2, StateV2> handler = orderSagaV1toV2Handler();
@@ -443,19 +468,20 @@ class WorkflowMigrationRegistryTest {
             // Construction must not throw — version check is deferred
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(handler), wfReg);
 
-            // find() returns empty because target version v2 is not registered
-            assertThat(reg.find("default", "order-saga", 1L, "default", 2L)).isEmpty();
+            // find() returns the handler although target version v2 is not registered
+            assertThat(reg.find("default", "order-saga", 1L, "default", 2L))
+                    .isPresent()
+                    .containsSame(handler);
         }
     }
 
     @Nested
-    @DisplayName("State-type mismatch validation — deferred to find()")
+    @DisplayName("State-type mismatch — not checked by find()")
     class StateTypeMismatchValidation {
 
         @Test
-        @DisplayName(
-                "handler sourceStateType differs from plan stateType → find() throws WorkflowMigrationStateTypeMismatchException")
-        void sourceStateTypeMismatchThrowsAtFindTime() {
+        @DisplayName("handler sourceStateType differs from plan stateType → find() still returns the handler")
+        void sourceStateTypeMismatchDoesNotFailFind() {
             // orderSagaV1Def has stateType=StateV2, but this handler claims StateV1 as source type
             WorkflowRegistry wfReg = registryWith(orderSagaV1Def(), orderSagaV2Def());
 
@@ -491,29 +517,18 @@ class WorkflowMigrationRegistryTest {
                 }
             };
 
-            // Construction must NOT throw — type checking is deferred
+            // Construction must NOT throw
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(badHandler), wfReg);
 
-            // find() must throw typed WorkflowMigrationStateTypeMismatchException
-            assertThatThrownBy(() -> reg.find("default", "order-saga", 1L, "default", 2L))
-                    .isInstanceOf(WorkflowMigrationStateTypeMismatchException.class)
-                    .hasMessageContaining("order-saga")
-                    .hasMessageContaining("sourceStateType")
-                    .satisfies(ex -> {
-                        WorkflowMigrationStateTypeMismatchException typed =
-                                (WorkflowMigrationStateTypeMismatchException) ex;
-                        assertThat(typed.definitionId()).isEqualTo("order-saga");
-                        assertThat(typed.fromVersion()).isEqualTo(1L);
-                        assertThat(typed.targetVersion()).isEqualTo(2L);
-                        assertThat(typed.expectedStateType()).isEqualTo(StateV1.class);
-                        assertThat(typed.actualStateType()).isEqualTo(StateV2.class);
-                    });
+            // find() returns the handler; the state-type check belongs to the migration execution
+            assertThat(reg.find("default", "order-saga", 1L, "default", 2L))
+                    .isPresent()
+                    .containsSame(badHandler);
         }
 
         @Test
-        @DisplayName(
-                "handler targetStateType differs from plan stateType → find() throws WorkflowMigrationStateTypeMismatchException")
-        void targetStateTypeMismatchThrowsAtFindTime() {
+        @DisplayName("handler targetStateType differs from plan stateType → find() still returns the handler")
+        void targetStateTypeMismatchDoesNotFailFind() {
             // orderSagaV2Def has stateType=StateV2, but this handler claims StateV1 as target type
             WorkflowRegistry wfReg = registryWith(orderSagaV1Def(), orderSagaV2Def());
 
@@ -549,23 +564,13 @@ class WorkflowMigrationRegistryTest {
                 }
             };
 
-            // Construction must NOT throw — type checking is deferred
+            // Construction must NOT throw
             DefaultWorkflowMigrationRegistry reg = new DefaultWorkflowMigrationRegistry(Set.of(badHandler), wfReg);
 
-            // find() must throw typed WorkflowMigrationStateTypeMismatchException
-            assertThatThrownBy(() -> reg.find("default", "order-saga", 1L, "default", 2L))
-                    .isInstanceOf(WorkflowMigrationStateTypeMismatchException.class)
-                    .hasMessageContaining("order-saga")
-                    .hasMessageContaining("targetStateType")
-                    .satisfies(ex -> {
-                        WorkflowMigrationStateTypeMismatchException typed =
-                                (WorkflowMigrationStateTypeMismatchException) ex;
-                        assertThat(typed.definitionId()).isEqualTo("order-saga");
-                        assertThat(typed.fromVersion()).isEqualTo(1L);
-                        assertThat(typed.targetVersion()).isEqualTo(2L);
-                        assertThat(typed.expectedStateType()).isEqualTo(StateV1.class);
-                        assertThat(typed.actualStateType()).isEqualTo(StateV2.class);
-                    });
+            // find() returns the handler; the state-type check belongs to the migration execution
+            assertThat(reg.find("default", "order-saga", 1L, "default", 2L))
+                    .isPresent()
+                    .containsSame(badHandler);
         }
     }
 
@@ -696,12 +701,12 @@ class WorkflowMigrationRegistryTest {
     }
 
     @Nested
-    @DisplayName("Deferred version validation — dynamic activation (C1)")
+    @DisplayName("Dynamic activation — find() does not depend on resident versions")
     class DeferredVersionValidation {
 
         @Test
         @DisplayName(
-                "handler registered with only v1 in registry does not throw at construction; find returns empty for v1→v2")
+                "handler registered with only v1 in registry does not throw at construction; find returns it before and after v2")
         void handlerRegisteredBeforeTargetVersionDoesNotThrowAtConstruction() {
             // Only v1 registered at Dagger-graph-build time; v2 will be loaded later
             DefaultWorkflowRegistry wfReg = new DefaultWorkflowRegistry();
@@ -713,22 +718,23 @@ class WorkflowMigrationRegistryTest {
             DefaultWorkflowMigrationRegistry migrationReg =
                     new DefaultWorkflowMigrationRegistry(Set.of(handler), wfReg);
 
-            // find() returns empty because v2 is not yet registered
+            // find() returns the handler although v2 is not yet registered
             assertThat(migrationReg.find("default", "order-saga", 1L, "default", 2L))
-                    .isEmpty();
+                    .isPresent()
+                    .containsSame(handler);
 
             // Now register v2 dynamically (simulating WorkflowDefinitionService.activate())
             wfReg.register(orderSagaV2Def());
 
-            // find() now returns the handler because both versions are registered
+            // find() still returns the handler once both versions are registered
             assertThat(migrationReg.find("default", "order-saga", 1L, "default", 2L))
                     .isPresent()
                     .containsSame(handler);
         }
 
         @Test
-        @DisplayName("state-type mismatch surfaced at find() time as WorkflowMigrationStateTypeMismatchException")
-        void stateTypeMismatchAtFindTimeThrows() {
+        @DisplayName("state-type mismatch with both versions registered does not fail find()")
+        void stateTypeMismatchAtFindTimeDoesNotFail() {
             // Both versions registered; but the handler declares wrong source state type
             DefaultWorkflowRegistry wfReg = new DefaultWorkflowRegistry();
             wfReg.register(orderSagaV1Def()); // stateType = StateV2
@@ -767,15 +773,14 @@ class WorkflowMigrationRegistryTest {
                 }
             };
 
-            // Construction must NOT throw — type checking is deferred to find()
+            // Construction must NOT throw
             DefaultWorkflowMigrationRegistry migrationReg =
                     new DefaultWorkflowMigrationRegistry(Set.of(badHandler), wfReg);
 
-            // find() must throw typed WorkflowMigrationStateTypeMismatchException
-            assertThatThrownBy(() -> migrationReg.find("default", "order-saga", 1L, "default", 2L))
-                    .isInstanceOf(WorkflowMigrationStateTypeMismatchException.class)
-                    .hasMessageContaining("order-saga")
-                    .hasMessageContaining("sourceStateType");
+            // find() returns the handler; the state-type check belongs to the migration execution
+            assertThat(migrationReg.find("default", "order-saga", 1L, "default", 2L))
+                    .isPresent()
+                    .containsSame(badHandler);
         }
     }
 

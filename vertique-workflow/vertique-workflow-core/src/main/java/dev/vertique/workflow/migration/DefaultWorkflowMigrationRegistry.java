@@ -4,12 +4,7 @@
 package dev.vertique.workflow.migration;
 
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
-import dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
-import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
-import dev.vertique.workflow.registry.store.DefinitionKey;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Collection;
@@ -21,20 +16,10 @@ import java.util.Set;
 
 /**
  * Default {@link WorkflowMigrationRegistry} implementation that indexes all
- * application-contributed {@link WorkflowMigrationHandler} instances at construction time and
- * performs state-type + version compatibility checks lazily at {@link #find} time.
- *
- * <h2>Deferred validation rationale</h2>
- * <p>Validating both source and target versions against {@link WorkflowRegistry#resolve(DefinitionKey)}
- * inside the constructor would make it impossible to register a {@code v1 -> v2} migration handler
- * when only {@code v1} is statically contributed to the Dagger graph at startup time and {@code v2}
- * is loaded later via
- * the asynchronous document-definition activation service.
- * Dagger constructs all singletons eagerly; if the constructor throws for an absent version the
- * entire graph fails to build.
+ * application-contributed {@link WorkflowMigrationHandler} instances at construction time.
  *
  * <h2>Validation rules at construction</h2>
- * <p>The following rules are enforced immediately, without consulting the registry:
+ * <p>The following rules are enforced immediately, without consulting the workflow registry:
  * <ol>
  *   <li>When {@link WorkflowMigrationHandler#sourceScope()} equals
  *       {@link WorkflowMigrationHandler#targetScope()},
@@ -45,23 +30,10 @@ import java.util.Set;
  *       {@code (sourceScope, definitionId, fromVersion, targetScope, targetVersion)} key.</li>
  * </ol>
  *
- * <h2>Validation rules deferred to {@link #find}</h2>
- * <p>The following rules are checked lazily, on each call to
- * {@code find(sourceScope, definitionId, from, targetScope, target)}:
- * <ol>
- *   <li>Both {@link WorkflowMigrationHandler#fromDefinitionVersion()} and
- *       {@link WorkflowMigrationHandler#targetDefinitionVersion()} must be resolvable via
- *       {@link WorkflowRegistry#resolve(DefinitionKey)} in the handler's source and target scope. If either is absent
- *       ({@link WorkflowVersionPinUnavailableException} or
- *       {@link WorkflowDefinitionMissingException} is thrown), {@link Optional#empty()} is
- *       returned. Any other registry exception propagates immediately so it is not silently
- *       swallowed as a benign "not found" (C1 fix).</li>
- *   <li>{@link WorkflowMigrationHandler#sourceStateType()} must exactly match the source plan's
- *       {@link RuntimeWorkflow#stateType()} ({@link Class#equals} comparison, exact match in v1).
- *       Mismatch throws {@link WorkflowMigrationStateTypeMismatchException}.</li>
- *   <li>{@link WorkflowMigrationHandler#targetStateType()} must exactly match the target plan's
- *       {@link RuntimeWorkflow#stateType()}. Same semantics as above.</li>
- * </ol>
+ * <h2>Lookup</h2>
+ * <p>{@link #find} resolves no plan: a definition version may be stored without being resident, so the lookup answers
+ * from the handler index alone. The handler's declared state types are compared with the plans' state types where the
+ * migration executes, not here.
  *
  * <p>After construction the internal map is immutable; {@link #find} and {@link #all} are safe
  * to call from any thread without external synchronization.
@@ -82,23 +54,21 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
             String sourceScope, String definitionId, long fromVersion, String targetScope, long targetVersion) {}
 
     private final Map<MigrationKey, WorkflowMigrationHandler<?, ?>> handlers;
-    private final WorkflowRegistry workflowRegistry;
 
     /**
      * Creates the registry from the contributed handler set.
      *
      * <p>Validates only the rules that do not require the registry (version direction within one scope, no
-     * duplicate keys). State-type and version-availability checks are deferred to {@link #find}.
+     * duplicate keys).
      *
      * @param migrationHandlers the set of contributed migration handlers; may be empty
-     * @param workflowRegistry the workflow registry used at {@link #find} time to resolve plans
+     * @param workflowRegistry accepted for constructor compatibility; the registry is not consulted
      * @throws WorkflowDefinitionException if any handler violates the construction-time rules
      *     (downgrade within one scope or duplicate key)
      */
     @Inject
     public DefaultWorkflowMigrationRegistry(
             Set<WorkflowMigrationHandler<?, ?>> migrationHandlers, WorkflowRegistry workflowRegistry) {
-        this.workflowRegistry = workflowRegistry;
         Map<MigrationKey, WorkflowMigrationHandler<?, ?>> map = new HashMap<>();
         for (WorkflowMigrationHandler<?, ?> handler : migrationHandlers) {
             indexHandler(handler, map);
@@ -109,89 +79,25 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
     // --- WorkflowMigrationRegistry ---
 
     /**
-     * Looks up the handler for the given
-     * {@code (sourceScope, definitionId, sourceVersion, targetScope, targetVersion)} key, validates state-type compatibility and version availability at call time, and returns
-     * the handler if everything is consistent.
+     * Returns the handler registered for the given
+     * {@code (sourceScope, definitionId, sourceVersion, targetScope, targetVersion)} key.
      *
-     * <p>Returns {@link Optional#empty()} if:
-     * <ul>
-     *   <li>No handler is indexed for the key.</li>
-     *   <li>Either the source or target version is not yet registered in the
-     *       {@link WorkflowRegistry} — specifically when {@link WorkflowRegistry#resolve(DefinitionKey)}
-     *       throws {@link WorkflowVersionPinUnavailableException} or
-     *       {@link WorkflowDefinitionMissingException} (version loaded dynamically after
-     *       construction). Any other registry exception propagates as-is (C1 fix).</li>
-     * </ul>
-     *
-     * <p>Throws {@link WorkflowMigrationStateTypeMismatchException} (a subclass of
-     * {@link WorkflowDefinitionException}) if both versions are registered but the handler's
-     * declared state type does not match the plan's state type. This is a configuration error
-     * that must be fixed before the migration can proceed.
+     * <p>The handler is returned whether or not either version is resident in the {@link WorkflowRegistry}; the lookup
+     * resolves no plan. Whether the handler's declared state types match the plans is checked where the migration
+     * executes. {@link Optional#empty()} means only that no handler is registered for the key.
      *
      * @param sourceScope the scope of the source definition version
      * @param definitionId the workflow definition id
      * @param sourceVersion the source definition version
      * @param targetScope the scope of the target definition version
      * @param targetVersion the target definition version
-     * @return the matching handler, or {@link Optional#empty()} if not found or either version
-     *     is not yet registered
-     * @throws WorkflowMigrationStateTypeMismatchException if both versions are registered but the
-     *     handler declares an incompatible source or target state type
+     * @return the matching handler, or {@link Optional#empty()} if none is registered for the key
      */
     @Override
     public Optional<WorkflowMigrationHandler<?, ?>> find(
             String sourceScope, String definitionId, long sourceVersion, String targetScope, long targetVersion) {
-        WorkflowMigrationHandler<?, ?> handler =
-                handlers.get(new MigrationKey(sourceScope, definitionId, sourceVersion, targetScope, targetVersion));
-        if (handler == null) {
-            return Optional.empty();
-        }
-
-        // Resolve source plan — if absent, the version is not yet registered (dynamic activation).
-        // Only WorkflowVersionPinUnavailableException / WorkflowDefinitionMissingException mean
-        // "not registered yet". Any other exception (e.g., internal registry corruption) must
-        // propagate so it is not silently swallowed as a benign "not found" (C1 fix).
-        RuntimeWorkflow sourcePlan;
-        try {
-            sourcePlan = workflowRegistry.resolve(new DefinitionKey(sourceScope, definitionId, sourceVersion));
-        } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException ex) {
-            return Optional.empty();
-        }
-
-        // Resolve target plan — same: absent means not yet registered.
-        RuntimeWorkflow targetPlan;
-        try {
-            targetPlan = workflowRegistry.resolve(new DefinitionKey(targetScope, definitionId, targetVersion));
-        } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException ex) {
-            return Optional.empty();
-        }
-
-        // Both versions are registered — validate state types. A mismatch here is a
-        // configuration error: the handler was registered with an incorrect state type declaration.
-        // Throw a typed WorkflowMigrationStateTypeMismatchException so callers can distinguish
-        // this from other WorkflowDefinitionExceptions (C1 fix).
-        if (!handler.sourceStateType().equals(sourcePlan.stateType())) {
-            throw new WorkflowMigrationStateTypeMismatchException(
-                    definitionId,
-                    sourceVersion,
-                    targetVersion,
-                    handler.getClass().getName(),
-                    "sourceStateType",
-                    handler.sourceStateType(),
-                    sourcePlan.stateType());
-        }
-        if (!handler.targetStateType().equals(targetPlan.stateType())) {
-            throw new WorkflowMigrationStateTypeMismatchException(
-                    definitionId,
-                    sourceVersion,
-                    targetVersion,
-                    handler.getClass().getName(),
-                    "targetStateType",
-                    handler.targetStateType(),
-                    targetPlan.stateType());
-        }
-
-        return Optional.of(handler);
+        return Optional.ofNullable(
+                handlers.get(new MigrationKey(sourceScope, definitionId, sourceVersion, targetScope, targetVersion)));
     }
 
     /**
