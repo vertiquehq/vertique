@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -34,17 +33,10 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.tasks.TaskAssignment;
-import dev.vertique.workflow.timer.TimerIntentPayload;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -58,7 +50,6 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -100,6 +91,7 @@ public class PgWorkflowEngineHumanTaskIT {
     static PgWorkflowInstanceRepository instanceRepo;
     static PgWorkflowHistoryRepository historyRepo;
     static PgTimerStore timerStore;
+    /** The due-date timer that the start of the last started instance recorded, or {@code null} when it recorded none. */
     static final AtomicReference<UUID> lastTimerId = new AtomicReference<>();
 
     // --- Domain types ---
@@ -378,55 +370,6 @@ public class PgWorkflowEngineHumanTaskIT {
         PgWorkflowDedupRepository dedupRepo = new PgWorkflowDedupRepository(pool, exMapper);
         timerStore = new PgTimerStore(exMapper);
 
-        WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient> fakeTimerRecorder =
-                new WorkflowSideEffectRecorder<>() {
-                    @Override
-                    public IntentKind kind() {
-                        return IntentKind.WORKFLOW_TIMER;
-                    }
-
-                    @Override
-                    public Future<RecorderResult> record(
-                            WorkflowSideEffectIntent intent, io.vertx.sqlclient.SqlClient tx) {
-                        UUID timerId = UUID.randomUUID();
-                        lastTimerId.set(timerId);
-                        Object payload = intent.payload();
-                        Instant fireAt;
-                        TimerPurpose purpose;
-                        UUID taskId;
-                        if (payload instanceof TimerIntentPayload tip) {
-                            fireAt = tip.fireAt();
-                            purpose = tip.purpose();
-                            taskId = tip.taskId();
-                        } else {
-                            fireAt = payload instanceof Instant fa
-                                    ? fa
-                                    : Instant.now().plusSeconds(3600);
-                            purpose = TimerPurpose.STANDALONE;
-                            taskId = null;
-                        }
-                        TimerRecord record = new TimerRecord(
-                                timerId,
-                                (WorkflowInstanceId) intent.correlation().workflowId(),
-                                intent.targetId(),
-                                fireAt,
-                                TimerStatus.SCHEDULED,
-                                UUID.randomUUID(),
-                                Instant.now(),
-                                null,
-                                null,
-                                null,
-                                null,
-                                purpose,
-                                taskId,
-                                null, // branchTokenId
-                                null, // forkStepId
-                                null,
-                                DurableMetadata.empty()); // branchId
-                        return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-                    }
-                };
-
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
         registry.register(REVIEW_DEF);
         registry.register(REVIEW_DUE_DEF);
@@ -440,7 +383,7 @@ public class PgWorkflowEngineHumanTaskIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(fakeTimerRecorder),
+                Set.of(),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -488,7 +431,12 @@ public class PgWorkflowEngineHumanTaskIT {
                 null);
         return engine.start(cmd)
                 .compose(id ->
-                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(idle -> id));
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(idle -> id))
+                .compose(id -> TimerCommandRows.allTimerIds(pool, id).map(timerIds -> {
+                    // the due-date timer is the only timer these workflows record
+                    lastTimerId.set(timerIds.isEmpty() ? null : timerIds.getFirst());
+                    return id;
+                }));
     }
 
     /**
@@ -1209,19 +1157,19 @@ public class PgWorkflowEngineHumanTaskIT {
     // =========================================================================
 
     /**
-     * Verifies the due-date path: task row and timer row both exist after start; backdating the
-     * timer and calling {@code timerFired} expires the task, advances the workflow, and writes a
-     * {@code TASK_EXPIRED} history entry.
+     * Verifies the due-date path: task row and timer row both exist after start; when the due date
+     * passes, the executor fires the due-date command, which expires the task, advances the
+     * workflow, and writes a {@code TASK_EXPIRED} history entry.
      */
     @Test
-    @DisplayName("due-date: timerFired expires the task and advances workflow to escalate")
+    @DisplayName("due-date: the due-date command expires the task and advances workflow to escalate")
     void dueDateTimerFired(VertxTestContext ctx) {
         TaskState state = TaskState.of("due-date-" + UUID.randomUUID());
 
         startWorkflow("human-task-due-date-test", state)
                 .compose(workflowId -> {
                     UUID timerId = lastTimerId.get();
-                    assertNotNull(timerId, "due-date timerId must be set by fakeTimerRecorder");
+                    assertNotNull(timerId, "the start must record the due-date timer");
 
                     // Read the instance to get the taskId from waitKey
                     return pool.withTransaction(tx -> instanceRepo.findById(workflowId, tx))
@@ -1232,21 +1180,14 @@ public class PgWorkflowEngineHumanTaskIT {
                                     assertEquals(timerId, optInst.get().waitAuxId(), "waitAuxId must be the timer id");
                                 });
 
-                                // Backdate the timer's fire_at to the past
-                                return pool.preparedQuery(
-                                                "UPDATE workflow_timers SET fire_at = NOW() - INTERVAL '1 minute'"
-                                                        + " WHERE timer_id = $1")
-                                        .execute(Tuple.of(timerId));
+                                // The due date passes: the executor fires the due-date command
+                                return TimerCommandRows.makeDue(pool, timerId);
                             })
-                            .compose(v -> pool.withTransaction(tx -> engine.timerFired(workflowId, timerId, tx)))
-                            .compose(applied -> engine.executionProbe()
-                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
-                                    .map(idle -> applied))
-                            .compose(firingResult -> {
+                            .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                            .compose(idle -> TimerCommandRows.commandState(pool, timerId))
+                            .compose(commandState -> {
                                 ctx.verify(() -> assertEquals(
-                                        dev.vertique.workflow.ops.TimerFiringResult.APPLIED,
-                                        firingResult,
-                                        "timerFired must return APPLIED"));
+                                        "COMPLETE", commandState, "the due-date command must fire and complete"));
                                 return pool.withTransaction(tx -> instanceRepo.findById(workflowId, tx));
                             })
                             .compose(optUpdated -> {

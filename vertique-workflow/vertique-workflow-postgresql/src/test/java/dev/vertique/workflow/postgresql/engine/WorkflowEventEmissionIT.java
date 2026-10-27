@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -45,10 +44,6 @@ import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowStatus;
-import dev.vertique.workflow.timer.TimerIntentPayload;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
@@ -70,7 +65,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
@@ -129,9 +123,6 @@ public class WorkflowEventEmissionIT {
 
     /** Collects the service-dispatch intents the engine hands to the SERVICE recorder. */
     static final List<WorkflowSideEffectIntent> dispatchedIntents = new CopyOnWriteArrayList<>();
-
-    /** Captures the latest timer id from the WORKFLOW_TIMER recorder for task/timer tests. */
-    static final AtomicReference<UUID> lastTimerId = new AtomicReference<>();
 
     // --- Domain types ---
 
@@ -365,52 +356,6 @@ public class WorkflowEventEmissionIT {
         WorkflowEventSideEffectRecorder eventRecorder =
                 new WorkflowEventSideEffectRecorder(outboxService, BINDING, eventsValidator);
 
-        // --- WORKFLOW_TIMER recorder (stub — just inserts timer rows) ---
-        WorkflowSideEffectRecorder<SqlClient> timerRecorder = new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                UUID timerId = UUID.randomUUID();
-                lastTimerId.set(timerId);
-                Object payload = intent.payload();
-                Instant fireAt;
-                TimerPurpose purpose;
-                UUID taskId;
-                if (payload instanceof TimerIntentPayload tip) {
-                    fireAt = tip.fireAt();
-                    purpose = tip.purpose();
-                    taskId = tip.taskId();
-                } else {
-                    fireAt = payload instanceof Instant fa ? fa : Instant.now().plusSeconds(3600);
-                    purpose = TimerPurpose.STANDALONE;
-                    taskId = null;
-                }
-                TimerRecord record = new TimerRecord(
-                        timerId,
-                        (WorkflowInstanceId) intent.correlation().workflowId(),
-                        intent.targetId(),
-                        fireAt,
-                        TimerStatus.SCHEDULED,
-                        UUID.randomUUID(),
-                        Instant.now(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        purpose,
-                        taskId,
-                        null, // branchTokenId
-                        null, // forkStepId
-                        null,
-                        DurableMetadata.empty()); // branchId
-                return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-            }
-        };
-
         // --- SERVICE recorder (stub, keeps the dispatched intents for the assertions) ---
         WorkflowSideEffectRecorder<SqlClient> serviceRecorder = new WorkflowSideEffectRecorder<>() {
             @Override
@@ -432,7 +377,7 @@ public class WorkflowEventEmissionIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(eventRecorder, timerRecorder, serviceRecorder),
+                Set.of(eventRecorder, serviceRecorder),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -443,7 +388,6 @@ public class WorkflowEventEmissionIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        lastTimerId.set(null);
         dispatchedIntents.clear();
         pool.query("TRUNCATE TABLE outbox, workflow_timers, workflow_tasks, workflow_history,"
                         + " workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")

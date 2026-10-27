@@ -9,7 +9,6 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.context.ContextRuntimeModule;
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.logging.LoggingContextModule;
@@ -39,7 +38,6 @@ import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
 import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
-import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -55,10 +53,6 @@ import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
-import dev.vertique.workflow.timer.TimerIntentPayload;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -348,58 +342,6 @@ final class ExecutionLockTestSupport {
         @Singleton
         static WorkflowMigrationRegistry migrationRegistry(WorkflowRegistry registry) {
             return new DefaultWorkflowMigrationRegistry(Set.of(new LockMigration()), registry);
-        }
-
-        /** Writes the timer row of every timer intent, as the delayed-job recorder does, without scheduling a job. */
-        @Provides
-        @IntoSet
-        @WorkflowRecorders
-        static WorkflowSideEffectRecorder<SqlClient> timerRecorder(PgTimerStore timers) {
-            return new WorkflowSideEffectRecorder<>() {
-                @Override
-                public IntentKind kind() {
-                    return IntentKind.WORKFLOW_TIMER;
-                }
-
-                @Override
-                public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                    UUID timerId = UUID.randomUUID();
-                    Object payload = intent.payload();
-                    Instant fireAt;
-                    TimerPurpose purpose;
-                    UUID taskId;
-                    if (payload instanceof TimerIntentPayload tip) {
-                        fireAt = tip.fireAt();
-                        purpose = tip.purpose();
-                        taskId = tip.taskId();
-                    } else {
-                        fireAt = payload instanceof Instant instant
-                                ? instant
-                                : Instant.now().plusSeconds(3600);
-                        purpose = TimerPurpose.STANDALONE;
-                        taskId = null;
-                    }
-                    TimerRecord record = new TimerRecord(
-                            timerId,
-                            (WorkflowInstanceId) intent.correlation().workflowId(),
-                            intent.targetId(),
-                            fireAt,
-                            TimerStatus.SCHEDULED,
-                            UUID.randomUUID(),
-                            Instant.now(),
-                            null,
-                            null,
-                            null,
-                            null,
-                            purpose,
-                            taskId,
-                            null,
-                            null,
-                            null,
-                            DurableMetadata.empty());
-                    return timers.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-                }
-            };
         }
 
         /** Satisfies the rule that a plan with task reminders needs an event recorder; emits nothing. */

@@ -151,6 +151,62 @@ public class PgTimerStoreIT {
                 DurableMetadata.empty()); // branchId
     }
 
+    /**
+     * Inserts a {@code TIMER} command in the given state for the timer, the way a segment records it.
+     *
+     * @param workflowId the owning instance
+     * @param seq        the command's position in the instance's queue
+     * @param timerId    the timer the command fires
+     * @param state      the command's state
+     * @return a future of the command's row id
+     */
+    private io.vertx.core.Future<Long> insertCommand(
+            WorkflowInstanceId workflowId, long seq, UUID timerId, String state) {
+        return pool.preparedQuery("INSERT INTO workflow_commands (workflow_id, seq, kind, timer_kind, timer_id, state,"
+                        + " recorded_at, available_at, fire_at) VALUES ($1, $2, 'TIMER', 'FIRE', $3, $4, now(), now(),"
+                        + " now() - interval '1 minute') RETURNING id")
+                .execute(Tuple.of(workflowId.value(), seq, timerId, state))
+                .map(rows -> rows.iterator().next().getLong("id"));
+    }
+
+    /**
+     * Builds a scheduled timer that names no delayed-job execution and is linked to the command.
+     *
+     * @param timerId    the timer id
+     * @param workflowId the owning instance
+     * @param fireAt     the scheduled fire time
+     * @param commandId  the command that fires the timer
+     * @return the record
+     */
+    private static TimerRecord commandRecord(
+            UUID timerId, WorkflowInstanceId workflowId, Instant fireAt, long commandId) {
+        return new TimerRecord(
+                timerId,
+                workflowId,
+                "timer-step",
+                fireAt,
+                TimerStatus.SCHEDULED,
+                null,
+                Instant.now(),
+                null,
+                null,
+                null,
+                null,
+                TimerPurpose.STANDALONE,
+                null,
+                null,
+                null,
+                null,
+                DurableMetadata.empty(),
+                commandId);
+    }
+
+    private io.vertx.core.Future<String> commandState(long commandId) {
+        return pool.preparedQuery("SELECT state FROM workflow_commands WHERE id = $1")
+                .execute(Tuple.of(commandId))
+                .map(rows -> rows.iterator().next().getString("state"));
+    }
+
     // =========================================================================
     // insertScheduled + lockForFiring round-trip
     // =========================================================================
@@ -291,6 +347,116 @@ public class PgTimerStoreIT {
                             TimerStatusTransition.LOST_TO_FAILED,
                             secondResult,
                             "markCancelled on FAILED row must return LOST_TO_FAILED");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    // =========================================================================
+    // Timers linked to commands
+    // =========================================================================
+
+    @Test
+    @DisplayName("a timer linked to a command round-trips without a delayed-job execution")
+    void commandLinkedTimerRoundTrips(VertxTestContext ctx) {
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        UUID timerId = UUID.randomUUID();
+
+        seedInstance(workflowId)
+                .compose(v -> insertCommand(workflowId, 1, timerId, "PENDING"))
+                .compose(commandId -> pool.withTransaction(tx -> store.insertScheduled(
+                                commandRecord(timerId, workflowId, Instant.now().plusSeconds(60), commandId), tx))
+                        .map(v -> commandId))
+                .compose(commandId -> pool.withTransaction(tx -> store.lockForFiring(timerId, tx))
+                        .map(locked -> new Object[] {commandId, locked}))
+                .onSuccess(result -> ctx.verify(() -> {
+                    @SuppressWarnings("unchecked")
+                    java.util.Optional<TimerRecord> locked = (java.util.Optional<TimerRecord>) result[1];
+                    assertTrue(locked.isPresent());
+                    assertEquals(result[0], locked.get().commandId(), "the link to the command is read back");
+                    assertNull(locked.get().delayedJobExecutionId(), "no delayed job is named");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("markCancelled cancels the command linked to the timer, and leaves a settled command alone")
+    void markCancelledCancelsTheLinkedCommand(VertxTestContext ctx) {
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        UUID pendingTimer = UUID.randomUUID();
+        UUID claimedTimer = UUID.randomUUID();
+        UUID settledTimer = UUID.randomUUID();
+
+        seedInstance(workflowId)
+                .compose(v -> insertCommand(workflowId, 1, pendingTimer, "PENDING"))
+                .compose(pending -> insertCommand(workflowId, 2, claimedTimer, "CLAIMED")
+                        .compose(claimed -> insertCommand(workflowId, 3, settledTimer, "COMPLETE")
+                                .map(settled -> new long[] {pending, claimed, settled})))
+                .compose(commands -> pool.withTransaction(tx -> store.insertScheduled(
+                                        commandRecord(pendingTimer, workflowId, Instant.now(), commands[0]), tx)
+                                .compose(x -> store.insertScheduled(
+                                        commandRecord(claimedTimer, workflowId, Instant.now(), commands[1]), tx))
+                                .compose(x -> store.insertScheduled(
+                                        commandRecord(settledTimer, workflowId, Instant.now(), commands[2]), tx)))
+                        .map(v -> commands))
+                .compose(commands -> pool.withTransaction(tx -> store.markCancelled(pendingTimer, Instant.now(), tx))
+                        .compose(first ->
+                                pool.withTransaction(tx -> store.markCancelled(claimedTimer, Instant.now(), tx)))
+                        .compose(second ->
+                                pool.withTransaction(tx -> store.markCancelled(settledTimer, Instant.now(), tx)))
+                        .compose(third -> commandState(commands[0]))
+                        .compose(pendingState -> commandState(commands[1])
+                                .compose(claimedState -> commandState(commands[2])
+                                        .map(settledState -> List.of(pendingState, claimedState, settledState)))))
+                .onSuccess(states -> ctx.verify(() -> {
+                    assertEquals(
+                            List.of("CANCELLED", "CANCELLED", "COMPLETE"),
+                            states,
+                            "unsettled commands are cancelled with their timers; a settled one is left as it is");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("markCancelled of a timer that is not scheduled leaves its command alone")
+    void markCancelledOfAFiredTimerLeavesItsCommand(VertxTestContext ctx) {
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        UUID timerId = UUID.randomUUID();
+
+        seedInstance(workflowId)
+                .compose(v -> insertCommand(workflowId, 1, timerId, "CLAIMED"))
+                .compose(commandId -> pool.withTransaction(tx -> store.insertScheduled(
+                                        commandRecord(timerId, workflowId, Instant.now(), commandId), tx)
+                                .compose(x -> store.markFired(timerId, Instant.now(), tx))
+                                .compose(x -> store.markCancelled(timerId, Instant.now(), tx)))
+                        .compose(transition -> commandState(commandId).map(state -> List.of(transition, state))))
+                .onSuccess(result -> ctx.verify(() -> {
+                    assertEquals(TimerStatusTransition.LOST_TO_FIRED, result.get(0));
+                    assertEquals("CLAIMED", result.get(1), "the command of a fired timer is the firing segment's own");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("findRecoverableScheduled returns only the rows of earlier releases: a delayed job and no command")
+    void findRecoverableScheduledReturnsOnlyRowsWithoutACommand(VertxTestContext ctx) {
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        Instant past = Instant.now().minusSeconds(60);
+        UUID legacy = UUID.randomUUID();
+        UUID linked = UUID.randomUUID();
+
+        seedInstance(workflowId)
+                .compose(v -> insertCommand(workflowId, 1, linked, "PENDING"))
+                .compose(commandId -> pool.withTransaction(tx -> store.insertScheduled(
+                                scheduledRecord(legacy, workflowId, past), tx)
+                        .compose(x -> store.insertScheduled(commandRecord(linked, workflowId, past, commandId), tx))))
+                .compose(v -> pool.withTransaction(tx -> store.findRecoverableScheduled(Instant.now(), 10, tx)))
+                .onSuccess(results -> ctx.verify(() -> {
+                    assertEquals(1, results.size(), "a timer linked to a command is not recovered through a job");
+                    assertEquals(legacy, results.get(0).timerId());
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);

@@ -138,7 +138,8 @@ class WorkflowEngineStartTenantTest {
                 new RecorderRouter(recorders, WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS);
         WorkflowEventEmitter eventEmitter = new WorkflowEventEmitter(recorderRouter, FIXED_CLOCK);
         WorkflowHistoryRecorder historyRecorder = new WorkflowHistoryRecorder(history, eventEmitter, FIXED_CLOCK);
-        ReminderScheduler reminderScheduler = new ReminderScheduler(history, recorderRouter, timerStore, FIXED_CLOCK);
+        EmptyCommandRepository commands = new EmptyCommandRepository();
+        ReminderScheduler reminderScheduler = new ReminderScheduler(history, commands, timerStore, FIXED_CLOCK);
         CompensationService compensationService =
                 new CompensationService(instances, history, recorderRouter, eventEmitter, FIXED_CLOCK);
         InboundExecutionContextScope inboundExecScope = propagator == null
@@ -146,12 +147,13 @@ class WorkflowEngineStartTenantTest {
                 : new InboundExecutionContextScope(new InboundDispatchScope(), propagator, Set.of());
         BranchTransitionEngine branchEngine = inboundExecScope == null
                 ? new BranchTransitionEngine(
-                        branchTokens, dedup, history, recorderRouter, taskStore, FIXED_CLOCK, propagator)
+                        branchTokens, dedup, history, recorderRouter, commands, taskStore, FIXED_CLOCK, propagator)
                 : new BranchTransitionEngine(
                         branchTokens,
                         dedup,
                         history,
                         recorderRouter,
+                        commands,
                         taskStore,
                         FIXED_CLOCK,
                         propagator,
@@ -190,7 +192,7 @@ class WorkflowEngineStartTenantTest {
                 Optional.empty(),
                 new FailingDefinitions(),
                 mock(WorkflowExecutionProbe.class),
-                new EmptyCommandRepository(),
+                commands,
                 new AcceptingTaskReservations(),
                 () -> null);
         return new Rig(engine, instances, history, taskStore);

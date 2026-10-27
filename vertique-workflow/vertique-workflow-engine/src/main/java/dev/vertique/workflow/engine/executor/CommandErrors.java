@@ -46,7 +46,9 @@ public final class CommandErrors {
         /** A completion's task is no longer reserved by that completion. */
         TASK_NOT_RESERVED,
         /** A completion's instance had failed, so it cannot take the decision. */
-        INSTANCE_FAILED
+        INSTANCE_FAILED,
+        /** A timer's wait was left, or its task closed, before the timer ran. */
+        TIMER_NOT_AWAITED
     }
 
     private CommandErrors() {
@@ -269,6 +271,31 @@ public final class CommandErrors {
                 Reason.INSTANCE_ENDED,
                 "COMPLETION command for decision '" + EchoedNames.bounded(decisionName)
                         + "' was rejected: instance ended with status " + token(status) + "; the task is cancelled");
+    }
+
+    /**
+     * The value for a timer whose wait was left, or whose task was closed, before the timer ran; the timer is stale and
+     * its instance is unchanged.
+     *
+     * @param timerKind the timer kind
+     * @return the stored value
+     */
+    public static String timerNotAwaited(String timerKind) {
+        return format(
+                Reason.TIMER_NOT_AWAITED,
+                "TIMER command (" + token(timerKind) + ") was settled as stale: its wait is no longer awaited");
+    }
+
+    /**
+     * The value for a timer whose instance had failed, so the timer cannot run.
+     *
+     * @param timerKind the timer kind
+     * @return the stored value
+     */
+    public static String timerInstanceFailed(String timerKind) {
+        return format(
+                Reason.INSTANCE_FAILED,
+                "TIMER command (" + token(timerKind) + ") was settled as stale: its instance has failed");
     }
 
     /**

@@ -3,13 +3,23 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.executor.ClaimLostException;
+import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.CommandHead;
+import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
+import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.TimerNode;
@@ -36,7 +46,9 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Package-private collaborator owning the timer-fire callback paths and timer helpers.
@@ -94,6 +106,8 @@ final class TimerLifecycleService {
     private final WorkflowTransitionDriver driver;
     private final TaskLifecycleService taskLifecycle;
     private final Clock clock;
+    private final WorkflowCommandRepository<SqlClient> commands;
+    private final WorkflowHistoryRecorder historyRecorder;
 
     /**
      * Binder-row seam for the instance-owned (non-branch) timer drives (Contract Appendix C2): the
@@ -128,6 +142,8 @@ final class TimerLifecycleService {
      * @param contextBinder the binder-row seam for the instance-owned timer drives; never
      *     {@code null} (the engine assembly seam substitutes {@link WorkflowContextBinder#noop()}
      *     when durable-context wiring is not exercised)
+     * @param commands the command repository that settles the {@code TIMER} command of a stale timer
+     * @param historyRecorder the history recorder that logs what became of a {@code TIMER} command
      */
     @Inject
     TimerLifecycleService(
@@ -141,7 +157,9 @@ final class TimerLifecycleService {
             WorkflowTransitionDriver driver,
             TaskLifecycleService taskLifecycle,
             Clock clock,
-            WorkflowContextBinder contextBinder) {
+            WorkflowContextBinder contextBinder,
+            WorkflowCommandRepository<SqlClient> commands,
+            WorkflowHistoryRecorder historyRecorder) {
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -153,6 +171,154 @@ final class TimerLifecycleService {
         this.taskLifecycle = taskLifecycle;
         this.clock = clock;
         this.contextBinder = contextBinder;
+        this.commands = commands;
+        this.historyRecorder = historyRecorder;
+    }
+
+    // --- Recorded timers in a segment ---
+
+    /**
+     * Runs the work of a claimed {@code TIMER} command inside the segment's transaction and settles it, except when
+     * the timer fires: then the executor completes it.
+     *
+     * <ul>
+     *   <li>The instance has ended or failed, the timer row is no longer scheduled, or the wait the timer belongs to is
+     *       gone (the instance moved on, or the task is not open): the command is stale and nothing else changes; a
+     *       timer row that is still scheduled is cancelled.</li>
+     *   <li>Otherwise the timer fires: a timer node advances the instance, a timeout applies the wait's timeout branch,
+     *       a due date expires the task and a reminder records its history, the next reminder of a recurring spec and
+     *       its event. The timer row is {@code FIRED}. The durable context bound for the drive is the context the timer
+     *       recorded, without an identity.</li>
+     * </ul>
+     *
+     * @param head    the peeked head the claim came from
+     * @param claim   the claim
+     * @param command the fenced command
+     * @param tx      the segment's transaction handle
+     * @return the outcome the executor acts on
+     */
+    Future<WorkflowSegments.Outcome> runTimer(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        UUID timerId = command.timerId();
+        String timerKind = command.timerKind();
+        if (timerId == null || timerKind == null) {
+            return Future.failedFuture(
+                    new IllegalStateException("The recorded timer command " + command.commandId() + " names no timer"));
+        }
+        return instances.findById(command.workflowId(), tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.<WorkflowSegments.Outcome>failedFuture(
+                        new WorkflowInstanceNotFoundException(command.workflowId()));
+            }
+            WorkflowInstance inst = found.get();
+            if (isEnded(inst.status())) {
+                return settleStale(
+                        claim,
+                        command,
+                        CommandErrors.instanceEnded("TIMER", inst.status().name()),
+                        tx);
+            }
+            if (inst.status() == WorkflowStatus.FAILED) {
+                return settleStale(claim, command, CommandErrors.timerInstanceFailed(timerKind), tx);
+            }
+            if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
+                    || !inst.definitionId().equals(head.definitionId())
+                    || inst.definitionVersion() != head.definitionVersion()
+                    || !Objects.equals(inst.planHash(), head.planHash())) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            }
+            try {
+                resolveAndCheckPlanHash(inst);
+            } catch (WorkflowVersionNotRunnableException | WorkflowPlanHashDriftException e) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            } catch (Exception e) {
+                return Future.failedFuture(e);
+            }
+            return timerStore.lockForFiring(timerId, tx).compose(locked -> {
+                if (locked.isEmpty() || locked.get().status() != TimerStatus.SCHEDULED) {
+                    return settleStale(claim, command, CommandErrors.timerNotAwaited(timerKind), tx);
+                }
+                TimerRecord timer = locked.get();
+                return historyRecorder
+                        .appendCommandHistory(
+                                command.workflowId(),
+                                WorkflowEntryType.COMMAND_RECEIVED,
+                                command.commandId(),
+                                command.kind(),
+                                tx)
+                        .compose(received -> fire(timer, claim, command, tx))
+                        .compose(result -> switch (result) {
+                            case APPLIED ->
+                                timerStore
+                                        .markFired(timerId, clock.instant(), tx)
+                                        .compose(done -> historyRecorder.appendCommandHistory(
+                                                command.workflowId(),
+                                                WorkflowEntryType.COMMAND_COMPLETED,
+                                                command.commandId(),
+                                                command.kind(),
+                                                tx))
+                                        .map(done -> WorkflowSegments.Outcome.APPLIED);
+                            case STALE_NOOP, LOST_TO_RACE ->
+                                settleStale(claim, command, CommandErrors.timerNotAwaited(timerKind), tx);
+                        });
+            });
+        });
+    }
+
+    /** Runs the work of the timer the command fires, with the context the timer recorded bound. */
+    private Future<TaskMutationResult> fire(
+            TimerRecord timer, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        DriveBinding recorded = new DriveBinding() {
+            @Override
+            public <T> Future<T> run(WorkflowInstance instance, Supplier<Future<T>> drive) {
+                return contextBinder.withRecordedBase(instance, command.commandId(), null, timer.metadata(), drive);
+            }
+        };
+        return switch (timer.purpose()) {
+            case STANDALONE, SIGNAL_TIMEOUT ->
+                fired(command.workflowId(), timer.timerId(), recorded, tx).map(result -> switch (result) {
+                    case APPLIED -> TaskMutationResult.APPLIED;
+                    case STALE_NOOP -> TaskMutationResult.STALE_NOOP;
+                });
+            case TASK_DUE -> taskLifecycle.dueFired(command.workflowId(), timer.taskId(), recorded, tx);
+            case TASK_REMINDER ->
+                taskLifecycle.reminderFired(
+                        command.workflowId(), timer.taskId(), timer.timerId(), timer.fireAt(), recorded, tx);
+        };
+    }
+
+    /**
+     * Settles the command as stale, in the segment's transaction, and cancels the timer row if it is still scheduled.
+     * The command is settled first, so that cancelling the timer leaves it alone.
+     */
+    private Future<WorkflowSegments.Outcome> settleStale(
+            ClaimedCommand claim, SegmentCommand command, String reason, SqlClient tx) {
+        return commands.stale(command.commandId(), claim.token(), reason, tx)
+                .compose(rows -> rows != null && rows > 0
+                        ? Future.<Void>succeededFuture()
+                        : Future.<Void>failedFuture(new ClaimLostException()))
+                .compose(done -> timerStore.markCancelled(command.timerId(), clock.instant(), tx))
+                .compose(done -> historyRecorder.appendTimerCommandHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_STALE,
+                        command.commandId(),
+                        command.timerKind(),
+                        command.timerId(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_STALE);
+    }
+
+    /** The binding of a caller of the engine's callbacks: the ambient context with the instance's own. */
+    private <T> Future<T> ambientBinding(WorkflowInstance instance, Supplier<Future<T>> drive) {
+        return contextBinder.withBound(instance, null, drive);
+    }
+
+    private static boolean isEnded(WorkflowStatus status) {
+        return status == WorkflowStatus.COMPLETED
+                || status == WorkflowStatus.COMPENSATED
+                || status == WorkflowStatus.CANCELLED
+                || status == WorkflowStatus.EXPIRED;
     }
 
     // --- TransactionalTimerCallbacks ---
@@ -178,9 +344,23 @@ final class TimerLifecycleService {
      * @return a {@link Future} resolving to the firing result
      */
     Future<TimerFiringResult> timerFired(WorkflowInstanceId workflowId, UUID timerId, SqlClient tx) {
-        // Load the timer record (non-locking) to check branch ownership. The timer row is already
-        // locked by WorkflowTimerFireExecutor via lockForFiring in the same transaction; this plain
-        // SELECT reads the already-locked row without re-acquiring the lock.
+        return fired(workflowId, timerId, this::ambientBinding, tx);
+    }
+
+    /**
+     * Fires a timer like {@link #timerFired}, binding the durable context of an instance-owned drive with the given
+     * binding.
+     *
+     * @param workflowId the workflow instance this timer belongs to
+     * @param timerId    the stable UUID of the timer that fired
+     * @param binding    binds the context of the instance-owned drive
+     * @param tx         the active transaction context; all writes must use this context
+     * @return a {@link Future} resolving to the firing result
+     */
+    private Future<TimerFiringResult> fired(
+            WorkflowInstanceId workflowId, UUID timerId, DriveBinding binding, SqlClient tx) {
+        // Load the timer record (non-locking) to check branch ownership. The caller holds the timer row's lock in the
+        // same transaction; this plain SELECT reads the already-locked row without re-acquiring the lock.
         return timerStore.findById(timerId, tx).compose(optTimer -> {
             // Route branch-owned timers before touching the parent instance.
             if (optTimer.isPresent() && optTimer.get().branchTokenId() != null) {
@@ -193,9 +373,8 @@ final class TimerLifecycleService {
                     return Future.succeededFuture(TimerFiringResult.STALE_NOOP);
                 }
                 WorkflowInstance inst = optInst.get();
-                // Binder-row bind (Contract Appendix C2): instance-owned (non-branch) timer-fire
-                // drive.
-                return contextBinder.withBound(inst, null, () -> doTimerFiredSinglePath(workflowId, timerId, inst, tx));
+                // Instance-owned (non-branch) timer-fire drive.
+                return binding.run(inst, () -> doTimerFiredSinglePath(workflowId, timerId, inst, tx));
             });
         });
     }

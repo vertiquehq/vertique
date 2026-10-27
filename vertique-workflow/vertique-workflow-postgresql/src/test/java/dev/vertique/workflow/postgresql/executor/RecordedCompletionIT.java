@@ -10,9 +10,7 @@ import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.failureO
 import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.sleep;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.validation.ViolationDetail;
-import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
@@ -32,24 +30,14 @@ import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.History;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.Payloads;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.SignalFixture;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.State;
-import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.WorkflowRegistry;
-import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import dev.vertique.workflow.tasks.TaskAssignment;
-import dev.vertique.workflow.timer.TimerIntentPayload;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Row;
-import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Transaction;
 import io.vertx.sqlclient.Tuple;
@@ -57,7 +45,6 @@ import jakarta.annotation.Nullable;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -233,9 +220,7 @@ public class RecordedCompletionIT {
     void signalThenCancelRacingATimedWaitSegmentNeverDeadlocks() {
         try (SignalFixture f = new SignalFixture(db.toPoolConfig(), new TimedWaitFixture(), List.of("paid", "note"))) {
             // Given an executor whose segment, on the paid signal, enters a task wait with a due date (a timer row)
-            Node node = f.node("engine")
-                    .recorders(f.intents, timerRows(new PgTimerStore(new PgDbExceptionMapper())))
-                    .build();
+            Node node = f.node("engine").recorders(f.intents).build();
             node.startExecutor();
             try {
                 for (int run = 0; run < 20; run++) {
@@ -529,41 +514,6 @@ public class RecordedCompletionIT {
                 wf.complete("done");
             });
         }
-    }
-
-    /** Writes the timer row of every timer intent, as the delayed-job recorder does, without scheduling a job. */
-    static WorkflowSideEffectRecorder<SqlClient> timerRows(PgTimerStore timers) {
-        return new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                UUID timerId = UUID.randomUUID();
-                TimerIntentPayload payload = (TimerIntentPayload) intent.payload();
-                TimerRecord record = new TimerRecord(
-                        timerId,
-                        intent.correlation().workflowId(),
-                        intent.targetId(),
-                        payload.fireAt(),
-                        TimerStatus.SCHEDULED,
-                        UUID.randomUUID(),
-                        Instant.now(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        payload.purpose() == null ? TimerPurpose.STANDALONE : payload.purpose(),
-                        payload.taskId(),
-                        null,
-                        null,
-                        null,
-                        DurableMetadata.empty());
-                return timers.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-            }
-        };
     }
 
     /** Wraps a registry and, once armed, fails every plan resolution and counts it. */

@@ -354,15 +354,32 @@ public class PgWorkflowEnginePayloadConstraintIT {
         ctx.completeNow();
     }
 
+    /**
+     * Empties the workflow tables. The executors of the engines that earlier tests assembled keep polling, and a poll
+     * that holds one workflow table while it waits for another can deadlock with the truncate, which locks the tables in
+     * a different order. The database picks one of the two as its victim, and the truncate has no work to lose, so it
+     * is tried again.
+     */
     @BeforeEach
     void truncateTables() {
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
-                .execute()
-                .toCompletionStage()
-                .toCompletableFuture()
-                .join();
+        for (int attempt = 1; ; attempt++) {
+            try {
+                pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
+                        .execute()
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .join();
+                return;
+            } catch (java.util.concurrent.CompletionException e) {
+                boolean deadlock =
+                        e.getCause() instanceof io.vertx.pgclient.PgException pg && "40P01".equals(pg.getSqlState());
+                if (!deadlock || attempt == 5) {
+                    throw e;
+                }
+            }
+        }
     }
 
     @AfterEach

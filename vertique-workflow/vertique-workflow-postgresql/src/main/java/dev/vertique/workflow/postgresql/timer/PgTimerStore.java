@@ -101,6 +101,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
         this.exceptionMapper = exceptionMapper;
 
         String timers = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_timers");
+        String commands = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_commands");
 
         this.sqlInsert = "INSERT INTO " + timers
                 + " (timer_id, workflow_id, step_id, status, fire_at, delayed_job_execution_id,"
@@ -117,16 +118,27 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
         this.sqlMarkFired = "UPDATE " + timers + " SET status = 'FIRED', fired_at = $2"
                 + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
 
-        this.sqlMarkCancelled = "UPDATE " + timers + " SET status = 'CANCELLED', cancelled_at = $2"
-                + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
+        // Leaving a wait cancels the timer and the command that would fire it, in one statement: a command that is
+        // still unsettled becomes CANCELLED with its claim cleared, so a segment that was about to run it finds its
+        // fence gone. A settled command is left as it is.
+        this.sqlMarkCancelled = "WITH cancelled AS (UPDATE " + timers
+                + " SET status = 'CANCELLED', cancelled_at = $2 WHERE timer_id = $1 AND status = 'SCHEDULED'"
+                + " RETURNING command_id), linked AS (UPDATE " + commands
+                + " SET state = 'CANCELLED', claim_token = NULL, lease_until = NULL, settled_at = now()"
+                + " WHERE id IN (SELECT command_id FROM cancelled WHERE command_id IS NOT NULL)"
+                + " AND state IN ('PENDING','DEFERRED','CLAIMED','PARKED','DEAD') RETURNING id)"
+                + " SELECT count(*)::int AS n FROM cancelled";
 
         this.sqlMarkFailed = "UPDATE " + timers + " SET status = 'FAILED', failed_at = $2, failure_reason = $3"
                 + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
 
         this.sqlSelectStatus = "SELECT status FROM " + timers + " WHERE timer_id = $1";
 
+        // Only the timers of earlier releases are recovered through their delayed job: a timer linked to a command is
+        // fired by the command.
         this.sqlFindRecoverableScheduled = sqlSelectAllColumns
-                + " WHERE status = 'SCHEDULED' AND fire_at < $1"
+                + " WHERE status = 'SCHEDULED' AND command_id IS NULL AND delayed_job_execution_id IS NOT NULL"
+                + " AND fire_at < $1"
                 + " ORDER BY fire_at ASC"
                 + " LIMIT $2";
 
@@ -233,14 +245,16 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
      * {@inheritDoc}
      *
      * <p>Executes a conditional {@code UPDATE ... WHERE status = 'SCHEDULED'} and, on zero rows
-     * updated, executes a follow-up {@code SELECT status} to classify the winning terminal state.
+     * updated, executes a follow-up {@code SELECT status} to classify the winning terminal state. When the update
+     * applies, the command linked to the timer, if it is still unsettled, is set {@code CANCELLED} in the same
+     * statement.
      */
     @Override
     public Future<TimerStatusTransition> markCancelled(UUID timerId, Instant cancelledAt, SqlClient tx) {
         Tuple params = Tuple.of(timerId, toOffsetDateTime(cancelledAt));
         return tx.preparedQuery(sqlMarkCancelled)
                 .execute(params)
-                .compose(rs -> rs.rowCount() == 1
+                .compose(rs -> rs.iterator().next().getInteger("n") == 1
                         ? Future.succeededFuture(TimerStatusTransition.APPLIED)
                         : classifyLostTransition(timerId, tx))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_timers markCancelled")));
@@ -266,6 +280,9 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
 
     /**
      * {@inheritDoc}
+     *
+     * <p>Returns only the scheduled timers of earlier releases: those that name a delayed-job execution and are not
+     * linked to a command. A timer linked to a command is fired by that command and is never recovered through a job.
      */
     @Override
     public Future<List<TimerRecord>> findRecoverableScheduled(Instant beforeFireAt, int limit, SqlClient tx) {

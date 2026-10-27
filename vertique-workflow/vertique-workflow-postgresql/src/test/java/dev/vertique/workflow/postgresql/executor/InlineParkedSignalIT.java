@@ -8,8 +8,6 @@ import static dev.vertique.workflow.postgresql.executor.RecordedSignalIT.signal;
 import static dev.vertique.workflow.postgresql.executor.RecordedSignalIT.waitFor;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.vertique.core.context.DurableMetadata;
-import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
@@ -20,22 +18,11 @@ import dev.vertique.workflow.postgresql.executor.ExecutorFixture.CommandRow;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.Node;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.Definition;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.SignalFixture;
-import dev.vertique.workflow.postgresql.timer.PgTimerStore;
-import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
-import io.vertx.core.Future;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
-import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -46,7 +33,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Verifies that a parked signal is applied when a path that drives its instance or branch into the wait the signal
- * addresses (a task completion, a timer fire, a branch task completion) reaches that wait.
+ * addresses (a task completion, a timer command, a branch task completion) reaches that wait.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -99,58 +86,32 @@ public class InlineParkedSignalIT {
     }
 
     @Test
-    @DisplayName("a timer fire that reaches the wait applies the signal parked for it")
+    @DisplayName("a timer command that reaches the wait applies the signal parked for it")
     void timerFireAppliesTheParkedSignal() {
         Definition pause = new Definition("inline-timer", wf -> {
             wf.initialStep("pause");
-            wf.timer("pause", Duration.ofMillis(500)).toStep("ship");
+            wf.timer("pause", Duration.ofHours(1)).toStep("ship");
             waitFor(wf, "ship", "shipped", "done");
             wf.complete("done");
         });
-        UUID[] timer = new UUID[1];
-        PgTimerStore timers = new PgTimerStore(new PgDbExceptionMapper());
-        WorkflowSideEffectRecorder<SqlClient> timerRecorder = new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                timer[0] = UUID.randomUUID();
-                TimerRecord record = new TimerRecord(
-                        timer[0],
-                        intent.correlation().workflowId(),
-                        intent.targetId(),
-                        Instant.now().plusSeconds(60),
-                        TimerStatus.SCHEDULED,
-                        UUID.randomUUID(),
-                        Instant.now(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        TimerPurpose.STANDALONE,
-                        null,
-                        null,
-                        null,
-                        null,
-                        DurableMetadata.empty());
-                return timers.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timer[0]));
-            }
-        };
         try (SignalFixture f = new SignalFixture(db.toPoolConfig(), pause, List.of("shipped"))) {
-            Node node = f.node("engine").recorders(f.intents, timerRecorder).build();
+            Node node = f.node("engine").build();
             // Given an instance waiting for its timer and a signal for the later wait, parked
             WorkflowInstanceId id = f.waiting(node, "timer-run");
             f.record(node, id, "shipped", signal("early"), "early");
             f.idle(node, id);
             assertThat(f.signal(id, "early").state()).isEqualTo("PARKED");
 
-            // When the timer fires on the inline path, with no executor running
-            await(f.caller(() -> node.pool.withTransaction(tx -> node.engine.timerFired(id, timer[0], tx))));
+            // When the timer comes due and the executor runs its command
+            await(node.pool
+                    .preparedQuery("WITH due AS (UPDATE workflow_commands SET fire_at = clock_timestamp(),"
+                            + " available_at = clock_timestamp() WHERE workflow_id = $1 AND kind = 'TIMER'"
+                            + " RETURNING fire_at, timer_id) UPDATE workflow_timers t SET fire_at = due.fire_at"
+                            + " FROM due WHERE t.timer_id = due.timer_id")
+                    .execute(Tuple.of(id.value())));
+            f.idle(node, id);
 
-            // Then the parked signal was applied in that transaction and the instance went past the wait
+            // Then the parked signal was applied in that segment and the instance went past the wait
             assertThat(f.signal(id, "early").state()).isEqualTo("COMPLETE");
             assertThat(f.snapshot(id).getString("status")).isEqualTo("COMPLETED");
         }

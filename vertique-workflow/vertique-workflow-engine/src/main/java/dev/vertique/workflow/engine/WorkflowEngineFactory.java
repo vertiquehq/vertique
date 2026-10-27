@@ -106,7 +106,7 @@ public final class WorkflowEngineFactory {
         FingerprintCanonicalizer fingerprintCanonicalizer = new FingerprintCanonicalizer();
         WorkflowEventEmitter eventEmitter = new WorkflowEventEmitter(recorderRouter, clock);
         WorkflowHistoryRecorder historyRecorder = new WorkflowHistoryRecorder(history, eventEmitter, clock);
-        ReminderScheduler reminderScheduler = new ReminderScheduler(history, recorderRouter, timerStore, clock);
+        ReminderScheduler reminderScheduler = new ReminderScheduler(history, parts.commands(), timerStore, clock);
         CompensationService compensationService =
                 new CompensationService(instances, history, recorderRouter, eventEmitter, clock);
         // Build the substrate lifecycle helper ONCE from the (possibly-null) propagator and the
@@ -132,6 +132,7 @@ public final class WorkflowEngineFactory {
                         dedup,
                         history,
                         recorderRouter,
+                        parts.commands(),
                         taskStore,
                         clock,
                         propagator,
@@ -142,6 +143,7 @@ public final class WorkflowEngineFactory {
                         dedup,
                         history,
                         recorderRouter,
+                        parts.commands(),
                         taskStore,
                         clock,
                         propagator,

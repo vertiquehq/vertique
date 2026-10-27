@@ -16,8 +16,10 @@ import dev.vertique.db.postgresql.PgTableNames;
  * statement judges every row at the same instant:
  *
  * <ul>
- *   <li>{@link #heldBack}: a due-date or reminder timer whose task is completing. A completion that is dead-lettered
- *       still holds its task's timers back, because the task stays {@code COMPLETING} under its reservation.</li>
+ *   <li>{@link #heldBack}: a timeout timer while an earlier-recorded signal or completion for the wait it belongs to
+ *       is still pending, deferred or claimed; a due-date or reminder timer whose task is completing. A completion that
+ *       is dead-lettered still holds its task's timers back, because the task stays {@code COMPLETING} under its
+ *       reservation, whereas a dead-lettered signal holds no timeout back.</li>
  *   <li>{@link #blocks}: an unsettled command ({@code PENDING}, {@code DEFERRED} or {@code CLAIMED}) that is not a
  *       timer before its fire time and is not held back. {@code PARKED}, {@code DEAD} and settled commands block
  *       nothing.</li>
@@ -27,8 +29,10 @@ import dev.vertique.db.postgresql.PgTableNames;
  *   <li>{@link #inFlight}: {@code CLAIMED} under a lease that has not expired.</li>
  * </ul>
  *
- * <p>The hold-back of a timeout timer by an earlier signal or completion for the wait it belongs to is not rendered
- * here yet: it reads the wait from the command's target, which only the timer writer records.
+ * <p>The wait a timeout belongs to is read from the timeout command's target (the signal names the wait accepts and its
+ * branch address) and from its task; a signal targets the wait when its name is among those names and it carries the
+ * same branch address, a completion when it reserves the wait's task. A signal recorded before the wait's timeout
+ * existed was recorded before the timeout's fire time, which is taken later, so it holds the timeout back too.
  */
 public final class CommandEligibilitySql {
 
@@ -54,12 +58,33 @@ public final class CommandEligibilitySql {
     }
 
     /**
-     * The command is a due-date or reminder timer whose task is completing.
+     * The command is held back: a timeout timer while an operation recorded before its fire time that targets its wait
+     * is pending, deferred or claimed, or a due-date or reminder timer whose task is completing.
      *
      * @param c the correlation name of the command row
      * @return a boolean SQL expression
      */
     public String heldBack(String c) {
+        // The task clause comes first so that a statement takes its lock on workflow_tasks as early in its analysis as
+        // it did before the timeout clause existed; a statement then holds its other table locks no longer while it
+        // waits for that one, which keeps the window small in which a TRUNCATE of the workflow tables can deadlock
+        // with a poll of the executor.
+        return "(" + taskTimerHeldBack(c) + " OR " + timeoutHeldBack(c) + ")";
+    }
+
+    private String timeoutHeldBack(String c) {
+        String o = "o_" + c;
+        return "(" + c + ".kind = 'TIMER' AND " + c + ".timer_kind = 'TIMEOUT' AND EXISTS (SELECT 1 FROM " + commands
+                + " " + o + " WHERE " + o + ".workflow_id = " + c + ".workflow_id AND " + o
+                + ".state IN ('PENDING','DEFERRED','CLAIMED') AND " + o + ".recorded_at < " + c + ".fire_at AND (("
+                + o + ".kind = 'SIGNAL' AND jsonb_exists(" + c + ".target_json->'signalNames', " + o
+                + ".target_json->>'name') AND " + o + ".target_json->>'branchId' IS NOT DISTINCT FROM " + c
+                + ".target_json->>'branchId' AND " + o + ".target_json->>'forkStepId' IS NOT DISTINCT FROM " + c
+                + ".target_json->>'forkStepId') OR (" + o + ".kind = 'COMPLETION' AND " + c
+                + ".task_id IS NOT NULL AND " + o + ".task_id = " + c + ".task_id))))";
+    }
+
+    private String taskTimerHeldBack(String c) {
         return "(" + c + ".kind = 'TIMER' AND " + c + ".timer_kind IN ('DUE','REMINDER')"
                 + " AND EXISTS (SELECT 1 FROM " + tasks + " tk_" + c + " WHERE tk_" + c + ".task_id = " + c
                 + ".task_id AND tk_" + c + ".status = 'COMPLETING'))";

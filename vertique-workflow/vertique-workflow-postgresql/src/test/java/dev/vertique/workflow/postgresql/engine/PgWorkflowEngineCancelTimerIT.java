@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -27,13 +26,7 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WorkflowEntryType;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -43,10 +36,8 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
-import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -220,42 +211,6 @@ public class PgWorkflowEngineCancelTimerIT {
         PgWorkflowDedupRepository dedupRepo = new PgWorkflowDedupRepository(pool, exMapper);
         timerStore = new PgTimerStore(exMapper);
 
-        WorkflowSideEffectRecorder<SqlClient> fakeTimerRecorder = new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                UUID timerId = UUID.randomUUID();
-                lastTimerId.set(timerId);
-                Instant fireAt = intent.payload() instanceof Instant fa
-                        ? fa
-                        : Instant.now().plusSeconds(3600);
-                TimerRecord record = new TimerRecord(
-                        timerId,
-                        (dev.vertique.workflow.ops.WorkflowInstanceId)
-                                intent.correlation().workflowId(),
-                        intent.targetId(),
-                        fireAt,
-                        TimerStatus.SCHEDULED,
-                        UUID.randomUUID(),
-                        Instant.now(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        TimerPurpose.STANDALONE,
-                        null,
-                        null, // branchTokenId
-                        null, // forkStepId
-                        null,
-                        DurableMetadata.empty()); // branchId
-                return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-            }
-        };
-
         DefaultWorkflowRegistry timerRegistry = new DefaultWorkflowRegistry();
         timerRegistry.register(STANDALONE_TIMER_DEF);
         timerEngine = PgWorkflowEngineTestSupport.create(
@@ -264,7 +219,7 @@ public class PgWorkflowEngineCancelTimerIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(fakeTimerRecorder),
+                Set.of(),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -278,7 +233,7 @@ public class PgWorkflowEngineCancelTimerIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(fakeTimerRecorder),
+                Set.of(),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -329,7 +284,10 @@ public class PgWorkflowEngineCancelTimerIT {
                 .compose(wfId -> timerEngine
                         .executionProbe()
                         .awaitIdle(wfId, IDLE_TIMEOUT)
-                        .map(r -> wfId))
+                        .compose(r -> TimerCommandRows.allTimerIds(pool, wfId).map(ids -> {
+                            lastTimerId.set(ids.getFirst());
+                            return wfId;
+                        })))
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     assertNotNull(timerId, "timerId must be set");
@@ -345,6 +303,12 @@ public class PgWorkflowEngineCancelTimerIT {
                                         assertEquals(
                                                 "CANCELLED", it.next().getString("status"), "timer must be CANCELLED");
                                     });
+                                    // The command that would fire it is cancelled with it
+                                    return TimerCommandRows.commandState(pool, timerId);
+                                })
+                                .compose(commandState -> {
+                                    ctx.verify(() -> assertEquals(
+                                            "CANCELLED", commandState, "the timer's command must be CANCELLED"));
                                     // History must have TIMER_CANCELLED with cause=WORKFLOW_CANCELLED
                                     return pool.withTransaction(tx -> historyRepo.listByInstance(wfId, tx))
                                             .map(entries -> {
@@ -405,7 +369,10 @@ public class PgWorkflowEngineCancelTimerIT {
                 .compose(wfId -> signalTimeoutEngine
                         .executionProbe()
                         .awaitIdle(wfId, IDLE_TIMEOUT)
-                        .map(r -> wfId))
+                        .compose(r -> TimerCommandRows.allTimerIds(pool, wfId).map(ids -> {
+                            lastTimerId.set(ids.getFirst());
+                            return wfId;
+                        })))
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     assertNotNull(timerId, "timerId must be set");

@@ -10,9 +10,9 @@ SPDX-License-Identifier: EUPL-1.2
 > **Artifact:** `vertique-workflow-delayed`
 > **Depends on:** workflow-core, job-core, job-delayed, job-cron, services, deploy, vertx-sql-client
 
-`vertique-workflow-delayed` provides durable workflow timers by integrating the workflow engine with Vertique delayed jobs and cron-backed recovery.
+`vertique-workflow-delayed` fires and recovers the workflow timers of earlier releases, which were scheduled as Vertique delayed jobs, and keeps the delayed-job wiring they need.
 
-Install this module when workflows use timer steps, signal timeouts, task due dates, task reminders, publish-at steps, or expire-at steps.
+**No new timer is a delayed job.** The workflow engine records every timer (timer steps, signal timeouts, task due dates, task reminders, publish-at steps and expire-at steps) as a `TIMER` command that the workflow executor runs (see `vertique-workflow-engine`). The recorder of this module is no longer invoked, and the fire executor and the recovery service touch only timer rows that name a delayed-job execution and are linked to no command. The module stays installable so that such rows, written before the upgrade, still fire until they are converted.
 
 ---
 
@@ -20,26 +20,24 @@ Install this module when workflows use timer steps, signal timeouts, task due da
 
 | Component | Purpose |
 |---|---|
-| Timer side-effect recorder | Persists workflow timer intents and enqueues delayed jobs in the workflow transaction |
-| Timer fire executor | Handles delayed-job execution and resumes the waiting workflow |
-| Timer recovery service | Reconciles orphaned or dead-lettered timer jobs |
+| Timer side-effect recorder | Persists workflow timer intents and enqueues delayed jobs in the workflow transaction; the engine no longer emits those intents |
+| Timer fire executor | Handles delayed-job execution of a timer of an earlier release and resumes the waiting workflow |
+| Timer recovery service | Reconciles orphaned or dead-lettered timer jobs of earlier releases; it ignores timers linked to a command |
 | Compose validator | Ensures timer, delayed-job, and cron dependencies are installed together |
 
-The workflow engine owns timer semantics. This module supplies durable scheduling and recovery.
+The workflow engine owns timer semantics. This module supplies the scheduling and recovery of timers written by earlier releases.
 
 ---
 
 ## Timer Flow
 
-When the engine reaches a timer-backed wait:
+A timer written by an earlier release fires like this:
 
-1. The engine emits a workflow timer side-effect intent.
-2. The recorder writes the workflow timer row and enqueues a delayed job inside the same transaction.
-3. The workflow waits.
-4. The delayed-job executor locks the timer row before firing.
-5. If the timer is still scheduled, the executor calls back into the engine and marks the timer fired.
+1. The workflow waits, and its timer row names a delayed job.
+2. The delayed-job executor locks the timer row before firing.
+3. If the timer is still scheduled, the executor calls back into the engine and marks the timer fired.
 
-All writes happen in the caller's SQL transaction. A timer is not visible to the delayed-job poller until the workflow transition commits.
+A timer recorded now has no delayed job: the engine inserts the timer row, linked to a `TIMER` command by `command_id`, in the same transaction as the wait, and the workflow executor fires the command. This module never fires such a timer, and its recovery service never reads it.
 
 ---
 
@@ -55,9 +53,9 @@ Known residual: every re-queue leaves a completed `job_executions` row, and the 
 
 ## Recovery
 
-The module includes cron-driven recovery for timers whose delayed job row is missing, stuck, or dead-lettered.
+The module includes cron-driven recovery for timers of earlier releases whose delayed job row is missing, stuck, or dead-lettered.
 
-Recovery is a cluster-singleton cron job. It periodically scans scheduled timers that are past a grace period and reconciles them with delayed-job state.
+Recovery is a cluster-singleton cron job. It periodically scans scheduled timers that name a delayed job, are linked to no command and are past a grace period, and reconciles them with delayed-job state. A timer linked to a command is never recovered here: a command that is deferred because no node can run its plan, for however long, never fails its instance.
 
 Operational behavior:
 
@@ -131,7 +129,7 @@ The two documents are written in one transaction but are **not** interchangeable
 
 ## Operational Notes
 
-- Timer rows written by this module carry no command link (`command_id` is null) and always carry a delayed-job execution id; the timer record accepts a null execution id and a command id for later use, but this module still schedules, tracks and recovers timers only through delayed jobs.
+- Timer rows written by this module carry no command link (`command_id` is null) and always carry a delayed-job execution id. The engine no longer calls the recorder; timer rows it writes carry a command link and no delayed-job execution id, and this module ignores them.
 - The timer row is the source of truth. Delayed jobs are the scheduling mechanism.
 - Transactions that touch both timer rows and workflow instance rows must lock timer rows first to avoid deadlocks with the firing executor.
 - Timer jobs may be retried by delayed-job infrastructure. The executor is idempotent and treats already-closed timers as no-ops.

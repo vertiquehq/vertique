@@ -34,9 +34,6 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
@@ -50,14 +47,12 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
-import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -110,9 +105,6 @@ public class RequireVersionStabilityIT {
     static PgWorkflowInstanceRepository instanceRepo;
     static PgWorkflowHistoryRepository historyRepo;
     static PgTimerStore timerStore;
-
-    /** Last timer id recorded by the fake recorder (set by fakeTimerRecorder). */
-    static final AtomicReference<UUID> lastTimerId = new AtomicReference<>();
 
     // --- Domain types ---
 
@@ -352,19 +344,6 @@ public class RequireVersionStabilityIT {
         PgWorkflowDedupRepository dedupRepo = new PgWorkflowDedupRepository(pool, exMapper);
         timerStore = new PgTimerStore(exMapper);
 
-        // Minimal no-op timer recorder (no timers are needed in these tests).
-        WorkflowSideEffectRecorder<SqlClient> noopTimerRecorder = new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                return Future.succeededFuture(RecorderResult.empty());
-            }
-        };
-
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
         registry.register(STABILITY_REQUIRED_DEF);
         registry.register(STABILITY_NOT_REQUIRED_DEF);
@@ -377,7 +356,7 @@ public class RequireVersionStabilityIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(noopTimerRecorder),
+                Set.of(),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -388,7 +367,6 @@ public class RequireVersionStabilityIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        lastTimerId.set(null);
         pool.query("TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
                         + " workflow_instances RESTART IDENTITY CASCADE")
                 .execute()

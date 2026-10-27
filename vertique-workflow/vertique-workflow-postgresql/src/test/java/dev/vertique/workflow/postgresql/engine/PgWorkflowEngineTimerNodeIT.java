@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -18,6 +17,7 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TimerFiringResult;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
@@ -25,14 +25,10 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -42,14 +38,11 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
-import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -65,9 +58,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Tests cover:
  * <ul>
- *   <li>handleTimerNode emits a WORKFLOW_TIMER intent and transitions to WAITING with
+ *   <li>handleTimerNode records a timer row and a {@code TIMER} command and transitions to WAITING with
  *       wait_type=TIMER.</li>
- *   <li>timerFired returns APPLIED for a slot match and advances the workflow to the next step.</li>
+ *   <li>timerFired returns APPLIED for a slot match and advances the workflow to the next step; the timer's
+ *       command then settles stale.</li>
  *   <li>timerFired returns STALE_NOOP for a non-WAITING instance.</li>
  *   <li>timerFired returns STALE_NOOP for a slot mismatch (wrong timer_id).</li>
  * </ul>
@@ -90,14 +84,20 @@ public class PgWorkflowEngineTimerNodeIT {
     static PgWorkflowHistoryRepository historyRepo;
     static PgTimerStore timerStore;
 
-    /** Captures the last intent routed for kind=WORKFLOW_TIMER. */
-    static final AtomicReference<WorkflowSideEffectIntent> capturedIntent = new AtomicReference<>();
+    /** The timer that the command of the started instance recorded. */
+    static final AtomicReference<UUID> recordedTimerId = new AtomicReference<>();
 
-    /** Counts how many times the recorder was called. */
-    static final AtomicInteger recorderCallCount = new AtomicInteger(0);
-
-    /** The timer id the fake recorder inserts and returns. */
-    static final AtomicReference<UUID> insertedTimerId = new AtomicReference<>();
+    /** Starts the instance, waits until it is idle and reads the timer its start recorded. */
+    private static Future<WorkflowInstanceId> startAndAwaitRecorded(StartCommand cmd) {
+        return engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+                .compose(id -> TimerCommandRows.onlyTimerId(pool, id, TimerPurpose.STANDALONE)
+                        .map(timerId -> {
+                            recordedTimerId.set(timerId);
+                            return id;
+                        }));
+    }
 
     // --- Sample domain types ---
 
@@ -131,9 +131,10 @@ public class PgWorkflowEngineTimerNodeIT {
     // --- Workflow definition ---
 
     /**
-     * Timer workflow: start → timer(500ms) → complete.
+     * Timer workflow: start → timer(1h) → complete.
      *
-     * <p>Plan: dispatch("start") → timer("wait", Duration.ofMillis(500)) → complete("done").
+     * <p>Plan: dispatch("start") → timer("wait", Duration.ofHours(1)) → complete("done"). The timer does not come due
+     * during a test; tests make it due or fire it directly.
      * The initial step is the timer step itself.
      */
     static final WorkflowDefinition<TimerState, FakeTimerContract> TIMER_DEFINITION = new WorkflowDefinition<>() {
@@ -161,7 +162,7 @@ public class PgWorkflowEngineTimerNodeIT {
         public void define(WorkflowBuilder<TimerState> wf) {
             wf.init(TimerTask.class, TimerState::from)
                     .initialStep("wait")
-                    .timer("wait", Duration.ofMillis(500))
+                    .timer("wait", Duration.ofHours(1))
                     .toStep("done")
                     .complete("done");
         }
@@ -187,47 +188,6 @@ public class PgWorkflowEngineTimerNodeIT {
         PgWorkflowDedupRepository dedupRepo = new PgWorkflowDedupRepository(pool, exMapper);
         timerStore = new PgTimerStore(exMapper);
 
-        // Fake recorder for WORKFLOW_TIMER that captures the intent, inserts a timer row,
-        // and returns RecorderResult.ofTimer(timerId).
-        WorkflowSideEffectRecorder<SqlClient> fakeTimerRecorder = new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                capturedIntent.set(intent);
-                recorderCallCount.incrementAndGet();
-                UUID timerId = UUID.randomUUID();
-                insertedTimerId.set(timerId);
-                Instant fireAt = intent.payload() instanceof Instant fa
-                        ? fa
-                        : Instant.now().plusSeconds(60);
-                UUID fakeJobId = UUID.randomUUID();
-                TimerRecord record = new TimerRecord(
-                        timerId,
-                        (dev.vertique.workflow.ops.WorkflowInstanceId)
-                                intent.correlation().workflowId(),
-                        intent.targetId(),
-                        fireAt,
-                        dev.vertique.workflow.timer.TimerStatus.SCHEDULED,
-                        fakeJobId,
-                        Instant.now(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        TimerPurpose.STANDALONE,
-                        null,
-                        null, // branchTokenId
-                        null, // forkStepId
-                        null,
-                        DurableMetadata.empty()); // branchId
-                return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-            }
-        };
-
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
         registry.register(TIMER_DEFINITION);
 
@@ -237,7 +197,7 @@ public class PgWorkflowEngineTimerNodeIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(fakeTimerRecorder),
+                Set.of(),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -248,9 +208,6 @@ public class PgWorkflowEngineTimerNodeIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        capturedIntent.set(null);
-        recorderCallCount.set(0);
-        insertedTimerId.set(null);
         pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup,"
                         + " workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
@@ -268,12 +225,12 @@ public class PgWorkflowEngineTimerNodeIT {
 
     /**
      * Starting a workflow whose initial step is a TimerNode should:
-     * - invoke the WORKFLOW_TIMER recorder exactly once
+     * - record one timer row, linked to a pending TIMER command
      * - leave the instance in WAITING status with wait_type=TIMER and wait_key=timerId
      * - append a TIMER_SCHEDULED history entry with kind=STANDALONE
      */
     @Test
-    @DisplayName("handleTimerNode emits WORKFLOW_TIMER intent and transitions to WAITING/TIMER")
+    @DisplayName("handleTimerNode records a timer command and transitions to WAITING/TIMER")
     void handleTimerNodeTransitionsToWaiting(VertxTestContext ctx) {
         String taskId = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
@@ -287,22 +244,15 @@ public class PgWorkflowEngineTimerNodeIT {
                 null,
                 null);
 
-        engine.start(cmd)
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+        startAndAwaitRecorded(cmd)
                 .compose(id -> {
-                    // Verify recorder was called exactly once
-                    ctx.verify(() -> {
-                        assertEquals(1, recorderCallCount.get(), "WORKFLOW_TIMER recorder should be called once");
-                        assertNotNull(capturedIntent.get(), "intent must have been captured");
-                        assertEquals(
-                                IntentKind.WORKFLOW_TIMER,
-                                capturedIntent.get().kind(),
-                                "intent kind must be WORKFLOW_TIMER");
-                        assertNotNull(insertedTimerId.get(), "timerId must have been set");
-                    });
-                    // Load and verify the instance
-                    return pool.withTransaction(tx -> instanceRepo.findById(id, tx))
+                    // Verify the timer row is linked to a pending TIMER command
+                    return TimerCommandRows.commandState(pool, recordedTimerId.get())
+                            .compose(commandState -> {
+                                ctx.verify(() -> assertEquals(
+                                        "PENDING", commandState, "the timer's command must wait for its fire time"));
+                                return pool.withTransaction(tx -> instanceRepo.findById(id, tx));
+                            })
                             .compose(optInst -> {
                                 ctx.verify(() -> {
                                     assertTrue(optInst.isPresent(), "instance must exist");
@@ -310,7 +260,7 @@ public class PgWorkflowEngineTimerNodeIT {
                                     assertEquals(WorkflowStatus.WAITING, inst.status(), "status must be WAITING");
                                     assertEquals(WaitType.TIMER, inst.waitType(), "wait_type must be TIMER");
                                     assertEquals(
-                                            insertedTimerId.get().toString(),
+                                            recordedTimerId.get().toString(),
                                             inst.waitKey(),
                                             "wait_key must be the timer_id as string");
                                     assertNull(inst.waitAuxId(), "wait_aux_id must be null for standalone timer");
@@ -338,7 +288,7 @@ public class PgWorkflowEngineTimerNodeIT {
                                                                     p.getString("kind"),
                                                                     "timer kind must be STANDALONE");
                                                             assertEquals(
-                                                                    insertedTimerId
+                                                                    recordedTimerId
                                                                             .get()
                                                                             .toString(),
                                                                     p.getString("timerId"),
@@ -383,11 +333,9 @@ public class PgWorkflowEngineTimerNodeIT {
                 null,
                 null);
 
-        engine.start(cmd)
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+        startAndAwaitRecorded(cmd)
                 .compose(id -> {
-                    UUID timerId = insertedTimerId.get();
+                    UUID timerId = recordedTimerId.get();
                     assertNotNull(timerId, "timerId must be set after start");
                     return pool.withTransaction(tx -> engine.timerFired(id, timerId, tx))
                             .compose(fired -> engine.executionProbe()
@@ -407,7 +355,7 @@ public class PgWorkflowEngineTimerNodeIT {
                                                         "status must be COMPLETED after timer fires");
                                             });
                                             return pool.withTransaction(tx -> historyRepo.listByInstance(id, tx))
-                                                    .map(entries -> {
+                                                    .compose(entries -> {
                                                         ctx.verify(() -> {
                                                             boolean hasTimerFired = entries.stream()
                                                                     .anyMatch(e -> e.entryType()
@@ -416,7 +364,21 @@ public class PgWorkflowEngineTimerNodeIT {
                                                                     hasTimerFired,
                                                                     "history must contain TIMER_FIRED entry");
                                                         });
-                                                        return null;
+                                                        // The direct call left the timer's command behind: when it
+                                                        // comes due, the wait is gone and the command settles stale.
+                                                        return TimerCommandRows.makeDue(pool, timerId)
+                                                                .compose(done -> engine.executionProbe()
+                                                                        .awaitIdle(id, IDLE_TIMEOUT))
+                                                                .compose(idle ->
+                                                                        TimerCommandRows.commandState(pool, timerId))
+                                                                .map(commandState -> {
+                                                                    ctx.verify(() -> assertEquals(
+                                                                            "STALE",
+                                                                            commandState,
+                                                                            "the command of a timer fired directly"
+                                                                                    + " must settle stale"));
+                                                                    return null;
+                                                                });
                                                     });
                                         });
                             });
@@ -449,11 +411,9 @@ public class PgWorkflowEngineTimerNodeIT {
                 null,
                 null);
 
-        engine.start(cmd)
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+        startAndAwaitRecorded(cmd)
                 .compose(id -> {
-                    UUID timerId = insertedTimerId.get();
+                    UUID timerId = recordedTimerId.get();
                     // Cancel the workflow first
                     return engine.cancel(id, "test cancel").compose(v -> {
                         return pool.withTransaction(tx -> engine.timerFired(id, timerId, tx))
@@ -497,9 +457,7 @@ public class PgWorkflowEngineTimerNodeIT {
                 null,
                 null);
 
-        engine.start(cmd)
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+        startAndAwaitRecorded(cmd)
                 .compose(id -> {
                     UUID wrongTimerId = UUID.randomUUID();
                     return pool.withTransaction(tx -> engine.timerFired(id, wrongTimerId, tx))

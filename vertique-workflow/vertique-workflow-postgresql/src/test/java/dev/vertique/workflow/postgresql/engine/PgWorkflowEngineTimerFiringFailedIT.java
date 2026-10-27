@@ -26,9 +26,6 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.timer.TimerPurpose;
@@ -42,7 +39,6 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
-import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
 import java.time.Duration;
@@ -92,6 +88,19 @@ public class PgWorkflowEngineTimerFiringFailedIT {
 
     static final AtomicReference<UUID> lastTimerId = new AtomicReference<>();
     static final AtomicReference<WorkflowInstanceId> lastWorkflowId = new AtomicReference<>();
+
+    /** Starts the instance, waits until it is idle and reads the timer its start recorded. */
+    private static Future<WorkflowInstanceId> startAndAwaitRecorded(StartCommand cmd) {
+        return engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+                .compose(wfId -> TimerCommandRows.onlyTimerId(pool, wfId, TimerPurpose.STANDALONE)
+                        .map(timerId -> {
+                            lastTimerId.set(timerId);
+                            lastWorkflowId.set(wfId);
+                            return wfId;
+                        }));
+    }
 
     // --- Domain types ---
 
@@ -151,6 +160,41 @@ public class PgWorkflowEngineTimerFiringFailedIT {
         }
     };
 
+    /** A timer followed by a step that fails the same way every time it runs. */
+    static final WorkflowDefinition<State, FakeContract> FAILING_AFTER_TIMER_DEF = new WorkflowDefinition<>() {
+        @Override
+        public Class<FakeContract> contract() {
+            return FakeContract.class;
+        }
+
+        @Override
+        public Class<State> stateType() {
+            return State.class;
+        }
+
+        @Override
+        public String definitionId() {
+            return "timer-command-fails-test";
+        }
+
+        @Override
+        public long definitionVersion() {
+            return 1L;
+        }
+
+        @Override
+        public void define(WorkflowBuilder<State> wf) {
+            wf.init(StartPayload.class, State::from)
+                    .initialStep("wait")
+                    .timer("wait", Duration.ofHours(1))
+                    .toStep("boom")
+                    .decide("boom", state -> {
+                        throw new IllegalStateException("the step after the timer always fails");
+                    })
+                    .complete("done");
+        }
+    };
+
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext ctx) {
         DbPoolConfig config = db.toPoolConfig();
@@ -171,44 +215,9 @@ public class PgWorkflowEngineTimerFiringFailedIT {
         PgWorkflowDedupRepository dedupRepo = new PgWorkflowDedupRepository(pool, exMapper);
         timerStore = new PgTimerStore(exMapper);
 
-        WorkflowSideEffectRecorder<SqlClient> fakeTimerRecorder = new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                UUID timerId = UUID.randomUUID();
-                lastTimerId.set(timerId);
-                WorkflowInstanceId wfId =
-                        (WorkflowInstanceId) intent.correlation().workflowId();
-                lastWorkflowId.set(wfId);
-                Instant fireAt = Instant.now().plusSeconds(3600);
-                TimerRecord record = new TimerRecord(
-                        timerId,
-                        wfId,
-                        intent.targetId(),
-                        fireAt,
-                        TimerStatus.SCHEDULED,
-                        UUID.randomUUID(),
-                        Instant.now(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        TimerPurpose.STANDALONE,
-                        null,
-                        null, // branchTokenId
-                        null, // forkStepId
-                        null,
-                        DurableMetadata.empty()); // branchId
-                return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-            }
-        };
-
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
         registry.register(TIMER_DEF);
+        registry.register(FAILING_AFTER_TIMER_DEF);
 
         engine = PgWorkflowEngineTestSupport.create(
                 pool,
@@ -216,7 +225,7 @@ public class PgWorkflowEngineTimerFiringFailedIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(fakeTimerRecorder),
+                Set.of(),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -264,9 +273,7 @@ public class PgWorkflowEngineTimerFiringFailedIT {
                 null,
                 null);
 
-        engine.start(cmd)
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+        startAndAwaitRecorded(cmd)
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     assertNotNull(timerId, "timerId must be set");
@@ -384,9 +391,7 @@ public class PgWorkflowEngineTimerFiringFailedIT {
                 null,
                 null);
 
-        engine.start(cmd)
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+        startAndAwaitRecorded(cmd)
                 .compose(wfId -> {
                     // The instance is WAITING on lastTimerId. Insert a DIFFERENT timer.
                     UUID otherTimerId = UUID.randomUUID();
@@ -484,9 +489,7 @@ public class PgWorkflowEngineTimerFiringFailedIT {
                 null,
                 null);
 
-        engine.start(cmd)
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+        startAndAwaitRecorded(cmd)
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     // Cancel the timer manually to put it in a terminal state
@@ -516,6 +519,60 @@ public class PgWorkflowEngineTimerFiringFailedIT {
                                             });
                                             return null;
                                         });
+                            });
+                })
+                .onComplete(ar -> {
+                    if (ar.failed()) {
+                        ctx.failNow(ar.cause());
+                    } else {
+                        ctx.completeNow();
+                    }
+                });
+    }
+
+    /**
+     * A timer command whose firing fails the same way every time fails its instance: the command is {@code FAILED}, the
+     * instance is {@code FAILED}, and nothing the segment wrote stays (the timer is not fired).
+     */
+    @Test
+    @DisplayName("a timer command that fails deterministically fails the instance and itself")
+    void timerCommandFailureFailsTheInstance(VertxTestContext ctx) {
+        StartCommand cmd = new StartCommand(
+                "timer-command-fails-test",
+                FakeContract.class.getName(),
+                new StartPayload(UUID.randomUUID().toString()),
+                UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
+                null,
+                null);
+
+        startAndAwaitRecorded(cmd)
+                .compose(wfId -> {
+                    UUID timerId = lastTimerId.get();
+                    return TimerCommandRows.makeDue(pool, timerId)
+                            .compose(v -> engine.executionProbe().awaitIdle(wfId, IDLE_TIMEOUT))
+                            .compose(idle -> TimerCommandRows.commandState(pool, timerId))
+                            .compose(commandState -> {
+                                ctx.verify(() -> assertEquals(
+                                        "FAILED", commandState, "a deterministic failure fails the timer command"));
+                                return TimerCommandRows.status(pool, timerId);
+                            })
+                            .compose(timerStatus -> {
+                                ctx.verify(() -> assertEquals(
+                                        "SCHEDULED", timerStatus, "the failed segment must not fire the timer"));
+                                return pool.withTransaction(tx -> instanceRepo.findById(wfId, tx));
+                            })
+                            .map(optInst -> {
+                                ctx.verify(() -> {
+                                    assertTrue(optInst.isPresent());
+                                    assertEquals(
+                                            WorkflowStatus.FAILED,
+                                            optInst.get().status(),
+                                            "the instance must be FAILED");
+                                });
+                                return null;
                             });
                 })
                 .onComplete(ar -> {

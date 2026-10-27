@@ -9,7 +9,9 @@ import dev.vertique.workflow.engine.spi.DispositionResult;
 import dev.vertique.workflow.engine.spi.InstanceFailureListener;
 import dev.vertique.workflow.engine.spi.ParkedSignal;
 import dev.vertique.workflow.engine.spi.QueueCounts;
+import dev.vertique.workflow.engine.spi.RecordedTimer;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.TimerCommandSpec;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.history.PendingCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -17,6 +19,7 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -39,6 +42,27 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
             @Nullable String explicitCarrierJson) {}
 
     private final List<RecordedSignal> recordedSignals = new CopyOnWriteArrayList<>();
+    private final List<TimerCommandSpec> recordedTimers = new CopyOnWriteArrayList<>();
+
+    /**
+     * The timers recorded through this repository, oldest first.
+     *
+     * @return a snapshot of the recordings
+     */
+    public List<TimerCommandSpec> recordedTimers() {
+        return List.copyOf(recordedTimers);
+    }
+
+    @Override
+    public Future<RecordedTimer> recordTimer(TimerCommandSpec timer, SqlClient tx) {
+        recordedTimers.add(timer);
+        Instant fireAt =
+                switch (timer.fireTime()) {
+                    case TimerCommandSpec.FireTime.At at -> at.at();
+                    case TimerCommandSpec.FireTime.After after -> Instant.now().plus(after.delay());
+                };
+        return Future.succeededFuture(new RecordedTimer(UUID.randomUUID(), recordedTimers.size(), fireAt));
+    }
 
     /**
      * The signal commands recorded through this repository, oldest first.

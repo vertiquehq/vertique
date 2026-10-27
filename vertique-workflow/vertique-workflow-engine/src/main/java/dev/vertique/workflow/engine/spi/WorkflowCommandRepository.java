@@ -447,6 +447,23 @@ public interface WorkflowCommandRepository<TX> {
             TX tx);
 
     /**
+     * Records a timer in the caller's transaction: a {@code workflow_timers} row linked by the command's id and the
+     * {@code TIMER} command that fires it. The command takes the next position of the instance's queue, state
+     * {@code PENDING}; its fire time is read once from the database clock, is the command's availability and never
+     * changes. A {@code TIMEOUT} command stores the wait it belongs to as its target: the step, the branch address of
+     * a branch wait and the signal names the wait accepts. The timer row's metadata is the durable context of the
+     * recording drive, signed for the timer's own carrier and without the identity-snapshot namespace; the command
+     * stores no context.
+     *
+     * <p>The caller must hold the instance's execution lock.
+     *
+     * @param timer the timer to record
+     * @param tx    the caller's transaction handle
+     * @return a {@link Future} containing the timer's id, its command's row id and its fire time
+     */
+    Future<RecordedTimer> recordTimer(TimerCommandSpec timer, TX tx);
+
+    /**
      * Lists the parked {@code SIGNAL} commands of an instance that carry the given name and address, in queue order.
      *
      * @param instance   the instance

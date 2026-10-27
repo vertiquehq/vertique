@@ -39,14 +39,10 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.tasks.TaskAssignment;
-import dev.vertique.workflow.timer.TimerIntentPayload;
 import dev.vertique.workflow.timer.TimerPurpose;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStatus;
@@ -87,11 +83,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link PgInboxOutboxRepository}, so TASK_REMINDER events are written to the {@code outbox} table
  * atomically with the reminder history entry.
  *
- * <p>Timer firing is simulated directly by calling
- * {@link WorkflowEngineHandle#taskReminderFired(WorkflowInstanceId, UUID, UUID, io.vertx.sqlclient.SqlClient)}
- * inside a {@link Pool#withTransaction} — bypassing the delayed-job infrastructure. After each
- * simulated fire, the test uses {@link PgTimerStore#markFired} to put the timer row into the
- * terminal state (mirroring what {@code WorkflowTimerFireExecutor} would do in production).
+ * <p>Reminders are {@code TIMER} commands. A test makes a reminder due by moving the fire time of its command and timer
+ * row to the database clock; the executor of the engine then fires it as a segment. The closed-task case also calls
+ * {@link WorkflowEngineHandle#taskReminderFired(WorkflowInstanceId, UUID, UUID, java.time.Instant,
+ * io.vertx.sqlclient.SqlClient)} directly, which still runs under the execution lock.
  *
  * <p>Covers:
  * <ul>
@@ -126,8 +121,17 @@ public class TaskReminderIT {
     static PgWorkflowHistoryRepository historyRepo;
     static PgTimerStore timerStore;
 
-    /** All timer ids inserted by the fake WORKFLOW_TIMER recorder, in insertion order. */
+    /** Every timer of the instance under test in queue order, refreshed after the start and after each fire. */
     static final CopyOnWriteArrayList<UUID> insertedTimerIds = new CopyOnWriteArrayList<>();
+
+    /** Reads the timers of the instance into {@link #insertedTimerIds} and answers the instance. */
+    private static Future<WorkflowInstanceId> refreshTimers(WorkflowInstanceId workflowId) {
+        return TimerCommandRows.allTimerIds(pool, workflowId).map(ids -> {
+            insertedTimerIds.clear();
+            insertedTimerIds.addAll(ids);
+            return workflowId;
+        });
+    }
 
     // --- Domain types ---
 
@@ -157,7 +161,7 @@ public class TaskReminderIT {
     // --- Workflow definitions ---
 
     /**
-     * A task with two one-shot reminders at 200ms and 400ms after creation.
+     * A task with two one-shot reminders at one and two hours after creation; a test makes them due.
      * Decision "approve" completes the workflow.
      */
     static final WorkflowDefinition<State, OneShotContract> ONE_SHOT_DEF = new WorkflowDefinition<>() {
@@ -190,14 +194,14 @@ public class TaskReminderIT {
                     .decision("approve", Void.class)
                     .onDecision((s, p) -> s)
                     .toStep("done")
-                    .reminderAt(Duration.ofMillis(200), Duration.ofMillis(400))
+                    .reminderAt(Duration.ofHours(1), Duration.ofHours(2))
                     .build()
                     .complete("done");
         }
     };
 
     /**
-     * A task with a recurring reminder every 150ms, max 3 fires.
+     * A task with a recurring reminder every hour, max 3 fires; a test makes each reminder due.
      */
     static final WorkflowDefinition<State, RecurringContract> RECURRING_DEF = new WorkflowDefinition<>() {
         @Override
@@ -229,14 +233,14 @@ public class TaskReminderIT {
                     .decision("approve", Void.class)
                     .onDecision((s, p) -> s)
                     .toStep("done")
-                    .reminderEvery(Duration.ofMillis(150), 3)
+                    .reminderEvery(Duration.ofHours(1), 3)
                     .build()
                     .complete("done");
         }
     };
 
     /**
-     * A task with a 1-hour due-date and a one-shot reminder at 200ms.
+     * A task with a 1-hour due-date and a one-shot reminder after 30 minutes.
      * Used to verify cancel cascade on due-date expiry.
      */
     static final WorkflowDefinition<State, DueDateReminderContract> DUE_DATE_REMINDER_DEF = new WorkflowDefinition<>() {
@@ -272,7 +276,7 @@ public class TaskReminderIT {
                     .dueIn(Duration.ofHours(1))
                     .onDue(s -> s)
                     .toStepOnDue("escalate")
-                    .reminderAt(Duration.ofMillis(200))
+                    .reminderAt(Duration.ofMinutes(30))
                     .build()
                     .complete("done")
                     .complete("escalate");
@@ -347,52 +351,6 @@ public class TaskReminderIT {
         WorkflowEventSideEffectRecorder eventRecorder =
                 new WorkflowEventSideEffectRecorder(outboxService, BINDING, eventsValidator);
 
-        // Timer recorder — records all timer ids in insertion order
-        WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient> timerRecorder = new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, io.vertx.sqlclient.SqlClient tx) {
-                UUID timerId = UUID.randomUUID();
-                insertedTimerIds.add(timerId);
-                Object payload = intent.payload();
-                Instant fireAt;
-                TimerPurpose purpose;
-                UUID taskId;
-                if (payload instanceof TimerIntentPayload tip) {
-                    fireAt = tip.fireAt();
-                    purpose = tip.purpose();
-                    taskId = tip.taskId();
-                } else {
-                    fireAt = payload instanceof Instant fa ? fa : Instant.now().plusSeconds(3600);
-                    purpose = TimerPurpose.STANDALONE;
-                    taskId = null;
-                }
-                TimerRecord record = new TimerRecord(
-                        timerId,
-                        (WorkflowInstanceId) intent.correlation().workflowId(),
-                        intent.targetId(),
-                        fireAt,
-                        TimerStatus.SCHEDULED,
-                        UUID.randomUUID(),
-                        Instant.now(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        purpose,
-                        taskId,
-                        null, // branchTokenId
-                        null, // forkStepId
-                        null,
-                        DurableMetadata.empty()); // branchId
-                return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-            }
-        };
-
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
         registry.register(ONE_SHOT_DEF);
         registry.register(RECURRING_DEF);
@@ -404,7 +362,7 @@ public class TaskReminderIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(eventRecorder, timerRecorder),
+                Set.of(eventRecorder),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -506,17 +464,31 @@ public class TaskReminderIT {
     }
 
     /**
-     * Simulates the {@code WorkflowTimerFireExecutor}'s work for a reminder timer:
-     * calls {@link WorkflowEngineHandle#taskReminderFired} inside a transaction, then marks the timer
-     * as {@code FIRED}. Returns a succeeded future even if the task was already closed (mirrors
-     * the executor's no-STALE_NOOP contract for reminders).
+     * Makes a reminder timer due and waits until the executor has run it: the reminder command fires as a segment and
+     * its timer row ends {@code FIRED}.
+     *
+     * @param workflowId the owning workflow instance id
+     * @param timerId    the reminder timer UUID to fire
+     * @return a succeeded future when the instance is idle again
+     */
+    private Future<Void> fireReminderTimer(WorkflowInstanceId workflowId, UUID timerId) {
+        return TimerCommandRows.makeDue(pool, timerId)
+                .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                .compose(idle -> refreshTimers(workflowId))
+                .mapEmpty();
+    }
+
+    /**
+     * Fires a reminder the way a caller of the public callback does: {@link WorkflowEngineHandle#taskReminderFired}
+     * inside a transaction, then {@link PgTimerStore#markFired} on the timer row. Returns a succeeded future even if
+     * the task was already closed.
      *
      * @param workflowId the owning workflow instance id
      * @param taskId     the task UUID
      * @param timerId    the reminder timer UUID to fire
      * @return a succeeded future when the fire + mark sequence completes
      */
-    private Future<Void> fireReminderTimer(WorkflowInstanceId workflowId, UUID taskId, UUID timerId) {
+    private Future<Void> fireReminderDirectly(WorkflowInstanceId workflowId, UUID taskId, UUID timerId) {
         // Look up the timer's persisted fire_at and pass it as the scheduledFireAt anchor (cycle-4
         // SPI extension: recurring reminders re-anchor off this instant to avoid drift).
         return pool.withTransaction(tx -> timerStore.lockForFiring(timerId, tx).compose(opt -> {
@@ -563,16 +535,17 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+                .compose(started -> engine.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .compose(idle -> refreshTimers(started)))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     // After start, insertedTimerIds has 2 one-shot reminder timer ids
                     assertEquals(2, insertedTimerIds.size(), "2 reminder timers should be scheduled on start");
                     UUID timerId1 = insertedTimerIds.get(0);
                     UUID timerId2 = insertedTimerIds.get(1);
 
-                    return fireReminderTimer(workflowId, taskId, timerId1)
-                            .compose(v -> fireReminderTimer(workflowId, taskId, timerId2))
+                    return fireReminderTimer(workflowId, timerId1)
+                            .compose(v -> fireReminderTimer(workflowId, timerId2))
                             .compose(v -> {
                                 // Assert: 2 TASK_REMINDER outbox rows
                                 return readReminderOutboxRows(workflowId.value())
@@ -664,58 +637,56 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+                .compose(started -> engine.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .compose(idle -> refreshTimers(started)))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     // After start, 1 recurring reminder timer is scheduled
                     assertEquals(1, insertedTimerIds.size(), "1 recurring reminder timer should be scheduled");
                     UUID timerId1 = insertedTimerIds.get(0);
 
                     // Fire 1st — schedules 2nd (insertedTimerIds will have 2 entries)
-                    return fireReminderTimer(workflowId, taskId, timerId1).compose(v -> {
+                    return fireReminderTimer(workflowId, timerId1).compose(v -> {
                         assertEquals(2, insertedTimerIds.size(), "2nd timer must be scheduled after 1st fire");
                         UUID timerId2 = insertedTimerIds.get(1);
 
                         // Fire 2nd — schedules 3rd
-                        return fireReminderTimer(workflowId, taskId, timerId2).compose(v2 -> {
+                        return fireReminderTimer(workflowId, timerId2).compose(v2 -> {
                             assertEquals(3, insertedTimerIds.size(), "3rd timer must be scheduled after 2nd fire");
                             UUID timerId3 = insertedTimerIds.get(2);
 
                             // Fire 3rd — should NOT schedule 4th (isLast=true)
-                            return fireReminderTimer(workflowId, taskId, timerId3)
-                                    .compose(v3 -> {
-                                        assertEquals(
-                                                3,
-                                                insertedTimerIds.size(),
-                                                "no 4th timer must be scheduled after 3rd fire (maxFires reached)");
+                            return fireReminderTimer(workflowId, timerId3).compose(v3 -> {
+                                assertEquals(
+                                        3,
+                                        insertedTimerIds.size(),
+                                        "no 4th timer must be scheduled after 3rd fire (maxFires reached)");
 
-                                        return countOutboxEvents(
-                                                        workflowId.value(), WorkflowEventType.TASK_REMINDER.name())
-                                                .compose(count -> {
-                                                    ctx.verify(() ->
-                                                            assertEquals(3L, count, "3 TASK_REMINDER events expected"));
+                                return countOutboxEvents(workflowId.value(), WorkflowEventType.TASK_REMINDER.name())
+                                        .compose(count -> {
+                                            ctx.verify(
+                                                    () -> assertEquals(3L, count, "3 TASK_REMINDER events expected"));
 
-                                                    // Verify 3rd event has isLast=true.
-                                                    // reminderIndex and isLast are nested inside "attributes".
-                                                    return readReminderEventPayload(workflowId.value(), 2)
-                                                            .map(envelope -> {
-                                                                JsonObject attrs = envelope.getJsonObject("attributes");
-                                                                ctx.verify(() -> {
-                                                                    assertNotNull(
-                                                                            attrs, "3rd reminder must have attributes");
-                                                                    assertEquals(
-                                                                            3,
-                                                                            attrs.getInteger("reminderIndex"),
-                                                                            "3rd event must have reminderIndex=3");
-                                                                    assertEquals(
-                                                                            true,
-                                                                            attrs.getBoolean("isLast"),
-                                                                            "3rd event must have isLast=true");
-                                                                });
-                                                                return null;
-                                                            });
-                                                });
-                                    });
+                                            // Verify 3rd event has isLast=true.
+                                            // reminderIndex and isLast are nested inside "attributes".
+                                            return readReminderEventPayload(workflowId.value(), 2)
+                                                    .map(envelope -> {
+                                                        JsonObject attrs = envelope.getJsonObject("attributes");
+                                                        ctx.verify(() -> {
+                                                            assertNotNull(attrs, "3rd reminder must have attributes");
+                                                            assertEquals(
+                                                                    3,
+                                                                    attrs.getInteger("reminderIndex"),
+                                                                    "3rd event must have reminderIndex=3");
+                                                            assertEquals(
+                                                                    true,
+                                                                    attrs.getBoolean("isLast"),
+                                                                    "3rd event must have isLast=true");
+                                                        });
+                                                        return null;
+                                                    });
+                                        });
+                            });
                         });
                     });
                 }))
@@ -746,8 +717,9 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+                .compose(started -> engine.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .compose(idle -> refreshTimers(started)))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     UUID reminderId = insertedTimerIds.get(0);
@@ -809,8 +781,9 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+                .compose(started -> engine.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .compose(idle -> refreshTimers(started)))
                 .compose(workflowId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     UUID reminderId = insertedTimerIds.get(0);
@@ -856,8 +829,9 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+                .compose(started -> engine.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .compose(idle -> refreshTimers(started)))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     // insertedTimerIds[0] = due-date timer, insertedTimerIds[1] = reminder timer
                     // (order: handleHumanTaskNode calls scheduleDueDateTimer first, then scheduleReminderTimers)
@@ -868,20 +842,13 @@ public class TaskReminderIT {
                     return readTimerStatus(reminderId).compose(status -> {
                         ctx.verify(() -> assertEquals("SCHEDULED", status, "reminder must start SCHEDULED"));
 
-                        // Backdate the due-date timer's fire_at to the past and then fire it
-                        return pool.preparedQuery("UPDATE workflow_timers SET fire_at = NOW() - INTERVAL '1 minute'"
-                                        + " WHERE timer_id = $1")
-                                .execute(Tuple.of(dueDateTimerId))
-                                .compose(v ->
-                                        pool.withTransaction(tx -> engine.timerFired(workflowId, dueDateTimerId, tx)))
-                                .compose(fired -> engine.executionProbe()
-                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
-                                        .map(idle -> fired))
-                                .compose(result -> {
+                        // Make the due date pass: the executor fires its command and the task expires
+                        return TimerCommandRows.makeDue(pool, dueDateTimerId)
+                                .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                                .compose(idle -> TimerCommandRows.commandState(pool, dueDateTimerId))
+                                .compose(commandState -> {
                                     ctx.verify(() -> assertEquals(
-                                            dev.vertique.workflow.ops.TimerFiringResult.APPLIED,
-                                            result,
-                                            "due-date timerFired must return APPLIED"));
+                                            "COMPLETE", commandState, "the due-date command must fire and complete"));
 
                                     // Reminder must now be CANCELLED
                                     return readTimerStatus(reminderId);
@@ -919,8 +886,9 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+                .compose(started -> engine.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .compose(idle -> refreshTimers(started)))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     UUID reminderId = insertedTimerIds.get(0);
@@ -973,8 +941,9 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+                .compose(started -> engine.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .compose(idle -> refreshTimers(started)))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(1, insertedTimerIds.size(), "1 reminder timer must be scheduled");
                     // insertedTimerIds.get(0) is the initial reminder timer — cancel cascade will
@@ -1033,7 +1002,7 @@ public class TaskReminderIT {
                                                     0L, countBefore, "no TASK_REMINDER events before racing fire"));
 
                                             // Fire the racing reminder against the closed task
-                                            return fireReminderTimer(workflowId, taskId, racingTimerId);
+                                            return fireReminderDirectly(workflowId, taskId, racingTimerId);
                                         })
                                         .compose(v -> {
                                             // Count TASK_REMINDER events AFTER the racing fire — must still be 0
@@ -1082,20 +1051,21 @@ public class TaskReminderIT {
                         null,
                         null,
                         null))
-                .compose(started ->
-                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
+                .compose(started -> engine.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .compose(idle -> refreshTimers(started)))
                 .compose(workflowId -> readTaskId(workflowId).compose(taskId -> {
                     assertEquals(2, insertedTimerIds.size(), "2 one-shot timers scheduled");
                     UUID timerId1 = insertedTimerIds.get(0);
                     UUID timerId2 = insertedTimerIds.get(1);
 
-                    return fireReminderTimer(workflowId, taskId, timerId1)
+                    return fireReminderTimer(workflowId, timerId1)
                             .compose(v -> countHistory(workflowId, WorkflowEntryType.TASK_REMINDER_FIRED))
                             .compose(countAfter1 -> {
                                 ctx.verify(() -> assertEquals(
                                         1L, countAfter1, "1 TASK_REMINDER_FIRED history after first fire"));
 
-                                return fireReminderTimer(workflowId, taskId, timerId2)
+                                return fireReminderTimer(workflowId, timerId2)
                                         .compose(v -> countHistory(workflowId, WorkflowEntryType.TASK_REMINDER_FIRED));
                             })
                             .map(countAfter2 -> {

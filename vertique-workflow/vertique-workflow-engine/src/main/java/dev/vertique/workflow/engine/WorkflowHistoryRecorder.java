@@ -136,6 +136,34 @@ final class WorkflowHistoryRecorder {
     }
 
     /**
+     * Appends a history entry about what became of a recorded {@code TIMER} command. The entry names the command, its
+     * timer kind and timer and the sanitized reason, never a payload value or exception text.
+     *
+     * @param workflowId the instance
+     * @param type the entry type
+     * @param commandId the command's row id
+     * @param timerKind the timer kind, or {@code null} when unknown
+     * @param timerId the timer row the command fires, or {@code null} when unknown
+     * @param reason the sanitized reason, or {@code null} for an outcome without one
+     * @param tx the active transaction
+     * @return a future that completes when the entry is appended
+     */
+    Future<Void> appendTimerCommandHistory(
+            WorkflowInstanceId workflowId,
+            WorkflowEntryType type,
+            long commandId,
+            @Nullable String timerKind,
+            @Nullable UUID timerId,
+            @Nullable String reason,
+            SqlClient tx) {
+        return history.nextSequence(workflowId, tx).compose(seq -> {
+            String payload =
+                    Json.encode(new TimerCommandHistoryPayload(commandId, "TIMER", timerKind, timerId, reason));
+            return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
+        });
+    }
+
+    /**
      * Appends a history entry about what became of a recorded {@code COMPLETION} command. The entry names the command,
      * the task, the decision and the sanitized reason, never a payload value or exception text.
      *

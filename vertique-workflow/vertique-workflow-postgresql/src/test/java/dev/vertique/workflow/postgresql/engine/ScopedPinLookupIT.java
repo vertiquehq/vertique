@@ -15,7 +15,6 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.context.ContextRuntimeModule;
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -40,22 +39,13 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
-import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowRecorders;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -133,45 +123,6 @@ public class ScopedPinLookupIT {
         @IntoSet
         static WorkflowMigrationHandler<?, ?> acmeMigration() {
             return ScopedApprovalFixture.ACME_MIGRATION;
-        }
-
-        @Provides
-        @IntoSet
-        @WorkflowRecorders
-        static WorkflowSideEffectRecorder<SqlClient> timerRecorder(PgTimerStore timerStore) {
-            return new WorkflowSideEffectRecorder<>() {
-                @Override
-                public IntentKind kind() {
-                    return IntentKind.WORKFLOW_TIMER;
-                }
-
-                @Override
-                public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                    UUID timerId = UUID.randomUUID();
-                    Instant fireAt = intent.payload() instanceof Instant instant
-                            ? instant
-                            : Instant.now().plusSeconds(300);
-                    TimerRecord record = new TimerRecord(
-                            timerId,
-                            (WorkflowInstanceId) intent.correlation().workflowId(),
-                            intent.targetId(),
-                            fireAt,
-                            TimerStatus.SCHEDULED,
-                            UUID.randomUUID(),
-                            Instant.now(),
-                            null,
-                            null,
-                            null,
-                            null,
-                            TimerPurpose.STANDALONE,
-                            null,
-                            null,
-                            null,
-                            null,
-                            DurableMetadata.empty());
-                    return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-                }
-            };
         }
 
         @Provides

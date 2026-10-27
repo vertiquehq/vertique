@@ -18,11 +18,18 @@ import dev.vertique.workflow.engine.spi.DispositionResult;
 import dev.vertique.workflow.engine.spi.InstanceFailureListener;
 import dev.vertique.workflow.engine.spi.ParkedSignal;
 import dev.vertique.workflow.engine.spi.QueueCounts;
+import dev.vertique.workflow.engine.spi.RecordedTimer;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.TimerCommandSpec;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.history.PendingCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.timer.PgTimerStore;
+import dev.vertique.workflow.postgresql.timer.WorkflowTimerCarriers;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.timer.TimerPurpose;
+import dev.vertique.workflow.timer.TimerRecord;
+import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
@@ -34,6 +41,9 @@ import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -100,6 +110,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final String lowerOpenSignals;
     private final String insertSignal;
     private final String insertCompletion;
+    private final String insertTimer;
+    private final PgTimerStore timers;
     private final String cancelReservedTask;
     private final String reopenReservedTask;
     private final String declaredNames;
@@ -237,7 +249,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 "SELECT kind FROM " + commands + " WHERE id = $1 AND state = 'CLAIMED' AND claim_token = $2 FOR UPDATE";
         this.fenceCommand =
                 "SELECT c.id, c.payload_json::text AS payload_json, c.target_json::text AS target_json, c.dedup_key,"
-                        + " c.explicit_carrier_json::text AS explicit_carrier_json, c.context_json::text AS context_json FROM "
+                        + " c.explicit_carrier_json::text AS explicit_carrier_json, c.context_json::text AS context_json,"
+                        + " c.timer_kind, c.timer_id, c.task_id FROM "
                         + commands
                         + " c WHERE c.id = $1 AND c.state = 'CLAIMED' AND c.claim_token = $2 AND "
                         + eligibility.atHead("c")
@@ -270,6 +283,16 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " (workflow_id, seq, kind, state, recorded_at, available_at, task_id, payload_json, dedup_key,"
                 + " target_json, context_json) SELECT $1, $2, 'COMPLETION', 'PENDING', recorded.at, recorded.at, $3,"
                 + " $4::jsonb, $5, $6::jsonb, $7::jsonb FROM recorded RETURNING id";
+        // The fire time is read once, with the recording time, from the database clock: a delay counts from it and an
+        // instant already past is taken as the recording time, so a timer never fires before it was recorded.
+        this.insertTimer = "WITH recorded AS (SELECT clock_timestamp() AS at), fire AS (SELECT recorded.at AS at,"
+                + " CASE WHEN $6::timestamptz IS NOT NULL THEN GREATEST($6::timestamptz, recorded.at)"
+                + " ELSE recorded.at + ($7::float8 * interval '1 millisecond') END AS fire_at FROM recorded)"
+                + " INSERT INTO " + commands
+                + " (workflow_id, seq, kind, timer_kind, timer_id, task_id, target_json, state, recorded_at,"
+                + " available_at, fire_at) SELECT $1, $2, 'TIMER', $3, $4, $5, $8::jsonb, 'PENDING', fire.at,"
+                + " fire.fire_at, fire.fire_at FROM fire RETURNING id, recorded_at, fire_at";
+        this.timers = new PgTimerStore(exceptionMapper, schemas);
         String tasks = PgTableNames.qualify(schemas, "workflow", "workflow_tasks");
         this.cancelReservedTask = "UPDATE " + tasks + " SET status = 'CANCELLED', cancelled_at = now(),"
                 + " cancelled_by = '{\"kind\":\"SYSTEM\",\"value\":\"INSTANCE_ENDED\"}'::jsonb,"
@@ -495,8 +518,11 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         String instanceStatus = looked.getString("instance_status");
         long id = head.commandId();
         if (isEnded(instanceStatus)) {
-            // The outcome table settles a signal of an ended instance as rejected, and a branch-addressed one as stale.
-            boolean stale = "SIGNAL".equals(kind) && Boolean.TRUE.equals(looked.getBoolean("branch_signal"));
+            // The outcome table settles a signal of an ended instance as rejected, a branch-addressed one and a timer
+            // as
+            // stale.
+            boolean stale = "TIMER".equals(kind)
+                    || "SIGNAL".equals(kind) && Boolean.TRUE.equals(looked.getBoolean("branch_signal"));
             String state = stale ? "STALE" : "REJECTED";
             String reason = "SIGNAL".equals(kind)
                     ? CommandErrors.signalInstanceEnded(looked.getString("signal_name"), instanceStatus, stale)
@@ -618,7 +644,10 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             row.getString("target_json"),
                             row.getString("dedup_key"),
                             row.getString("explicit_carrier_json"),
-                            row.getString("context_json")));
+                            row.getString("context_json"),
+                            row.getString("timer_kind"),
+                            row.getUUID("timer_id"),
+                            row.getUUID("task_id")));
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands fence")));
     }
@@ -748,6 +777,98 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                 capturedContext(instance, seq))))
                 .map(rows -> rows.iterator().next().getLong("id"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordSignal")));
+    }
+
+    @Override
+    public Future<RecordedTimer> recordTimer(TimerCommandSpec timer, SqlClient tx) {
+        UUID timerId = UUID.randomUUID();
+        String timerKind = timerKind(timer.purpose());
+        JsonObject target = timeoutTarget(timer);
+        Instant at = timer.fireTime() instanceof TimerCommandSpec.FireTime.At fixed ? fixed.at() : null;
+        double delayMs = timer.fireTime() instanceof TimerCommandSpec.FireTime.After after
+                ? (double) after.delay().toMillis()
+                : 0d;
+        return nextQueueSequence(timer.workflowId(), tx)
+                .compose(seq -> {
+                    Tuple parameters = Tuple.tuple();
+                    parameters.addValue(timer.workflowId().value());
+                    parameters.addValue(seq);
+                    parameters.addValue(timerKind);
+                    parameters.addValue(timerId);
+                    parameters.addValue(timer.taskId());
+                    parameters.addValue(at == null ? null : at.atOffset(ZoneOffset.UTC));
+                    parameters.addValue(delayMs);
+                    parameters.addValue(target);
+                    return tx.preparedQuery(insertTimer).execute(parameters);
+                })
+                .compose(rows -> {
+                    Row row = rows.iterator().next();
+                    long commandId = row.getLong("id");
+                    OffsetDateTime recordedAt = row.getOffsetDateTime("recorded_at");
+                    OffsetDateTime fireAt = row.getOffsetDateTime("fire_at");
+                    TimerRecord record = new TimerRecord(
+                            timerId,
+                            timer.workflowId(),
+                            timer.stepId(),
+                            fireAt.toInstant(),
+                            TimerStatus.SCHEDULED,
+                            null,
+                            recordedAt.toInstant(),
+                            null,
+                            null,
+                            null,
+                            null,
+                            timer.purpose(),
+                            timer.taskId(),
+                            timer.branchTokenId(),
+                            timer.forkStepId(),
+                            timer.branchId(),
+                            timerMetadata(timer, timerId),
+                            commandId);
+                    return timers.insertScheduled(record, tx)
+                            .map(done -> new RecordedTimer(timerId, commandId, fireAt.toInstant()));
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordTimer")));
+    }
+
+    /** The wait a timeout belongs to, as the timeout command stores it; {@code null} for the other timers. */
+    private static @Nullable JsonObject timeoutTarget(TimerCommandSpec timer) {
+        if (timer.purpose() != TimerPurpose.SIGNAL_TIMEOUT) {
+            return null;
+        }
+        JsonObject target = new JsonObject().put("stepId", timer.stepId());
+        if (timer.forkStepId() != null) {
+            target.put("forkStepId", timer.forkStepId());
+        }
+        if (timer.branchId() != null) {
+            target.put("branchId", timer.branchId());
+        }
+        return target.put("signalNames", new JsonArray(timer.signalNames()));
+    }
+
+    private static String timerKind(TimerPurpose purpose) {
+        return switch (purpose) {
+            case STANDALONE -> "FIRE";
+            case SIGNAL_TIMEOUT -> "TIMEOUT";
+            case TASK_DUE -> "DUE";
+            case TASK_REMINDER -> "REMINDER";
+        };
+    }
+
+    /**
+     * The durable context the recording drive has bound, encoded for the timer row's own carrier and without an
+     * identity snapshot; empty when the capture is empty or no propagator is configured.
+     */
+    private DurableMetadata timerMetadata(TimerCommandSpec timer, UUID timerId) {
+        if (propagator == null) {
+            return DurableMetadata.empty();
+        }
+        return propagator
+                .mergeCaptured(
+                        DurableMetadata.empty(),
+                        DispatchBoundary.DELAYED_JOB,
+                        WorkflowTimerCarriers.of(timerId, timer.workflowId()))
+                .without(CommandContextCarrier.IDENTITY_SNAPSHOT_NAMESPACE);
     }
 
     @Override

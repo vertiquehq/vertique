@@ -250,6 +250,7 @@ public class MixedCodeNodesIT {
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
             awaitInitialExecution(database, instance, 0);
+            asEarlierRelease(database, instance);
             TimerRow scheduled = onlyTimer(database, instance);
             assertThat(scheduled.status()).isEqualTo("SCHEDULED");
             SteppedClock clock = new SteppedClock(scheduled.fireAt());
@@ -314,6 +315,7 @@ public class MixedCodeNodesIT {
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
             awaitInitialExecution(database, instance, 0);
+            asEarlierRelease(database, instance);
             TimerRow due = timerWithPurpose(database, instance, "TASK_DUE");
             assertThat(due.status()).isEqualTo("SCHEDULED");
             Rows before = Rows.of(database, instance);
@@ -366,6 +368,7 @@ public class MixedCodeNodesIT {
             WorkflowInstanceId instance = await(onDuplicatedContext(
                     vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
             awaitInitialExecution(database, instance, 2);
+            asEarlierRelease(database, instance);
             TimerRow due = timerWithPurpose(database, instance, "TASK_DUE");
             Rows before = Rows.of(database, instance);
             assertThat(before.tasks()).contains("OPEN");
@@ -414,6 +417,7 @@ public class MixedCodeNodesIT {
             await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
             awaitInitialExecution(database, instance, 0);
+            asEarlierRelease(database, instance);
             List<TimerRow> reminders = reminderTimers(database, instance);
             assertThat(reminders).hasSize(2);
             TimerRow first = reminders.getFirst();
@@ -468,6 +472,7 @@ public class MixedCodeNodesIT {
             WorkflowInstanceId instance = await(onDuplicatedContext(
                     vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
             awaitInitialExecution(database, instance, 2);
+            asEarlierRelease(database, instance);
             TimerRow reminder = timerWithPurpose(database, instance, "TASK_REMINDER");
             Rows before = Rows.of(database, instance);
             assertThat(before.tasks()).endsWith(":OPEN:0");
@@ -674,6 +679,7 @@ public class MixedCodeNodesIT {
                     .workflowOperations()
                     .signal(waitingForTimer, "inventory.reserved", new InventoryReservedDoc("r4"), "d-first"));
             await(first.app().executionProbe().awaitIdle(waitingForTimer, IDLE_TIMEOUT));
+            asEarlierRelease(database, waitingForTimer);
             TimerRow timer = onlyTimer(database, waitingForTimer);
             assertThat(timer.status()).isEqualTo("SCHEDULED");
             first.close();
@@ -740,6 +746,22 @@ public class MixedCodeNodesIT {
                 MixedCodeFixtures.code(id, 1, Shape.COMPLETES, MixedContract.class),
                 MixedCodeFixtures.code(id, 2, version2, MixedContract.class));
         return database.node(none(), unobserved(), code);
+    }
+
+    /**
+     * Rewrites the timers of the instance as the release before timer commands wrote them: a timer row that names a
+     * delayed-job execution and no command, and no command row. The tests that use it exercise the delayed-job timer
+     * executor, which fires only such rows; a timer recorded now is fired by its command.
+     */
+    private static void asEarlierRelease(DefinitionScenario database, WorkflowInstanceId instance) {
+        database.execute(
+                "DELETE FROM workflow_commands WHERE id IN (SELECT command_id FROM workflow_timers"
+                        + " WHERE workflow_id = $1 AND command_id IS NOT NULL)",
+                Tuple.of(instance.value()));
+        database.execute(
+                "UPDATE workflow_timers SET delayed_job_execution_id = gen_random_uuid(), command_id = NULL"
+                        + " WHERE workflow_id = $1",
+                Tuple.of(instance.value()));
     }
 
     private static WorkflowTimerFireExecutor executor(Boot node, WorkflowTimerFireJob job, Clock clock) {

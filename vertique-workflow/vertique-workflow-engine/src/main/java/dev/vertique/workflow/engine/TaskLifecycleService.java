@@ -82,6 +82,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -1751,6 +1752,21 @@ final class TaskLifecycleService {
      * @return a {@link Future} resolving to the mutation result
      */
     Future<TaskMutationResult> taskDueFired(WorkflowInstanceId workflowId, UUID taskId, SqlClient tx) {
+        return dueFired(workflowId, taskId, this::ambientBinding, tx);
+    }
+
+    /**
+     * Fires a task's due date like {@link #taskDueFired}, binding the durable context of an instance-owned expiry with
+     * the given binding.
+     *
+     * @param workflowId the workflow instance this task belongs to
+     * @param taskId     the stable UUID of the task whose due date passed
+     * @param binding    binds the context of the instance-owned expiry drive
+     * @param tx         the active transaction context
+     * @return a {@link Future} resolving to the mutation result
+     */
+    Future<TaskMutationResult> dueFired(
+            WorkflowInstanceId workflowId, UUID taskId, DriveBinding binding, SqlClient tx) {
         // Lock order: workflow_timers BEFORE workflow_tasks (matches taskCompleted/cancel and the
         // reminder-fire executor — preserves the cycle-4 workflow-wide lock-order invariant).
         // Step sequence: (1) non-locking task read for the slot validation, (2) branch-fork on
@@ -1787,9 +1803,8 @@ final class TaskLifecycleService {
                     return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
                 }
 
-                // Binder-row bind (Contract Appendix C2): instance-owned (no branch) due-date
-                // expiry drive.
-                return contextBinder.withBound(inst, null, () -> doTaskDueFiredBound(taskId, inst, tx));
+                // Instance-owned (no branch) due-date expiry drive.
+                return binding.run(inst, () -> doTaskDueFiredBound(taskId, inst, tx));
             });
         });
     }
@@ -2077,40 +2092,64 @@ final class TaskLifecycleService {
      */
     Future<Void> taskReminderFired(
             WorkflowInstanceId workflowId, UUID taskId, UUID timerId, Instant scheduledFireAt, SqlClient tx) {
+        return reminderFired(workflowId, taskId, timerId, scheduledFireAt, this::ambientBinding, tx)
+                .mapEmpty();
+    }
+
+    /**
+     * Fires a task reminder like {@link #taskReminderFired}, binding the durable context of an instance-owned reminder
+     * with the given binding, and tells whether the reminder applied to a task that is still open and awaited.
+     *
+     * @param workflowId      the owning workflow instance id
+     * @param taskId          the stable UUID of the task
+     * @param timerId         the UUID of the firing reminder timer
+     * @param scheduledFireAt the {@code fire_at} of the firing timer (anchors the next interval)
+     * @param binding         binds the context of the instance-owned reminder drive
+     * @param tx              the active transaction context
+     * @return {@link TaskMutationResult#APPLIED} when the reminder fired, {@link TaskMutationResult#STALE_NOOP} when its
+     *     task is closed or no longer awaited
+     */
+    Future<TaskMutationResult> reminderFired(
+            WorkflowInstanceId workflowId,
+            UUID taskId,
+            UUID timerId,
+            Instant scheduledFireAt,
+            DriveBinding binding,
+            SqlClient tx) {
         // Non-locking task read to discover branch ownership.
         return taskStore.findById(taskId, tx).compose(maybeTask -> {
             if (maybeTask.isEmpty() || maybeTask.get().status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
                 // Task already closed or not found — no-op; executor marks timer FIRED.
-                return Future.succeededFuture();
+                return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
             }
             TaskRecord task = maybeTask.get();
 
             // Branch fork: route branch-owned tasks through the branch-specific path.
             if (task.branchTokenId() != null) {
-                return doBranchTaskReminderFired(workflowId, task, timerId, scheduledFireAt, tx);
+                return doBranchTaskReminderFired(workflowId, task, timerId, scheduledFireAt, tx)
+                        .map(done -> TaskMutationResult.APPLIED);
             }
 
             // Single-path: verify the parent instance is WAITING on this task.
             return instances.findById(workflowId, tx).compose(maybeInst -> {
                 if (maybeInst.isEmpty()) {
                     // Workflow purged — no-op; executor marks the timer FIRED.
-                    return Future.succeededFuture();
+                    return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
                 }
                 WorkflowInstance inst = maybeInst.get();
                 if (inst.status() != WorkflowStatus.WAITING || inst.waitType() != WaitType.TASK) {
-                    return Future.succeededFuture();
+                    return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
                 }
                 // Verify this reminder belongs to the task the workflow is currently waiting on.
                 if (!taskId.toString().equals(inst.waitKey())) {
-                    return Future.succeededFuture();
+                    return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
                 }
 
-                // Binder-row bind (Contract Appendix C2): instance-owned (no branch) reminder-fire
-                // drive.
-                return contextBinder.withBound(
-                        inst,
-                        null,
-                        () -> doTaskReminderFiredBound(workflowId, task, inst, timerId, scheduledFireAt, tx));
+                // Instance-owned (no branch) reminder-fire drive.
+                return binding.run(
+                                inst,
+                                () -> doTaskReminderFiredBound(workflowId, task, inst, timerId, scheduledFireAt, tx))
+                        .map(done -> TaskMutationResult.APPLIED);
             });
         });
     }
@@ -2239,6 +2278,11 @@ final class TaskLifecycleService {
     }
 
     // --- Internal helpers ---
+
+    /** The binding of a caller of the engine's callbacks: the ambient context with the instance's own. */
+    private <T> Future<T> ambientBinding(WorkflowInstance instance, Supplier<Future<T>> drive) {
+        return contextBinder.withBound(instance, null, drive);
+    }
 
     /**
      * Resolves the runtime workflow for {@code inst} and enforces the plan-hash drift guard

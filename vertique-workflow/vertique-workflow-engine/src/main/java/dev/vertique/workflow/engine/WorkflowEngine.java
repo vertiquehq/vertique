@@ -530,6 +530,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 instances,
                 history,
                 recorders,
+                commands,
                 taskStore,
                 eventEmitter,
                 reminderScheduler,
@@ -580,7 +581,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 this.driver,
                 this.taskLifecycle,
                 clock,
-                builtContextBinder);
+                builtContextBinder,
+                commands,
+                historyRecorder);
         timerLifecycleHolder[0] = this.timerLifecycle;
         // SignalHandler needs the driver, coordinator, and timer service eagerly; all are now built.
         // Nothing references the handler, so it is a plain leaf in the construction order.
@@ -1215,8 +1218,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Runs a fenced command's work in the segment's transaction: a {@code START}, a recorded {@code SIGNAL} or a
-     * recorded {@code COMPLETION}.
+     * Runs a fenced command's work in the segment's transaction: a {@code START}, a recorded {@code SIGNAL}, a
+     * recorded {@code COMPLETION} or a {@code TIMER}.
      */
     private Future<WorkflowSegments.Outcome> runSegment(
             CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
@@ -1229,6 +1232,17 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return driver.withStepCap(
                     tx, maxSteps, () -> signalHandler.parkedSignals().managing(tx, () -> taskLifecycle
                             .runCompletion(head, claim, command, tx)
+                            .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
+                                    ? signalHandler
+                                            .parkedSignals()
+                                            .drain(command.workflowId(), tx)
+                                            .map(done -> outcome)
+                                    : Future.succeededFuture(outcome))));
+        }
+        if ("TIMER".equals(command.kind())) {
+            return driver.withStepCap(
+                    tx, maxSteps, () -> signalHandler.parkedSignals().managing(tx, () -> timerLifecycle
+                            .runTimer(head, claim, command, tx)
                             .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
                                     ? signalHandler
                                             .parkedSignals()
