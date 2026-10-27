@@ -273,7 +273,7 @@ export function deriveInventory(repoRoot, policy) {
 
     const isFixed = fixed.includes(mod.artifactId);
     const isBomManaged = bomKeys.has(key);
-    // A product with no archetypes (enterprise) simply omits the rule.
+    // A product with no archetypes simply omits the rule.
     const isArchetype =
       Boolean(archetypes) &&
       mod.packaging === archetypes.packaging &&
