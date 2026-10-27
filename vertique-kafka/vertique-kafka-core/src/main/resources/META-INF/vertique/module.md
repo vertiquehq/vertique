@@ -646,6 +646,10 @@ Later entries win:
 `sasl.jaas.config` is constructed automatically when `sasl.username` and `sasl.password` are present
 and `sasl.jaas.config` is absent.
 
+The framework sets no `acks` default, so producers inherit the Kafka client defaults (`acks=all` and
+`enable.idempotence=true` with the `kafka-clients` 4.x line brought in by Vert.x) unless
+`producer.properties` overrides them.
+
 When `bootstrap.servers` is not configured through any source, producer startup fails with an
 `IllegalStateException` rather than silently falling back to `localhost:9092`.
 
