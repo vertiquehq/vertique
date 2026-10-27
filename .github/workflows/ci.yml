@@ -1,17 +1,16 @@
 # SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 # SPDX-License-Identifier: EUPL-1.2
 #
-# RELEASE-001 required CI (FR-REL-010, FR-REL-014, FR-REL-023, NFR-REL-001,
-# NFR-REL-006).
+# CI for pull requests and main.
 #
-# This is the required check for pull requests and pushes to main. It holds
+# This workflow checks pull requests and pushes to main. It holds
 # read-only permissions and references no secret, so no package, release, tag
 # or repository-content write credential is ever available to code arriving
 # through a pull request.
 #
 # Every step binds an event or invokes a versioned, locally runnable
 # repository-owned entry point; substantive logic never lives in this YAML.
-# SNAPSHOT publication is a separate, non-required workflow so its failure
+# SNAPSHOT publication is a separate workflow so its failure
 # cannot erase this workflow's already-established result.
 
 name: CI
@@ -27,16 +26,16 @@ permissions:
   contents: read
 
 jobs:
-  # Classifies the changed paths so a docs-only pull request can skip the
-  # expensive build (a job skipped via `if:` satisfies its required check).
-  # The decision lives in a repository-owned, contract-tested script; pushes
-  # to main always build, so SNAPSHOT publication only trails verified SHAs.
+  # Markdown-only pull requests run Docs checks; a red job signals a failure.
+  # When configuring required checks, require Docs checks alongside Build and Test.
+  # Other changes retain the allowlist and fail-closed build behavior.
   classify:
     name: Classify changed paths
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
+      markdown_only: ${{ steps.scope.outputs.markdown_only }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -49,13 +48,41 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash scripts/detect-docs-only-scope.sh --event-name "$EVENT_NAME" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
+  docs:
+    name: Docs checks
+    needs: classify
+    if: ${{ needs.classify.outputs.markdown_only == 'true' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Verify module documents
+        run: |
+          bash scripts/test-verify-module-docs.sh
+          bash scripts/verify-module-docs.sh
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+      - name: Verify release contracts
+        run: node --test release/tests/*.test.mjs
+      - name: Verify documentation contracts
+        run: |
+          bash scripts/test-verify-documentation-contracts.sh
+          bash scripts/verify-documentation-contracts.sh
+
   build:
     name: Build and Test
     needs: classify
     # !cancelled(): if classify itself fails, docs_only is empty and the full
-    # build still runs — a classify failure must never satisfy the required
-    # check by skipping the job it exists to gate.
-    if: ${{ !cancelled() && needs.classify.outputs.docs_only != 'true' }}
+    # build still runs; classification failures must not skip verification.
+    if: ${{ !cancelled() && needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.markdown_only != 'true' }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 70
     steps:
@@ -63,6 +90,11 @@ jobs:
         with:
           # Full history: the diff coverage gate diffs against the PR's base branch.
           fetch-depth: 0
+
+      - name: Verify module documents
+        run: |
+          bash scripts/test-verify-module-docs.sh
+          bash scripts/verify-module-docs.sh
 
       # The build JDK is the newest supported one. The bytecode target stays
       # Java 21: the compiler plugin passes --release ${java.version}, and the
@@ -98,7 +130,7 @@ jobs:
       # its own yet. A deliberately-refreshed stable key would need
       # `gh cache delete`, which needs actions: write — forbidden in this
       # job by PublicCiContractTest's pullRequestBuildHasReadOnlyPermissions
-      # AndNoSecrets (FR-REL-014, NFR-REL-001): required CI holds read-only
+      # AndNoSecrets: CI holds read-only
       # permissions, no exceptions.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
