@@ -29,6 +29,12 @@ SPDX-License-Identifier: EUPL-1.2
     </properties>
 
     <dependencies>
+        <dependency>
+            <groupId>org.apache.velocity</groupId>
+            <artifactId>velocity-engine-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!--
             Harness dependency: compiles and runs RestPostgresqlArchetypeContractTest under Surefire.
             It is not a staging edge for the generated project (the generated project declares its own

@@ -213,6 +213,13 @@ SPDX-License-Identifier: EUPL-1.2
 
     <dependencyManagement>
         <dependencies>
+            <!-- Match the version used by maven-archetype-plugin 3.4.1. -->
+            <dependency>
+                <groupId>org.apache.velocity</groupId>
+                <artifactId>velocity-engine-core</artifactId>
+                <version>2.4.1</version>
+            </dependency>
+
             <!-- JUnit BOM — declared before vertx-dependencies so every JUnit Jupiter and
                  Platform artifact resolves to one version. vertx-junit5 otherwise brings an
                  older junit-jupiter-engine that cannot load against a newer junit-jupiter-api. -->
