@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
-import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -23,8 +22,6 @@ import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
-import org.apache.velocity.VelocityContext;
-import org.apache.velocity.app.VelocityEngine;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -48,20 +45,6 @@ import org.junit.jupiter.api.Test;
  * machinery is a separate, later concern.
  */
 class ServicesArchetypeContractTest {
-
-    @Test
-    @DisplayName("README template renders with Velocity")
-    void rendersReadmeTemplateWithVelocity() throws IOException {
-        VelocityContext context = new VelocityContext();
-        context.put("groupId", "com.example");
-        context.put("artifactId", "example-app");
-        context.put("version", "1.0-SNAPSHOT");
-        context.put("package", "com.example");
-        context.put("vertiqueVersion", "1.0.0");
-        StringWriter rendered = new StringWriter();
-        assertTrue(new VelocityEngine().evaluate(context, rendered, "README.md", Files.readString(TEMPLATE_README)));
-        assertTrue(rendered.toString().contains("example-app"));
-    }
 
     // --- Template locations (relative to the archetype module basedir) ---
 
@@ -194,14 +177,13 @@ class ServicesArchetypeContractTest {
             new Dependency("org.junit.jupiter", "junit-jupiter", null, "test"));
 
     /**
-     * The complete dependency contract of the archetype module itself, in declaration order: two
-     * test-harness edges (Velocity, which renders the README template, and Surefire) plus the frozen §4.5 staging set that populates the isolated
+     * The complete dependency contract of the archetype module itself, in declaration order: one
+     * Surefire harness edge plus the frozen §4.5 staging set that populates the isolated
      * integration-test repository. The list is exhaustive so a staging edge cannot be added or
      * dropped silently — a missing edge would let the nested build fall back to a coordinate this
      * reactor did not produce.
      */
     private static final List<Dependency> EXPECTED_ARCHETYPE_DEPENDENCIES = List.of(
-            new Dependency("org.apache.velocity", "velocity-engine-core", null, "test"),
             new Dependency("org.junit.jupiter", "junit-jupiter", null, "test"),
             new Dependency("dev.vertique", "vertique-app-parent", "pom", "test"),
             new Dependency("dev.vertique", "vertique-bom", "pom", "test"),
