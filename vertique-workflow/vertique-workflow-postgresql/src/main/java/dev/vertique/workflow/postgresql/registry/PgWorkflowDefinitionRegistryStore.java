@@ -8,6 +8,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
 import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.workflow.engine.WorkflowExceptionMapper;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
@@ -33,6 +34,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
+import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Tuple;
 import jakarta.annotation.Nullable;
@@ -65,7 +67,7 @@ import org.slf4j.LoggerFactory;
  */
 @Singleton
 public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
-        implements WorkflowDefinitionRegistryStore {
+        implements WorkflowDefinitionRegistryStore, TransactionalDefinitionReads<SqlClient> {
     private static final Logger log = LoggerFactory.getLogger(PgWorkflowDefinitionRegistryStore.class);
 
     private static final String COLUMNS =
@@ -79,6 +81,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
     private final String sqlFind;
     private final String sqlFindDocument;
+    private final String sqlFindStoredDocument;
     private final String sqlList;
     private final String sqlInsert;
     private final String sqlInsertCode;
@@ -149,6 +152,13 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         CASE WHEN octet_length(convert_to(document, 'UTF8')) <= $4 AND char_length(document) <= $5
                              THEN document ELSE NULL END AS document
                     FROM""" + " " + definitions + " WHERE " + KEY + " AND kind = 'DOCUMENT'";
+
+        this.sqlFindStoredDocument = "SELECT " + COLUMNS + ", document_digest,"
+                + " octet_length(convert_to(document, 'UTF8')) AS document_size_bytes,"
+                + " char_length(document) AS document_code_points,"
+                + " CASE WHEN octet_length(convert_to(document, 'UTF8')) <= $4 AND char_length(document) <= $5"
+                + " THEN document ELSE NULL END AS document FROM " + definitions + " WHERE " + KEY
+                + " AND kind = 'DOCUMENT'";
 
         // The filter is applied by the database: each parameter is null when its criterion is absent.
         this.sqlList = "SELECT " + COLUMNS + " FROM " + definitions
@@ -281,26 +291,53 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     .execute(parameters(key)
                             .addInteger(config.maxStoredDocumentSizeBytes())
                             .addInteger(config.maxDocumentSizeBytes()))
-                    .map(rows -> {
-                        if (!rows.iterator().hasNext()) return Optional.empty();
-                        Row r = rows.iterator().next();
-                        long bytes = ((Number) r.getValue("document_size_bytes")).longValue();
-                        long points = ((Number) r.getValue("document_code_points")).longValue();
-                        if (bytes > config.maxStoredDocumentSizeBytes() || points > config.maxDocumentSizeBytes())
-                            throw new WorkflowDefinitionException(
-                                    "Stored document " + key + " exceeds source envelope: UTF8 bytes " + bytes + "/"
-                                            + config.maxStoredDocumentSizeBytes() + ", code points " + points + "/"
-                                            + config.maxDocumentSizeBytes());
-                        String text = r.getString("document");
-                        if (!sha256Hex(text).equals(r.getString("document_digest")))
-                            throw new WorkflowDefinitionLifecycleException(
-                                    Reason.DRIFT,
-                                    key,
-                                    "Definition " + key
-                                            + ": stored text digest differs from the recorded digest, so the stored text was changed after it was recorded");
-                        return Optional.of(new WorkflowDefinitionDocument(key, text, r.getString("document_format")));
-                    })));
+                    .map(rows -> rows.iterator().hasNext()
+                            ? Optional.of(documentOf(key, rows.iterator().next()))
+                            : Optional.<WorkflowDefinitionDocument>empty())));
         });
+    }
+
+    /**
+     * Reads the record and the text of a document row on the caller's transaction, with the same checks of the text
+     * as {@link #findDocument(DefinitionKey)}. It takes no connection of its own, and a failure is translated like
+     * the failure of any other read of this store.
+     */
+    @Override
+    public Future<Optional<StoredDocument>> findDocument(DefinitionKey key, SqlClient tx) {
+        return attempt(() -> {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(tx, "tx");
+            return encoding(tx)
+                    .compose(ignored -> tx.preparedQuery(sqlFindStoredDocument)
+                            .execute(parameters(key)
+                                    .addInteger(config.maxStoredDocumentSizeBytes())
+                                    .addInteger(config.maxDocumentSizeBytes())))
+                    .map(rows -> {
+                        if (!rows.iterator().hasNext()) return Optional.<StoredDocument>empty();
+                        Row r = rows.iterator().next();
+                        return Optional.of(new StoredDocument(metadata(r), documentOf(key, r)));
+                    })
+                    .recover(failure -> Future.failedFuture(translated(failure, key.definitionId())));
+        });
+    }
+
+    /** Checks the size and the digest of the text a row holds and returns it. */
+    private WorkflowDefinitionDocument documentOf(DefinitionKey key, Row r) {
+        long bytes = ((Number) r.getValue("document_size_bytes")).longValue();
+        long points = ((Number) r.getValue("document_code_points")).longValue();
+        if (bytes > config.maxStoredDocumentSizeBytes() || points > config.maxDocumentSizeBytes())
+            throw new WorkflowDefinitionException(
+                    "Stored document " + key + " exceeds source envelope: UTF8 bytes " + bytes + "/"
+                            + config.maxStoredDocumentSizeBytes() + ", code points " + points + "/"
+                            + config.maxDocumentSizeBytes());
+        String text = r.getString("document");
+        if (!sha256Hex(text).equals(r.getString("document_digest")))
+            throw new WorkflowDefinitionLifecycleException(
+                    Reason.DRIFT,
+                    key,
+                    "Definition " + key
+                            + ": stored text digest differs from the recorded digest, so the stored text was changed after it was recorded");
+        return new WorkflowDefinitionDocument(key, text, r.getString("document_format"));
     }
 
     @Override
@@ -679,7 +716,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 .map(result -> result.iterator().next().getLong("total"));
     }
 
-    private Future<Void> encoding(SqlConnection tx) {
+    private Future<Void> encoding(SqlClient tx) {
         if (utf8Confirmed) return Future.succeededFuture();
         return tx.query("SELECT current_setting('server_encoding') AS encoding")
                 .execute()
@@ -885,12 +922,14 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     private <T> Future<T> transaction(String id, Function<SqlConnection, Future<T>> action) {
-        return pool.withTransaction(action).recover(failure -> {
-            Throwable mapped = failure instanceof VertxException
-                    ? exceptionMapper.translate(failure, "definition registry " + id)
-                    : failure;
-            return Future.failedFuture(workflowMapper.translate(mapped, "definition registry " + id));
-        });
+        return pool.withTransaction(action).recover(failure -> Future.failedFuture(translated(failure, id)));
+    }
+
+    private Throwable translated(Throwable failure, String id) {
+        Throwable mapped = failure instanceof VertxException
+                ? exceptionMapper.translate(failure, "definition registry " + id)
+                : failure;
+        return workflowMapper.translate(mapped, "definition registry " + id);
     }
 
     private static <T> Future<T> attempt(Supplier<Future<T>> action) {

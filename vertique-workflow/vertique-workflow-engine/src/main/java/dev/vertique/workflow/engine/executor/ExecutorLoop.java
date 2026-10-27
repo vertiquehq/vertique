@@ -372,12 +372,14 @@ final class ExecutorLoop {
         }
         return peek.resident(free).compose(peeked -> {
             List<Future<Boolean>> claims = new ArrayList<>();
-            for (CommandHead head : peeked.heads()) {
+            for (CommandPeek.WarmedHead warmed : peeked.heads()) {
                 if (!running || inFlight.get() >= config.concurrency()) {
-                    break;
+                    // not claimed in this pass: the plans warmed for it are not needed, and it is peeked again
+                    warmed.release().run();
+                    continue;
                 }
                 inFlight.incrementAndGet();
-                claims.add(claim(head));
+                claims.add(claim(warmed));
             }
             return Future.all(claims).map(ignored -> {
                 // a deferral is work too: the next pass runs now and sees the heads behind the deferred ones
@@ -393,7 +395,9 @@ final class ExecutorLoop {
     }
 
     /** Claims a head and starts its segment; the future never fails and tells whether a claim was taken. */
-    private Future<Boolean> claim(CommandHead head) {
+    private Future<Boolean> claim(CommandPeek.WarmedHead warmed) {
+        CommandHead head = warmed.head();
+        Runnable releasePlans = warmed.release();
         long claimStartNanos = System.nanoTime();
         Future<Optional<ClaimedCommand>> claimed;
         try {
@@ -406,6 +410,7 @@ final class ExecutorLoop {
         }
         return claimed.map(result -> {
                     if (result == null || result.isEmpty()) {
+                        releasePlans.run();
                         release();
                         return false;
                     }
@@ -419,10 +424,11 @@ final class ExecutorLoop {
                                 claim.kind(),
                                 claim.result() == ClaimedCommand.Result.DEAD_LETTERED ? "DEAD_LETTERED" : "REJECTED",
                                 Duration.ofNanos(System.nanoTime() - claimStartNanos)));
+                        releasePlans.run();
                         release();
                         return true;
                     }
-                    startSegment(head, claim, claimStartNanos);
+                    startSegment(head, claim, claimStartNanos, releasePlans);
                     return true;
                 })
                 .recover(failure -> {
@@ -431,12 +437,13 @@ final class ExecutorLoop {
                             instanceId,
                             failure.getClass().getName());
                     log.debug("Executor {}: claim failure", instanceId, failure);
+                    releasePlans.run();
                     release();
                     return Future.succeededFuture(false);
                 });
     }
 
-    private void startSegment(CommandHead head, ClaimedCommand claim, long claimStartNanos) {
+    private void startSegment(CommandHead head, ClaimedCommand claim, long claimStartNanos, Runnable releasePlans) {
         ContextInternal segmentContext = root.duplicate();
         segmentContext.runOnContext(ignored -> {
             Future<Void> done;
@@ -448,6 +455,7 @@ final class ExecutorLoop {
                 done = Future.failedFuture(e);
             }
             done.onComplete(result -> {
+                releasePlans.run();
                 if (result.failed()) {
                     log.warn(
                             "Executor {}: a segment ended with a failure: {}",

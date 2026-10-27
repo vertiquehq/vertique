@@ -471,6 +471,12 @@ with a different index a decision payload name resolves as a binary class name o
 payload constraints off, an empty `stateCompatibility` makes the engine refuse a migration between differing state
 classes, and an empty `migrationRegistry` makes `migrate` fail with `UnsupportedOperationException`.
 
+A factory-built engine builds its plan cache (see Plan Cache) with the default size, 500 plans, and an empty observer set,
+so it emits no cache events; `WorkflowEngineParts` has no part for it. The cache of a factory-built engine reads rows
+through the `definitionStore` part but has no document loaders, so a document the registry does not hold fails to load
+as not runnable there; an application that needs on-demand documents composes the engine with `WorkflowEngineModule`.
+When `registry` is not the framework's `DefaultWorkflowRegistry`, the engine does not bind the cache to it.
+
 An engine always runs over a durable definition store: there is no store-less mode. A factory-built engine runs no
 startup step, so `create` seeds the engine's view of the activation records from the records the store holds when it
 is called; a start without a version fails with `WorkflowNoCurrentVersionException` when the store holds none that
@@ -510,6 +516,15 @@ Dagger module owning the engine-internal bindings:
 - Binds `WorkflowDefinitionLifecycle` for durable document publication and contributes the document registry startup step.
 - Binds `WorkflowDefinitionRegistryView` and contributes the startup and shutdown steps of
   `WorkflowDefinitionPropagationPoller`, which keeps the node's registry in step with the durable table.
+- Provides the `PlanCache` (see Plan Cache) and binds it as the `DocumentPlanSource` of the framework registry when it is built
+  (a `BOOTSTRAP` startup step builds it right after the registry is restored, and the executor builds it on its first warm-up
+  otherwise, so a graph that never starts or runs an executor does not build the registry for it); it takes its
+  size from the optional `WorkflowDefinitionsConfig` (`workflow.definitions.planCache.maxEntries`, default 500) and reports
+  its events to the `Set<CacheObserver>` multibinding. The module declares that multibinding itself with `@Multibinds`, so an
+  application without a cache provider still builds its graph; it does not include `CacheCoreModule`, and a graph that does
+  install it (any application with a cache provider) declares the same multibinding, which Dagger merges. An application
+  that wants the cache events installs a cache observer module (for example the Micrometer or OpenTelemetry cache
+  bridge) next to the engine.
 - Declares the `@WorkflowRecorders`-qualified `Set<WorkflowSideEffectRecorder<SqlClient>>` multibinding.
 - Provides the `@OptionalIntentKinds Set<IntentKind>` (delegates to `WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS`).
 - Declares `WorkflowMigrationRegistry` as `@BindsOptionalOf` (opt-in migration support). The migration executor also
@@ -915,6 +930,44 @@ following one, up to 250 ms; a timeout beyond ten minutes is shortened to ten mi
 it as `WorkflowEngineHandle.executionProbe()`; a Dagger graph provides it from `WorkflowEngineModule`. The adapter module must
 bind `WorkflowCommandRepository<SqlClient>`.
 
+### Plan Cache
+
+`WorkflowRegistry.load(key)` answers a plan the registry holds (code definitions and the documents registered at startup)
+at once. Any other key goes to the engine's plan cache, a size-bounded object cache named `workflow-plans` that
+`WorkflowEngineModule` provides and binds as the registry's document plan source. The executor warms the plan of every
+command it peeks on a live instance through `load`, so a node runs a document version it was not started with.
+
+- **One read and one build per key.** Concurrent requests for a key the cache does not hold share one load. The load reads
+  the record and the document text, each on a pooled connection that is released when the read ends, then compiles the
+  document and builds the plan on a worker thread that holds no connection, and checks the rebuilt plan hash against the
+  stored one. Every registration validator runs in the build. Nothing is registered: the plan belongs to the cache, and
+  `find` and `resolve` answer a document key only while its plan is resident, never loading. A request completes on the
+  caller's own Vert.x context, so a continuation runs on its executor instance's event loop.
+- **What is remembered.** A `WorkflowDefinitionException` is remembered under the key and fails every later request: the
+  document does not compile, a recorded type name no class resolves, no loader supports its format, or the rebuilt hash
+  differs from the stored one. An absent row, a row that is not `AVAILABLE` or `DEPRECATED`, a failure to read the row, a
+  timeout and every `Error` are never remembered, so the next request reads again.
+- **Size.** At most `workflow.definitions.planCache.maxEntries` plans (default 500) stay resident; remembered failures count as entries. The cache reports each miss, each successful and each failed
+  load and each size eviction to the `Set<CacheObserver>` under the name `workflow-plans`, and nothing for a hit.
+- **Held for the segment.** A plan can be evicted at any moment, and a lookup inside a segment's transaction must never
+  build. The executor therefore holds the plans it warmed from the peek until its segment ends (or until it decides not to
+  claim the command); `find` and `resolve` answer a held plan whatever the cache did. Holds are counted, so two segments
+  of one version release independently. A segment whose claim is released because the pin changed since the warm-up is
+  peeked again and warms again.
+- **Legacy rows.** A row written before the signal names and the start schema were stored has both columns null. After the
+  first successful on-demand build of such a row, and only when a `WorkflowPlanSchemaProducer` is bound, the engine fills
+  them with the store's guarded fill: one statement of its own on a pooled connection after the build, outside any segment
+  and any caller's transaction, writing only while the names are still null and the stored plan hash is still the built
+  one. A failed fill is logged at warn level with the key only and never fails the load; the plan stays resident.
+- **Pool use.** No transaction takes a second pooled connection for definition data: the loads happen before the claim, and
+  the load itself holds a connection only for each short read, so a cold version runs on a pool of two connections.
+
+**Budget.** A resident plan is kept by reference, so `maxEntries` bounds the count of plans, not bytes. The largest plan of the order-fulfillment example, the fan-out definition with 15 nodes, retains about 2.4 KB of heap once built (the
+retained size of 2,000 builds after a full collection, shared classes and the type-name index excluded); the 9-node order definition
+retains about 1.9 KB. The default of 500 plans therefore budgets about 1.2 MB for plans of that size. Measure your own largest document
+the same way before raising the limit: a plan grows with its node count and with the callbacks and schemas it holds, and a plan that is
+evicted while a segment holds it stays on the heap until the segment ends.
+
 ### Executor
 
 Recorded commands run in the executor: the internal `WorkflowExecutorVerticle`, deployed like the outbox relay. A Dagger-built
@@ -941,7 +994,7 @@ wake-up hint, so an engine without those capabilities polls alone. The PostgreSQ
 Each verticle instance runs on the event loop only (no worker threading, no blocking call). It claims commands as the instance
 id `<node id>-<n>`, where the node id is the host name plus a random suffix and `n` counts the verticle instances of the
 deployment. One pass is one one-shot timer: it peeks the commands that could be claimed (the head of their instance's queue,
-available, not held back), makes their plans resident outside any transaction, claims up to `concurrency` heads (one short
+available, not held back), warms their plans through `WorkflowRegistry.load` outside any transaction (see Plan Cache), claims up to `concurrency` heads (one short
 transaction each: try the execution lock, lock the row, check again that it is claimable, spend an attempt, set a token and a
 lease) and runs a segment for each claim on a fresh duplicate of the instance's own verticle context, never the context of
 whoever deployed it or recorded the command. A segment is one transaction through the engine's `WorkflowTransactionRunner`:
@@ -959,12 +1012,16 @@ then rolls back and its claim lapses at the end of its lease, so another executo
 stays spent, exactly as after a crash); work that completed before the deadline commits even when the commit ends after it. A
 peek, claim or segment start that throws, returns no future or fails never ends the loop: the failure is logged at
 warn level and the next pass is scheduled. A peeked
-command whose plan this node holds but cannot make resident is skipped and logged at debug level; it is peeked again on the
-next pass.
+command whose plan could not be read for a reason that says nothing about the plan, such as a failed row read, is skipped and
+logged at debug level; nothing is written and it is peeked again on the next pass.
 
-**Commands this node cannot run.** For a command on a live instance the executor checks, outside any transaction, that its
-registry holds the definition key the instance is pinned to and, when the pin names a plan hash, that the plan held has that
-hash. A command the node cannot run is deferred instead of claimed: one short transaction tries the execution lock, locks
+**Commands this node cannot run.** For a command on a live instance the executor loads, outside any transaction, the plan of the definition key the
+instance is pinned to through `WorkflowRegistry.load` (a migration also loads its target), and checks that, when the pin
+names a plan hash, the plan has that hash. A node cannot run a command when no available row supplies the plan (an absent or
+retired row, or a code version this node does not deploy), when the plan failed to build deterministically (a document that
+does not compile, a recorded type name no class resolves, a rebuilt plan hash that differs from the stored one), or when the
+hash differs from the pin. A transient failure to read the row is none of these: the command is skipped for this pass and
+nothing is written. A command the node cannot run is deferred instead of claimed: one short transaction tries the execution lock, locks
 the row, checks again that it is claimable and that the instance is still pinned as peeked, then sets it `DEFERRED`, raises
 `deferral_count` by one and moves `available_at` forward by 5 s doubled once per earlier deferral, at most 5 min (fixed, not
 configured). Attempts, token and lease are untouched, so a deferral never spends an attempt, and a node that can run the
@@ -1069,6 +1126,10 @@ parameterized over `<TX>` (typically `SqlClient`):
 | `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping. The client it hands the work is a `SqlConnection` whose `transaction()` reports the underlying pending transaction; the deadline-guarded connection of `vertique-db` meets that. Its internal overload `inTransaction(level, deadline, work)` bounds the transaction (the executor's segment deadline) and returns `TransactionDeadlineExceededException` unchanged; the default fails with `UnsupportedOperationException` without running the work |
 | `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked, not-yet-available and stuck commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `findEarliestAvailabilityDelayMs()` is the executor's scalar scheduling hint, separate from the bounded diagnostic lists. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock. The executor's members: `recordStart` inserts a `START` command in the caller's transaction; `peek(limit)` reads the claimable heads without locks; `defer(head)` defers a head the node cannot run in one self-contained transaction and returns the new deferral count, or `0` when it wrote nothing (busy lock, no longer claimable, already deferred into the future, or the instance pinned otherwise than the head observed); `claim(head, claimedBy, leaseSeconds, maxAttempts)` is one self-contained transaction that tries the lock, locks the row, checks `claimable` again and settles an ended instance's command, dead-letters a command that spent `maxAttempts`, or claims (the three-argument overload never dead-letters); `retryTransient` and `failCommand` are the dispositions of a failed segment (the first locks only the command row, the second tries the execution lock in a transaction of its own); `findStuck` and `countQueue` read the stuck report and the queue snapshot; `fence`, `complete` and `reject` run in the segment's transaction, fenced on the command being `CLAIMED` with the claim's token (`complete` and `reject` return the number of rows updated, and `0` means the claim no longer stands); `release` returns a claim whose segment did not run to `PENDING` with its attempt restored, in one statement that takes no lock. The signal members: `declaredSignalNames(pin, forkStepId, branchId, tx)` reads the names the pinned definition row declares for the addressed wait (empty when the row stores no declaration); `raiseOpenSignals(id, limit, tx)` creates the instance's queue row when missing and raises its open-signal count with one conditional update (`false` when the limit is reached); `lowerOpenSignals` undoes a raise; `recordSignal(...)` inserts the `SIGNAL` command with its name and address as target and its explicit carrier; `recordCompletion(instance, taskId, dedupKey, payloadJson, targetJson, tx)` inserts the `COMPLETION` command that owns a task's reservation; `recordTimer(spec, tx)` inserts a timer row and the `TIMER` command that fires it (the fire time comes from the database clock, a timeout stores the wait it belongs to as its target, and the timer row keeps the recording drive's durable context without an identity snapshot) and returns the timer id, the command id and the fire time; `reject(id, token, lastError, tx)`, `stale(...)` and `park(...)` settle or park the claimed command (`park` restores the attempt the claim spent); `parkedSignalsAt`, `parkedSignals`, `readParked`, `settleParked` and `requeueParked` read and settle parked commands in the segment's transaction without a claim token (`requeueParked` is the guarded `PARKED` to `PENDING` write that keeps position, id, attempts and counters); `deadlineBlocked` answers the deadline guard (a timeout that has fired no longer blocks, even while its own segment is open); `wasParked` tells whether a command was parked or dead-lettered before. The recovery members: `recordRetry(instance, tx)` and `recordMigration(instance, targetVersion, targetScope, tx)` insert the `RETRY` and `MIGRATION` commands in the caller's transaction (a migration stores its target version and scope as its target); `hasDeadLetters` tells whether the instance holds a `DEAD` command; `readStart` reads the `START` command with its stored payload; `supersedeDeadStart` settles a `DEAD` `START` as `SUPERSEDED` with history; `rearmTimers(instance, tx)` offers again, with one new command each and the original fire time, the timers whose last command failed or was settled stale because the instance had failed; `liveTasks(instance, tx)` lists the tasks that are still `OPEN` or `COMPLETING` and belong to no branch; `unsettledTargets(instance, kind, tx)` lists the targets of the `PENDING`, `DEFERRED` and `CLAIMED` commands of a kind, which `retry` and `migrate` read to record once; `reofferDeadLetters` returns every `DEAD` command to `PENDING` with `attempts` zero and its position kept, and raises the open-signal count once per re-offered `SIGNAL` without the limit check; `settleEnded` settles the `PARKED` and `DEAD` commands of an instance that has ended in one write, `REJECTED` (`CANCELLED` for a cancelled instance) with history, cancelling the task a dead-lettered completion reserves and lowering the open-signal count for the parked signals only. The cancel members: `cancelAll(instance, tx)` cancels every unsettled command of the instance in one statement under the execution lock, with a `COMMAND_CANCELLED` entry each, frees the slot of each open signal and returns the cancelled commands (`SettledCommand`: id, kind, task and timer) so the engine can cancel their timers and tasks; `cancel(id, token, lastError, tx)` settles a claimed command whose instance was cancelled, fenced like `complete`. A `CommandHead` of a `MIGRATION` carries the target version and scope, which the executor uses to make the target plan resident or to defer Every write that takes a `SIGNAL` out of its open states lowers the open-signal count in the same statement |
 
+An adapter that reads definition rows on an operation's transaction handle also implements the engine-internal
+`TransactionalDefinitionReads<TX>` (`findDocument(key, tx)` answers a `StoredDocument` of the row's record and text without a
+connection of its own); the PostgreSQL store does. The public `WorkflowDefinitionRegistryStore` is unchanged.
+
 Register the SPI bindings in the adapter's Dagger module, then `include = {WorkflowEngineModule.class}`:
 
 ```java
@@ -1105,6 +1166,7 @@ which case `WorkflowReminderComposeValidator` refuses the plan (aborting startup
 
 ## Dependencies
 
+- **cache-core** and **cache-caffeine** — the `CacheObserver` event vocabulary and the size-bounded, single-flight object cache behind the plan cache. Neither needs `cache.enabled`.
 - **workflow-core** — workflow DSL types, `WorkflowRegistry`, `WorkflowOperations` and transactional
   interfaces, `TaskStore<TX>` / `TimerStore<TX>` SPIs, side-effect SPI, exception hierarchy including
   `WorkflowPersistenceException`.

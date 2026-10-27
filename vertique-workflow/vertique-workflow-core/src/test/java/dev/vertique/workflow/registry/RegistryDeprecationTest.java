@@ -90,6 +90,14 @@ class RegistryDeprecationTest {
         }
 
         @Override
+        public io.vertx.core.Future<RuntimeWorkflow> load(DefinitionKey key) {
+            return find(key)
+                    .map(io.vertx.core.Future::succeededFuture)
+                    .orElseGet(() -> io.vertx.core.Future.failedFuture(
+                            new dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException(key)));
+        }
+
+        @Override
         public java.util.List<DefinitionKey> keysFor(String definitionId) {
             return java.util.List.of();
         }

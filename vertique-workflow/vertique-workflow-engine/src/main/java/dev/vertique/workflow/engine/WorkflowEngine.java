@@ -1139,11 +1139,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     WorkflowSegments segments() {
         return new WorkflowSegments() {
             @Override
-            public boolean makeResident(CommandHead head) {
-                return WorkflowEngine.this.makeResident(head);
-            }
-
-            @Override
             public WorkflowRegistry registry() {
                 return registry;
             }
@@ -1200,41 +1195,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     WorkflowEventEmitter.attrs("errorType", reasonCode, "errorMessage", message),
                     tx);
         });
-    }
-
-    /**
-     * Makes the plan of a peeked command resident: resolves it through the registry, outside any transaction.
-     *
-     * @param head the peeked command
-     * @return whether this node can resolve the plan
-     */
-    private boolean makeResident(CommandHead head) {
-        try {
-            PinnedPlans.resolve(
-                    registry,
-                    new DefinitionKey(head.definitionScopeKey(), head.definitionId(), head.definitionVersion()));
-        } catch (RuntimeException e) {
-            return false;
-        }
-        if (head.migrationVersion() == null) {
-            return true;
-        }
-        // A migration also needs the target plan; a target no key can name is rejected by the segment
-        DefinitionKey target;
-        try {
-            target = new DefinitionKey(
-                    head.migrationScope() != null ? head.migrationScope() : head.definitionScopeKey(),
-                    head.definitionId(),
-                    head.migrationVersion());
-        } catch (IllegalArgumentException e) {
-            return true;
-        }
-        try {
-            PinnedPlans.resolve(registry, target);
-            return true;
-        } catch (RuntimeException e) {
-            return false;
-        }
     }
 
     /**

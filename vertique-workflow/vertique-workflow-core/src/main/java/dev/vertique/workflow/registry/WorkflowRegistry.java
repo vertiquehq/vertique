@@ -7,6 +7,7 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import io.vertx.core.Future;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -75,17 +76,42 @@ public interface WorkflowRegistry {
      * @return the runtime workflow for the key; its {@link RuntimeWorkflow#definitionScopeKey()} is the
      *     scope of the key
      * @throws WorkflowVersionPinUnavailableException if the key is not registered; the exception names the
-     *     scope, the definition id and the version
+     *     scope, the definition id and the version. A key whose plan is not held, and may be loadable by
+     *     {@link #load(DefinitionKey)}, fails with its subtype
+     *     {@link dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException}
      */
     RuntimeWorkflow resolve(DefinitionKey key);
 
     /**
      * Returns the {@link RuntimeWorkflow} for one version of a definition in one scope, if registered.
      *
+     * <p>This never loads: a plan that is not held, or is no longer resident in the plan cache, is empty here even
+     * though {@link #load(DefinitionKey)} could supply it.
+     *
      * @param key the scope, definition id and exact plan version to look up
      * @return the runtime workflow, or empty when the key is not registered
      */
     Optional<RuntimeWorkflow> find(DefinitionKey key);
+
+    /**
+     * Returns the plan of one version, loading it when this node does not hold it.
+     *
+     * <p>The plan of a code definition, and of any version this registry holds, is returned at once. A document
+     * plan the registry does not hold is read from its stored row and built on a worker thread, outside any
+     * transaction, into the bounded plan cache; concurrent requests for one key share one read and one build, and the
+     * plan stays resident until the cache evicts it. A deterministic failure, such as a document that no longer
+     * compiles, a name that no class resolves or a rebuilt plan hash that differs from the stored one, is remembered
+     * and fails every later request for the key. A failure to read the row is not remembered.
+     *
+     * <p>Members added in later releases are abstract, so a third-party implementation must supply this one.
+     *
+     * @param key the scope, definition id and exact plan version
+     * @return a future of the plan; it fails with
+     *     {@link dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException} when no row supplies the
+     *     version, with a {@link dev.vertique.workflow.exception.WorkflowDefinitionException} subtype when the plan
+     *     cannot be built, or with the persistence failure that prevented the row from being read
+     */
+    Future<RuntimeWorkflow> load(DefinitionKey key);
 
     /**
      * Lists the keys of every registered version of a definition id across all scopes, ordered by scope

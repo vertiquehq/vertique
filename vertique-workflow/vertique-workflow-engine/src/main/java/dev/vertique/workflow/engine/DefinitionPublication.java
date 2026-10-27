@@ -29,9 +29,11 @@ import java.util.stream.Collectors;
  * for a version, choosing the loader of a document format, checking a stored code row against the deployed code,
  * and registering a definition under the key's attribution.
  *
- * <p>The methods are stateless. Callers make them under the {@link DefinitionApplyQueue} slot of the id.
+ * <p>The methods are stateless. Callers make them under the {@link DefinitionApplyQueue} slot of the id. The loader,
+ * hash and name checks are public for the engine's plan loader, which builds a stored plan on demand; the rest is
+ * package-private.
  */
-final class DefinitionPublication {
+public final class DefinitionPublication {
 
     /** The most unresolved names a refusal lists; the message states the total when there are more. */
     static final int MAX_LISTED_NAMES = 10;
@@ -46,7 +48,7 @@ final class DefinitionPublication {
      *
      * @throws WorkflowUnknownTypeNameException when the binding names a class that no longer resolves
      */
-    static void requireBoundNamesResolve(WorkflowTypeNames typeNames, WorkflowDefinitionRecord row) {
+    public static void requireBoundNamesResolve(WorkflowTypeNames typeNames, WorkflowDefinitionRecord row) {
         List<String> unresolved = row.nameBinding().values().stream()
                 .distinct()
                 .filter(name -> typeNames.find(name).isEmpty())
@@ -75,7 +77,7 @@ final class DefinitionPublication {
     }
 
     /** The one loader that supports the record's document format; any other count fails as a missing loader. */
-    static PersistedDefinitionLoader loaderFor(
+    public static PersistedDefinitionLoader loaderFor(
             Set<PersistedDefinitionLoader> loaders, WorkflowDefinitionRecord record) {
         List<PersistedDefinitionLoader> matches = loaders.stream()
                 .filter(loader -> loader.supports(record.documentFormat()))
@@ -92,7 +94,7 @@ final class DefinitionPublication {
      * The plan hash of the compiled definition under the type names the row was recorded with; a row without a
      * binding hashes under current names.
      */
-    static String planHash(
+    public static String planHash(
             PersistedDefinitionLoader loader, WorkflowDefinition<?, ?> definition, WorkflowDefinitionRecord record) {
         return record.nameBinding().isEmpty()
                 ? loader.planHash(definition)

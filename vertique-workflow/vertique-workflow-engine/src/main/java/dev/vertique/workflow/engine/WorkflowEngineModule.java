@@ -10,14 +10,17 @@ import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
+import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
+import dev.vertique.workflow.engine.executor.HoldingSegments;
 import dev.vertique.workflow.engine.executor.WorkflowExecutor;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
+import dev.vertique.workflow.engine.registry.PlanCache;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
@@ -27,7 +30,12 @@ import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
+import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
@@ -113,52 +121,92 @@ public abstract class WorkflowEngineModule {
     }
 
     /**
-     * Provides the engine's side of a segment for the executor.
+     * Provides the plan cache: document plans this node does not hold are read from their rows and built into it on
+     * demand, at most {@code workflow.definitions.planCache.maxEntries} at a time, and the registry answers document
+     * keys through it. The cache is bound as the registry's document plan source when it is built, so every graph
+     * that builds the segments seam, and so every executor, has it bound.
+     *
+     * @param store          the durable definition rows
+     * @param loaders        the document loaders
+     * @param registry       the registry whose type names and validators the build uses and which the cache serves
+     * @param vertx          the optional Vert.x instance whose worker threads run the builds
+     * @param schemaProducer the optional producer of the schemas that fill a legacy row
+     * @param config         the optional definitions configuration, or empty for the defaults
+     * @param observers      the observers of the cache's events; empty unless the application contributes some
+     * @return the plan cache
+     */
+    @Provides
+    @Singleton
+    static PlanCache planCache(
+            WorkflowDefinitionRegistryStore store,
+            Set<PersistedDefinitionLoader> loaders,
+            WorkflowRegistry registry,
+            Optional<Vertx> vertx,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer,
+            Optional<WorkflowDefinitionsConfig> config,
+            Set<CacheObserver> observers) {
+        return PlanCache.bound(
+                store,
+                loaders,
+                registry,
+                vertx.orElse(null),
+                schemaProducer,
+                config.orElseGet(WorkflowDefinitionsConfig::defaults).planCacheMaxEntries(),
+                observers);
+    }
+
+    /**
+     * Declares the observers of cache events as a multibinding, so that an application without a cache provider still
+     * builds its graph. A graph that also installs the cache core module declares the same multibinding; Dagger merges
+     * the two.
+     *
+     * @return the (initially empty) set of observers
+     */
+    @Multibinds
+    abstract Set<CacheObserver> cacheObservers();
+
+    /**
+     * Provides the engine's side of a segment for the executor, with the plan cache holding the plans it warms.
      *
      * @param engine the engine, resolved lazily because the engine reaches the executor control through this graph
+     * @param cache  the plan cache, resolved lazily because building it builds the registry, whose contributors parse
+     *               documents and which a graph that never runs an executor need not build
      * @return the segments seam
      */
     @Provides
     @Singleton
-    static WorkflowSegments segments(Provider<WorkflowEngine> engine) {
-        return new WorkflowSegments() {
+    static WorkflowSegments segments(Provider<WorkflowEngine> engine, Provider<PlanCache> cache) {
+        return new HoldingSegments(() -> engine.get().segments(), cache::get);
+    }
+
+    /**
+     * Builds the plan cache, and so binds it to the registry, once the document registry has been restored at startup,
+     * so that {@code WorkflowRegistry.load} answers document keys from the moment the application runs and not only
+     * from the executor's first pass.
+     *
+     * @param cache the plan cache, resolved when the step runs, after the registry exists
+     * @return the startup step
+     */
+    @Provides
+    @Singleton
+    @IntoSet
+    static dev.vertique.core.lifecycle.ApplicationStartupStep planCacheStartupStep(Provider<PlanCache> cache) {
+        return new dev.vertique.core.lifecycle.ApplicationStartupStep() {
             @Override
-            public boolean makeResident(dev.vertique.workflow.engine.spi.CommandHead head) {
-                return engine.get().segments().makeResident(head);
+            public dev.vertique.core.lifecycle.LifecyclePhase phase() {
+                return dev.vertique.core.lifecycle.LifecyclePhase.BOOTSTRAP;
             }
 
             @Override
-            public dev.vertique.workflow.registry.WorkflowRegistry registry() {
-                return engine.get().segments().registry();
+            public int priority() {
+                // right after the step that restores the registry, which builds it
+                return Integer.MIN_VALUE / 2 + 1;
             }
 
             @Override
-            public io.vertx.core.Future<Outcome> run(
-                    dev.vertique.workflow.engine.spi.CommandHead head,
-                    dev.vertique.workflow.engine.spi.ClaimedCommand claim,
-                    dev.vertique.workflow.engine.spi.SegmentCommand command,
-                    SqlClient tx) {
-                return engine.get().segments().run(head, claim, command, tx);
-            }
-
-            @Override
-            public io.vertx.core.Future<Outcome> run(
-                    dev.vertique.workflow.engine.spi.CommandHead head,
-                    dev.vertique.workflow.engine.spi.ClaimedCommand claim,
-                    dev.vertique.workflow.engine.spi.SegmentCommand command,
-                    SqlClient tx,
-                    int maxSteps) {
-                return engine.get().segments().run(head, claim, command, tx, maxSteps);
-            }
-
-            @Override
-            public io.vertx.core.Future<Void> instanceFailed(
-                    dev.vertique.workflow.ops.WorkflowInstanceId instance,
-                    long historySequence,
-                    String reasonCode,
-                    String message,
-                    SqlClient tx) {
-                return engine.get().segments().instanceFailed(instance, historySequence, reasonCode, message, tx);
+            public io.vertx.core.Future<Void> start() {
+                cache.get();
+                return io.vertx.core.Future.succeededFuture();
             }
         };
     }

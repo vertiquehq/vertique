@@ -5,7 +5,9 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
+import dev.vertique.workflow.engine.executor.HoldingSegments;
 import dev.vertique.workflow.engine.executor.WorkflowExecutor;
+import dev.vertique.workflow.engine.registry.PlanCache;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
@@ -15,6 +17,7 @@ import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerStore;
@@ -194,12 +197,21 @@ public final class WorkflowEngineFactory {
                 parts.recordingConfig(),
                 parts.taskReservations(),
                 parts.schemaProducer());
+        // The plan cache of a factory-built engine has the default size and no observers, so it emits no cache events.
+        PlanCache planCache = PlanCache.bound(
+                parts.definitionStore(),
+                Set.of(),
+                registry,
+                parts.vertx(),
+                parts.schemaProducer(),
+                WorkflowDefinitionsConfig.DEFAULT_PLAN_CACHE_MAX_ENTRIES,
+                Set.of());
         executorHolder[0] = new WorkflowExecutor(
                 parts.vertx(),
                 parts.executorConfig(),
                 parts.commands(),
                 txRunner,
-                engine.segments(),
+                new HoldingSegments(engine::segments, () -> planCache),
                 WorkflowExecutor.newNodeId(),
                 parts.executorObservers(),
                 parts.commandWakeups());

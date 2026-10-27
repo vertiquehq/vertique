@@ -10,12 +10,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException;
 import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.CommandRow;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.Node;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import io.vertx.core.Future;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.util.concurrent.TimeUnit;
@@ -55,8 +57,14 @@ class SegmentPinMismatchIT {
                                 refusals.incrementAndGet();
                                 throw new WorkflowVersionNotRunnableException((DefinitionKey) args[0]);
                             }
+                        } else if (lookup && method.getName().equals("load")) {
+                            // the peek warms the plan through load: it is there once, then it has left the registry
+                            // and later peeks see it gone and defer the command
+                            if (resolutions.incrementAndGet() > 1) {
+                                return Future.failedFuture(
+                                        new WorkflowDefinitionNotFoundException((DefinitionKey) args[0]));
+                            }
                         } else if (lookup && method.getName().equals("find") && resolutions.get() > 0) {
-                            // the plan has left the registry: later peeks see it gone and defer the command
                             return java.util.Optional.empty();
                         }
                         try {

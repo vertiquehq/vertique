@@ -1350,6 +1350,14 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
+        public io.vertx.core.Future<RuntimeWorkflow> load(DefinitionKey key) {
+            return find(key)
+                    .map(io.vertx.core.Future::succeededFuture)
+                    .orElseGet(() -> io.vertx.core.Future.failedFuture(
+                            new dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException(key)));
+        }
+
+        @Override
         public List<DefinitionKey> keysFor(String definitionId) {
             throw new UnsupportedOperationException();
         }
@@ -1532,6 +1540,14 @@ class DefaultWorkflowDefinitionLifecycleTest {
         @Override
         public Optional<RuntimeWorkflow> find(DefinitionKey key) {
             return Optional.ofNullable(registrations.get(key.definitionId() + "@" + key.definitionVersion()));
+        }
+
+        @Override
+        public io.vertx.core.Future<RuntimeWorkflow> load(DefinitionKey key) {
+            return find(key)
+                    .map(io.vertx.core.Future::succeededFuture)
+                    .orElseGet(() -> io.vertx.core.Future.failedFuture(
+                            new dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException(key)));
         }
 
         @Override

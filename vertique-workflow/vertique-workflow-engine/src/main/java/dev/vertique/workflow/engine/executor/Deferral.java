@@ -20,9 +20,9 @@ import org.slf4j.LoggerFactory;
 /**
  * INTERNAL: decides that this node cannot run a peeked command and defers the command instead of claiming it.
  *
- * <p>A command is not runnable here when the node's registry holds no plan for the definition key the instance is
- * pinned to, or holds a plan whose hash differs from the plan hash the instance is pinned to, or, for a migration,
- * holds no plan for the version the instance moves to. A deferral moves the
+ * <p>A command is not runnable here when no plan can be had for the definition key the instance is pinned to (the node
+ * holds none and no available row supplies one, or the plan failed to build), or the plan's hash differs from the plan
+ * hash the instance is pinned to, or, for a migration, no plan can be had for the version the instance moves to. A deferral moves the
  * command's availability forward by a fixed backoff that doubles from five seconds to a cap of five minutes. It spends
  * no attempt, so another node that can run the plan still claims the command, and a command nobody can run is reported
  * as stuck by its age.
@@ -67,10 +67,22 @@ public final class Deferral {
         if (held.isEmpty()) {
             return false;
         }
-        if (head.planHash() != null && !head.planHash().equals(held.get().plan().planHash())) {
+        if (!matches(held.get(), head)) {
             return false;
         }
         return head.migrationVersion() == null || targetRunnable(registry, head);
+    }
+
+    /**
+     * Whether a plan is the one the head's instance is pinned to: a head that names a plan hash needs a plan of that
+     * hash, and a head that names none matches by key alone.
+     *
+     * @param plan the plan held for the head's definition key
+     * @param head the peeked command
+     * @return {@code true} when the plan can run the command
+     */
+    static boolean matches(RuntimeWorkflow plan, CommandHead head) {
+        return head.planHash() == null || head.planHash().equals(plan.plan().planHash());
     }
 
     /**

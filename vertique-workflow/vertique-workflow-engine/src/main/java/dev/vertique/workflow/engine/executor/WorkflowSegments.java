@@ -53,12 +53,53 @@ public interface WorkflowSegments {
     }
 
     /**
-     * Makes the plan of a peeked command resident. Runs outside any transaction.
+     * What warming the plans of a peeked command came to.
+     *
+     * @param status  whether the command can run here
+     * @param release gives up the hold on the plans the warm-up took; idempotent, and a no-op unless the status is
+     *                {@link Status#RESIDENT}
+     */
+    record Warm(Status status, Runnable release) {
+
+        /** The status of a warm-up. */
+        public enum Status {
+            /** The plans are resident and held until released; the command can be claimed. */
+            RESIDENT,
+            /**
+             * The node cannot run the command now: no row supplies the plan, it failed to build, or its hash differs
+             * from the instance's pin. The executor defers the command.
+             */
+            NOT_RUNNABLE,
+            /** A plan could not be read for a reason that says nothing about it; nothing is written and the command is peeked again. */
+            UNAVAILABLE
+        }
+
+        private static final Runnable NOTHING = () -> {};
+
+        /**
+         * A warm-up that holds no plan.
+         *
+         * @param status the status
+         * @return the result
+         */
+        public static Warm of(Status status) {
+            return new Warm(status, NOTHING);
+        }
+    }
+
+    /**
+     * Warms the plans of a peeked command through {@link WorkflowRegistry#load}, outside any transaction, and holds
+     * them until the returned {@link Warm#release()} runs, so that a cache eviction cannot make a lookup inside the
+     * segment miss. The executor releases the hold when the segment ends, or when the command is not claimed.
+     *
+     * <p>The default warms through the registry and holds nothing, which is right for a registry that evicts nothing.
      *
      * @param head the peeked command
-     * @return {@code true} when the plan is resident, {@code false} when this node cannot resolve it
+     * @return a future of the warm-up; it never fails
      */
-    boolean makeResident(CommandHead head);
+    default Future<Warm> warm(CommandHead head) {
+        return PlanWarming.warm(registry(), null, head);
+    }
 
     /**
      * The registry of plans this node holds, from which the executor decides whether it can run a peeked command or

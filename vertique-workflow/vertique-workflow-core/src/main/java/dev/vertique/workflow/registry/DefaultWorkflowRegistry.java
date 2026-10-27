@@ -7,6 +7,7 @@ import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.plan.CompensationNode;
@@ -23,6 +24,7 @@ import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
+import io.vertx.core.Future;
 import jakarta.inject.Provider;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -179,6 +181,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
 
     /** Decides whether a scope-owned state class extends the default scope's; empty refuses differing classes. */
     private final Optional<WorkflowStateCompatibility> stateCompatibility;
+
+    /** Where the plans of document keys that this registry does not hold come from; null until the engine binds one. */
+    private volatile DocumentPlanSource documentPlanSource;
 
     /**
      * Creates a new empty {@code DefaultWorkflowRegistry} with no fork/join validator.
@@ -1007,8 +1012,11 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /**
      * {@inheritDoc}
      *
-     * @throws WorkflowVersionPinUnavailableException if the scope does not hold the version; the message
-     *     names the scope, the definition id and the version
+     * <p>A key the registry does not hold is answered from the bound {@link DocumentPlanSource} if its plan is
+     * resident there now; nothing is loaded.
+     *
+     * @throws WorkflowDefinitionNotFoundException (a {@link WorkflowVersionPinUnavailableException}) if neither the
+     *     registry nor the source holds the version; the message names the scope, the definition id and the version
      */
     @Override
     public RuntimeWorkflow resolve(DefinitionKey key) {
@@ -1018,15 +1026,106 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     private RuntimeWorkflow resolve(String scopeKey, String definitionId, long version) {
         RuntimeWorkflow rw = lookup(scopeKey, definitionId, version);
         if (rw == null) {
-            throw new WorkflowVersionPinUnavailableException(scopeKey, definitionId, version, null);
+            rw = resident(new DefinitionKey(scopeKey, definitionId, version)).orElse(null);
+        }
+        if (rw == null) {
+            throw new WorkflowDefinitionNotFoundException(new DefinitionKey(scopeKey, definitionId, version));
         }
         return rw;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A key the registry does not hold is answered from the bound {@link DocumentPlanSource} only if its plan is
+     * resident there now; nothing is loaded, built or read.
+     */
     @Override
     public Optional<RuntimeWorkflow> find(DefinitionKey key) {
-        return Optional.ofNullable(lookup(key.scopeKey(), key.definitionId(), key.definitionVersion()));
+        RuntimeWorkflow held = lookup(key.scopeKey(), key.definitionId(), key.definitionVersion());
+        return held != null ? Optional.of(held) : resident(key);
+    }
+
+    private Optional<RuntimeWorkflow> resident(DefinitionKey key) {
+        DocumentPlanSource source = documentPlanSource;
+        return source == null ? Optional.empty() : source.resident(key);
+    }
+
+    /**
+     * Binds the source of the plans of document keys that this registry does not hold.
+     *
+     * <p>INTERNAL: called only by the engine when it wires its plan cache; applications never call it. The source
+     * is set once per engine, and a later call replaces it.
+     *
+     * @param source the source that {@link #load(DefinitionKey)}, {@link #find(DefinitionKey)} and
+     *     {@link #resolve(DefinitionKey)} consult for keys the registry does not hold
+     */
+    public void bindDocumentPlanSource(DocumentPlanSource source) {
+        this.documentPlanSource = Objects.requireNonNull(source, "source");
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A key the registry holds, which is every code definition and every document registered at startup, is
+     * answered here. Any other key is handed to the bound {@link DocumentPlanSource}; without one the future fails
+     * with {@link WorkflowDefinitionNotFoundException}.
+     */
+    @Override
+    public Future<RuntimeWorkflow> load(DefinitionKey key) {
+        Objects.requireNonNull(key, "key");
+        RuntimeWorkflow held = lookup(key.scopeKey(), key.definitionId(), key.definitionVersion());
+        if (held != null) {
+            return Future.succeededFuture(held);
+        }
+        DocumentPlanSource source = documentPlanSource;
+        if (source == null) {
+            return Future.failedFuture(new WorkflowDefinitionNotFoundException(key));
+        }
+        try {
+            return source.load(key);
+        } catch (RuntimeException e) {
+            return Future.failedFuture(e);
+        }
+    }
+
+    /**
+     * Builds the runtime of a definition under the registration rules that concern the definition alone, and
+     * publishes nothing.
+     *
+     * <p>INTERNAL: the engine's plan cache builds the plan of a stored document with it. The plan graph, signal and
+     * callback checks and every contributed {@link WorkflowDefinitionValidator} run as they do for
+     * {@link #register(String, WorkflowDefinition, Map)}; the comparisons with the versions already registered do not,
+     * because nothing is registered. The classes of the definition enter the shared type-name index, which only adds
+     * names, and stay there when the build succeeds.
+     *
+     * @param scopeKey the scope that owns the definition
+     * @param def the definition to build
+     * @param nameBinding the binary name of a state or payload class mapped to the name its plan hash used; empty
+     *     names every class by its current logical name
+     * @return the runtime of the definition; it is not registered
+     * @throws WorkflowDefinitionException if the plan is invalid or a validator refuses it
+     */
+    public RuntimeWorkflow build(String scopeKey, WorkflowDefinition<?, ?> def, Map<String, String> nameBinding) {
+        Objects.requireNonNull(scopeKey, "scopeKey");
+        Objects.requireNonNull(def, "def");
+        Objects.requireNonNull(nameBinding, "nameBinding");
+        requireValidScope(scopeKey, def.definitionId(), def.definitionVersion());
+        WorkflowTypeNames names =
+                nameBinding.isEmpty() ? typeNames : DefaultWorkflowTypeNames.bound(typeNames, nameBinding);
+        Compiled compiled = compile(scopeKey, def, names);
+        Runnable undoIndexing = indexCandidate(def, compiled.builder());
+        try {
+            RegisteredWorkflowDefinition candidate = new RegisteredWorkflowDefinition(
+                    compiled.runtime().plan(), compiled.builder().startPayloadType());
+            for (WorkflowDefinitionValidator validator : definitionValidators.get()) {
+                validator.validate(candidate);
+            }
+            return compiled.runtime();
+        } catch (RuntimeException | Error e) {
+            undoIndexing.run();
+            throw e;
+        }
     }
 
     private RuntimeWorkflow lookup(String scopeKey, String definitionId, long version) {
