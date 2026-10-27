@@ -4,13 +4,9 @@
 /**
  * Docs-only CI scope contract.
  *
- * Proves that scripts/detect-docs-only-scope.sh skips the Build and Test job
- * only for pull requests whose every changed path is on the minimal
- * documentation allowlist, and keeps the full build for everything else —
- * including the contract-gated Markdown (README.md, docs/**, canonical
- * module.md resources) that the reactor's documentation integration tests
- * assert on, mixed changes, non-pull-request events, empty diffs, and
- * malformed inputs. Runs against synthetic git repositories so the contract
+ * Proves the classifier selects the allowlist, Markdown checks, or full build
+ * for changed paths, non-pull-request events, empty diffs, and malformed
+ * inputs. Runs against synthetic git repositories so the contract
  * is exercised end to end through the same `git diff` the workflow uses.
  */
 
@@ -98,10 +94,25 @@ describe('detect-docs-only-scope', () => {
     );
     const result = detectPr(head);
     assert.equal(result.status, 0);
-    assert.equal(result.stdout.trim(), 'docs_only=true');
+    assert.equal(result.stdout.trim(), 'docs_only=true\nmarkdown_only=false');
   });
 
-  it('keeps the full build for contract-gated Markdown the reactor tests assert on', () => {
+  it('runs Markdown checks for multiple Markdown paths', () => {
+    const head = branchWith({ 'README.md': 'changed\n', 'docs/guide.md': 'guide\n' }, 'markdown-only');
+    assert.equal(detectPr(head).stdout.trim(), 'docs_only=false\nmarkdown_only=true');
+  });
+
+  it('keeps the build for Markdown mixed with Java', () => {
+    const head = branchWith({ 'README.md': 'changed\n', 'Example.java': 'class Example {}\n' }, 'markdown-and-java');
+    assert.equal(detectPr(head).stdout.trim(), 'docs_only=false\nmarkdown_only=false');
+  });
+
+  it('does not run Markdown checks for allowlisted Markdown alone', () => {
+    const head = branchWith({ 'CONTRIBUTING.md': 'guide\n' }, 'allowlisted-markdown');
+    assert.equal(detectPr(head).stdout.trim(), 'docs_only=true\nmarkdown_only=false');
+  });
+
+  it('runs Markdown checks for contract-gated Markdown the reactor tests assert on', () => {
     for (const [file, name] of [
       ['README.md', 'readme'],
       ['docs/architecture.md', 'architecture'],
@@ -112,7 +123,7 @@ describe('detect-docs-only-scope', () => {
       const head = branchWith({ [file]: 'changed\n' }, `gated-${name}`);
       const result = detectPr(head);
       assert.equal(result.status, 0);
-      assert.equal(result.stdout.trim(), 'docs_only=false', `${file} is contract-gated and must build`);
+      assert.equal(result.stdout.trim(), 'docs_only=false\nmarkdown_only=true', `${file} must run Markdown checks`);
     }
   });
 
@@ -123,7 +134,7 @@ describe('detect-docs-only-scope', () => {
     );
     const result = detectPr(head);
     assert.equal(result.status, 0);
-    assert.equal(result.stdout.trim(), 'docs_only=false');
+    assert.equal(result.stdout.trim(), 'docs_only=false\nmarkdown_only=false');
   });
 
   it('keeps the full build for workflow, script, and pom changes', () => {
@@ -136,7 +147,7 @@ describe('detect-docs-only-scope', () => {
       const head = branchWith({ [file]: 'changed\n' }, `non-docs-${name}`);
       const result = detectPr(head);
       assert.equal(result.status, 0);
-      assert.equal(result.stdout.trim(), 'docs_only=false', `${file} must keep the build`);
+      assert.equal(result.stdout.trim(), 'docs_only=false\nmarkdown_only=false', `${file} must keep the build`);
     }
   });
 
@@ -151,7 +162,7 @@ describe('detect-docs-only-scope', () => {
       const head = branchWith({ [file]: 'changed\n' }, `lookalike-${name}`);
       const result = detectPr(head);
       assert.equal(result.status, 0);
-      assert.equal(result.stdout.trim(), 'docs_only=false', `${file} must keep the build`);
+      assert.equal(result.stdout.trim(), `docs_only=false\nmarkdown_only=${file.endsWith('.md')}`, `${file} classification`);
     }
   });
 
@@ -161,19 +172,19 @@ describe('detect-docs-only-scope', () => {
     const head = commit(repo, {}, 'rename');
     const result = detectPr(head);
     assert.equal(result.status, 0);
-    assert.equal(result.stdout.trim(), 'docs_only=false');
+    assert.equal(result.stdout.trim(), 'docs_only=false\nmarkdown_only=false');
   });
 
   it('never skips the build for non-pull-request events', () => {
     const result = detect(repo, ['--event-name', 'push']);
     assert.equal(result.status, 0);
-    assert.equal(result.stdout.trim(), 'docs_only=false');
+    assert.equal(result.stdout.trim(), 'docs_only=false\nmarkdown_only=false');
   });
 
   it('never skips the build on an empty diff', () => {
     const result = detectPr(baseSha);
     assert.equal(result.status, 0);
-    assert.equal(result.stdout.trim(), 'docs_only=false');
+    assert.equal(result.stdout.trim(), 'docs_only=false\nmarkdown_only=false');
   });
 
   it('rejects malformed inputs instead of guessing', () => {

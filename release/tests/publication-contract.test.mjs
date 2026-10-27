@@ -643,6 +643,18 @@ describe('PublicCiContractTest', () => {
     );
   });
 
+  it('routesMarkdownPullRequestsToDocumentationChecks', () => {
+    const yaml = ci();
+    assert.match(yaml, /markdown_only: \$\{\{ steps\.scope\.outputs\.markdown_only \}\}/);
+    const docs = yaml.match(/^  docs:\n([\s\S]*?)(?=^  build:)/m)?.[1];
+    const build = yaml.match(/^  build:\n([\s\S]*)/m)?.[1];
+    assert.ok(docs && build);
+    assert.match(docs, /needs\.classify\.outputs\.markdown_only == 'true'/);
+    assert.match(build, /!cancelled\(\) && needs\.classify\.outputs\.docs_only != 'true' && needs\.classify\.outputs\.markdown_only != 'true'/);
+    assert.match(docs, /bash scripts\/verify-module-docs\.sh/);
+    assert.match(build, /bash scripts\/verify-module-docs\.sh/);
+  });
+
   it('delegatesSubstantiveLogicToRepositoryOwnedScripts', () => {
     // NFR-REL-006: workflow YAML binds events and permissions; substantive
     // logic lives in versioned, locally runnable repository-owned entry points.

@@ -37,6 +37,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
+      markdown_only: ${{ steps.scope.outputs.markdown_only }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -49,13 +50,33 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash scripts/detect-docs-only-scope.sh --event-name "$EVENT_NAME" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
+  docs:
+    name: Docs checks
+    needs: classify
+    if: ${{ needs.classify.outputs.markdown_only == 'true' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Verify module documents
+        run: bash scripts/verify-module-docs.sh
+      - name: Verify documentation contracts
+        run: ./mvnw -ntp -pl vertique-starter/vertique-starter-integration-tests,vertique-codegen/vertique-codegen-integration-tests,vertique-archetype/vertique-archetype-rest,vertique-archetype/vertique-archetype-rest-postgresql,vertique-archetype/vertique-archetype-services,vertique-rest/vertique-rest-openapi-docs -am -Dtest=StarterFamilyDocumentationContractTest,CodegenDocumentationPolicyTest,RestArchetypeContractTest,RestPostgresqlArchetypeContractTest,ServicesArchetypeContractTest,RestOpenApiDocsHasNoOpenApiImportsTest -Dsurefire.failIfNoSpecifiedTests=false test
+
   build:
     name: Build and Test
     needs: classify
     # !cancelled(): if classify itself fails, docs_only is empty and the full
     # build still runs — a classify failure must never satisfy the required
     # check by skipping the job it exists to gate.
-    if: ${{ !cancelled() && needs.classify.outputs.docs_only != 'true' }}
+    if: ${{ !cancelled() && needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.markdown_only != 'true' }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 70
     steps:
@@ -63,6 +84,9 @@ jobs:
         with:
           # Full history: the diff coverage gate diffs against the PR's base branch.
           fetch-depth: 0
+
+      - name: Verify module documents
+        run: bash scripts/verify-module-docs.sh
 
       # The build JDK is the newest supported one. The bytecode target stays
       # Java 21: the compiler plugin passes --release ${java.version}, and the

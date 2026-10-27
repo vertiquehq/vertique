@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: EUPL-1.2
 set -euo pipefail
 
+# Classify pull requests for the full build, Markdown checks, or neither.
 # Decide whether a pull request touches only documentation that no build step
 # verifies, in which case the expensive Build and Test job is skipped (a job
 # skipped via `if:` reports its required check as satisfied). The workflow
@@ -14,10 +15,10 @@ set -euo pipefail
 # StarterFamilyDocumentationContractTest (README.md, docs/architecture.md,
 # docs/modules.md, every canonical module.md), CodegenDocumentationPolicyTest
 # (README.md, docs/packaging.md, named module.md resources), and the archetype
-# contract tests (module READMEs). Skipping the build for those files would
-# convert a pre-merge failure into a post-merge red main, which also blocks
-# SNAPSHOT publication. Only prose no test reads may skip the build; extend
-# the allowlist only after proving nothing in the reactor asserts on the path.
+# contract tests (module READMEs). Markdown outside the allowlist runs those
+# tests and the module documentation verifier in a separate lane. Only prose
+# no test reads may skip both lanes; extend the allowlist only after proving
+# nothing in the reactor asserts on the path.
 
 event_name=""
 base_sha=""
@@ -37,6 +38,7 @@ done
 if [[ "$event_name" != 'pull_request' ]]; then
   # Pushes to main (and every other event) always run the full build.
   echo 'docs_only=false'
+  echo 'markdown_only=false'
   exit 0
 fi
 
@@ -51,6 +53,7 @@ changed="$(git diff --name-only --no-renames "$base_sha...$head_sha")"
 if [[ -z "$changed" ]]; then
   # An empty diff is anomalous; never skip the build on an anomaly.
   echo 'docs_only=false'
+  echo 'markdown_only=false'
   exit 0
 fi
 
@@ -59,7 +62,20 @@ fi
 status=0
 grep -Evq '^(CONTRIBUTING|SECURITY)\.md$|^LICENSES/|^NOTICE$' <<< "$changed" || status=$?
 case "$status" in
-  0) echo 'docs_only=false' ;;
-  1) echo 'docs_only=true' ;;
+  0) docs_only=false ;;
+  1) docs_only=true ;;
   *) echo "detect-docs-only-scope: allowlist match failed (grep exit $status)" >&2; exit 1 ;;
 esac
+
+markdown_only=false
+if [[ "$docs_only" == false ]]; then
+  status=0
+  grep -Evq '\.md$' <<< "$changed" || status=$?
+  case "$status" in
+    0) ;;
+    1) markdown_only=true ;;
+    *) echo "detect-docs-only-scope: Markdown match failed (grep exit $status)" >&2; exit 1 ;;
+  esac
+fi
+echo "docs_only=$docs_only"
+echo "markdown_only=$markdown_only"
