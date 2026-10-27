@@ -549,10 +549,11 @@ class WorkflowEngineBinderWiringTest {
                 FIXED_NOW,
                 FIXED_NOW,
                 tenantMetadata("T1"));
-        when(h.instances().findByIdForUpdate(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
 
         runOnDuplicated(vertx, v -> h.txOps()
                 .retry(inst.id(), tx)
+                .compose(recorded -> RecordedRecoverySegments.retry(h.txOps(), inst, null, tx))
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());
@@ -622,6 +623,7 @@ class WorkflowEngineBinderWiringTest {
         dev.vertique.workflow.migration.WorkflowMigrationRegistry migrationRegistry = mock();
         dev.vertique.workflow.migration.WorkflowMigrationHandler<Object, Object> handler = mock();
         when(handler.sourceStateType()).thenReturn((Class) Object.class);
+        when(handler.targetStateType()).thenReturn((Class) Object.class);
         when(handler.migrate(any(), any()))
                 .thenReturn(dev.vertique.workflow.migration.MigrationResult.anchorAtInitial(Map.of()));
         when(migrationRegistry.find("default", DEFINITION_ID, 1L, "default", 2L))
@@ -649,6 +651,7 @@ class WorkflowEngineBinderWiringTest {
                 .build());
 
         runOnDuplicated(vertx, v -> handle.migrate(inst.id(), 2L, tx)
+                .compose(recorded -> RecordedRecoverySegments.migrate(handle, inst, 2L, tx))
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());
@@ -971,10 +974,14 @@ class WorkflowEngineBinderWiringTest {
                 FIXED_NOW,
                 FIXED_NOW,
                 tenantMetadata("T1"));
-        when(h.instances().findByIdForUpdate(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+        RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
 
         runOnNonDuplicated(vertx, v -> h.txOps()
                 .retry(inst.id(), tx)
+                .compose(recorded -> RecordedRecoverySegments.retry(h.txOps(), inst, null, tx))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertThat(ar.failed()).isTrue();
                     assertThat(ar.cause()).isInstanceOf(IllegalStateException.class);
@@ -1013,11 +1020,12 @@ class WorkflowEngineBinderWiringTest {
                 FIXED_NOW,
                 FIXED_NOW,
                 null);
-        when(h.instances().findByIdForUpdate(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
         when(h.instances().updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
 
         runOnNonDuplicated(vertx, v -> h.txOps()
                 .retry(inst.id(), tx)
+                .compose(recorded -> RecordedRecoverySegments.retry(h.txOps(), inst, null, tx))
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());
@@ -1039,9 +1047,16 @@ class WorkflowEngineBinderWiringTest {
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, null, null, null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+        RuntimeWorkflow sourceRw = buildRuntimeWorkflow(stubCallbacks());
+        RuntimeWorkflow targetRw = buildRuntimeWorkflow(stubCallbacks());
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(sourceRw);
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2L)))
+                .thenReturn(targetRw);
 
         runOnNonDuplicated(vertx, v -> h.txOps()
                 .migrate(inst.id(), 2L, tx)
+                .compose(recorded -> RecordedRecoverySegments.migrate(h.txOps(), inst, 2L, tx))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertThat(ar.failed()).isTrue();
                     assertThat(ar.cause()).isInstanceOf(IllegalStateException.class);
@@ -1089,6 +1104,7 @@ class WorkflowEngineBinderWiringTest {
 
         dev.vertique.workflow.migration.WorkflowMigrationHandler<Object, Object> handler = mock();
         when(handler.sourceStateType()).thenReturn((Class) Object.class);
+        when(handler.targetStateType()).thenReturn((Class) Object.class);
         when(handler.migrate(any(), any()))
                 .thenReturn(dev.vertique.workflow.migration.MigrationResult.anchorAtInitial(Map.of()));
         when(mh.migrationRegistry().find("default", DEFINITION_ID, 1L, "default", 2L))
@@ -1096,6 +1112,7 @@ class WorkflowEngineBinderWiringTest {
 
         runOnNonDuplicated(vertx, v -> h.txOps()
                 .migrate(inst.id(), 2L, tx)
+                .compose(recorded -> RecordedRecoverySegments.migrate(h.txOps(), inst, 2L, tx))
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());

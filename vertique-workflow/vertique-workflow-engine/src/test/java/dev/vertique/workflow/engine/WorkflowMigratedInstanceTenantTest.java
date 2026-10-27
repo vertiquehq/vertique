@@ -13,6 +13,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.CommandHead;
+import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
@@ -66,7 +68,7 @@ class WorkflowMigratedInstanceTenantTest {
 
     record TargetState(String name, boolean migrated) {}
 
-    private static RuntimeWorkflow runtimeWorkflow(long version, String planHash, String stepId) {
+    private static RuntimeWorkflow runtimeWorkflow(long version, String planHash, String stepId, Class<?> stateType) {
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID,
                 version,
@@ -77,7 +79,7 @@ class WorkflowMigratedInstanceTenantTest {
                 null);
         WorkflowCallbackRegistry callbacks = mock();
         return RuntimeWorkflow.of(
-                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+                plan, "test-contract", stateType, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     private static WorkflowInstance waitingInstance(String scopeKey, String definitionScopeKey) {
@@ -140,15 +142,15 @@ class WorkflowMigratedInstanceTenantTest {
     /** The collaborators of one migration, with the snapshots they received. */
     private record Migrated(WorkflowInstance persisted, WorkflowInstance driven, boolean succeeded) {}
 
-    /** Migrates the instance from version 1 to version 2 through a {@link MigrationExecutor}. */
+    /** Prepares and runs the migration of the instance from version 1 to version 2 through a {@link MigrationExecutor}. */
     private static Migrated migrate(WorkflowInstance source) {
         WorkflowMigrationRegistry migrations = mock();
         when(migrations.find(source.definitionScopeKey(), DEFINITION_ID, 1L, source.definitionScopeKey(), 2L))
                 .thenReturn(Optional.<WorkflowMigrationHandler<?, ?>>of(HANDLER));
         WorkflowRegistry registry = mock();
         when(registry.resolve(new DefinitionKey(source.definitionScopeKey(), DEFINITION_ID, 1L)))
-                .thenReturn(runtimeWorkflow(1L, SOURCE_HASH, "source-step"));
-        RuntimeWorkflow target = runtimeWorkflow(2L, TARGET_HASH, "target-step");
+                .thenReturn(runtimeWorkflow(1L, SOURCE_HASH, "source-step", SourceState.class));
+        RuntimeWorkflow target = runtimeWorkflow(2L, TARGET_HASH, "target-step", TargetState.class);
         when(registry.resolve(new DefinitionKey(source.definitionScopeKey(), DEFINITION_ID, 2L)))
                 .thenReturn(target);
         WorkflowInstanceRepository<SqlClient> instances = mock();
@@ -173,16 +175,33 @@ class WorkflowMigratedInstanceTenantTest {
                 driver,
                 FIXED_CLOCK,
                 WorkflowContextBinder.noop(),
+                Optional.of((from, to) -> Optional.empty()),
                 new EmptyCommandRepository());
 
         SqlClient tx = ActiveTransactionClient.create();
-        Future<Void> outcome = executor.migrate(source.id(), 2L, tx);
+        CommandHead head = new CommandHead(
+                1L,
+                source.id(),
+                "MIGRATION",
+                source.definitionScopeKey(),
+                DEFINITION_ID,
+                1L,
+                SOURCE_HASH,
+                false,
+                2L,
+                null);
+        SegmentCommand command = new SegmentCommand(1L, source.id(), "MIGRATION", null, "{\"version\":2}", null);
+        Future<MigrationExecutor.Result> outcome =
+                executor.execute(executor.prepare(head, command, source).orElseThrow(), tx);
 
         ArgumentCaptor<WorkflowInstance> persisted = ArgumentCaptor.forClass(WorkflowInstance.class);
         verify(instances).migratePinAndState(persisted.capture(), eq(3L), any());
         ArgumentCaptor<WorkflowInstance> driven = ArgumentCaptor.forClass(WorkflowInstance.class);
         verify(driver).driveTransitions(driven.capture(), eq(target), any());
-        return new Migrated(persisted.getValue(), driven.getValue(), outcome.succeeded());
+        return new Migrated(
+                persisted.getValue(),
+                driven.getValue(),
+                outcome.succeeded() && outcome.result() instanceof MigrationExecutor.Result.Applied);
     }
 
     @Test

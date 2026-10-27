@@ -111,6 +111,13 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final String insertSignal;
     private final String insertCompletion;
     private final String insertTimer;
+    private final String insertRecovery;
+    private final String deadLettersExist;
+    private final String readStartRow;
+    private final String supersedeStartRow;
+    private final String reofferRows;
+    private final String deadOfEnded;
+    private final String rejectDeadRow;
     private final PgTimerStore timers;
     private final String cancelReservedTask;
     private final String reopenReservedTask;
@@ -197,7 +204,9 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " context_json) SELECT $1, $2, 'START', 'PENDING', recorded.at, recorded.at, $3::jsonb, $4,"
                 + " $5::jsonb, $6::jsonb FROM recorded RETURNING id";
         this.peekHeads = "SELECT c.id, c.workflow_id, c.kind, i.definition_scope_key, i.definition_id,"
-                + " i.definition_version, i.plan_hash, i.status IN " + ENDED + " AS instance_ended FROM " + commands
+                + " i.definition_version, i.plan_hash, i.status IN " + ENDED + " AS instance_ended,"
+                + " CASE WHEN c.kind = 'MIGRATION' THEN (c.target_json->>'version')::bigint END AS migration_version,"
+                + " CASE WHEN c.kind = 'MIGRATION' THEN c.target_json->>'scope' END AS migration_scope FROM " + commands
                 + " c JOIN " + instances
                 + " i ON i.id = c.workflow_id WHERE " + eligibility.claimable("c")
                 + " ORDER BY c.available_at, c.id LIMIT $1";
@@ -292,6 +301,36 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " (workflow_id, seq, kind, timer_kind, timer_id, task_id, target_json, state, recorded_at,"
                 + " available_at, fire_at) SELECT $1, $2, 'TIMER', $3, $4, $5, $8::jsonb, 'PENDING', fire.at,"
                 + " fire.fire_at, fire.fire_at FROM fire RETURNING id, recorded_at, fire_at";
+        this.insertRecovery = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
+                + " (workflow_id, seq, kind, state, recorded_at, available_at, target_json, context_json)"
+                + " SELECT $1, $2, $3, 'PENDING', recorded.at, recorded.at, $4::jsonb, $5::jsonb FROM recorded"
+                + " RETURNING id";
+        this.deadLettersExist =
+                "SELECT EXISTS (SELECT 1 FROM " + commands + " WHERE workflow_id = $1 AND state = 'DEAD') AS dead";
+        this.readStartRow =
+                "SELECT c.id, c.payload_json::text AS payload_json, c.target_json::text AS target_json, c.dedup_key,"
+                        + " c.context_json::text AS context_json FROM " + commands
+                        + " c WHERE c.workflow_id = $1 AND c.kind = 'START' ORDER BY c.seq LIMIT 1";
+        this.supersedeStartRow = "UPDATE " + commands + " SET state = 'SUPERSEDED', claim_token = NULL,"
+                + " lease_until = NULL, settled_at = now(), last_error = $2 WHERE workflow_id = $1"
+                + " AND kind = 'START' AND state = 'DEAD' RETURNING id";
+        // A dead-lettered signal was counted when it was recorded and released when it was dead-lettered, so offering
+        // it
+        // again counts it again, without the limit: the slot is the one it held.
+        this.reofferRows = "WITH reoffered AS (UPDATE " + commands
+                + " SET state = 'PENDING', attempts = 0, claim_token = NULL, lease_until = NULL,"
+                + " available_at = LEAST(available_at, clock_timestamp()) WHERE workflow_id = $1 AND state = 'DEAD'"
+                + " RETURNING kind), raised AS (UPDATE " + queues
+                + " SET open_signals = open_signals + (SELECT count(*) FROM reoffered WHERE kind = 'SIGNAL')"
+                + " WHERE workflow_id = $1 AND EXISTS (SELECT 1 FROM reoffered WHERE kind = 'SIGNAL')"
+                + " RETURNING workflow_id) SELECT count(*)::int AS n FROM reoffered";
+        this.deadOfEnded =
+                "SELECT c.id, c.seq, c.kind, c.target_json->>'name' AS signal_name, i.status AS instance_status"
+                        + " FROM " + commands + " c JOIN " + instances
+                        + " i ON i.id = c.workflow_id WHERE c.workflow_id = $1"
+                        + " AND c.state = 'DEAD' AND i.status IN " + ENDED + " ORDER BY c.id FOR UPDATE OF c";
+        this.rejectDeadRow = "UPDATE " + commands + " SET state = 'REJECTED', claim_token = NULL, lease_until = NULL,"
+                + " settled_at = now(), last_error = $2 WHERE id = $1 AND state = 'DEAD'";
         this.timers = new PgTimerStore(exceptionMapper, schemas);
         String tasks = PgTableNames.qualify(schemas, "workflow", "workflow_tasks");
         this.cancelReservedTask = "UPDATE " + tasks + " SET status = 'CANCELLED', cancelled_at = now(),"
@@ -315,7 +354,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                         + " c.explicit_carrier_json::text AS explicit_carrier_json, c.context_json::text AS context_json FROM "
                         + commands + " c WHERE c.workflow_id = $1 AND c.id = $2 AND c.state = 'PARKED'";
         this.parkedBefore = "SELECT EXISTS (SELECT 1 FROM " + history
-                + " WHERE workflow_id = $1 AND entry_type = 'SIGNAL_PARKED' AND (payload_json->>'commandId')::bigint = $2)"
+                + " WHERE workflow_id = $1 AND entry_type IN ('SIGNAL_PARKED','COMMAND_DEAD_LETTERED')"
+                + " AND (payload_json->>'commandId')::bigint = $2)"
                 + " AS parked";
         this.blockedByDeadline =
                 "SELECT s.id FROM " + commands + " s WHERE s.workflow_id = $1 AND s.id = ANY($2::bigint[])"
@@ -323,7 +363,11 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                         + " t WHERE t.workflow_id = s.workflow_id AND t.kind = 'TIMER'"
                         + " AND t.timer_kind = 'TIMEOUT' AND t.target_json->>'stepId' = $3"
                         + " AND t.target_json->>'branchId' IS NOT DISTINCT FROM $4 AND t.fire_at <= s.recorded_at"
-                        + " AND t.state IN ('PENDING','DEFERRED','CLAIMED','DEAD'))";
+                        + " AND t.state IN ('PENDING','DEFERRED','CLAIMED','DEAD')"
+                        // a timeout that has fired has left its wait, even while its own segment is still open: a wait
+                        // the instance enters again is a new one
+                        + " AND EXISTS (SELECT 1 FROM " + PgTableNames.qualify(schemas, "workflow", "workflow_timers")
+                        + " tm WHERE tm.timer_id = t.timer_id AND tm.status = 'SCHEDULED'))";
         this.releaseCommand = "UPDATE " + commands + " SET state = 'PENDING', attempts = attempts - 1,"
                 + " claim_token = NULL, lease_until = NULL WHERE id = $1 AND state = 'CLAIMED' AND claim_token = $2"
                 + " AND lease_until > now()";
@@ -410,7 +454,9 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                 row.getString("definition_id"),
                                 row.getLong("definition_version"),
                                 row.getString("plan_hash"),
-                                row.getBoolean("instance_ended")));
+                                row.getBoolean("instance_ended"),
+                                row.getLong("migration_version"),
+                                row.getString("migration_scope")));
                     }
                     return heads;
                 })
@@ -777,6 +823,124 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                 capturedContext(instance, seq))))
                 .map(rows -> rows.iterator().next().getLong("id"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordSignal")));
+    }
+
+    @Override
+    public Future<Long> recordRetry(WorkflowInstanceId instance, SqlClient tx) {
+        return recordRecovery(instance, "RETRY", null, tx, "recordRetry");
+    }
+
+    @Override
+    public Future<Long> recordMigration(
+            WorkflowInstanceId instance, long targetVersion, @Nullable String targetScope, SqlClient tx) {
+        JsonObject target = new JsonObject().put("version", targetVersion);
+        if (targetScope != null) {
+            target.put("scope", targetScope);
+        }
+        return recordRecovery(instance, "MIGRATION", target, tx, "recordMigration");
+    }
+
+    private Future<Long> recordRecovery(
+            WorkflowInstanceId instance, String kind, @Nullable JsonObject target, SqlClient tx, String operation) {
+        return nextQueueSequence(instance, tx)
+                .compose(seq -> tx.preparedQuery(insertRecovery)
+                        .execute(Tuple.of(instance.value(), seq, kind, target, capturedContext(instance, seq))))
+                .map(rows -> rows.iterator().next().getLong("id"))
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands " + operation)));
+    }
+
+    @Override
+    public Future<Boolean> hasDeadLetters(WorkflowInstanceId instance, SqlClient tx) {
+        return tx.preparedQuery(deadLettersExist)
+                .execute(Tuple.of(instance.value()))
+                .map(rows -> rows.iterator().next().getBoolean("dead"))
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands hasDeadLetters")));
+    }
+
+    @Override
+    public Future<Optional<SegmentCommand>> readStart(WorkflowInstanceId instance, SqlClient tx) {
+        return tx.preparedQuery(readStartRow)
+                .execute(Tuple.of(instance.value()))
+                .map(rows -> {
+                    if (rows.size() == 0) {
+                        return Optional.<SegmentCommand>empty();
+                    }
+                    Row row = rows.iterator().next();
+                    return Optional.of(new SegmentCommand(
+                            row.getLong("id"),
+                            instance,
+                            "START",
+                            row.getString("payload_json"),
+                            row.getString("target_json"),
+                            row.getString("dedup_key"),
+                            null,
+                            row.getString("context_json")));
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands readStart")));
+    }
+
+    @Override
+    public Future<Integer> supersedeDeadStart(WorkflowInstanceId instance, SqlClient tx) {
+        String reason = CommandErrors.superseded("START");
+        return tx.preparedQuery(supersedeStartRow)
+                .execute(Tuple.of(instance.value(), reason))
+                .compose(rows -> {
+                    Future<Void> written = Future.succeededFuture();
+                    for (Row row : rows) {
+                        long id = row.getLong("id");
+                        JsonObject payload = new JsonObject()
+                                .put("commandId", id)
+                                .put("kind", "START")
+                                .put("reason", reason);
+                        written = written.compose(
+                                done -> appendHistory(tx, instance, id, "COMMAND_SUPERSEDED", payload, "SUPERSEDED")
+                                        .mapEmpty());
+                    }
+                    int count = rows.size();
+                    return written.map(done -> count);
+                })
+                .recover(
+                        t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands supersedeDeadStart")));
+    }
+
+    @Override
+    public Future<Integer> reofferDeadLetters(WorkflowInstanceId instance, SqlClient tx) {
+        return tx.preparedQuery(reofferRows)
+                .execute(Tuple.of(instance.value()))
+                .map(rows -> rows.iterator().next().getInteger("n"))
+                .recover(
+                        t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands reofferDeadLetters")));
+    }
+
+    @Override
+    public Future<Integer> rejectDeadLetters(WorkflowInstanceId instance, SqlClient tx) {
+        return tx.preparedQuery(deadOfEnded)
+                .execute(Tuple.of(instance.value()))
+                .compose(rows -> {
+                    Future<Void> written = Future.succeededFuture();
+                    for (Row row : rows) {
+                        long id = row.getLong("id");
+                        String kind = row.getString("kind");
+                        String status = row.getString("instance_status");
+                        String reason = "SIGNAL".equals(kind)
+                                ? CommandErrors.signalInstanceEnded(row.getString("signal_name"), status, false)
+                                : CommandErrors.instanceEnded(kind, status);
+                        JsonObject payload = new JsonObject()
+                                .put("commandId", id)
+                                .put("kind", kind)
+                                .put("reason", reason);
+                        written = written.compose(done -> "COMPLETION".equals(kind)
+                                        ? tx.preparedQuery(cancelReservedTask).execute(Tuple.of(id))
+                                        : Future.succeededFuture())
+                                .compose(done -> tx.preparedQuery(rejectDeadRow).execute(Tuple.of(id, reason)))
+                                .compose(
+                                        done -> appendHistory(tx, instance, id, "COMMAND_REJECTED", payload, "REJECTED")
+                                                .mapEmpty());
+                    }
+                    int count = rows.size();
+                    return written.map(done -> count);
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands rejectDeadLetters")));
     }
 
     @Override

@@ -12,6 +12,8 @@ import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMaps;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
+import dev.vertique.workflow.engine.executor.ClaimLostException;
+import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
@@ -702,11 +704,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
-     * <p>Opens a new database transaction and re-executes the current step of a {@code FAILED}
-     * instance.
+     * <p>Opens a new database transaction and records a retry, as
+     * {@link #retry(WorkflowInstanceId, SqlClient)} does.
      *
      * @param id the workflow instance id; must not be null
-     * @return a {@link Future} that completes when the retry attempt has been initiated
+     * @return a {@link Future} that completes when the retry is recorded
      */
     @Override
     public Future<Void> retry(WorkflowInstanceId id) {
@@ -1208,6 +1210,24 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             PinnedPlans.resolve(
                     registry,
                     new DefinitionKey(head.definitionScopeKey(), head.definitionId(), head.definitionVersion()));
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (head.migrationVersion() == null) {
+            return true;
+        }
+        // A migration also needs the target plan; a target no key can name is rejected by the segment
+        DefinitionKey target;
+        try {
+            target = new DefinitionKey(
+                    head.migrationScope() != null ? head.migrationScope() : head.definitionScopeKey(),
+                    head.definitionId(),
+                    head.migrationVersion());
+        } catch (IllegalArgumentException e) {
+            return true;
+        }
+        try {
+            PinnedPlans.resolve(registry, target);
             return true;
         } catch (RuntimeException e) {
             return false;
@@ -1220,6 +1240,26 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private Future<WorkflowSegments.Outcome> runSegment(
             CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
+        return runCommand(head, claim, command, tx, maxSteps)
+                .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
+                        // A command the segment applied may have ended the instance: its dead-lettered commands are
+                        // settled
+                        ? commands.rejectDeadLetters(command.workflowId(), tx).map(rejected -> outcome)
+                        : Future.succeededFuture(outcome));
+    }
+
+    private Future<WorkflowSegments.Outcome> runCommand(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
+        if ("RETRY".equals(command.kind())) {
+            return driver.withStepCap(tx, maxSteps, () -> signalHandler
+                    .parkedSignals()
+                    .managing(tx, () -> runRetry(head, claim, command, tx)));
+        }
+        if ("MIGRATION".equals(command.kind())) {
+            return driver.withStepCap(tx, maxSteps, () -> signalHandler
+                    .parkedSignals()
+                    .managing(tx, () -> runMigration(head, claim, command, tx)));
+        }
         if ("SIGNAL".equals(command.kind())) {
             return driver.withStepCap(tx, maxSteps, () -> signalHandler
                     .parkedSignals()
@@ -1307,6 +1347,24 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private Future<Void> startSegment(
             WorkflowInstance inst, RuntimeWorkflow rw, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        return initialize(inst, rw, claim, command, true, tx);
+    }
+
+    /**
+     * Initializes an instance from the payload and subject recorded on a {@code START} command and drives it to its
+     * first wait or its end. A {@code START} segment runs it for its own command; a {@code RETRY} segment runs it for
+     * the start that failed before initialization and logs its own command.
+     *
+     * @param ownCommand whether the claimed command is the {@code START} itself, so that this method logs its receipt
+     *     and its completion
+     */
+    private Future<Void> initialize(
+            WorkflowInstance inst,
+            RuntimeWorkflow rw,
+            ClaimedCommand claim,
+            SegmentCommand command,
+            boolean ownCommand,
+            SqlClient tx) {
         Object coercedPayload;
         Object initialState;
         WorkflowSubjectRef subjectRef;
@@ -1349,16 +1407,241 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 inst.scopeKey(),
                 inst.definitionScopeKey());
 
-        return historyRecorder
-                .appendCommandHistory(
+        Future<Void> received = ownCommand
+                ? historyRecorder.appendCommandHistory(
                         inst.id(), WorkflowEntryType.COMMAND_RECEIVED, claim.commandId(), command.kind(), tx)
-                .compose(v -> instances.updateOptimistic(running, inst.version(), tx))
+                : Future.succeededFuture();
+        return received.compose(v -> instances.updateOptimistic(running, inst.version(), tx))
                 .compose(rows ->
                         requireRowUpdated(rows, "workflow instance " + inst.id().value() + " start"))
                 .compose(v -> historyRecorder.appendStartHistory(running, command.dedupKey(), tx))
                 .compose(v -> driver.driveTransitions(running, rw, tx))
-                .compose(v -> historyRecorder.appendCommandHistory(
-                        inst.id(), WorkflowEntryType.COMMAND_COMPLETED, claim.commandId(), command.kind(), tx));
+                .compose(v -> ownCommand
+                        ? historyRecorder.appendCommandHistory(
+                                inst.id(), WorkflowEntryType.COMMAND_COMPLETED, claim.commandId(), command.kind(), tx)
+                        : Future.<Void>succeededFuture());
+    }
+
+    /**
+     * Runs a claimed {@code RETRY} command, the one recovery operation, in the segment's transaction:
+     *
+     * <ul>
+     *   <li>an instance that has ended rejects it;</li>
+     *   <li>an instance that is not {@code FAILED} and holds no dead-lettered command has nothing to recover: the command
+     *       is stale;</li>
+     *   <li>a {@code FAILED} instance without state is initialized from the stored start payload, and a dead-lettered
+     *       start is superseded; a {@code FAILED} instance with state is driven again from its current step;</li>
+     *   <li>after a drive, the parked signals the wait it reached accepts are applied, while a dead-lettered timeout
+     *       still holds its deadline;</li>
+     *   <li>then, unless the instance has ended, every dead-lettered command is offered again with its attempts reset.</li>
+     * </ul>
+     *
+     * A failure of the drive rolls the segment back and the executor fails the command and the instance.
+     */
+    private Future<WorkflowSegments.Outcome> runRetry(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        return instances.findById(command.workflowId(), tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.<WorkflowSegments.Outcome>failedFuture(
+                        new WorkflowInstanceNotFoundException(command.workflowId()));
+            }
+            WorkflowInstance inst = found.get();
+            if (isEnded(inst.status())) {
+                return rejectCommand(
+                        claim,
+                        command,
+                        CommandErrors.instanceEnded(
+                                command.kind(), inst.status().name()),
+                        tx);
+            }
+            if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
+                    || !inst.definitionId().equals(head.definitionId())
+                    || inst.definitionVersion() != head.definitionVersion()
+                    || !Objects.equals(inst.planHash(), head.planHash())) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            }
+            RuntimeWorkflow rw;
+            DurableMetadata recorded;
+            try {
+                rw = PinnedPlans.resolve(registry, inst);
+                requirePlanHashMatches(inst, rw);
+                recorded = WorkflowContextBinder.decodeCarrier(command.contextJson());
+            } catch (WorkflowVersionNotRunnableException | WorkflowPlanHashDriftException e) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            } catch (Exception e) {
+                return Future.failedFuture(e);
+            }
+            return historyRecorder
+                    .appendCommandHistory(
+                            inst.id(), WorkflowEntryType.COMMAND_RECEIVED, command.commandId(), command.kind(), tx)
+                    .compose(v -> commands.hasDeadLetters(inst.id(), tx))
+                    .compose(dead -> inst.status() != WorkflowStatus.FAILED && !dead
+                            ? staleCommand(claim, command, CommandErrors.nothingToRecover(), tx)
+                            : contextBinder.withRecordedBase(
+                                    inst,
+                                    command.commandId(),
+                                    null,
+                                    recorded,
+                                    () -> recover(inst, rw, claim, command, tx)));
+        });
+    }
+
+    private Future<WorkflowSegments.Outcome> recover(
+            WorkflowInstance inst, RuntimeWorkflow rw, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        Future<Boolean> drove;
+        if (inst.status() != WorkflowStatus.FAILED) {
+            drove = Future.succeededFuture(false);
+        } else if (inst.stateJson() == null) {
+            // The start failed before the instance had a state: initialize it from the stored start payload. A start
+            // that was dead-lettered is superseded, so that its payload runs once.
+            drove = commands.readStart(inst.id(), tx).compose(start -> {
+                if (start.isEmpty()) {
+                    return Future.<Boolean>failedFuture(new IllegalStateException(
+                            "Workflow instance " + inst.id().value() + " has no start command to initialize from"));
+                }
+                return commands.supersedeDeadStart(inst.id(), tx)
+                        .compose(superseded -> initialize(inst, rw, claim, start.get(), false, tx))
+                        .map(done -> true);
+            });
+        } else {
+            drove = redrive(inst, rw, tx).map(done -> true);
+        }
+        return drove.compose(drive ->
+                        drive ? signalHandler.parkedSignals().drain(inst.id(), tx) : Future.<Void>succeededFuture())
+                .compose(done -> instances.findById(inst.id(), tx))
+                .compose(after -> after.isPresent() && !isEnded(after.get().status())
+                        ? commands.reofferDeadLetters(inst.id(), tx).<Void>mapEmpty()
+                        : Future.<Void>succeededFuture())
+                .compose(done -> historyRecorder.appendCommandHistory(
+                        inst.id(), WorkflowEntryType.COMMAND_COMPLETED, command.commandId(), command.kind(), tx))
+                .map(done -> WorkflowSegments.Outcome.APPLIED);
+    }
+
+    /** Resets a {@code FAILED} instance that has state to {@code RUNNING} and drives it again from its current step. */
+    private Future<Void> redrive(WorkflowInstance inst, RuntimeWorkflow rw, SqlClient tx) {
+        long prevVersion = inst.version();
+        WorkflowInstance retried = inst.withVersion(prevVersion + 1)
+                .withStatus(WorkflowStatus.RUNNING)
+                .withWait(null, null)
+                .withError(null, null)
+                .withUpdatedAt(clock.instant());
+        return instances
+                .updateOptimistic(retried, prevVersion, tx)
+                .compose(rowCount ->
+                        requireRowUpdated(rowCount, "instance '" + inst.id().value() + "' during retry"))
+                .compose(v -> history.nextSequence(inst.id(), tx))
+                .compose(seq -> {
+                    String histPayload =
+                            Json.encode(new RetriedHistoryPayload("FAILED", WorkflowPayloads.commandCorrelationId()));
+                    return history.append(
+                            new WorkflowHistoryEntry(
+                                    inst.id(), seq, WorkflowEntryType.RETRIED, histPayload, clock.instant()),
+                            tx);
+                })
+                .compose(v -> driver.driveTransitions(retried, rw, tx));
+    }
+
+    /**
+     * Runs a claimed {@code MIGRATION} command in the segment's transaction. A failed instance rejects it. Otherwise
+     * the migration runs under a savepoint: when it is applied, the parked signals the target version does not declare
+     * are rejected and the rest are applied at the wait the instance reached; when it is not valid it is rejected
+     * with a reason that states neither a value nor a failure's text, and the instance is unchanged.
+     */
+    private Future<WorkflowSegments.Outcome> runMigration(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        return instances.findById(command.workflowId(), tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.<WorkflowSegments.Outcome>failedFuture(
+                        new WorkflowInstanceNotFoundException(command.workflowId()));
+            }
+            WorkflowInstance inst = found.get();
+            if (isEnded(inst.status())) {
+                return rejectCommand(
+                        claim,
+                        command,
+                        CommandErrors.instanceEnded(
+                                command.kind(), inst.status().name()),
+                        tx);
+            }
+            if (inst.status() == WorkflowStatus.FAILED) {
+                return rejectCommand(
+                        claim,
+                        command,
+                        CommandErrors.migrationRejected(CommandErrors.MigrationRejection.INSTANCE_STATE),
+                        tx);
+            }
+            Optional<MigrationExecutor.Prepared> prepared;
+            try {
+                prepared = migrationExecutor.prepare(head, command, inst);
+            } catch (RuntimeException e) {
+                return Future.failedFuture(e);
+            }
+            if (prepared.isEmpty()) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            }
+            return historyRecorder
+                    .appendCommandHistory(
+                            inst.id(), WorkflowEntryType.COMMAND_RECEIVED, command.commandId(), command.kind(), tx)
+                    .compose(v -> migrationExecutor.execute(prepared.get(), tx))
+                    .compose(result -> switch (result) {
+                        case MigrationExecutor.Result.Applied applied ->
+                            signalHandler
+                                    .rejectUndeclaredParked(inst.id(), applied.target(), tx)
+                                    .compose(done ->
+                                            signalHandler.parkedSignals().drain(inst.id(), tx))
+                                    .compose(done -> historyRecorder.appendCommandHistory(
+                                            inst.id(),
+                                            WorkflowEntryType.COMMAND_COMPLETED,
+                                            command.commandId(),
+                                            command.kind(),
+                                            tx))
+                                    .map(done -> WorkflowSegments.Outcome.APPLIED);
+                        case MigrationExecutor.Result.Rejected rejected ->
+                            rejectCommand(claim, command, rejected.reason(), tx);
+                    });
+        });
+    }
+
+    /** Settles the claimed command as rejected with a reason, and logs it, in the segment's transaction. */
+    private Future<WorkflowSegments.Outcome> rejectCommand(
+            ClaimedCommand claim, SegmentCommand command, String reason, SqlClient tx) {
+        return commands.reject(command.commandId(), claim.token(), reason, tx)
+                .compose(WorkflowEngine::requireClaimRow)
+                .compose(done -> historyRecorder.appendCommandOutcomeHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_REJECTED,
+                        command.commandId(),
+                        command.kind(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_REJECTED);
+    }
+
+    /** Settles the claimed command as stale with a reason, and logs it, in the segment's transaction. */
+    private Future<WorkflowSegments.Outcome> staleCommand(
+            ClaimedCommand claim, SegmentCommand command, String reason, SqlClient tx) {
+        return commands.stale(command.commandId(), claim.token(), reason, tx)
+                .compose(WorkflowEngine::requireClaimRow)
+                .compose(done -> historyRecorder.appendCommandOutcomeHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_STALE,
+                        command.commandId(),
+                        command.kind(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_STALE);
+    }
+
+    /** A settlement that updated no row means the claim no longer stands: the segment rolls back. */
+    private static Future<Void> requireClaimRow(Integer rows) {
+        return rows != null && rows > 0 ? Future.succeededFuture() : Future.failedFuture(new ClaimLostException());
+    }
+
+    private static boolean isEnded(WorkflowStatus status) {
+        return switch (status) {
+            case COMPLETED, COMPENSATED, CANCELLED, EXPIRED -> true;
+            default -> false;
+        };
     }
 
     /** The caller-supplied subject recorded on a start command, or {@code null}. */
@@ -1932,12 +2215,17 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
-     * <p>Resets a {@code FAILED} instance to {@code RUNNING} and re-drives transitions from the
-     * current step.
+     * <p>Records a {@code RETRY} command in the caller's transaction and returns once it is recorded; no workflow code
+     * runs here. An executor runs it afterwards, in its own segment, in queue order: it initializes an instance whose
+     * start failed before initialization from the stored start payload, re-drives a {@code FAILED} instance from its
+     * current step and applies the signals parked meanwhile at the wait it reaches, and then offers every dead-lettered
+     * command of the instance again with its attempts reset. A retry that finds nothing to recover completes as stale.
+     * The call is refused, under the instance's execution lock, when the instance has ended or is neither {@code FAILED}
+     * nor holds a dead-lettered command.
      *
      * @param id the workflow instance id; must not be null
      * @param tx the active SQL transaction; must not be null
-     * @return a {@link Future} that completes when the retry attempt has been initiated
+     * @return a {@link Future} that completes when the retry is recorded
      */
     @Override
     public Future<Void> retry(WorkflowInstanceId id, SqlClient tx) {
@@ -1945,69 +2233,28 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         if (invalidClient != null) {
             return invalidClient;
         }
-
-        // retry() keeps findByIdForUpdate (unlike signal() / cancel() which switched to non-locking
-        // findById to honor the workflow_timers-before-workflow_instances lock-order invariant).
-        // retry() does not touch workflow_timers — a retry only fires for FAILED instances, which
-        // are terminal w.r.t. timer firing — so the lock-order constraint does not apply.
-        return underExecutionLock(id, tx, () -> instances.findByIdForUpdate(id, tx))
-                .compose((Optional<WorkflowInstance> optInst) -> {
-                    if (optInst.isEmpty()) {
-                        return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
+        return underExecutionLock(id, tx, () -> instances.findById(id, tx))
+                .compose((Optional<WorkflowInstance> found) -> {
+                    if (found.isEmpty()) {
+                        return Future.<Void>failedFuture(new WorkflowInstanceNotFoundException(id));
                     }
-                    WorkflowInstance inst = optInst.get();
-                    if (inst.status() != WorkflowStatus.FAILED) {
-                        return Future.failedFuture(new WorkflowSignalRejectedException("Cannot retry instance '"
-                                + id.value() + "': status is " + inst.status() + " (must be FAILED)"));
+                    WorkflowInstance inst = found.get();
+                    if (isEnded(inst.status())) {
+                        return Future.<Void>failedFuture(retryRefusal(id, inst.status()));
                     }
-
-                    // Binder-row bind (Contract Appendix C2): instance-owned retry drive.
-                    return contextBinder.withBound(inst, null, () -> doRetry(id, inst, tx));
+                    if (inst.status() == WorkflowStatus.FAILED) {
+                        return commands.recordRetry(id, tx).<Void>mapEmpty();
+                    }
+                    return commands.hasDeadLetters(id, tx)
+                            .compose(dead -> dead
+                                    ? commands.recordRetry(id, tx).<Void>mapEmpty()
+                                    : Future.<Void>failedFuture(retryRefusal(id, inst.status())));
                 });
     }
 
-    /**
-     * Executes the retry drive body after the instance-owned binder-row bind is in effect.
-     * Extracted so {@link #retry(WorkflowInstanceId, SqlClient)} can pass it to
-     * {@link WorkflowContextBinder#withBound} as a {@link java.util.function.Supplier}.
-     *
-     * @param id   the workflow instance id
-     * @param inst the loaded (FAILED-status) instance snapshot
-     * @param tx   the active transaction
-     * @return a {@link Future} that completes when the retry attempt has been initiated
-     */
-    private Future<Void> doRetry(WorkflowInstanceId id, WorkflowInstance inst, SqlClient tx) {
-        RuntimeWorkflow rw;
-        try {
-            rw = PinnedPlans.resolve(registry, inst);
-        } catch (Exception e) {
-            return Future.failedFuture(e);
-        }
-        try {
-            requirePlanHashMatches(inst, rw);
-        } catch (WorkflowPlanHashDriftException e) {
-            return Future.failedFuture(e);
-        }
-
-        long prevVersion = inst.version();
-        WorkflowInstance retried = inst.withVersion(prevVersion + 1)
-                .withStatus(WorkflowStatus.RUNNING)
-                .withWait(null, null)
-                .withError(null, null)
-                .withUpdatedAt(clock.instant());
-
-        return instances
-                .updateOptimistic(retried, prevVersion, tx)
-                .compose(rowCount -> requireRowUpdated(rowCount, "instance '" + id.value() + "' during retry"))
-                .compose(v -> history.nextSequence(id, tx))
-                .compose(seq -> {
-                    String histPayload =
-                            Json.encode(new RetriedHistoryPayload("FAILED", WorkflowPayloads.commandCorrelationId()));
-                    return history.append(
-                            new WorkflowHistoryEntry(id, seq, WorkflowEntryType.RETRIED, histPayload, clock.instant()),
-                            tx);
-                })
-                .compose(v -> driver.driveTransitions(retried, rw, tx));
+    private static WorkflowSignalRejectedException retryRefusal(WorkflowInstanceId id, WorkflowStatus status) {
+        return new WorkflowSignalRejectedException("Cannot retry instance '" + id.value() + "': status is " + status
+                + " (must be FAILED or hold dead-lettered commands)");
     }
 
     /**
@@ -2018,7 +2265,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * @param id            the workflow instance id; must not be null
      * @param targetVersion the definition version to migrate to
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     * @return a {@link Future} that completes when the migration is recorded
      */
     @Override
     public Future<Void> migrate(WorkflowInstanceId id, long targetVersion) {
@@ -2034,7 +2281,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * @param id            the workflow instance id; must not be null
      * @param targetScope   the scope of the definition to migrate to; must not be null
      * @param targetVersion the definition version to migrate to
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     * @return a {@link Future} that completes when the migration is recorded
      */
     @Override
     public Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion) {
@@ -2044,16 +2291,18 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
-     * <p>Delegates the migration algorithm to {@link MigrationExecutor#migrate}. The executor owns
-     * the opt-in {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} and the
-     * null-registry {@link UnsupportedOperationException} fail-fast guard: if no registry was
-     * provided (the migration module was not installed), the call fails immediately before any
+     * <p>Records a {@code MIGRATION} command in the caller's transaction and returns once it is recorded; no workflow
+     * code runs here. An executor that holds the source and the target plan runs it afterwards, in its own segment, in
+     * queue order, and rejects it with the instance unchanged on its previous version when it is not valid. The call is
+     * refused, under the instance's execution lock, only when the instance has ended; the executor owns the opt-in
+     * {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry}, and if no registry was provided (the migration
+     * module was not installed) the call fails immediately with {@link UnsupportedOperationException} before any
      * database work.
      *
      * @param id            the workflow instance id; must not be null
      * @param targetVersion the definition version to migrate to
      * @param tx            the active SQL transaction; must not be null
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     * @return a {@link Future} that completes when the migration is recorded
      */
     @Override
     public Future<Void> migrate(WorkflowInstanceId id, long targetVersion, SqlClient tx) {
@@ -2062,19 +2311,20 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
 
-        return migrationExecutor.migrate(id, targetVersion, tx);
+        return migrationExecutor.record(id, null, targetVersion, tx);
     }
 
     /**
      * {@inheritDoc}
      *
-     * <p>Delegates to {@link MigrationExecutor#migrate}, which resolves the target in {@code targetScope}.
+     * <p>Records the migration like {@link #migrate(WorkflowInstanceId, long, SqlClient)}; the executor resolves the
+     * target in {@code targetScope}.
      *
      * @param id            the workflow instance id; must not be null
      * @param targetScope   the scope of the definition to migrate to; must not be null
      * @param targetVersion the definition version to migrate to
      * @param tx            the active SQL transaction; must not be null
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     * @return a {@link Future} that completes when the migration is recorded
      */
     @Override
     public Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion, SqlClient tx) {
@@ -2083,7 +2333,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
         Objects.requireNonNull(targetScope, "targetScope");
-        return migrationExecutor.migrate(id, targetScope, targetVersion, tx);
+        return migrationExecutor.record(id, targetScope, targetVersion, tx);
     }
 
     // --- State machine driver — extracted to WorkflowTransitionDriver (slice C5) ---

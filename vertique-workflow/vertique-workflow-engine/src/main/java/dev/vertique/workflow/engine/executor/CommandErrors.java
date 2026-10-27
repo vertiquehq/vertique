@@ -48,7 +48,37 @@ public final class CommandErrors {
         /** A completion's instance had failed, so it cannot take the decision. */
         INSTANCE_FAILED,
         /** A timer's wait was left, or its task closed, before the timer ran. */
-        TIMER_NOT_AWAITED
+        TIMER_NOT_AWAITED,
+        /** A dead-lettered start was replaced by a retry that initialized the instance. */
+        SUPERSEDED,
+        /** A retry found nothing left to recover. */
+        NOTHING_TO_RECOVER,
+        /** A migration is not valid for its instance, so it was rejected and the instance is unchanged. */
+        MIGRATION_REJECTED
+    }
+
+    /** Why a migration was rejected; each is a fixed framework statement, never text of a failure. */
+    public enum MigrationRejection {
+        /** The instance is not in a state that can be migrated. */
+        INSTANCE_STATE("the instance is in a status that cannot be migrated, or holds active branches"),
+        /** The target is not a version the instance may move to. */
+        TARGET_NOT_ADMITTED(
+                "the target version is not visible to the instance, names another contract, changes the state type"
+                        + " incompatibly, or is not admitted for a new pin"),
+        /** The target version is deprecated. */
+        TARGET_DEPRECATED("the target version is deprecated"),
+        /** No handler is registered for the move. */
+        HANDLER_MISSING("no migration handler is registered for the source and target version"),
+        /** The handler's state types are not the state types of the definitions. */
+        STATE_TYPE_MISMATCH("the handler's state types do not match the state types of the definitions"),
+        /** The handler or the re-pin failed. */
+        FAILED("the migration handler or the re-pin failed; see the executor log");
+
+        private final String text;
+
+        MigrationRejection(String text) {
+            this.text = text;
+        }
     }
 
     private CommandErrors() {
@@ -296,6 +326,54 @@ public final class CommandErrors {
         return format(
                 Reason.INSTANCE_FAILED,
                 "TIMER command (" + token(timerKind) + ") was settled as stale: its instance has failed");
+    }
+
+    /**
+     * The value for a command that a retry replaced.
+     *
+     * @param kind the command kind
+     * @return the stored value
+     */
+    public static String superseded(String kind) {
+        return format(
+                Reason.SUPERSEDED,
+                token(kind) + " command was superseded by a retry that initialized the instance from the stored start");
+    }
+
+    /**
+     * The value for a retry that found nothing to recover.
+     *
+     * @return the stored value
+     */
+    public static String nothingToRecover() {
+        return format(
+                Reason.NOTHING_TO_RECOVER,
+                "RETRY command was settled as stale: the instance is not failed and holds no dead-lettered command");
+    }
+
+    /**
+     * The value for a migration that was rejected; the instance is unchanged on its previous version.
+     *
+     * @param rejection why the migration was rejected
+     * @return the stored value
+     */
+    public static String migrationRejected(MigrationRejection rejection) {
+        return format(
+                Reason.MIGRATION_REJECTED,
+                "MIGRATION command was rejected: " + rejection.text + "; the instance is unchanged");
+    }
+
+    /**
+     * The value for a migration whose handler and re-drive executed more nodes than the step cap allows a segment.
+     *
+     * @param cap the step cap that was exceeded
+     * @return the stored value
+     */
+    public static String migrationStepLimit(int cap) {
+        return format(
+                Reason.STEP_LIMIT,
+                "MIGRATION command executed more than " + cap
+                        + " steps in one segment without reaching a wait and was rejected; the instance is unchanged");
     }
 
     /**

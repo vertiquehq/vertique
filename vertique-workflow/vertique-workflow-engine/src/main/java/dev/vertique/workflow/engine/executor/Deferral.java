@@ -21,7 +21,8 @@ import org.slf4j.LoggerFactory;
  * INTERNAL: decides that this node cannot run a peeked command and defers the command instead of claiming it.
  *
  * <p>A command is not runnable here when the node's registry holds no plan for the definition key the instance is
- * pinned to, or holds a plan whose hash differs from the plan hash the instance is pinned to. A deferral moves the
+ * pinned to, or holds a plan whose hash differs from the plan hash the instance is pinned to, or, for a migration,
+ * holds no plan for the version the instance moves to. A deferral moves the
  * command's availability forward by a fixed backoff that doubles from five seconds to a cap of five minutes. It spends
  * no attempt, so another node that can run the plan still claims the command, and a command nobody can run is reported
  * as stuck by its age.
@@ -66,8 +67,31 @@ public final class Deferral {
         if (held.isEmpty()) {
             return false;
         }
-        return head.planHash() == null
-                || head.planHash().equals(held.get().plan().planHash());
+        if (head.planHash() != null && !head.planHash().equals(held.get().plan().planHash())) {
+            return false;
+        }
+        return head.migrationVersion() == null || targetRunnable(registry, head);
+    }
+
+    /**
+     * Whether the registry holds the plan a migration moves its instance to. A target no definition key can name is
+     * left to the segment, which rejects the migration.
+     */
+    private static boolean targetRunnable(WorkflowRegistry registry, CommandHead head) {
+        DefinitionKey target;
+        try {
+            target = new DefinitionKey(
+                    head.migrationScope() != null ? head.migrationScope() : head.definitionScopeKey(),
+                    head.definitionId(),
+                    head.migrationVersion());
+        } catch (IllegalArgumentException e) {
+            return true;
+        }
+        try {
+            return registry.find(target).isPresent();
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /**

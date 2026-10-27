@@ -15,6 +15,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
@@ -45,6 +46,8 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
+import dev.vertique.workflow.state.WorkflowEntryType;
+import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.tasks.TaskStore;
@@ -332,24 +335,32 @@ class DeprecatedVersionAdmissionTest {
                         verify(dedup, never()).claimOrResolveStart(any(), any(), any(), any(), any(), any());
                         verify(history, never()).append(any(), any());
 
-                        // When another instance is migrated onto the deprecated version
-                        return failureOf(engine.migrate(onVersion1.id(), 2L, tx));
+                        // When another instance is migrated onto the deprecated version, which is recorded and then
+                        // rejected by the segment that runs it
+                        return engine.migrate(onVersion1.id(), 2L, tx)
+                                .compose(recorded -> RecordedRecoverySegments.migrate(engine, onVersion1, 2L, tx));
                     })
-                    .compose(migrateFailure -> {
-                        // Then the migration fails typed naming the deprecated version, and the instance stays pinned
-                        assertThat(migrateFailure)
-                                .as("a migration onto a deprecated version must fail")
-                                .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                                    assertThat(failure.reason()).isEqualTo(Reason.DEPRECATED);
-                                    assertThat(failure.key().definitionId()).isEqualTo(DEFINITION_ID);
-                                    assertThat(failure.key().definitionVersion())
-                                            .isEqualTo(2);
-                                    assertThat(failure.getMessage()).contains(DEFINITION_ID);
-                                });
+                    .compose(migrateOutcome -> {
+                        // Then the migration is rejected naming no value, and the instance stays pinned
+                        assertThat(migrateOutcome)
+                                .as("a migration onto a deprecated version must be rejected")
+                                .isEqualTo(WorkflowSegments.Outcome.SETTLED_REJECTED);
                         verify(instances, never()).migratePinAndState(any(), anyLong(), any());
                         verify(instances, never()).updateOptimistic(any(), anyLong(), any());
-                        verify(history, never()).append(any(), any());
                         verify(history, never()).listRecentByInstance(any(), anyInt(), any());
+                        ArgumentCaptor<WorkflowHistoryEntry> entries =
+                                ArgumentCaptor.forClass(WorkflowHistoryEntry.class);
+                        verify(history, atLeastOnce()).append(entries.capture(), any());
+                        assertThat(entries.getAllValues())
+                                .extracting(WorkflowHistoryEntry::entryType)
+                                .doesNotContain(WorkflowEntryType.WORKFLOW_MIGRATED)
+                                .contains(WorkflowEntryType.COMMAND_REJECTED);
+                        assertThat(entries.getAllValues())
+                                .filteredOn(entry -> entry.entryType() == WorkflowEntryType.COMMAND_REJECTED)
+                                .singleElement()
+                                .satisfies(entry -> assertThat(entry.payloadJson())
+                                        .contains("MIGRATION_REJECTED")
+                                        .contains("deprecated"));
                         assertThat(harness.migrationsToVersion2())
                                 .as("the migration handler must not run for a deprecated target")
                                 .hasValue(0);
@@ -418,19 +429,23 @@ class DeprecatedVersionAdmissionTest {
                         assertThat(inserted.getValue().definitionVersion()).isEqualTo(1);
                         assertThat(inserted.getValue().planHash()).isEqualTo(PLAN_HASH_V1);
 
-                        // When an instance on version 1 is migrated to version 3
-                        return failureOf(
-                                harness.engine().migrate(harness.onVersion1().id(), 3L, harness.tx()));
+                        // When an instance on version 1 is migrated to version 3, which is recorded and then carried
+                        // out by the segment that runs it
+                        return harness.engine()
+                                .migrate(harness.onVersion1().id(), 3L, harness.tx())
+                                .compose(recorded -> RecordedRecoverySegments.migrate(
+                                        harness.engine(), harness.onVersion1(), 3L, harness.tx()));
                     })
                     .onComplete(outcome -> ctx.verify(() -> {
                         if (outcome.failed()) {
                             ctx.failNow(outcome.cause());
                             return;
                         }
-                        // Then the migration succeeds: the handler ran once and the instance is re-pinned to version 3
+                        // Then the migration is applied: the handler ran once and the instance is re-pinned to version
+                        // 3
                         assertThat(outcome.result())
-                                .as("a migration onto a version that is not deprecated must succeed")
-                                .isNull();
+                                .as("a migration onto a version that is not deprecated must be applied")
+                                .isEqualTo(WorkflowSegments.Outcome.APPLIED);
                         assertThat(harness.migrationsToVersion3()).hasValue(1);
                         assertThat(harness.migrationsToVersion2()).hasValue(0);
                         ArgumentCaptor<WorkflowInstance> migrated = ArgumentCaptor.forClass(WorkflowInstance.class);

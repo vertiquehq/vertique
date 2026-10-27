@@ -538,7 +538,7 @@ public class FailingScopeRowIT {
     }
 
     @Test
-    @DisplayName("a migration into a failing version is refused before anything is written")
+    @DisplayName("a migration into a failing version is rejected by the executor with the instance unchanged")
     void migrationIntoAFailingVersionIsRefused(Vertx vertx) {
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, PURCHASE);
@@ -559,17 +559,23 @@ public class FailingScopeRowIT {
             await(first.app().definitionService().publish(v2));
             first.close();
 
-            // When the second deployment marks both versions failing and the instance migrates to version 2
+            // When the second deployment marks both versions failing and the instance migrates to version 2, which
+            // is recorded and then run by the executor
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
             assertThat(listed(second, v1).failure()).isNotNull();
             assertThat(listed(second, v2).failure()).isNotNull();
-            Throwable refusal = failureOf(second.app().workflowOperations().migrate(waiting, ACME, 2L));
+            await(second.app().workflowOperations().migrate(waiting, ACME, 2L));
+            await(second.app().executionProbe().awaitIdle(waiting, IDLE_TIMEOUT));
 
-            // Then the migration is refused as failing, naming version 2
-            assertThat(refusal).isInstanceOfSatisfying(WorkflowDefinitionFailingException.class, failing -> {
-                assertThat(failing.definitionKey()).isEqualTo(v2);
-                assertThat(failing.rule()).isEqualTo(Rule.STATE_TYPE_NOT_EXTENDED);
-            });
+            // Then the migration is rejected as not admitted, without naming the rule
+            Row migration = await(database.admin().preparedQuery("""
+                                    SELECT state, last_error FROM workflow_commands
+                                    WHERE workflow_id = $1 AND kind = 'MIGRATION'
+                                    """).execute(Tuple.of(waiting.value())))
+                    .iterator()
+                    .next();
+            assertThat(migration.getString("state")).isEqualTo("REJECTED");
+            assertThat(migration.getString("last_error")).startsWith("MIGRATION_REJECTED: ");
 
             // And the instance keeps its pin
             assertThat(pinOf(database, waiting)).isEqualTo(new Pin(ACME, ACME, PURCHASE, 1));

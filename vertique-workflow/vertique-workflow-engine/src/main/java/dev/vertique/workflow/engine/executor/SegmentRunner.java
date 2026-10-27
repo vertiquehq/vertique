@@ -48,7 +48,10 @@ import org.slf4j.LoggerFactory;
  * reason, and answers with the matching outcome, so only an applied signal is completed here. A signal's deterministic
  * failure and its own step-limit overrun never reach the dispositions above. A recorded {@code COMPLETION} does the same:
  * the engine applies it under a savepoint and, when it is rejected, reopens the task it reserved and answers with the
- * matching outcome.
+ * matching outcome. A recorded {@code MIGRATION} also settles itself when it is rejected: its checks, handler and re-pin run
+ * under a savepoint, so a rejection (including a step-limit overrun) never reaches the dispositions above and leaves the
+ * instance unchanged. A recorded {@code RETRY} runs outside any savepoint: its stale and rejected outcomes settle themselves,
+ * and a failure of its drive or an overrun fails the command and, as for a start, the instance.
  *
  * <p>No executor connection ever waits on an execution lock.
  */

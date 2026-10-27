@@ -53,6 +53,81 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
         return List.copyOf(recordedTimers);
     }
 
+    /** A migration command as {@link #recordMigration} was asked to record it. */
+    public record RecordedMigration(
+            WorkflowInstanceId instance,
+            long targetVersion,
+            @Nullable String targetScope) {}
+
+    private final List<WorkflowInstanceId> recordedRetries = new CopyOnWriteArrayList<>();
+    private final List<RecordedMigration> recordedMigrations = new CopyOnWriteArrayList<>();
+    private volatile boolean deadLetters;
+
+    /**
+     * The retries recorded through this repository, oldest first.
+     *
+     * @return a snapshot of the recordings
+     */
+    public List<WorkflowInstanceId> recordedRetries() {
+        return List.copyOf(recordedRetries);
+    }
+
+    /**
+     * The migrations recorded through this repository, oldest first.
+     *
+     * @return a snapshot of the recordings
+     */
+    public List<RecordedMigration> recordedMigrations() {
+        return List.copyOf(recordedMigrations);
+    }
+
+    /**
+     * Makes {@link #hasDeadLetters} answer as given.
+     *
+     * @param deadLetters whether every instance holds a dead-lettered command
+     */
+    public void deadLetters(boolean deadLetters) {
+        this.deadLetters = deadLetters;
+    }
+
+    @Override
+    public Future<Long> recordRetry(WorkflowInstanceId instance, SqlClient tx) {
+        recordedRetries.add(instance);
+        return Future.succeededFuture(1L);
+    }
+
+    @Override
+    public Future<Long> recordMigration(
+            WorkflowInstanceId instance, long targetVersion, @Nullable String targetScope, SqlClient tx) {
+        recordedMigrations.add(new RecordedMigration(instance, targetVersion, targetScope));
+        return Future.succeededFuture(1L);
+    }
+
+    @Override
+    public Future<Boolean> hasDeadLetters(WorkflowInstanceId instance, SqlClient tx) {
+        return Future.succeededFuture(deadLetters);
+    }
+
+    @Override
+    public Future<Optional<SegmentCommand>> readStart(WorkflowInstanceId instance, SqlClient tx) {
+        return Future.succeededFuture(Optional.empty());
+    }
+
+    @Override
+    public Future<Integer> supersedeDeadStart(WorkflowInstanceId instance, SqlClient tx) {
+        return Future.succeededFuture(0);
+    }
+
+    @Override
+    public Future<Integer> reofferDeadLetters(WorkflowInstanceId instance, SqlClient tx) {
+        return Future.succeededFuture(0);
+    }
+
+    @Override
+    public Future<Integer> rejectDeadLetters(WorkflowInstanceId instance, SqlClient tx) {
+        return Future.succeededFuture(0);
+    }
+
     @Override
     public Future<RecordedTimer> recordTimer(TimerCommandSpec timer, SqlClient tx) {
         recordedTimers.add(timer);

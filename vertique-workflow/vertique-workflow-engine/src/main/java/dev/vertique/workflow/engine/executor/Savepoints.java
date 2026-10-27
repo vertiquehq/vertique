@@ -78,6 +78,26 @@ public final class Savepoints {
      *     for the caller to roll back
      */
     public static <T> Future<Attempt<T>> attempt(SqlClient tx, Supplier<Future<T>> work) {
+        return attempt(tx, work, false);
+    }
+
+    /**
+     * Runs an operation under a savepoint and contains every failure of the operation itself, whatever its type, so that
+     * the transaction rolls back to the savepoint and the caller settles the command. Used for an operation, such as a
+     * migration, whose handler is application code and whose every refusal leaves the instance unchanged. Only a failure
+     * that stands for a lost or timed-out transaction (the segment deadline, a lost claim, a transient database
+     * failure) and an error that is not an exception are passed on, and the segment then rolls back as a whole.
+     *
+     * @param tx   the segment's transaction handle
+     * @param work the operation
+     * @param <T>  the result type of the operation
+     * @return the outcome; the future fails when the failure is not one to contain
+     */
+    public static <T> Future<Attempt<T>> attemptAnyFailure(SqlClient tx, Supplier<Future<T>> work) {
+        return attempt(tx, work, true);
+    }
+
+    private static <T> Future<Attempt<T>> attempt(SqlClient tx, Supplier<Future<T>> work, boolean any) {
         String name = "wf_sp_" + SEQUENCE.incrementAndGet();
         return tx.query("SAVEPOINT " + name).execute().compose(started -> {
             Future<T> running;
@@ -93,7 +113,7 @@ public final class Savepoints {
                             .execute()
                             .<Attempt<T>>map(released -> new Attempt.Applied<>(value));
                 }
-                Containment kind = classify(result.cause());
+                Containment kind = classify(result.cause(), any);
                 if (kind == null) {
                     return Future.<Attempt<T>>failedFuture(result.cause());
                 }
@@ -106,12 +126,15 @@ public final class Savepoints {
         });
     }
 
-    private static Containment classify(Throwable failure) {
+    private static Containment classify(Throwable failure, boolean any) {
         if (Dispositions.isDeadline(failure) || Dispositions.isClaimLost(failure) || isTransientIn(failure)) {
             return null;
         }
         if (Dispositions.stepLimit(failure) != null) {
             return Containment.STEP_LIMIT;
+        }
+        if (any) {
+            return failure instanceof Exception ? Containment.DETERMINISTIC : null;
         }
         Throwable cause = failure;
         for (int depth = 0; cause != null && depth < MAX_CAUSE_DEPTH; depth++) {

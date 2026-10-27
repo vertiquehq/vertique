@@ -89,11 +89,27 @@ public interface WorkflowOperations {
     Future<Void> cancel(WorkflowInstanceId id, String reason);
 
     /**
-     * Retries the current step of a failed workflow instance.
+     * Records a retry of a workflow instance: the single recovery operation. The call returns once the retry is
+     * recorded; an executor carries it out afterwards, in queue order (await the execution probe to observe the
+     * effect).
      *
-     * @param id id of the {@code FAILED} workflow instance to retry
-     * @return a {@link Future} that completes when the retry has been initiated and the engine has
-     *     attempted to advance from the current step
+     * <p>When it runs, the retry:
+     * <ul>
+     *   <li>initializes an instance whose start failed before initialization from the stored start payload, and
+     *       settles a dead-lettered start as superseded;</li>
+     *   <li>drives a {@code FAILED} instance again from its current step and applies the signals parked meanwhile at the
+     *       wait it reaches;</li>
+     *   <li>then offers every dead-lettered command of the instance again with its attempts reset, keeping their order,
+     *       so that they run next; if the drive ended the instance they are rejected instead.</li>
+     * </ul>
+     * A retry that finds nothing left to recover completes as stale, and a retry whose drive fails again leaves the
+     * instance {@code FAILED}.
+     *
+     * @param id id of the workflow instance to recover; it must be {@code FAILED} or hold a dead-lettered command
+     * @return a {@link Future} that completes when the retry is recorded; it fails with
+     *     {@link dev.vertique.workflow.exception.WorkflowSignalRejectedException} naming the instance and its status
+     *     when the instance has ended or is neither {@code FAILED} nor holds a dead-lettered command, and
+     *     records nothing then
      */
     Future<Void> retry(WorkflowInstanceId id);
 
@@ -137,41 +153,34 @@ public interface WorkflowOperations {
     }
 
     /**
-     * Migrates a workflow instance from its current definition version to {@code targetVersion}
-     * using an application-registered
-     * {@link dev.vertique.workflow.migration.WorkflowMigrationHandler}.
+     * Records the migration of a workflow instance from its current definition version to {@code targetVersion} using an
+     * application-registered {@link dev.vertique.workflow.migration.WorkflowMigrationHandler}. The call returns once the
+     * migration is recorded; an executor that holds both the source and the target plan carries it out afterwards, in
+     * queue order (await the execution probe to observe the effect), and a node that holds either plan not leaves it
+     * for one that does.
      *
-     * <p>Per PRD-WF-003 §7.4:
+     * <p>The executor rejects the migration, leaving the instance on its previous version, state and status, and
+     * records the rejection in the instance's history and the command's last error, when:
      * <ul>
-     *   <li>The instance must be in a non-terminal status and must not have active
-     *       fork-branch state.</li>
-     *   <li>A {@link dev.vertique.workflow.migration.WorkflowMigrationHandler} matching
-     *       {@code (definitionId, currentVersion, targetVersion)} within the instance's definition scope must be
-     *       registered.</li>
-     *   <li>The handler's source state type must match the resolved source plan's state type;
-     *       same for target.</li>
-     *   <li>On success a {@code WORKFLOW_MIGRATED} history entry is appended.</li>
+     *   <li>the instance has failed or has active fork-branch state;</li>
+     *   <li>no handler matches {@code (definitionId, currentVersion, targetVersion)} within the instance's definition
+     *       scope, or the handler's source or target state type is not the state type of the corresponding
+     *       definition;</li>
+     *   <li>the target version is deprecated, marked failing, of another contract, or not admitted for a new pin;</li>
+     *   <li>the handler or the re-pin fails, or the target plan's drive overruns the step cap of a segment.</li>
      * </ul>
+     * When it is applied, a {@code WORKFLOW_MIGRATED} history entry is appended, and the parked signals the target
+     * version does not declare are rejected.
      *
      * <p>This default implementation throws {@link UnsupportedOperationException}. The real
      * implementation lives in {@code vertique-workflow-postgresql} and requires
      * {@code WorkflowMigrationModule} to be installed in the Dagger component.
      *
      * @param id workflow instance to migrate
-     * @param targetVersion the definition version to migrate to; must be registered and strictly
-     *     greater than the current pin
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
-     * @throws dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException if no
-     *     handler matches {@code (definitionId, currentVersion, targetVersion)}
-     * @throws dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException if the
-     *     instance is terminal or has active branch state
-     * @throws dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException if either
-     *     version is unregistered
-     * @throws dev.vertique.workflow.exception.WorkflowPlanHashDriftException if the source pin hash
-     *     has drifted
-     * @throws dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException if the
-     *     handler's declared source or target state type does not match the corresponding
-     *     registered plan's runtime state type
+     * @param targetVersion the definition version to migrate to
+     * @return a {@link Future} that completes when the migration is recorded; it fails with
+     *     {@link dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException} naming the status when the
+     *     instance has ended, and records nothing then
      */
     default Future<Void> migrate(WorkflowInstanceId id, long targetVersion) {
         return Future.failedFuture(
@@ -181,25 +190,23 @@ public interface WorkflowOperations {
     }
 
     /**
-     * Migrates a workflow instance to {@code targetVersion} of the definition of the same id in {@code targetScope}.
+     * Records the migration of a workflow instance to {@code targetVersion} of the definition of the same id in
+     * {@code targetScope}.
      *
      * <p>The rules of {@link #migrate(WorkflowInstanceId, long)} apply, with these differences: the target
      * definition is the one of {@code targetScope}, which must be the instance's start scope or the default scope;
      * it must name the same contract as the definition the instance is pinned to; and when the two definitions use
-     * different state classes, the target's must extend the source's. A matching
-     * {@link dev.vertique.workflow.migration.WorkflowMigrationHandler} is keyed by the scope and version of the
-     * source and of the target.
+     * different state classes, the target's must extend the source's. The executor rejects a migration that does not
+     * meet these. A matching {@link dev.vertique.workflow.migration.WorkflowMigrationHandler} is keyed by the scope and
+     * version of the source and of the target.
      *
      * <p>This default implementation throws {@link UnsupportedOperationException}, as the two-argument form does.
      *
      * @param id workflow instance to migrate
      * @param targetScope the scope of the definition to migrate to; the instance's start scope or the default scope
-     * @param targetVersion the definition version to migrate to; must be registered in {@code targetScope}
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced; it fails with
-     *     {@link dev.vertique.workflow.exception.WorkflowDefinitionException} when the scope is not visible from the
-     *     instance or the state classes are not compatible, and with
-     *     {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException} when the target names
-     *     another contract
+     * @param targetVersion the definition version to migrate to
+     * @return a {@link Future} that completes when the migration is recorded; it fails with
+     *     {@link dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException} when the instance has ended
      */
     default Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion) {
         return Future.failedFuture(

@@ -538,13 +538,97 @@ public interface WorkflowCommandRepository<TX> {
             WorkflowInstanceId instance, String waitStepId, @Nullable String branchId, Collection<Long> signals, TX tx);
 
     /**
-     * Tells whether a signal command was parked before: whether the instance's history holds a parked entry for it. A
-     * signal that was parked and set back to pending is applied from the parked state when it runs.
+     * Tells whether a signal command was parked or dead-lettered before: whether the instance's history holds a parked
+     * or a dead-lettered entry for it. A signal that was parked and set back to pending, or dead-lettered and offered
+     * again by a retry, is applied from that state when it runs.
      *
      * @param instance  the instance
      * @param commandId the command's row id
      * @param tx        the segment's transaction handle
-     * @return a {@link Future} containing {@code true} when the command was parked at least once
+     * @return a {@link Future} containing {@code true} when the command was parked or dead-lettered at least once
      */
     Future<Boolean> wasParked(WorkflowInstanceId instance, long commandId, TX tx);
+
+    /**
+     * Records a {@code RETRY} command in the caller's transaction: the next position of the instance's queue, state
+     * {@code PENDING}, recorded and available at the database clock now.
+     *
+     * <p>The caller must hold the instance's execution lock.
+     *
+     * @param instance the instance to recover
+     * @param tx       the caller's transaction handle
+     * @return a {@link Future} containing the command's row id
+     */
+    Future<Long> recordRetry(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Records a {@code MIGRATION} command in the caller's transaction: the next position of the instance's queue, state
+     * {@code PENDING}, recorded and available at the database clock now, with the target version, and the target scope
+     * when one was named, stored as the command's target.
+     *
+     * <p>The caller must hold the instance's execution lock.
+     *
+     * @param instance      the instance to migrate
+     * @param targetVersion the definition version to migrate to
+     * @param targetScope   the scope of the definition to migrate to, or {@code null} for the scope the instance is
+     *                      pinned to
+     * @param tx            the caller's transaction handle
+     * @return a {@link Future} containing the command's row id
+     */
+    Future<Long> recordMigration(WorkflowInstanceId instance, long targetVersion, @Nullable String targetScope, TX tx);
+
+    /**
+     * Tells whether the instance holds a dead-lettered command, in the caller's transaction.
+     *
+     * @param instance the instance
+     * @param tx       the caller's transaction handle
+     * @return a {@link Future} containing {@code true} when at least one command of the instance is {@code DEAD}
+     */
+    Future<Boolean> hasDeadLetters(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Reads the {@code START} command of an instance, in the segment's transaction: its payload, subject target and
+     * key, whatever state it is in.
+     *
+     * @param instance the instance
+     * @param tx       the segment's transaction handle
+     * @return a {@link Future} containing the command, or empty when the instance has none
+     */
+    Future<Optional<SegmentCommand>> readStart(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Settles the instance's dead-lettered {@code START} command as {@code SUPERSEDED}, with its history entry, in the
+     * segment's transaction, because a retry initializes the instance from the stored start payload instead. A start
+     * settled in any other state is left as it is.
+     *
+     * @param instance the instance
+     * @param tx       the segment's transaction handle
+     * @return a {@link Future} containing the number of commands superseded
+     */
+    Future<Integer> supersedeDeadStart(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Offers the instance's dead-lettered commands again, in the segment's transaction: each goes from {@code DEAD}
+     * back to {@code PENDING} with its attempts reset to zero and its queue position unchanged, and is available now.
+     * Each re-offered {@code SIGNAL} raises the instance's open-signal count by one in the same statement, without the
+     * limit check, because the signal was counted when it was recorded and released when it was dead-lettered. A
+     * re-offered {@code COMPLETION} still owns its task's reservation.
+     *
+     * @param instance the instance
+     * @param tx       the segment's transaction handle
+     * @return a {@link Future} containing the number of commands offered again
+     */
+    Future<Integer> reofferDeadLetters(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Settles the dead-lettered commands of an instance that has ended as {@code REJECTED}, with a history entry each,
+     * in the segment's transaction; a dead-lettered completion also cancels the task it still reserves. Writes nothing
+     * while the instance has not ended. A signal's open-signal slot was released when it was dead-lettered, so nothing
+     * is lowered again.
+     *
+     * @param instance the instance
+     * @param tx       the segment's transaction handle
+     * @return a {@link Future} containing the number of commands rejected
+     */
+    Future<Integer> rejectDeadLetters(WorkflowInstanceId instance, TX tx);
 }

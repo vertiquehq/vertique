@@ -46,6 +46,7 @@ import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.events.WorkflowEventIntent;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
@@ -360,6 +361,7 @@ final class ExecutorFixture implements AutoCloseable {
         private WorkflowRecordingConfig recordingConfig;
         private WorkflowDefinitionRegistryStore definitionStore;
         private WorkflowPlanSchemaProducer schemaProducer;
+        private WorkflowMigrationRegistry migrations;
         private Set<WorkflowSideEffectRecorder<SqlClient>> additionalRecorders = Set.of();
         private final SegmentControl segmentControl = new SegmentControl();
         private boolean listening;
@@ -532,6 +534,12 @@ final class ExecutorFixture implements AutoCloseable {
             return this;
         }
 
+        /** The migration handlers the engine's executor runs. */
+        NodeSpec migrations(WorkflowMigrationRegistry migrations) {
+            this.migrations = migrations;
+            return this;
+        }
+
         /** Adds recorders of kinds the ordinary fixture does not own. */
         NodeSpec recorders(WorkflowSideEffectRecorder<SqlClient>... recorders) {
             this.additionalRecorders = Set.of(recorders);
@@ -578,6 +586,9 @@ final class ExecutorFixture implements AutoCloseable {
             }
             if (schemaProducer != null) {
                 engine.schemaProducer(schemaProducer);
+            }
+            if (migrations != null) {
+                engine.migrationRegistry(migrations);
             }
             CommandNotificationListener listener = null;
             if (listening) {

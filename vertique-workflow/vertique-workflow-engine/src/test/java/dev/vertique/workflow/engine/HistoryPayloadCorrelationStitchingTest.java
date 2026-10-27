@@ -280,6 +280,26 @@ class HistoryPayloadCorrelationStitchingTest {
     }
 
     /**
+     * Stubs {@code history.append} to capture the {@code payloadJson} of the first entry of the given type, then
+     * succeeds; the entries a segment appends before it are not captured.
+     */
+    private static AtomicReference<String> captureAppendedPayload(
+            WorkflowHistoryRepository<SqlClient> history, WorkflowEntryType type) {
+        AtomicReference<String> captured = new AtomicReference<>();
+        org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
+        doAnswer(inv -> {
+                    WorkflowHistoryEntry entry = inv.getArgument(0);
+                    if (entry.entryType() == type) {
+                        captured.compareAndSet(null, entry.payloadJson());
+                    }
+                    return Future.succeededFuture();
+                })
+                .when(history)
+                .append(any(), any());
+        return captured;
+    }
+
+    /**
      * Stubs {@code history.append} to capture the {@code payloadJson} of the first {@code TASK_COMPLETED} or
      * {@code BRANCH_TASK_COMPLETED} entry, then succeeds; the entries a segment appends before it are not captured.
      */
@@ -364,7 +384,7 @@ class HistoryPayloadCorrelationStitchingTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
-        var captured = captureAppendedPayload(h.history());
+        var captured = captureAppendedPayload(h.history(), WorkflowEntryType.RETRIED);
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
@@ -372,12 +392,13 @@ class HistoryPayloadCorrelationStitchingTest {
                 .thenReturn(rw);
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, null, null, WorkflowStatus.FAILED);
-        when(h.instances().findByIdForUpdate(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
 
         runOnDuplicated(vertx, v -> {
             ContextValues.bind(CorrelationContext.class, correlation("corr-E"));
             h.txOps()
                     .retry(inst.id(), tx)
+                    .compose(recorded -> RecordedRecoverySegments.retry(h.txOps(), inst, null, tx))
                     .onComplete(ar -> ctx.verify(() -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());
@@ -409,7 +430,7 @@ class HistoryPayloadCorrelationStitchingTest {
         TaskStore<SqlClient> taskStore = mock();
         SqlClient tx = ActiveTransactionClient.create();
 
-        var captured = captureAppendedPayload(history);
+        var captured = captureAppendedPayload(history, WorkflowEntryType.WORKFLOW_MIGRATED);
         when(history.listRecentByInstance(any(), anyInt(), any())).thenReturn(Future.succeededFuture(List.of()));
 
         RuntimeWorkflow sourceRw = buildRuntimeWorkflow(stubCallbacks());
@@ -445,6 +466,7 @@ class HistoryPayloadCorrelationStitchingTest {
         dev.vertique.workflow.migration.WorkflowMigrationRegistry migrationRegistry = mock();
         dev.vertique.workflow.migration.WorkflowMigrationHandler<Object, Object> handler = mock();
         when(handler.sourceStateType()).thenReturn((Class) Object.class);
+        when(handler.targetStateType()).thenReturn((Class) Object.class);
         when(handler.migrate(any(), any()))
                 .thenReturn(dev.vertique.workflow.migration.MigrationResult.anchorAtInitial(Map.of()));
         when(migrationRegistry.find("default", DEFINITION_ID, 1L, "default", 2L))
@@ -474,6 +496,7 @@ class HistoryPayloadCorrelationStitchingTest {
         runOnDuplicated(vertx, v -> {
             ContextValues.bind(CorrelationContext.class, correlation("corr-F"));
             handle.migrate(inst.id(), 2L, tx)
+                    .compose(recorded -> RecordedRecoverySegments.migrate(handle, inst, 2L, tx))
                     .onComplete(ar -> ctx.verify(() -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());

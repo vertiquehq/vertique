@@ -421,7 +421,8 @@ public final class PgWorkflowEngineTestSupport {
 
     /**
      * Assembles an engine and starts its executor, which polls fast, unless the pool is a mock. The executor runs only
-     * the starts that this engine recorded, as the engine ran them itself before starts were recorded: tests build
+     * the starts that this engine recorded (and the completions, retries and migrations it recorded for any instance), as
+     * the engine ran them itself before starts were recorded: tests build
      * several engines over one database with different registries, and an executor that ran another engine's start would
      * run it with the wrong plan. The executor stops itself once the engine's pool is closed, so a test that closes its
      * pool at the end leaves nothing running.
@@ -491,15 +492,21 @@ public final class PgWorkflowEngineTestSupport {
             WorkflowCommandRepository<SqlClient> real,
             java.util.Set<java.util.UUID> own,
             AtomicReference<WorkflowEngineHandle> handle) {
+        java.util.Set<Long> recoveries = java.util.concurrent.ConcurrentHashMap.newKeySet();
         return (WorkflowCommandRepository<SqlClient>) Proxy.newProxyInstance(
                 WorkflowCommandRepository.class.getClassLoader(),
                 new Class<?>[] {WorkflowCommandRepository.class},
                 (proxy, method, arguments) -> {
-                    if ("recordCompletion".equals(method.getName())
-                            && arguments[0] instanceof dev.vertique.workflow.ops.WorkflowInstanceId completed) {
-                        // a completion this engine records is run by this engine, whoever started the instance
-                        own.add(completed.value());
+                    if (("recordCompletion".equals(method.getName())
+                                    || "recordRetry".equals(method.getName())
+                                    || "recordMigration".equals(method.getName()))
+                            && arguments[0] instanceof dev.vertique.workflow.ops.WorkflowInstanceId recorded) {
+                        // a completion, retry or migration this engine records is run by this engine, whoever started
+                        // the instance
+                        own.add(recorded.value());
                     }
+                    boolean recovery =
+                            "recordRetry".equals(method.getName()) || "recordMigration".equals(method.getName());
                     boolean peek = "peek".equals(method.getName());
                     Object[] forwarded = arguments;
                     int limit = 0;
@@ -513,14 +520,21 @@ public final class PgWorkflowEngineTestSupport {
                     } catch (InvocationTargetException e) {
                         throw e.getCause();
                     }
+                    if (recovery && result instanceof Future<?> recorded) {
+                        // only the engine that recorded a retry or a migration runs it: another engine over the same
+                        // instance may hold other plans and would defer it
+                        recorded.onSuccess(commandId -> recoveries.add((Long) commandId));
+                    }
                     if (!peek || !(result instanceof Future<?> future)) {
                         return result;
                     }
                     int wanted = limit;
                     return ((Future<List<dev.vertique.workflow.engine.spi.CommandHead>>) future)
                             .<List<dev.vertique.workflow.engine.spi.CommandHead>>map(heads -> heads.stream()
-                                    .filter(head ->
-                                            own.contains(head.workflowId().value()))
+                                    .filter(head -> own.contains(
+                                                    head.workflowId().value())
+                                            && (!("RETRY".equals(head.kind()) || "MIGRATION".equals(head.kind()))
+                                                    || recoveries.contains(head.commandId())))
                                     .limit(wanted)
                                     .toList())
                             .recover(failure -> {
@@ -594,6 +608,7 @@ public final class PgWorkflowEngineTestSupport {
         private WorkflowRecordingConfig recordingConfig;
         private WorkflowDefinitionRegistryStore definitionStore;
         private WorkflowPlanSchemaProducer schemaProducer;
+        private WorkflowMigrationRegistry migrationRegistry;
         private DurableContextPropagator propagator;
         private Set<InboundContextInitializer> inboundContextInitializers = Set.of();
         private Set<WorkflowExecutorObserver> executorObservers = Set.of();
@@ -628,6 +643,12 @@ public final class PgWorkflowEngineTestSupport {
         /** The producer of the decision schemas new tasks store in their snapshots; none by default. */
         public ExecutorEngine schemaProducer(WorkflowPlanSchemaProducer schemaProducer) {
             this.schemaProducer = schemaProducer;
+            return this;
+        }
+
+        /** The migration handlers the engine runs; none by default. */
+        public ExecutorEngine migrationRegistry(WorkflowMigrationRegistry migrationRegistry) {
+            this.migrationRegistry = migrationRegistry;
             return this;
         }
 
@@ -713,6 +734,9 @@ public final class PgWorkflowEngineTestSupport {
             }
             if (schemaProducer != null) {
                 parts.schemaProducer(Optional.of(schemaProducer));
+            }
+            if (migrationRegistry != null) {
+                parts.migrationRegistry(Optional.of(migrationRegistry));
             }
             return WorkflowEngineFactory.create(parts.build());
         }

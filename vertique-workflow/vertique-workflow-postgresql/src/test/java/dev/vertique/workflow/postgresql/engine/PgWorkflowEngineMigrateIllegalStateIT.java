@@ -458,7 +458,7 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
      * {@link WorkflowMigrationIllegalStateException}.
      */
     @Test
-    @DisplayName("AC #15a — migrate on COMPLETED instance throws WorkflowMigrationIllegalStateException")
+    @DisplayName("AC #15a — migrate on COMPLETED instance is refused with WorkflowMigrationIllegalStateException")
     void migrateCompletedInstance(VertxTestContext ctx) {
         String key = "migrate-completed-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
@@ -491,7 +491,10 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
                         })))
                 .compose(id -> engineSimpleMigrate
                         .migrate(id, 2L)
-                        .map(v -> (WorkflowInstanceId) null)
+                        .<WorkflowInstanceId>map(v -> {
+                            throw new AssertionError(
+                                    "migrate of an ended instance must be refused when it is recorded");
+                        })
                         .recover(e -> {
                             assertInstanceOf(
                                     WorkflowMigrationIllegalStateException.class,
@@ -540,7 +543,10 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
                 }))
                 .compose(id -> engineSimpleMigrate
                         .migrate(id, 2L)
-                        .map(v -> (WorkflowInstanceId) null)
+                        .<WorkflowInstanceId>map(v -> {
+                            throw new AssertionError(
+                                    "migrate of an ended instance must be refused when it is recorded");
+                        })
                         .recover(e -> {
                             assertInstanceOf(
                                     WorkflowMigrationIllegalStateException.class,
@@ -564,7 +570,7 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
      */
     @Test
     @DisplayName(
-            "AC #15b — migrate on instance with active fork-branch state throws WorkflowMigrationIllegalStateException")
+            "AC #15b — migrate on instance with active fork-branch state is rejected and the instance stays on its version")
     void migrateInstanceWithActiveBranches(VertxTestContext ctx) {
         String key = "migrate-fork-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
@@ -589,13 +595,22 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
                 }))
                 .compose(id -> engineForkMigrate
                         .migrate(id, 2L)
-                        .map(v -> (WorkflowInstanceId) null)
-                        .recover(e -> {
-                            assertInstanceOf(
-                                    WorkflowMigrationIllegalStateException.class,
-                                    e,
-                                    "must throw WorkflowMigrationIllegalStateException for active branches; got: " + e);
-                            return io.vertx.core.Future.succeededFuture(null);
+                        .compose(v -> engineForkMigrate.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                        .compose(v -> pool.preparedQuery("SELECT state, last_error FROM workflow_commands"
+                                        + " WHERE workflow_id = $1 AND kind = 'MIGRATION'")
+                                .execute(io.vertx.sqlclient.Tuple.of(id.value())))
+                        .map(rows -> {
+                            // The recording succeeds; the executor rejects the migration with the instance unchanged
+                            assertEquals(1, rows.size(), "one migration command must be recorded");
+                            io.vertx.sqlclient.Row row = rows.iterator().next();
+                            assertEquals("REJECTED", row.getString("state"));
+                            assertTrue(row.getString("last_error").startsWith("MIGRATION_REJECTED: "));
+                            return id;
+                        })
+                        .compose(engineForkMigrate::query)
+                        .map(view -> {
+                            assertEquals(1L, view.instance().definitionVersion(), "instance must stay on version 1");
+                            return (WorkflowInstanceId) null;
                         }))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "test chain must complete: " + ar.cause());

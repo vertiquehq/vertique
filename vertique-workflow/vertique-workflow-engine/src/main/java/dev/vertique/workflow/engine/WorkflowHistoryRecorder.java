@@ -110,6 +110,32 @@ final class WorkflowHistoryRecorder {
     }
 
     /**
+     * Appends a history entry about what became of a recorded command that has no payload of its own to name: a retry or
+     * a migration. The entry names the command, its kind and the sanitized reason, never a payload value or exception
+     * text.
+     *
+     * @param workflowId the instance
+     * @param type the entry type
+     * @param commandId the command's row id
+     * @param kind the command kind
+     * @param reason the sanitized reason, or {@code null} for an outcome without one
+     * @param tx the active transaction
+     * @return a future that completes when the entry is appended
+     */
+    Future<Void> appendCommandOutcomeHistory(
+            WorkflowInstanceId workflowId,
+            WorkflowEntryType type,
+            long commandId,
+            String kind,
+            @Nullable String reason,
+            SqlClient tx) {
+        return history.nextSequence(workflowId, tx).compose(seq -> {
+            String payload = Json.encode(new CommandOutcomeHistoryPayload(commandId, kind, reason));
+            return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
+        });
+    }
+
+    /**
      * Appends a history entry about what became of a recorded {@code SIGNAL} command. The entry names the command, the
      * signal and the sanitized reason, never a payload value or exception text.
      *

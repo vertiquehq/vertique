@@ -753,6 +753,38 @@ final class SignalHandler {
                 || status == WorkflowStatus.EXPIRED;
     }
 
+    /**
+     * Rejects the parked signals the plan an instance was migrated to does not wait for, with their history, in the
+     * segment's transaction. The rest stay parked for the drain of the wait the instance reached.
+     *
+     * @param instance the migrated instance
+     * @param target   the plan the instance is pinned to now
+     * @param tx       the segment's transaction handle
+     * @return a future that completes when the undeclared signals are rejected
+     */
+    Future<Void> rejectUndeclaredParked(WorkflowInstanceId instance, RuntimeWorkflow target, SqlClient tx) {
+        return commands.parkedSignals(instance, tx).compose(parked -> {
+            Future<Void> chain = Future.succeededFuture();
+            for (var signal : parked) {
+                if (waitsForSignal(target, signal.signalName())) {
+                    continue;
+                }
+                String reason = CommandErrors.signalUndeclared(
+                        signal.signalName(), target.plan().definitionVersion());
+                chain = chain.compose(done -> commands.settleParked(signal.commandId(), "REJECTED", reason, tx))
+                        .compose(SignalHandler::requireRow)
+                        .compose(done -> historyRecorder.appendSignalCommandHistory(
+                                instance,
+                                WorkflowEntryType.COMMAND_REJECTED,
+                                signal.commandId(),
+                                signal.signalName(),
+                                reason,
+                                tx));
+            }
+            return chain;
+        });
+    }
+
     /** The engine side of the parked-signal application. */
     private final class ParkedHost implements ParkedSignals.Host {
 

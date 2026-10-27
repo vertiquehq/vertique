@@ -145,50 +145,29 @@ public interface TransactionalWorkflowOperations<TX> {
     Future<Void> cancel(WorkflowInstanceId id, String reason, TX tx);
 
     /**
-     * Retries the current step of a failed workflow instance within the given transaction.
+     * Records a retry of a workflow instance within the given transaction and returns once it is recorded; the rules of
+     * {@link WorkflowOperations#retry(WorkflowInstanceId)} apply. Nothing runs in the transaction but the recording.
      *
-     * @param id id of the {@code FAILED} workflow instance to retry
+     * @param id id of the workflow instance to recover; it must be {@code FAILED} or hold a dead-lettered command
      * @param tx the active transaction context
-     * @return a {@link Future} that completes when the retry has been initiated
+     * @return a {@link Future} that completes when the retry is recorded
      */
     Future<Void> retry(WorkflowInstanceId id, TX tx);
 
     /**
-     * Migrates a workflow instance from its current definition version to {@code targetVersion}
-     * within the given transaction, using an application-registered
-     * {@link dev.vertique.workflow.migration.WorkflowMigrationHandler}.
-     *
-     * <p>Per PRD-WF-003 §7.4:
-     * <ul>
-     *   <li>The instance must be in a non-terminal status and must not have active
-     *       fork-branch state.</li>
-     *   <li>A {@link dev.vertique.workflow.migration.WorkflowMigrationHandler} matching
-     *       {@code (definitionId, currentVersion, targetVersion)} must be registered.</li>
-     *   <li>The handler's source state type must match the resolved source plan's state type;
-     *       same for target.</li>
-     *   <li>On success a {@code WORKFLOW_MIGRATED} history entry is appended.</li>
-     * </ul>
+     * Records the migration of a workflow instance from its current definition version to {@code targetVersion} within
+     * the given transaction and returns once it is recorded; the rules of
+     * {@link WorkflowOperations#migrate(WorkflowInstanceId, long)} apply. Nothing runs in the transaction but the
+     * recording.
      *
      * <p>This default implementation throws {@link UnsupportedOperationException}. The real
      * implementation lives in {@code vertique-workflow-postgresql} and requires
      * {@code WorkflowMigrationModule} to be installed in the Dagger component.
      *
      * @param id workflow instance to migrate
-     * @param targetVersion the definition version to migrate to; must be registered and strictly
-     *     greater than the current pin
+     * @param targetVersion the definition version to migrate to
      * @param tx the active transaction context
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
-     * @throws dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException if no
-     *     handler matches {@code (definitionId, currentVersion, targetVersion)}
-     * @throws dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException if the
-     *     instance is terminal or has active branch state
-     * @throws dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException if either
-     *     version is unregistered
-     * @throws dev.vertique.workflow.exception.WorkflowPlanHashDriftException if the source pin hash
-     *     has drifted
-     * @throws dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException if the
-     *     handler's declared source or target state type does not match the corresponding
-     *     registered plan's runtime state type
+     * @return a {@link Future} that completes when the migration is recorded
      */
     default Future<Void> migrate(WorkflowInstanceId id, long targetVersion, TX tx) {
         return Future.failedFuture(new UnsupportedOperationException(
@@ -201,7 +180,8 @@ public interface TransactionalWorkflowOperations<TX> {
      * Migrates a workflow instance to {@code targetVersion} of the definition of the same id in
      * {@code targetScope} within the given transaction.
      *
-     * <p>The rules of {@link WorkflowOperations#migrate(WorkflowInstanceId, String, long)} apply.
+     * <p>The rules of {@link WorkflowOperations#migrate(WorkflowInstanceId, String, long)} apply: the migration is
+     * recorded here and carried out by an executor.
      *
      * <p>This default implementation throws {@link UnsupportedOperationException}.
      *
@@ -209,7 +189,7 @@ public interface TransactionalWorkflowOperations<TX> {
      * @param targetScope the scope of the definition to migrate to; the instance's start scope or the default scope
      * @param targetVersion the definition version to migrate to; must be registered in {@code targetScope}
      * @param tx the active transaction context
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     * @return a {@link Future} that completes when the migration is recorded
      */
     default Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion, TX tx) {
         return Future.failedFuture(new UnsupportedOperationException(
