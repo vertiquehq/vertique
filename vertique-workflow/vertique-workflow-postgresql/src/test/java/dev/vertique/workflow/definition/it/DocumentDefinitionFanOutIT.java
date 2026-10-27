@@ -581,7 +581,8 @@ public class DocumentDefinitionFanOutIT {
                                                     "reserve-order",
                                                     "inventory",
                                                     tx))
-                                            .compose(v -> engine.query(id2))
+                                            .compose(v -> probe.awaitIdle(id2, java.time.Duration.ofSeconds(10)))
+                                            .compose(idle -> engine.query(id2))
                                             .compose(afterFirst -> {
                                                 assertEquals(
                                                         WorkflowStatus.RUNNING,
@@ -600,7 +601,8 @@ public class DocumentDefinitionFanOutIT {
                                                 "reserve-order",
                                                 "payment",
                                                 tx))
-                                        .compose(v -> engine.query(id2))
+                                        .compose(v -> probe.awaitIdle(id2, java.time.Duration.ofSeconds(10)))
+                                        .compose(idle -> engine.query(id2))
                                         .compose(afterSecond -> {
                                             assertEquals(
                                                     WorkflowStatus.RUNNING,
@@ -618,7 +620,8 @@ public class DocumentDefinitionFanOutIT {
                                                 "fraud",
                                                 tx))
                                         .map(v -> id2))
-                                .compose(id2 -> engine.query(id2)))
+                                .compose(id2 -> probe.awaitIdle(id2, java.time.Duration.ofSeconds(10))
+                                        .compose(idle -> engine.query(id2))))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "fan-out saga must succeed end-to-end, got: " + ar.cause());
                     WorkflowView view = ar.result();

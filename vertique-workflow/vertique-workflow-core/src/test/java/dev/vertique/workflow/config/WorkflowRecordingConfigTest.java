@@ -17,6 +17,8 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /** Verifies recording configuration defaults and the bounds of lock timeouts and encoded payload sizes. */
 class WorkflowRecordingConfigTest {
@@ -92,6 +94,35 @@ class WorkflowRecordingConfigTest {
         assertThatThrownBy(() -> new WorkflowRecordingConfig(5000L, 1023))
                 .isInstanceOf(ConfigurationException.class)
                 .hasMessageContaining("workflow.recording.maxPayloadBytes");
+    }
+
+    @ParameterizedTest
+    @CsvSource({"absent, 100", "1, 1", "10000, 10000", "0, -1", "10001, -1"})
+    @DisplayName("the open-signal cap defaults to one hundred and is bounded from one to ten thousand")
+    void maxOpenSignalsPerInstanceDefaultsToOneHundredAndIsBounded(String input, int expected) {
+        // Given a missing key or one explicit bound/boundary violation
+        JsonObject config = "absent".equals(input)
+                ? new JsonObject()
+                : new JsonObject()
+                        .put(
+                                "workflow",
+                                new JsonObject()
+                                        .put(
+                                                "recording",
+                                                new JsonObject()
+                                                        .put("maxOpenSignalsPerInstance", Integer.parseInt(input))));
+
+        // When parsed through the production configuration module
+        // Then the accepted value is retained or the configuration error names the full key
+        if (expected < 0) {
+            assertThatThrownBy(() -> configured(config))
+                    .isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("workflow.recording.maxOpenSignalsPerInstance");
+        } else {
+            assertThat(configured(config).maxOpenSignalsPerInstance()).isEqualTo(expected);
+        }
+        assertThat(WorkflowRecordingConfig.defaults().maxOpenSignalsPerInstance())
+                .isEqualTo(100);
     }
 
     private static JsonObject withMaxPayloadBytes(int value) {

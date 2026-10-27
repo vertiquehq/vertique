@@ -6,12 +6,12 @@ package dev.vertique.workflow.engine;
 import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
-import io.vertx.core.buffer.Buffer;
-import io.vertx.core.json.EncodeException;
-import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.json.jackson.DatabindCodec;
 import jakarta.annotation.Nullable;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
@@ -19,7 +19,11 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-/** Pure record-time bounds over encoded JSON, with an iterative container walk before encoding. */
+/**
+ * Pure record-time bounds over encoded JSON: an iterative container walk before encoding, then a streaming encode that
+ * counts bytes and container depth as they are produced and stops as soon as a bound is crossed, so an oversized value
+ * is never fully encoded in memory.
+ */
 final class RecordTimePayloadValidator {
 
     private static final int MAX_DEPTH = 64;
@@ -47,16 +51,18 @@ final class RecordTimePayloadValidator {
      */
     void validate(@Nullable Object payload) {
         validateDepth(payload);
-        Buffer encoded;
+        BoundedSink sink = new BoundedSink(maxPayloadBytes);
         try {
-            encoded = Json.encodeToBuffer(payload);
-        } catch (EncodeException failure) {
+            DatabindCodec.mapper().writeValue(sink, payload);
+        } catch (IOException | RuntimeException failure) {
+            if (sink.tooLarge) {
+                throw invalid("payload exceeds maxPayloadBytes " + maxPayloadBytes);
+            }
+            if (sink.tooDeep) {
+                throw invalid("payload exceeds depth " + MAX_DEPTH);
+            }
             throw invalid("payload cannot be encoded as JSON");
         }
-        if (encoded.length() > maxPayloadBytes) {
-            throw invalid("payload exceeds maxPayloadBytes " + maxPayloadBytes);
-        }
-        validateEncodedDepth(encoded);
     }
 
     /** Rejects deep JSON containers before a recursive codec can visit them; retains only the ancestor iterators. */
@@ -94,13 +100,38 @@ final class RecordTimePayloadValidator {
         };
     }
 
-    /** Counts the codec's actual containers too, including values supplied through application serializers. */
-    private static void validateEncodedDepth(Buffer encoded) {
-        int depth = 0;
-        boolean inString = false;
-        boolean escaped = false;
-        for (int index = 0; index < encoded.length(); index++) {
-            byte value = encoded.getByte(index);
+    /** Counts encoded bytes and the codec's actual containers as they are written, and refuses once a bound is crossed. */
+    private static final class BoundedSink extends OutputStream {
+
+        private final int maxBytes;
+        private long written;
+        private int depth;
+        private boolean inString;
+        private boolean escaped;
+        boolean tooLarge;
+        boolean tooDeep;
+
+        BoundedSink(int maxBytes) {
+            this.maxBytes = maxBytes;
+        }
+
+        @Override
+        public void write(int value) throws IOException {
+            if (++written > maxBytes) {
+                tooLarge = true;
+                throw new IOException("payload exceeds the size bound");
+            }
+            observe((byte) value);
+        }
+
+        @Override
+        public void write(byte[] bytes, int offset, int length) throws IOException {
+            for (int index = 0; index < length; index++) {
+                write(bytes[offset + index]);
+            }
+        }
+
+        private void observe(byte value) throws IOException {
             if (inString) {
                 if (escaped) {
                     escaped = false;
@@ -113,7 +144,8 @@ final class RecordTimePayloadValidator {
                 inString = true;
             } else if (value == '{' || value == '[') {
                 if (++depth > MAX_DEPTH) {
-                    throw invalid("payload exceeds depth " + MAX_DEPTH);
+                    tooDeep = true;
+                    throw new IOException("payload exceeds the depth bound");
                 }
             } else if (value == '}' || value == ']') {
                 depth--;

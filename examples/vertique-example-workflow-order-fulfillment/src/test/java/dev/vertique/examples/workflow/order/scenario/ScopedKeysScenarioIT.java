@@ -26,10 +26,11 @@ import dev.vertique.examples.workflow.order.OrderFulfillmentDefinition;
 import dev.vertique.examples.workflow.order.OrderFulfillmentWorkflow;
 import dev.vertique.examples.workflow.order.scenario.ScenarioNode.Pin;
 import dev.vertique.workflow.exception.WorkflowBusinessKeyConflictException;
-import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
+import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.Tuple;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -117,11 +118,11 @@ class ScopedKeysScenarioIT {
 
             // When Acme's instance, pinned to the variant that waits for the audit, is sent the approval
             approveFinance(second, acme);
-            Throwable approvalToAcme =
-                    failureOf(purchaseClient(second, ACME).approved(acme, new PoApproved("frank"), "a-1"));
+            await(purchaseClient(second, ACME).approved(acme, new PoApproved("frank"), "a-1"));
+            second.awaitIdle(acme);
 
-            // Then the signal fails naming the pinned version and the instance is unchanged
-            assertRejectedNamingVersionOne(approvalToAcme, "po.approved");
+            // Then the executor rejects the recorded signal naming the pinned version and the instance is unchanged
+            assertRejectedNamingVersionOne(second, acme, "po.approved");
             assertEquals("WAITING", second.status(acme));
 
             // When the instance is sent the audit that its pin waits for
@@ -132,9 +133,9 @@ class ScopedKeysScenarioIT {
             assertEquals("COMPLETED", second.status(acme));
 
             // When globex's instance, pinned to the default scope's version, is sent the audit and then the approval
-            Throwable auditToGlobex =
-                    failureOf(purchaseClient(second, GLOBEX).audited(globex, new PoAudited("hugo"), "g-1"));
-            assertRejectedNamingVersionOne(auditToGlobex, "po.audited");
+            await(purchaseClient(second, GLOBEX).audited(globex, new PoAudited("hugo"), "g-1"));
+            second.awaitIdle(globex);
+            assertRejectedNamingVersionOne(second, globex, "po.audited");
             assertEquals("WAITING", second.status(globex));
             await(purchaseClient(second, GLOBEX).approved(globex, new PoApproved("ines"), "g-2"));
             second.awaitIdle(globex);
@@ -144,12 +145,16 @@ class ScopedKeysScenarioIT {
         }
     }
 
-    private static void assertRejectedNamingVersionOne(Throwable failure, String signal) {
-        assertNotNull(failure, "the signal must be refused");
-        assertInstanceOf(WorkflowSignalRejectedException.class, failure);
-        String message = failure.getMessage();
-        assertTrue(message.contains("'purchase-approval' v1"), message);
-        assertTrue(message.contains("does not wait for signal '" + signal + "'"), message);
+    private static void assertRejectedNamingVersionOne(ScenarioNode node, WorkflowInstanceId instance, String signal) {
+        Row row = await(node.pool()
+                .preparedQuery("SELECT state, last_error FROM workflow_commands WHERE workflow_id = $1"
+                        + " AND kind = 'SIGNAL' AND target_json->>'name' = $2")
+                .execute(Tuple.of(instance.value(), signal))
+                .map(rows -> rows.iterator().next()));
+        assertEquals("REJECTED", row.getString("state"), "the signal must be rejected");
+        String reason = row.getString("last_error");
+        assertTrue(reason.contains("version 1"), reason);
+        assertTrue(reason.contains("signal '" + signal + "' is not declared"), reason);
     }
 
     private static ScenarioNode deploy(Vertx vertx) {

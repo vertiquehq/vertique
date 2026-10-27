@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine.executor;
 
+import dev.vertique.workflow.types.EchoedNames;
 import java.util.Locale;
 
 /**
@@ -37,7 +38,11 @@ public final class CommandErrors {
         /** The command's instance had ended when the command was claimed. */
         INSTANCE_ENDED,
         /** This node holds no plan for the instance's pin, so the command was deferred. */
-        NOT_RUNNABLE
+        NOT_RUNNABLE,
+        /** A signal names no wait of the definition version its instance is pinned to. */
+        UNDECLARED_SIGNAL,
+        /** A branch-addressed signal arrived after its branch was superseded or ended. */
+        BRANCH_ENDED
     }
 
     private CommandErrors() {
@@ -120,6 +125,77 @@ public final class CommandErrors {
                 Reason.NOT_RUNNABLE,
                 token(kind) + " command was deferred: this node holds no runnable plan for the instance's pinned"
                         + " definition");
+    }
+
+    /**
+     * The value for a signal whose application failed in a way a retry repeats; the signal is rejected and its
+     * instance is unchanged.
+     *
+     * @param signalName the signal's name, echoed bounded
+     * @return the stored value
+     */
+    public static String signalFailure(String signalName) {
+        return format(
+                Reason.DETERMINISTIC_FAILURE,
+                "SIGNAL command for signal '" + EchoedNames.bounded(signalName)
+                        + "' failed with a non-retryable error and was rejected; the instance is unchanged;"
+                        + " see the executor log");
+    }
+
+    /**
+     * The value for a signal whose application executed more nodes than the step cap allows a segment.
+     *
+     * @param signalName the signal's name, echoed bounded
+     * @param cap        the step cap that was exceeded
+     * @return the stored value
+     */
+    public static String signalStepLimit(String signalName, int cap) {
+        return format(
+                Reason.STEP_LIMIT,
+                "SIGNAL command for signal '" + EchoedNames.bounded(signalName) + "' executed more than " + cap
+                        + " steps in one segment without reaching a wait and was rejected; the instance is unchanged");
+    }
+
+    /**
+     * The value for a signal that the pinned definition version never waits for.
+     *
+     * @param signalName the signal's name, echoed bounded
+     * @param version    the definition version the instance is pinned to
+     * @return the stored value
+     */
+    public static String signalUndeclared(String signalName, long version) {
+        return format(
+                Reason.UNDECLARED_SIGNAL,
+                "SIGNAL command rejected: signal '" + EchoedNames.bounded(signalName) + "' is not declared by version "
+                        + version + " of the pinned definition");
+    }
+
+    /**
+     * The value for a signal whose instance had ended.
+     *
+     * @param signalName the signal's name, echoed bounded
+     * @param status     the status of the ended instance
+     * @param stale      whether the signal is settled stale (a branch-addressed one) rather than rejected
+     * @return the stored value
+     */
+    public static String signalInstanceEnded(String signalName, String status, boolean stale) {
+        return format(
+                Reason.INSTANCE_ENDED,
+                "SIGNAL command for signal '" + EchoedNames.bounded(signalName) + "' was "
+                        + (stale ? "settled stale" : "rejected") + ": instance ended with status " + token(status));
+    }
+
+    /**
+     * The value for a branch-addressed signal whose branch was superseded or ended.
+     *
+     * @param signalName the signal's name, echoed bounded
+     * @return the stored value
+     */
+    public static String signalBranchEnded(String signalName) {
+        return format(
+                Reason.BRANCH_ENDED,
+                "SIGNAL command for signal '" + EchoedNames.bounded(signalName)
+                        + "' is stale: its branch was superseded or ended");
     }
 
     /**

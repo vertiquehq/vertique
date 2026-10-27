@@ -73,8 +73,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Verifies what a node does with work it cannot run because its deployed code lacks the version in question: a start
- * that resolves to the version, and a signal, branch signal, task completion or query on an instance pinned to it, fail
- * to the caller with a typed error and change nothing; a timer fired there is queued again as a fresh job, without
+ * that resolves to the version, and a task completion or query on an instance pinned to it, fail to the caller with a
+ * typed error and change nothing; a signal or branch signal for such an instance is recorded, since recording needs no
+ * code, and applied by a node that has it; a timer fired there is queued again as a fresh job, without
  * spending an attempt, so that a node with the code fires it; and no node fails an instance because it cannot run
  * its pin.
  *
@@ -144,10 +145,9 @@ public class MixedCodeNodesIT {
     }
 
     @Test
-    @DisplayName("a signal through a node without the pinned code fails typed and leaves the instance unchanged")
-    void signalThroughNodeWithoutPinnedCodeFailsTypedAndLeavesInstanceUnchanged(Vertx vertx) {
+    @DisplayName("a signal through a node without the pinned code is recorded and applied by a capable node")
+    void signalThroughNodeWithoutPinnedCodeIsRecordedAndAppliedByACapableNode(Vertx vertx) {
         String id = "mixed-code-signal";
-        DefinitionKey pinned = new DefinitionKey(DEFAULT, id, 2);
 
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, id);
@@ -167,16 +167,17 @@ public class MixedCodeNodesIT {
                     .workflowOperations()
                     .signal(instance, "inventory.reserved", new InventoryReservedDoc("r1"), "d1"));
 
-            // Then it fails typed, naming the pinned version
-            assertThat(refused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
-                assertThat(failure.definitionKey()).isEqualTo(pinned);
-            });
+            // Then it is recorded: recording needs no code for the pinned version, and B applies nothing
+            assertThat(refused)
+                    .as("recording through a node without the pinned code")
+                    .isNull();
 
-            // And the instance, its history and its deduplication rows are as they were, with no row for the key
-            assertThat(Rows.of(database, instance)).isEqualTo(before);
-            assertThat(dedupRowsWithKey(database, "d1")).isZero();
+            // And the instance and its history are as they were, with the key recorded for the signal
+            assertThat(Rows.of(database, instance)).isEqualTo(before.withDedup(before.dedup() + 1));
+            assertThat(dedupRowsWithKey(database, "d1")).isEqualTo(1);
 
-            // And the same signal through A, with the same key, advances the instance
+            // And the same signal through A, with the same key, is a duplicate, and A's executor applies the recorded
+            // command and advances the instance
             await(a.app()
                     .workflowOperations()
                     .signal(instance, "inventory.reserved", new InventoryReservedDoc("r1"), "d1"));
@@ -600,10 +601,9 @@ public class MixedCodeNodesIT {
     }
 
     @Test
-    @DisplayName("a branch signal through a node without the pinned code fails typed and leaves the branch unchanged")
-    void branchSignalThroughNodeWithoutPinnedCodeFailsTypedAndLeavesBranchUnchanged(Vertx vertx) {
+    @DisplayName("a branch signal through a node without the pinned code is recorded and applied by a capable node")
+    void branchSignalThroughNodeWithoutPinnedCodeIsRecordedAndAppliedByACapableNode(Vertx vertx) {
         String id = "mixed-code-branch";
-        DefinitionKey pinned = new DefinitionKey(DEFAULT, id, 2);
 
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, id);
@@ -623,16 +623,20 @@ public class MixedCodeNodesIT {
             Throwable refused = ActivationFixtures.failureOf(
                     () -> onDuplicatedContext(vertx, () -> branchSignal(b, instance, payload, "d3")));
 
-            // Then it fails typed, naming the pinned version
-            assertThat(refused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
-                assertThat(failure.definitionKey()).isEqualTo(pinned);
-            });
+            // Then it is recorded: recording needs no code for the pinned version, and B applies nothing
+            assertThat(refused)
+                    .as("recording through a node without the pinned code")
+                    .isNull();
 
-            // And the branch tokens, the instance and the history are unchanged, and no deduplication row was kept
-            assertThat(Rows.of(database, instance)).isEqualTo(before);
-            assertThat(dedupRowsWithKey(database, "d3")).isZero();
+            // And the branch tokens, the instance and the history are unchanged, with the key recorded for the signal
+            assertThat(Rows.of(database, instance)).isEqualTo(before.withDedup(before.dedup() + 1));
+            assertThat(count(database, "SELECT count(*) AS total FROM workflow_commands WHERE dedup_key = $1", "d3"))
+                    .as("the recorded signal command")
+                    .isEqualTo(1);
 
-            // And the same call through A advances the branch
+            // And the same call through A is a duplicate, and A's executor applies the recorded command and advances
+            // the
+            // branch
             await(onDuplicatedContext(vertx, () -> branchSignal(a, instance, payload, "d3")));
             await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             assertThat(Rows.of(database, instance).branches()).isNotEqualTo(before.branches());
@@ -640,8 +644,8 @@ public class MixedCodeNodesIT {
     }
 
     @Test
-    @DisplayName("an instance of a failing row without a plan is refused, not failed")
-    void instanceOfFailingRowWithoutAPlanIsRefusedNotFailed(Vertx vertx) {
+    @DisplayName("an instance of a failing row without a plan records its signal and is not failed")
+    void instanceOfFailingRowWithoutAPlanRecordsItsSignalAndIsNotFailed(Vertx vertx) {
         String id = FailingScopeRowIT.PURCHASE;
         DefinitionKey key = new DefinitionKey(FailingScopeRowIT.ACME, id, 1);
 
@@ -687,12 +691,13 @@ public class MixedCodeNodesIT {
                     .signal(waitingForSignal, "inventory.reserved", new InventoryReservedDoc("r4"), "d4"));
             Throwable fired = fireOn(executor(second, job, clock), timer.timerId(), waitingForTimer);
 
-            // Then the signal fails typed, naming the row, and writes nothing
-            assertThat(refused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
-                assertThat(failure.definitionKey()).isEqualTo(key);
-            });
-            assertThat(Rows.of(database, waitingForSignal)).isEqualTo(before);
-            assertThat(dedupRowsWithKey(database, "d4")).isZero();
+            // Then the signal is recorded, since recording needs no plan, and nothing is applied: the instance row is
+            // as it was and its key is kept for the recorded command
+            assertThat(refused)
+                    .as("recording for an instance whose plan this node lacks")
+                    .isNull();
+            assertThat(Rows.of(database, waitingForSignal)).isEqualTo(before.withDedup(before.dedup() + 1));
+            assertThat(dedupRowsWithKey(database, "d4")).isEqualTo(1);
 
             // And the timer is queued again with a warning, its row still scheduled and pointing at the new job
             assertThat(fired).as("failure of the executor").isNull();
@@ -843,6 +848,11 @@ public class MixedCodeNodesIT {
 
     /** Everything a refused call must leave as it was, read straight from the tables. */
     private record Rows(String instance, long history, long dedup, String branches, String tasks, String timers) {
+
+        /** The same rows with another number of deduplication rows. */
+        Rows withDedup(long dedup) {
+            return new Rows(instance, history, dedup, branches, tasks, timers);
+        }
 
         static Rows of(DefinitionScenario database, WorkflowInstanceId id) {
             Row instance = one(database, """

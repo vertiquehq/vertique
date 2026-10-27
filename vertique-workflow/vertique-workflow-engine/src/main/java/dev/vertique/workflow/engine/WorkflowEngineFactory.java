@@ -171,7 +171,8 @@ public final class WorkflowEngineFactory {
                 new FailingDefinitions(),
                 executionProbe,
                 parts.commands(),
-                () -> executorHolder[0]);
+                () -> executorHolder[0],
+                parts.recordingConfig());
         executorHolder[0] = new WorkflowExecutor(
                 parts.vertx(),
                 parts.executorConfig(),

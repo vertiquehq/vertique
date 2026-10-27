@@ -44,6 +44,10 @@ import org.slf4j.LoggerFactory;
  *       the claim with its attempt restored, because the failure recurs on the next claim.</li>
  * </ul>
  *
+ * <p>A recorded {@code SIGNAL} settles itself inside its savepoint: the engine parks it, or rejects or stales it with a
+ * reason, and answers with the matching outcome, so only an applied signal is completed here. A signal's deterministic
+ * failure and its own step-limit overrun never reach the dispositions above.
+ *
  * <p>No executor connection ever waits on an execution lock.
  */
 final class SegmentRunner {
@@ -60,6 +64,8 @@ final class SegmentRunner {
     private enum Step {
         COMPLETED,
         REJECTED,
+        STALE,
+        PARKED,
         BUSY,
         RELEASE,
         ENDED_WITHOUT_SETTLING
@@ -105,6 +111,8 @@ final class SegmentRunner {
                     switch (step) {
                         case COMPLETED -> emitSettled(claim, "COMPLETE", claimStartNanos);
                         case REJECTED -> emitSettled(claim, "REJECTED", claimStartNanos);
+                        case STALE -> emitSettled(claim, "STALE", claimStartNanos);
+                        case PARKED -> emitSettled(claim, "PARKED", claimStartNanos);
                         default -> {
                             // released or abandoned: nothing was settled
                         }
@@ -155,6 +163,9 @@ final class SegmentRunner {
                                 settled(commands.complete(claim.commandId(), claim.token(), tx), Step.COMPLETED);
                             case STALE -> settled(commands.reject(claim.commandId(), claim.token(), tx), Step.REJECTED);
                             case PIN_MISMATCH -> Future.succeededFuture(Step.RELEASE);
+                            case PARKED -> Future.succeededFuture(Step.PARKED);
+                            case SETTLED_REJECTED -> Future.succeededFuture(Step.REJECTED);
+                            case SETTLED_STALE -> Future.succeededFuture(Step.STALE);
                         });
             });
         });

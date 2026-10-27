@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.executor.ParkedSignals;
 import dev.vertique.workflow.engine.executor.StepLimitExceededException;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -10,6 +11,7 @@ import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowSubjectVersionUnavailableException;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.CompensationNode;
 import dev.vertique.workflow.plan.CompleteNode;
 import dev.vertique.workflow.plan.DecisionNode;
@@ -126,6 +128,9 @@ final class WorkflowTransitionDriver {
      */
     private final Provider<TaskLifecycleService> taskPvd;
 
+    /** The application of parked signals at the end of a drive; connected by the signal handler, absent in legacy tests. */
+    private volatile ParkedSignals parkedSignals;
+
     /**
      * The step counters of the segments that run with a step cap, keyed by the segment's transaction handle by
      * identity. A drive on a handle with no counter is not capped.
@@ -207,7 +212,30 @@ final class WorkflowTransitionDriver {
      * @return a {@link Future} that completes when the engine reaches a stable state
      */
     Future<Void> driveTransitions(WorkflowInstance inst, RuntimeWorkflow rw, SqlClient tx) {
-        return driveTransitionsStep(inst, rw, tx);
+        return driveTransitionsStep(inst, rw, tx).compose(done -> afterInlineDrive(inst.id(), tx));
+    }
+
+    /**
+     * Applies the parked signals that the waits a drive has just reached accept. It runs at the end of a top-level drive,
+     * after everything the drive wrote, so a parked signal's application never sees a half-written instance; a transaction
+     * whose caller drains itself (an executor segment, or a drain that is running) is left alone.
+     *
+     * @param id the instance the drive moved
+     * @param tx the active transaction
+     * @return a future that completes when the parked signals are applied
+     */
+    Future<Void> afterInlineDrive(WorkflowInstanceId id, SqlClient tx) {
+        ParkedSignals parked = parkedSignals;
+        return parked == null ? Future.succeededFuture() : parked.afterDrive(id, tx);
+    }
+
+    /**
+     * Connects the parked-signal application that the drive calls at the end of a drive.
+     *
+     * @param parked the parked-signal application
+     */
+    void attachParkedSignals(ParkedSignals parked) {
+        this.parkedSignals = parked;
     }
 
     /**
@@ -234,6 +262,28 @@ final class WorkflowTransitionDriver {
             throw e;
         }
         return result.onComplete(ignored -> stepCounters.remove(tx));
+    }
+
+    /**
+     * The nodes the capped segment on this transaction handle has executed so far.
+     *
+     * @param tx the segment's transaction handle
+     * @return the count, {@code 0} when the segment is not capped
+     */
+    int stepsUsed(SqlClient tx) {
+        StepCounter counter = stepCounters.get(tx);
+        return counter == null ? 0 : counter.steps;
+    }
+
+    /**
+     * The most nodes the segment on this transaction handle may execute.
+     *
+     * @param tx the segment's transaction handle
+     * @return the cap, {@link Integer#MAX_VALUE} when the segment is not capped
+     */
+    int stepCap(SqlClient tx) {
+        StepCounter counter = stepCounters.get(tx);
+        return counter == null ? Integer.MAX_VALUE : counter.cap;
     }
 
     /**

@@ -151,7 +151,33 @@ class WorkflowEngineExplicitCarrierSignalTest {
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowDedupRepository<SqlClient> dedup,
             WorkflowRegistry registry,
-            DefaultContextHolder holder) {}
+            DefaultContextHolder holder,
+            EmptyCommandRepository commands) {}
+
+    /** Stubs what recording a signal reads and claims for the instance, with no earlier delivery of the key. */
+    private static void stubRecording(Harness h, WorkflowInstance inst, SqlClient tx) {
+        when(h.dedup().findSignal(eq(inst.id()), any(), eq(tx))).thenReturn(Future.succeededFuture(Optional.empty()));
+        when(h.dedup().claimOrResolveSignalScoped(any(), any(), eq(inst.id()), eq(tx)))
+                .thenReturn(Future.succeededFuture(true));
+    }
+
+    /**
+     * Records the signal with the explicit carrier, then runs the segment that applies it with the carrier exactly as it
+     * was recorded: a signal is applied by a segment, not by the call that records it.
+     */
+    private static Future<Void> recordThenApply(
+            Harness h, WorkflowInstance inst, DurableMetadata explicitCarrier, SqlClient tx) {
+        return h.txOps()
+                .signal(inst.id(), "approve", Map.of(), "dedup-1", null, null, explicitCarrier, tx)
+                .compose(recorded -> RecordedSignalSegments.run(
+                        h.txOps(),
+                        inst,
+                        "approve",
+                        Map.of(),
+                        "dedup-1",
+                        h.commands().recordedSignals().getFirst().explicitCarrierJson(),
+                        tx));
+    }
 
     /** Builds a {@link RuntimeWorkflow} with a single {@link WaitSignalNode} leading to completion. */
     private static RuntimeWorkflow buildRuntimeWorkflow() {
@@ -206,6 +232,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
     private static Harness buildHarnessWithNullPropagator() {
         DefaultContextHolder holder = new DefaultContextHolder();
 
+        EmptyCommandRepository commands = new EmptyCommandRepository();
         WorkflowTransactionRunner<SqlClient> txRunner = mock();
         WorkflowRegistry workflowRegistry = mock();
         WorkflowInstanceRepository<SqlClient> instances = mock();
@@ -232,10 +259,10 @@ class WorkflowEngineExplicitCarrierSignalTest {
                 .migrationRegistry(Optional.empty())
                 .propagator(null)
                 .typeNames(WorkflowEngineFactory.registryTypeNames(workflowRegistry))
-                .commands(new EmptyCommandRepository())
+                .commands(commands)
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(workflowRegistry))
                 .build());
-        return new Harness(handle, instances, dedup, workflowRegistry, holder);
+        return new Harness(handle, instances, dedup, workflowRegistry, holder, commands);
     }
 
     /**
@@ -254,6 +281,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
         DurableContextPropagator propagator =
                 new DurableContextPropagator(registry, holder, new ContextScopeBinder(holder));
 
+        EmptyCommandRepository commands = new EmptyCommandRepository();
         WorkflowTransactionRunner<SqlClient> txRunner = mock();
         WorkflowRegistry workflowRegistry = mock();
         WorkflowInstanceRepository<SqlClient> instances = mock();
@@ -285,10 +313,10 @@ class WorkflowEngineExplicitCarrierSignalTest {
                 .migrationRegistry(Optional.empty())
                 .propagator(propagator)
                 .typeNames(WorkflowEngineFactory.registryTypeNames(workflowRegistry))
-                .commands(new EmptyCommandRepository())
+                .commands(commands)
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(workflowRegistry))
                 .build());
-        return new Harness(handle, instances, dedup, workflowRegistry, holder);
+        return new Harness(handle, instances, dedup, workflowRegistry, holder, commands);
     }
 
     @Test
@@ -305,7 +333,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
         DurableMetadata instanceMetadata = DurableMetadata.of(REGION_NAMESPACE, new JsonObject().put("regionId", "R1"));
         WorkflowInstance inst = instanceWaitingOnSignal(instanceMetadata);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.dedup().claimOrResolveSignal(eq(inst.id()), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
+        stubRecording(h, inst, tx);
 
         DurableMetadata explicitCarrier =
                 DurableMetadata.of(TenantCtxCodec.NAMESPACE, new JsonObject().put("tenantId", "CARRIER"));
@@ -322,8 +350,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
             // Ambient tenant, present but must lose to the explicit carrier.
             h.holder().bind(TenantCtx.class, new TenantCtx("AMBIENT"));
 
-            h.txOps()
-                    .signal(inst.id(), "approve", Map.of(), "dedup-1", null, null, explicitCarrier, tx)
+            recordThenApply(h, inst, explicitCarrier, tx)
                     .onComplete(ar -> ctx.verify(() -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());
@@ -351,7 +378,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
 
         WorkflowInstance inst = instanceWaitingOnSignal(null);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.dedup().claimOrResolveSignal(eq(inst.id()), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
+        stubRecording(h, inst, tx);
 
         DurableMetadata explicitCarrier =
                 DurableMetadata.of(TenantCtxCodec.NAMESPACE, new JsonObject().put("tenantId", "CARRIER"));
@@ -364,8 +391,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
                 .when(h.instances())
                 .updateOptimistic(any(), anyLong(), any());
 
-        runOnDuplicated(vertx, v -> h.txOps()
-                .signal(inst.id(), "approve", Map.of(), "dedup-1", null, null, explicitCarrier, tx)
+        runOnDuplicated(vertx, v -> recordThenApply(h, inst, explicitCarrier, tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());
@@ -385,12 +411,12 @@ class WorkflowEngineExplicitCarrierSignalTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
-        // Loser: claimOrResolveSignal resolves false (a prior committed transaction already applied
-        // the signal) — the dedup race is resolved before the instance is ever loaded, so the
-        // carrier never reaches a drive/bind. No instance stub is registered: if the drive
-        // incorrectly loaded the instance before (or regardless of) the claim, the unstubbed
-        // findById would return Mockito's default null-Future, surfacing as an NPE.
-        when(h.dedup().claimOrResolveSignal(eq(id), any(), eq(tx))).thenReturn(Future.succeededFuture(false));
+        // Loser: the committed duplicate lookup finds the earlier recording (a prior committed transaction already
+        // recorded the signal) — the duplicate is resolved before the instance is ever loaded, so the carrier is never
+        // stored, let alone bound. No instance stub is registered: if the recording incorrectly loaded the instance
+        // after (or regardless of) the lookup, the unstubbed findById would return Mockito's default null-Future,
+        // surfacing as an NPE.
+        when(h.dedup().findSignal(eq(id), any(), eq(tx))).thenReturn(Future.succeededFuture(Optional.of(id.value())));
 
         DurableMetadata loserCarrier =
                 DurableMetadata.of(TenantCtxCodec.NAMESPACE, new JsonObject().put("tenantId", "LOSER"));
@@ -408,6 +434,9 @@ class WorkflowEngineExplicitCarrierSignalTest {
                             .isEmpty();
                     org.mockito.Mockito.verify(h.instances(), org.mockito.Mockito.never())
                             .findById(any(), any());
+                    assertThat(h.commands().recordedSignals())
+                            .as("the loser's carrier is never stored")
+                            .isEmpty();
                     ctx.completeNow();
                 })));
     }
@@ -431,7 +460,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
                 DurableMetadata.of(SECURE_NAMESPACE, new JsonObject().put("value", "FROM-INSTANCE"));
         WorkflowInstance inst = instanceWaitingOnSignal(instanceMetadata);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.dedup().claimOrResolveSignal(eq(inst.id()), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
+        stubRecording(h, inst, tx);
 
         // Sender-supplied explicit carrier tries to forge the authenticated-only namespace alongside
         // a normal one.
@@ -449,8 +478,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
                 .when(h.instances())
                 .updateOptimistic(any(), anyLong(), any());
 
-        runOnDuplicated(vertx, v -> h.txOps()
-                .signal(inst.id(), "approve", Map.of(), "dedup-1", null, null, explicitCarrier, tx)
+        runOnDuplicated(vertx, v -> recordThenApply(h, inst, explicitCarrier, tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());

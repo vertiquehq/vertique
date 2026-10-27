@@ -232,7 +232,8 @@ class DeprecatedVersionAdmissionTest {
         when(dedup.claimOrResolveStart(any(), eq(DEFINITION_ID), any(), any(), any(), any()))
                 .thenAnswer(invocation -> Future.succeededFuture(new StartDedupResult(
                         new WorkflowInstanceId(UUID.randomUUID()), true, "definitionVersion=unused")));
-        when(dedup.claimOrResolveSignal(any(), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
+        when(dedup.findSignal(any(), any(), eq(tx))).thenReturn(Future.succeededFuture(Optional.empty()));
+        when(dedup.claimOrResolveSignalScoped(any(), any(), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
         when(instances.insert(any(), any())).thenReturn(Future.succeededFuture());
         when(instances.updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
         when(instances.migratePinAndState(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
@@ -351,8 +352,11 @@ class DeprecatedVersionAdmissionTest {
                                 .as("the migration handler must not run for a deprecated target")
                                 .hasValue(0);
 
-                        // When the instance already pinned to the deprecated version receives its signal
-                        return failureOf(engine.signal(pinnedToDeprecated.id(), SIGNAL_NAME, Map.of(), "signal-1", tx));
+                        // When the instance already pinned to the deprecated version receives its signal, which is
+                        // recorded and then applied by the segment that runs it
+                        return failureOf(engine.signal(pinnedToDeprecated.id(), SIGNAL_NAME, Map.of(), "signal-1", tx)
+                                .compose(recorded ->
+                                        RecordedSignalSegments.run(engine, pinnedToDeprecated, SIGNAL_NAME, tx)));
                     })
                     .compose(signalFailure -> {
                         // Then the signal resumes it to completion

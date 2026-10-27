@@ -525,7 +525,8 @@ public class DocumentDefinitionEndToEndYamlIT {
                         id, "payment.captured", new PaymentCapturedDoc("auth-456"), "pay-" + UUID.randomUUID()))
                 .compose(v -> engine.signal(
                         id, "shipment.created", new ShipmentCreatedDoc("track-789"), "ship-" + UUID.randomUUID()))
-                .map(v -> id);
+                .compose(v -> probe.awaitIdle(id, java.time.Duration.ofSeconds(10)))
+                .map(idle -> id);
     }
 
     /**

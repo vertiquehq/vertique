@@ -4,15 +4,18 @@
 package dev.vertique.workflow.exception;
 
 /**
- * Thrown when a signal cannot be applied to a workflow instance because the instance is not in a
- * compatible waiting state.
+ * Thrown when a signal is refused.
  *
- * <p>This exception is thrown when:
+ * <p>A call that records a signal fails with this exception when:
  * <ul>
- *   <li>The instance is not in {@code WAITING} status</li>
- *   <li>The instance is waiting for a different signal name</li>
- *   <li>The instance is in a terminal status (COMPLETED, FAILED, etc.)</li>
+ *   <li>The instance has ended (completed, compensated, cancelled or expired)</li>
+ *   <li>The instance's pinned definition row declares signal names and does not declare this one for the
+ *       addressed wait</li>
  * </ul>
+ *
+ * <p>Applying a recorded signal raises it internally when the instance is not in a compatible waiting state or the
+ * pinned definition never waits for the name; the executor then settles the signal's command as rejected instead of
+ * failing a caller.
  */
 public class WorkflowSignalRejectedException extends WorkflowConflictException {
 

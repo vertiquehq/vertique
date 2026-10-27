@@ -7,6 +7,7 @@ import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.WorkflowEngineFactory;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.engine.WorkflowEngineParts;
@@ -32,6 +33,7 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.tasks.TaskStore;
@@ -567,6 +569,8 @@ public final class PgWorkflowEngineTestSupport {
         private final WorkflowRegistry registry;
         private Set<WorkflowSideEffectRecorder<SqlClient>> recorders = Set.of();
         private WorkflowExecutorConfig executorConfig = WorkflowExecutorConfig.defaults();
+        private WorkflowRecordingConfig recordingConfig;
+        private WorkflowDefinitionRegistryStore definitionStore;
         private DurableContextPropagator propagator;
         private Set<WorkflowExecutorObserver> executorObservers = Set.of();
         private CommandWakeups commandWakeups = CommandWakeups.none();
@@ -588,6 +592,18 @@ public final class PgWorkflowEngineTestSupport {
         /** The executor configuration: instances, concurrency, poll interval and lease. */
         public ExecutorEngine executorConfig(WorkflowExecutorConfig executorConfig) {
             this.executorConfig = executorConfig;
+            return this;
+        }
+
+        /** The recording bounds, when a proof overrides the engine defaults. */
+        public ExecutorEngine recordingConfig(WorkflowRecordingConfig recordingConfig) {
+            this.recordingConfig = recordingConfig;
+            return this;
+        }
+
+        /** The durable definition rows used by recording, in place of the in-memory default. */
+        public ExecutorEngine definitionStore(WorkflowDefinitionRegistryStore definitionStore) {
+            this.definitionStore = definitionStore;
             return this;
         }
 
@@ -629,7 +645,7 @@ public final class PgWorkflowEngineTestSupport {
          */
         public WorkflowEngineHandle build() {
             PgDbExceptionMapper ex = new PgDbExceptionMapper();
-            return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+            WorkflowEngineParts.Builder parts = WorkflowEngineParts.builder()
                     .txRunner(runnerDecorator.apply(runnerFor(pool)))
                     .commands(commandsDecorator.apply(new PgWorkflowCommandRepository(pool, ex)))
                     .registry(registry)
@@ -646,12 +662,18 @@ public final class PgWorkflowEngineTestSupport {
                     .propagator(propagator)
                     .inboundContextInitializers(Set.of())
                     .typeNames(typeNamesOf(registry))
-                    .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                    .definitionStore(
+                            definitionStore != null
+                                    ? definitionStore
+                                    : new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
                     .vertx(vertx)
                     .executorConfig(executorConfig)
                     .executorObservers(executorObservers)
-                    .commandWakeups(commandWakeups)
-                    .build());
+                    .commandWakeups(commandWakeups);
+            if (recordingConfig != null) {
+                parts.recordingConfig(recordingConfig);
+            }
+            return WorkflowEngineFactory.create(parts.build());
         }
     }
 }

@@ -13,6 +13,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
@@ -163,8 +164,14 @@ public class ReleasedDataUpgradeIT {
         Pool pool = openPool(vertx, withoutStoreDb);
         WorkflowInstanceId replayed;
         try {
-            WorkflowEngineHandle engine = engineOver(pool);
-            replayed = resume(engine, engine, engine.executionProbe(), pool, instanceA, instanceB, taskA);
+            // The released instances were not started through this engine, so its executor must run every command
+            WorkflowEngineHandle engine = runningEngineOver(vertx, pool);
+            await(engine.executor().start());
+            try {
+                replayed = resume(engine, engine, engine.executionProbe(), pool, instanceA, instanceB, taskA);
+            } finally {
+                await(engine.executor().stop());
+            }
         } finally {
             await(pool.close());
         }
@@ -349,6 +356,15 @@ public class ReleasedDataUpgradeIT {
                 new PgTimerStore(mapper),
                 new PgTaskStore(pool, mapper),
                 Clock.systemUTC());
+    }
+
+    /** An engine whose executor, which the test starts, runs every command of the database. */
+    private static WorkflowEngineHandle runningEngineOver(Vertx vertx, Pool pool) {
+        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
+        registry.register(new ReleasedApprovalDefinition());
+        return PgWorkflowEngineTestSupport.executorEngine(pool, vertx, registry)
+                .executorConfig(new WorkflowExecutorConfig(1, 8, 100, 60))
+                .build();
     }
 
     private static Pool openPool(Vertx vertx, PostgresContainer database) {

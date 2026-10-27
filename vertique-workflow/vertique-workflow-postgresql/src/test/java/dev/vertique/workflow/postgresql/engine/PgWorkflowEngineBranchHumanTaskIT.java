@@ -58,6 +58,7 @@ import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
@@ -423,8 +424,8 @@ public class PgWorkflowEngineBranchHumanTaskIT {
 
         // Apply branch-aware signal for branch B (parent is parked at WAITING/JOIN, so the
         // single-path 4-arg signal would reject; use the 7-arg branch-aware overload).
-        pool.withTransaction(tx ->
-                        engine.signal(workflowId, "my-signal", new Object(), "idem-signal-1", "fork", "branch-b", tx))
+        pool.withTransaction(
+                        tx -> engine.signal(workflowId, "my-signal", Map.of(), "idem-signal-1", "fork", "branch-b", tx))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();

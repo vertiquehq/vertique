@@ -19,7 +19,6 @@ import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
-import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowView;
@@ -394,13 +393,14 @@ public class PgWorkflowEngineTransactionalIT {
     }
 
     /**
-     * Verifies that concurrent signals on the same waiting instance produce optimistic-concurrency
-     * behavior: exactly one wins, the other fails with {@link WorkflowConflictException}.
+     * Verifies that concurrent signals on the same waiting instance are both recorded and then applied one at a time
+     * in queue order: the first completes the instance, and the second is rejected because the instance has ended.
      */
     @Test
-    @DisplayName("concurrent signals trigger optimistic concurrency — one wins, other gets WorkflowConflictException")
+    @DisplayName(
+            "concurrent signals are recorded in order — the first applies, the other is rejected as the instance ended")
     @SuppressWarnings("unchecked")
-    void concurrentSignalsOptimisticConcurrency(VertxTestContext ctx) {
+    void concurrentSignalsAreRecordedAndAppliedOneAtATime(VertxTestContext ctx) {
         PlaceOrder payload = new PlaceOrder("o3", 300);
         StartCommand startCmd = new StartCommand(
                 "engine-tx-signal",
@@ -430,38 +430,37 @@ public class PgWorkflowEngineTransactionalIT {
                                 view.instance().status(),
                                 "instance must be WAITING after start");
 
-                        // Send two concurrent signals with different dedup keys.
+                        // Send two concurrent signals with different dedup keys: both are recorded.
                         Future<Void> signalA =
                                 signalEngine.signal(id, "payment.captured", new PaymentCaptured("charge-1"), dedupA);
                         Future<Void> signalB =
                                 signalEngine.signal(id, "payment.captured", new PaymentCaptured("charge-2"), dedupB);
 
-                        return Future.join(List.of(signalA, signalB)).map(cf -> {
-                            boolean aSucceeded = signalA.succeeded();
-                            boolean bSucceeded = signalB.succeeded();
-
-                            // Exactly one must win, the other must fail.
-                            assertTrue(
-                                    aSucceeded ^ bSucceeded,
-                                    "exactly one signal must win; signalA=" + aSucceeded + " signalB=" + bSucceeded);
-
-                            // The loser must fail with WorkflowConflictException (or signal rejected).
-                            Future<Void> loser = aSucceeded ? signalB : signalA;
-                            assertTrue(loser.failed(), "loser signal must fail");
-                            // The loser fails because the instance was already advanced past WAITING.
-                            // This may be a WorkflowConflictException or WorkflowSignalRejectedException.
-                            assertNotNull(loser.cause(), "loser cause must not be null");
-                            return null;
-                        });
+                        return Future.join(List.of(signalA, signalB))
+                                .compose(joined -> signalEngine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                                .compose(idle -> pool.preparedQuery("SELECT state FROM workflow_commands"
+                                                + " WHERE workflow_id = $1 AND kind = 'SIGNAL' ORDER BY seq")
+                                        .execute(io.vertx.sqlclient.Tuple.of(id.value())))
+                                .compose(rows -> {
+                                    List<String> states = new java.util.ArrayList<>();
+                                    rows.forEach(row -> states.add(row.getString("state")));
+                                    assertEquals(
+                                            List.of("COMPLETE", "REJECTED"),
+                                            states,
+                                            "the first recorded signal applies; the second finds the instance ended");
+                                    return signalEngine.query(id);
+                                })
+                                .map(finalView -> {
+                                    assertEquals(
+                                            WorkflowStatus.COMPLETED,
+                                            finalView.instance().status(),
+                                            "the first signal must complete the instance");
+                                    return finalView;
+                                });
                     });
                 })
                 .onComplete(ar -> ctx.verify(() -> {
-                    // If we get here without a verify() failure, the test passed.
-                    // The join itself may have a combined failure; check the individual futures.
-                    if (ar.failed() && !(ar.cause() instanceof AssertionError)) {
-                        // The join may report a failure from the losing signal — that's expected.
-                        // The assertion inside the compose already verified the invariant.
-                    }
+                    assertTrue(ar.succeeded(), "both signals must be recorded and run, got: " + ar.cause());
                     ctx.completeNow();
                 }));
     }

@@ -13,13 +13,16 @@ import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DispositionResult;
 import dev.vertique.workflow.engine.spi.InstanceFailureListener;
+import dev.vertique.workflow.engine.spi.ParkedSignal;
 import dev.vertique.workflow.engine.spi.QueueCounts;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.history.PendingCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Row;
@@ -29,8 +32,11 @@ import io.vertx.sqlclient.Tuple;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.IntToLongFunction;
 
@@ -83,6 +89,19 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final String completeCommand;
     private final String rejectCommand;
     private final String releaseCommand;
+    private final String settleClaimed;
+    private final String settleParkedRow;
+    private final String parkCommand;
+    private final String requeueParkedRow;
+    private final String raiseOpenSignals;
+    private final String lowerOpenSignals;
+    private final String insertSignal;
+    private final String declaredNames;
+    private final String parkedAt;
+    private final String parkedAll;
+    private final String readParkedRow;
+    private final String blockedByDeadline;
+    private final String parkedBefore;
 
     /**
      * Creates a repository whose tables are not schema-qualified, so they resolve through the connection's default
@@ -142,7 +161,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " i ON i.id = c.workflow_id WHERE " + eligibility.claimable("c")
                 + " ORDER BY c.available_at, c.id LIMIT $1";
         this.claimLookup =
-                "SELECT c.state, c.attempts, c.kind, i.status AS instance_status FROM " + commands + " c JOIN "
+                "SELECT c.state, c.attempts, c.kind, i.status AS instance_status, c.target_json->>'name' AS signal_name,"
+                        + " c.target_json->>'branchId' IS NOT NULL AS branch_signal FROM " + commands + " c JOIN "
                         + instances + " i ON i.id = c.workflow_id WHERE c.id = $1 AND " + eligibility.claimable("c")
                         + " FOR UPDATE OF c";
         this.claimTake = "UPDATE " + commands + " SET state = 'CLAIMED', attempts = attempts + 1,"
@@ -156,12 +176,20 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         this.deferRow = "UPDATE " + commands + " SET state = 'DEFERRED', deferral_count = $2,"
                 + " available_at = clock_timestamp() + ($3::float8 * interval '1 millisecond'), last_error = $4"
                 + " WHERE id = $1";
-        this.settleEnded = "UPDATE " + commands + " SET state = 'REJECTED', claim_token = NULL, lease_until = NULL,"
-                + " settled_at = now(), last_error = $2 WHERE id = $1";
-        this.deadLetter = "UPDATE " + commands + " SET state = 'DEAD', claim_token = NULL, lease_until = NULL,"
-                + " last_error = $2 WHERE id = $1";
-        this.failCommandRow = "UPDATE " + commands + " SET state = 'FAILED', claim_token = NULL, lease_until = NULL,"
-                + " settled_at = now(), last_error = $2 WHERE id = $1";
+        // Every write that takes a SIGNAL out of its open states frees one slot of the instance's open-signal count in
+        // the same statement; the CTE is executed whether or not the outer query reads it.
+        this.settleEnded = withLowering(
+                queues,
+                "UPDATE " + commands + " SET state = $3, claim_token = NULL, lease_until = NULL,"
+                        + " settled_at = now(), last_error = $2 WHERE id = $1");
+        this.deadLetter = withLowering(
+                queues,
+                "UPDATE " + commands + " SET state = 'DEAD', claim_token = NULL, lease_until = NULL,"
+                        + " last_error = $2 WHERE id = $1");
+        this.failCommandRow = withLowering(
+                queues,
+                "UPDATE " + commands + " SET state = 'FAILED', claim_token = NULL, lease_until = NULL,"
+                        + " settled_at = now(), last_error = $2 WHERE id = $1");
         this.failInstance = "UPDATE " + instances + " SET status = 'FAILED', error_type = $2, error_message = $3,"
                 + " version = version + 1, wait_type = NULL, wait_key = NULL, wait_aux_id = NULL,"
                 + " updated_at = now(), completed_at = now() WHERE id = $1 AND status NOT IN " + ENDED_OR_FAILED
@@ -179,15 +207,60 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         this.lockForFailure =
                 "SELECT kind FROM " + commands + " WHERE id = $1 AND state = 'CLAIMED' AND claim_token = $2 FOR UPDATE";
         this.fenceCommand =
-                "SELECT c.id, c.payload_json::text AS payload_json, c.target_json::text AS target_json, c.dedup_key FROM "
+                "SELECT c.id, c.payload_json::text AS payload_json, c.target_json::text AS target_json, c.dedup_key,"
+                        + " c.explicit_carrier_json::text AS explicit_carrier_json FROM "
                         + commands
                         + " c WHERE c.id = $1 AND c.state = 'CLAIMED' AND c.claim_token = $2 AND "
                         + eligibility.atHead("c")
                         + " FOR UPDATE OF c";
-        String settle = " SET state = $3, claim_token = NULL, lease_until = NULL, settled_at = now() WHERE id = $1"
-                + " AND state = 'CLAIMED' AND claim_token = $2";
-        this.completeCommand = "UPDATE " + commands + settle;
-        this.rejectCommand = completeCommand;
+        this.settleClaimed = withLowering(
+                queues,
+                "UPDATE " + commands + " SET state = $3, claim_token = NULL, lease_until = NULL, settled_at = now(),"
+                        + " last_error = COALESCE($4::text, last_error) WHERE id = $1 AND state = 'CLAIMED'"
+                        + " AND claim_token = $2");
+        this.completeCommand = settleClaimed;
+        this.rejectCommand = settleClaimed;
+        this.settleParkedRow = withLowering(
+                queues,
+                "UPDATE " + commands
+                        + " SET state = $2, settled_at = now(), last_error = COALESCE($3::text, last_error)"
+                        + " WHERE id = $1 AND state = 'PARKED'");
+        this.parkCommand = "UPDATE " + commands + " SET state = 'PARKED', attempts = attempts - 1, claim_token = NULL,"
+                + " lease_until = NULL WHERE id = $1 AND state = 'CLAIMED' AND claim_token = $2";
+        this.requeueParkedRow = "UPDATE " + commands + " SET state = 'PENDING',"
+                + " available_at = LEAST(available_at, clock_timestamp()) WHERE id = $1 AND state = 'PARKED'";
+        this.raiseOpenSignals = "UPDATE " + queues
+                + " SET open_signals = open_signals + 1 WHERE workflow_id = $1 AND open_signals < $2";
+        this.lowerOpenSignals =
+                "UPDATE " + queues + " SET open_signals = open_signals - 1 WHERE workflow_id = $1 AND open_signals > 0";
+        this.insertSignal = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
+                + " (workflow_id, seq, kind, state, recorded_at, available_at, payload_json, dedup_key, target_json,"
+                + " explicit_carrier_json) SELECT $1, $2, 'SIGNAL', 'PENDING', recorded.at, recorded.at, $3::jsonb,"
+                + " $4, $5::jsonb, $6::jsonb FROM recorded RETURNING id";
+        this.declaredNames = "SELECT signal_names_json::text AS names FROM "
+                + PgTableNames.qualify(schemas, "workflow", "workflow_definitions")
+                + " WHERE scope_key = $1 AND definition_id = $2 AND definition_version = $3";
+        String parked = "SELECT c.id, c.seq, c.target_json->>'name' AS signal_name, c.target_json->>'forkStepId' AS"
+                + " fork_step_id, c.target_json->>'branchId' AS branch_id, c.recorded_at FROM " + commands
+                + " c WHERE c.workflow_id = $1 AND c.kind = 'SIGNAL' AND c.state = 'PARKED'";
+        this.parkedAt =
+                parked + " AND c.target_json->>'name' = $2 AND c.target_json->>'forkStepId' IS NOT DISTINCT FROM $3"
+                        + " AND c.target_json->>'branchId' IS NOT DISTINCT FROM $4 ORDER BY c.seq";
+        this.parkedAll = parked + " ORDER BY c.seq";
+        this.readParkedRow =
+                "SELECT c.payload_json::text AS payload_json, c.target_json::text AS target_json, c.dedup_key,"
+                        + " c.explicit_carrier_json::text AS explicit_carrier_json FROM " + commands
+                        + " c WHERE c.workflow_id = $1 AND c.id = $2 AND c.state = 'PARKED'";
+        this.parkedBefore = "SELECT EXISTS (SELECT 1 FROM " + history
+                + " WHERE workflow_id = $1 AND entry_type = 'SIGNAL_PARKED' AND (payload_json->>'commandId')::bigint = $2)"
+                + " AS parked";
+        this.blockedByDeadline =
+                "SELECT s.id FROM " + commands + " s WHERE s.workflow_id = $1 AND s.id = ANY($2::bigint[])"
+                        + " AND EXISTS (SELECT 1 FROM " + commands
+                        + " t WHERE t.workflow_id = s.workflow_id AND t.kind = 'TIMER'"
+                        + " AND t.timer_kind = 'TIMEOUT' AND t.target_json->>'stepId' = $3"
+                        + " AND t.target_json->>'branchId' IS NOT DISTINCT FROM $4 AND t.fire_at <= s.recorded_at"
+                        + " AND t.state IN ('PENDING','DEFERRED','CLAIMED','DEAD'))";
         this.releaseCommand = "UPDATE " + commands + " SET state = 'PENDING', attempts = attempts - 1,"
                 + " claim_token = NULL, lease_until = NULL WHERE id = $1 AND state = 'CLAIMED' AND claim_token = $2"
                 + " AND lease_until > now()";
@@ -362,10 +435,16 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         String instanceStatus = looked.getString("instance_status");
         long id = head.commandId();
         if (isEnded(instanceStatus)) {
-            String reason = CommandErrors.instanceEnded(kind, instanceStatus);
+            // The outcome table settles a signal of an ended instance as rejected, and a branch-addressed one as stale.
+            boolean stale = "SIGNAL".equals(kind) && Boolean.TRUE.equals(looked.getBoolean("branch_signal"));
+            String state = stale ? "STALE" : "REJECTED";
+            String reason = "SIGNAL".equals(kind)
+                    ? CommandErrors.signalInstanceEnded(looked.getString("signal_name"), instanceStatus, stale)
+                    : CommandErrors.instanceEnded(kind, instanceStatus);
             return conn.preparedQuery(settleEnded)
-                    .execute(Tuple.of(id, reason))
-                    .compose(ignored -> appendCommandHistory(conn, head, "COMMAND_REJECTED", reason, "REJECTED"))
+                    .execute(Tuple.of(id, reason, state))
+                    .compose(ignored -> appendCommandHistory(
+                            conn, head, stale ? "COMMAND_STALE" : "COMMAND_REJECTED", reason, state))
                     .map(ignored -> new ClaimedCommand(
                             id,
                             head.workflowId(),
@@ -474,27 +553,263 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             claim.kind(),
                             row.getString("payload_json"),
                             row.getString("target_json"),
-                            row.getString("dedup_key")));
+                            row.getString("dedup_key"),
+                            row.getString("explicit_carrier_json")));
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands fence")));
     }
 
     @Override
     public Future<Integer> complete(long commandId, UUID token, SqlClient tx) {
-        return settle(completeCommand, "COMPLETE", commandId, token, tx, "complete");
+        return settle(completeCommand, "COMPLETE", commandId, token, null, tx, "complete");
     }
 
     @Override
     public Future<Integer> reject(long commandId, UUID token, SqlClient tx) {
-        return settle(rejectCommand, "REJECTED", commandId, token, tx, "reject");
+        return settle(rejectCommand, "REJECTED", commandId, token, null, tx, "reject");
+    }
+
+    @Override
+    public Future<Integer> reject(long commandId, UUID token, String lastError, SqlClient tx) {
+        return settle(rejectCommand, "REJECTED", commandId, token, lastError, tx, "reject");
+    }
+
+    @Override
+    public Future<Integer> stale(long commandId, UUID token, String lastError, SqlClient tx) {
+        return settle(settleClaimed, "STALE", commandId, token, lastError, tx, "stale");
     }
 
     private Future<Integer> settle(
-            String sql, String state, long commandId, UUID token, SqlClient tx, String operation) {
+            String sql,
+            String state,
+            long commandId,
+            UUID token,
+            @Nullable String lastError,
+            SqlClient tx,
+            String operation) {
+        Tuple parameters = Tuple.tuple();
+        parameters.addValue(commandId);
+        parameters.addValue(token);
+        parameters.addValue(state);
+        parameters.addValue(lastError);
         return tx.preparedQuery(sql)
-                .execute(Tuple.of(commandId, token, state))
-                .map(RowSet::rowCount)
+                .execute(parameters)
+                .map(rows -> rows.iterator().next().getInteger("n"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands " + operation)));
+    }
+
+    @Override
+    public Future<Integer> park(long commandId, UUID token, SqlClient tx) {
+        return tx.preparedQuery(parkCommand)
+                .execute(Tuple.of(commandId, token))
+                .map(RowSet::rowCount)
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands park")));
+    }
+
+    @Override
+    public Future<Optional<List<String>>> declaredSignalNames(
+            DefinitionKey pin, @Nullable String forkStepId, @Nullable String branchId, SqlClient tx) {
+        return tx.preparedQuery(declaredNames)
+                .execute(Tuple.of(pin.scopeKey(), pin.definitionId(), pin.definitionVersion()))
+                .map(rows -> {
+                    if (rows.size() == 0) {
+                        return Optional.<List<String>>empty();
+                    }
+                    String stored = rows.iterator().next().getString("names");
+                    if (stored == null) {
+                        return Optional.<List<String>>empty();
+                    }
+                    JsonObject names = new JsonObject(stored);
+                    JsonArray declared;
+                    if (forkStepId == null || branchId == null) {
+                        declared = names.getJsonArray("instance");
+                    } else {
+                        JsonObject branches = names.getJsonObject("branches");
+                        declared = branches == null ? null : branches.getJsonArray(forkStepId + "/" + branchId);
+                    }
+                    List<String> result = new ArrayList<>();
+                    if (declared != null) {
+                        declared.forEach(name -> result.add(String.valueOf(name)));
+                    }
+                    return Optional.of(List.copyOf(result));
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_definitions signal names")));
+    }
+
+    @Override
+    public Future<Boolean> raiseOpenSignals(WorkflowInstanceId instance, int limit, SqlClient tx) {
+        return tx.preparedQuery(insertQueue)
+                .execute(Tuple.of(instance.value()))
+                .compose(created -> tx.preparedQuery(raiseOpenSignals).execute(Tuple.of(instance.value(), limit)))
+                .map(rows -> rows.rowCount() > 0)
+                .recover(
+                        t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_command_queues open signals")));
+    }
+
+    @Override
+    public Future<Void> lowerOpenSignals(WorkflowInstanceId instance, SqlClient tx) {
+        return tx.preparedQuery(lowerOpenSignals)
+                .execute(Tuple.of(instance.value()))
+                .<Void>mapEmpty()
+                .recover(
+                        t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_command_queues open signals")));
+    }
+
+    @Override
+    public Future<Long> recordSignal(
+            WorkflowInstanceId instance,
+            String signalName,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            String dedupKey,
+            @Nullable String payloadJson,
+            @Nullable String explicitCarrierJson,
+            SqlClient tx) {
+        JsonObject target = new JsonObject().put("name", signalName);
+        if (forkStepId != null) {
+            target.put("forkStepId", forkStepId);
+        }
+        if (branchId != null) {
+            target.put("branchId", branchId);
+        }
+        return nextQueueSequence(instance, tx)
+                .compose(seq -> tx.preparedQuery(insertSignal)
+                        .execute(Tuple.of(
+                                instance.value(),
+                                seq,
+                                jsonValue(payloadJson),
+                                dedupKey,
+                                target,
+                                jsonValue(explicitCarrierJson))))
+                .map(rows -> rows.iterator().next().getLong("id"))
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordSignal")));
+    }
+
+    @Override
+    public Future<List<ParkedSignal>> parkedSignalsAt(
+            WorkflowInstanceId instance,
+            String signalName,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            SqlClient tx) {
+        Tuple parameters = Tuple.tuple();
+        parameters.addValue(instance.value());
+        parameters.addValue(signalName);
+        parameters.addValue(forkStepId);
+        parameters.addValue(branchId);
+        return tx.preparedQuery(parkedAt)
+                .execute(parameters)
+                .map(PgWorkflowCommandRepository::parkedSignals)
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands parkedSignalsAt")));
+    }
+
+    @Override
+    public Future<List<ParkedSignal>> parkedSignals(WorkflowInstanceId instance, SqlClient tx) {
+        return tx.preparedQuery(parkedAll)
+                .execute(Tuple.of(instance.value()))
+                .map(PgWorkflowCommandRepository::parkedSignals)
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands parkedSignals")));
+    }
+
+    private static List<ParkedSignal> parkedSignals(RowSet<Row> rows) {
+        List<ParkedSignal> result = new ArrayList<>(rows.size());
+        for (Row row : rows) {
+            result.add(new ParkedSignal(
+                    row.getLong("id"),
+                    row.getLong("seq"),
+                    row.getString("signal_name"),
+                    row.getString("fork_step_id"),
+                    row.getString("branch_id"),
+                    row.getOffsetDateTime("recorded_at").toInstant()));
+        }
+        return result;
+    }
+
+    @Override
+    public Future<Optional<SegmentCommand>> readParked(WorkflowInstanceId instance, long commandId, SqlClient tx) {
+        return tx.preparedQuery(readParkedRow)
+                .execute(Tuple.of(instance.value(), commandId))
+                .map(rows -> {
+                    if (rows.size() == 0) {
+                        return Optional.<SegmentCommand>empty();
+                    }
+                    Row row = rows.iterator().next();
+                    return Optional.of(new SegmentCommand(
+                            commandId,
+                            instance,
+                            "SIGNAL",
+                            row.getString("payload_json"),
+                            row.getString("target_json"),
+                            row.getString("dedup_key"),
+                            row.getString("explicit_carrier_json")));
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands readParked")));
+    }
+
+    @Override
+    public Future<Integer> settleParked(long commandId, String state, @Nullable String lastError, SqlClient tx) {
+        Tuple parameters = Tuple.tuple();
+        parameters.addValue(commandId);
+        parameters.addValue(state);
+        parameters.addValue(lastError);
+        return tx.preparedQuery(settleParkedRow)
+                .execute(parameters)
+                .map(rows -> rows.iterator().next().getInteger("n"))
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands settleParked")));
+    }
+
+    @Override
+    public Future<Boolean> wasParked(WorkflowInstanceId instance, long commandId, SqlClient tx) {
+        return tx.preparedQuery(parkedBefore)
+                .execute(Tuple.of(instance.value(), commandId))
+                .map(rows -> rows.iterator().next().getBoolean("parked"))
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history wasParked")));
+    }
+
+    @Override
+    public Future<Integer> requeueParked(long commandId, SqlClient tx) {
+        return tx.preparedQuery(requeueParkedRow)
+                .execute(Tuple.of(commandId))
+                .map(RowSet::rowCount)
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands requeueParked")));
+    }
+
+    @Override
+    public Future<Set<Long>> deadlineBlocked(
+            WorkflowInstanceId instance,
+            String waitStepId,
+            @Nullable String branchId,
+            Collection<Long> signals,
+            SqlClient tx) {
+        if (signals.isEmpty()) {
+            return Future.succeededFuture(Set.of());
+        }
+        Tuple parameters = Tuple.tuple();
+        parameters.addValue(instance.value());
+        parameters.addValue(signals.toArray(new Long[0]));
+        parameters.addValue(waitStepId);
+        parameters.addValue(branchId);
+        return tx.preparedQuery(blockedByDeadline)
+                .execute(parameters)
+                .map(rows -> {
+                    Set<Long> blocked = new HashSet<>();
+                    for (Row row : rows) {
+                        blocked.add(row.getLong("id"));
+                    }
+                    return Set.copyOf(blocked);
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands deadlineBlocked")));
+    }
+
+    /**
+     * Wraps an update of one command row so that, when the row is a {@code SIGNAL}, the same statement frees one slot
+     * of its instance's open-signal count. The wrapped statement answers the number of command rows it updated as
+     * {@code n}.
+     */
+    private static String withLowering(String queues, String update) {
+        return "WITH settled AS (" + update + " RETURNING workflow_id, kind), lowered AS (UPDATE " + queues
+                + " SET open_signals = open_signals - 1 WHERE open_signals > 0 AND workflow_id IN (SELECT workflow_id"
+                + " FROM settled WHERE kind = 'SIGNAL') RETURNING workflow_id) SELECT count(*)::int AS n FROM settled";
     }
 
     @Override

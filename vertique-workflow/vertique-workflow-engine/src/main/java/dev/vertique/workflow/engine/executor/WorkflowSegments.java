@@ -29,7 +29,22 @@ public interface WorkflowSegments {
         /** The command no longer applies to its instance; the executor rejects it. */
         STALE,
         /** This node cannot run the pinned plan now (another plan is pinned, or it no longer resolves); the claim is released. */
-        PIN_MISMATCH
+        PIN_MISMATCH,
+        /**
+         * The command is not awaited by its instance. The engine has parked it in the segment's transaction, restoring
+         * the attempt its claim spent; the executor writes no settlement.
+         */
+        PARKED,
+        /**
+         * The engine rejected the command in the segment's transaction, with its reason and history; the executor writes
+         * no settlement.
+         */
+        SETTLED_REJECTED,
+        /**
+         * The engine settled the command as stale in the segment's transaction, with its reason and history; the
+         * executor writes no settlement.
+         */
+        SETTLED_STALE
     }
 
     /**

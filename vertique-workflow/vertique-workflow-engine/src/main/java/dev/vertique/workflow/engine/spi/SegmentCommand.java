@@ -18,6 +18,7 @@ import jakarta.annotation.Nullable;
  * @param payloadJson the command's payload as recorded, or {@code null}
  * @param targetJson  the command's target as recorded, or {@code null}
  * @param dedupKey    the caller's idempotency key as recorded, or {@code null}
+ * @param explicitCarrierJson the explicit durable-context carrier a signal was recorded with, or {@code null}
  */
 public record SegmentCommand(
         long commandId,
@@ -25,4 +26,26 @@ public record SegmentCommand(
         String kind,
         @Nullable String payloadJson,
         @Nullable String targetJson,
-        @Nullable String dedupKey) {}
+        @Nullable String dedupKey,
+        @Nullable String explicitCarrierJson) {
+
+    /**
+     * Creates a command that carries no explicit carrier.
+     *
+     * @param commandId   the command's row id
+     * @param workflowId  the instance the command belongs to
+     * @param kind        the command kind
+     * @param payloadJson the command's payload as recorded, or {@code null}
+     * @param targetJson  the command's target as recorded, or {@code null}
+     * @param dedupKey    the caller's idempotency key as recorded, or {@code null}
+     */
+    public SegmentCommand(
+            long commandId,
+            WorkflowInstanceId workflowId,
+            String kind,
+            @Nullable String payloadJson,
+            @Nullable String targetJson,
+            @Nullable String dedupKey) {
+        this(commandId, workflowId, kind, payloadJson, targetJson, dedupKey, null);
+    }
+}

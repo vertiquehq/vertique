@@ -139,6 +139,9 @@ public class PgWorkflowBranchRecoveryServiceIT {
     /** Engine handle wired for the AC-2 definition (real outbox + real correlation/tenant context). */
     static WorkflowOperations ac2Engine;
 
+    /** The transaction-aware operations of the same engine, for a signal that carries an explicit carrier. */
+    static dev.vertique.workflow.ops.TransactionalWorkflowOperations<SqlClient> ac2TxEngine;
+
     static WorkflowExecutionProbe ac2Probe;
 
     /** Captures every SERVICE {@link WorkflowSideEffectIntent} routed during an AC-2 test's sweep. */
@@ -508,6 +511,7 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 .toCompletableFuture()
                 .join();
         ac2Engine = ac2Component.workflowOperations();
+        ac2TxEngine = ac2Component.transactionalWorkflowOperations();
         ac2Probe = ac2Component.workflowExecutionProbe();
         DefaultVersionSeed.recordAndActivate(
                 ac2Component.pgWorkflowDefinitionRegistryStore(),
@@ -841,6 +845,8 @@ public class PgWorkflowBranchRecoveryServiceIT {
     interface Ac2TestComponent {
 
         java.util.Set<dev.vertique.deploy.VerticleDeployment> verticleDeployments();
+
+        dev.vertique.workflow.ops.TransactionalWorkflowOperations<SqlClient> transactionalWorkflowOperations();
 
         WorkflowOperations workflowOperations();
 
@@ -1557,11 +1563,19 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 .compose(id -> pool.preparedQuery("UPDATE workflow_instances SET metadata = $1 WHERE id = $2")
                         .execute(Tuple.of(tenantOnlyMetadataCarrier("T-LIVE"), id.value()))
                         .map(id))
-                // Deliver the fork-triggering signal with ambient correlation bound (no tenant) —
-                // the binder fills tenant T-LIVE from the instance's persisted metadata before the
-                // drive (including the fork dispatch reached later in the same drive) proceeds.
-                .compose(id -> withAc2AmbientCorrelation(
-                                "LIVE-CORR", () -> ac2Engine.signal(id, "signal-start", "go", "ac2-live-fill-dedup"))
+                // Record the fork-triggering signal with correlation LIVE-CORR as its explicit carrier (no tenant) —
+                // a signal is applied by an executor, which has no ambient context of the caller; the binder
+                // fills tenant T-LIVE from the instance's persisted metadata before the drive (including the
+                // fork dispatch reached later in the same drive) proceeds.
+                .compose(id -> pool.withTransaction(tx -> ac2TxEngine.signal(
+                                id,
+                                "signal-start",
+                                "go",
+                                "ac2-live-fill-dedup",
+                                null,
+                                null,
+                                DurableMetadata.fromCarrier(correlationOnlyMetadataCarrier("LIVE-CORR")),
+                                tx))
                         .compose(v -> ac2Probe.awaitIdle(id, IDLE_TIMEOUT))
                         .map(r -> id))
                 .compose(id -> readAc2OutboxRowsForWorkflow(id.value()))

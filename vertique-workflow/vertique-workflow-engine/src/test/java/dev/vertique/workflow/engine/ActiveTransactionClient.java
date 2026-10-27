@@ -3,10 +3,15 @@
 
 package dev.vertique.workflow.engine;
 
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 
+import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.sqlclient.Query;
+import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.RowSet;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Transaction;
 
@@ -21,8 +26,10 @@ final class ActiveTransactionClient {
     /**
      * Creates a connection mock that reports a transaction whose completion has not happened yet.
      *
-     * @return a fresh connection mock; it answers no SQL
+     * @return a fresh connection mock; it answers plain statements, such as the savepoint statements of a segment, with
+     *     an empty success and no other SQL
      */
+    @SuppressWarnings("unchecked")
     static SqlConnection create() {
         Transaction transaction = mock(Transaction.class);
         lenient()
@@ -30,6 +37,9 @@ final class ActiveTransactionClient {
                 .thenReturn(Promise.<Void>promise().future());
         SqlConnection connection = mock(SqlConnection.class);
         lenient().when(connection.transaction()).thenReturn(transaction);
+        Query<RowSet<Row>> statement = mock(Query.class);
+        lenient().when(statement.execute()).thenReturn(Future.succeededFuture());
+        lenient().when(connection.query(anyString())).thenReturn(statement);
         return connection;
     }
 }

@@ -379,10 +379,8 @@ class WorkflowEngineBinderWiringTest {
 
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.dedup().claimOrResolveSignal(eq(inst.id()), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
 
-        runOnDuplicated(vertx, v -> h.txOps()
-                .signal(inst.id(), "approve", Map.of(), "dedup-1", tx)
+        runOnDuplicated(vertx, v -> RecordedSignalSegments.run(h.txOps(), inst, "approve", tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());
@@ -396,7 +394,7 @@ class WorkflowEngineBinderWiringTest {
     }
 
     @Test
-    @DisplayName("signal(): duplicate-key loser performs no instance read (claim runs before the load)")
+    @DisplayName("signal(): duplicate-key loser performs no instance read (the duplicate lookup runs before the load)")
     void signal_duplicateDedupKeyRace_loserPerformsNoInstanceRead(Vertx vertx, VertxTestContext ctx) {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
@@ -404,11 +402,11 @@ class WorkflowEngineBinderWiringTest {
         SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
-        // Loser: claimOrResolveSignal resolves false (a prior committed transaction already applied
-        // the signal). No instance stub is registered — if the drive incorrectly loaded the instance
-        // before (or regardless of) the claim, the unstubbed findById would return Mockito's default
-        // null-Future, surfacing as an NPE and failing the test.
-        when(h.dedup().claimOrResolveSignal(eq(id), any(), eq(tx))).thenReturn(Future.succeededFuture(false));
+        // Loser: the committed duplicate lookup finds the earlier recording (a prior committed transaction already
+        // recorded the signal). No instance stub is registered — if the recording incorrectly loaded the instance
+        // after (or regardless of) the lookup, the unstubbed findById would return Mockito's default null-Future,
+        // surfacing as an NPE and failing the test.
+        when(h.dedup().findSignal(eq(id), any(), eq(tx))).thenReturn(Future.succeededFuture(Optional.of(id.value())));
 
         runOnDuplicated(vertx, v -> h.txOps()
                 .signal(id, "approve", Map.of(), "dedup-1", tx)
@@ -446,7 +444,6 @@ class WorkflowEngineBinderWiringTest {
         // correlation namespace.
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.dedup().claimOrResolveSignal(eq(inst.id()), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
 
         var capturedCorrelation = new java.util.concurrent.atomic.AtomicReference<
                 Optional<dev.vertique.core.correlation.CorrelationContext>>();
@@ -457,8 +454,7 @@ class WorkflowEngineBinderWiringTest {
                 .when(h.instances())
                 .updateOptimistic(any(), anyLong(), any());
 
-        runOnDuplicated(vertx, v -> h.txOps()
-                .signal(inst.id(), "approve", Map.of(), "dedup-1", tx)
+        runOnDuplicated(vertx, v -> RecordedSignalSegments.run(h.txOps(), inst, "approve", tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());
@@ -491,7 +487,6 @@ class WorkflowEngineBinderWiringTest {
 
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.dedup().claimOrResolveSignal(eq(inst.id()), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
 
         var capturedCorrelation = new java.util.concurrent.atomic.AtomicReference<
                 Optional<dev.vertique.core.correlation.CorrelationContext>>();
@@ -502,8 +497,7 @@ class WorkflowEngineBinderWiringTest {
                 .when(h.instances())
                 .updateOptimistic(any(), anyLong(), any());
 
-        runOnDuplicated(vertx, v -> h.txOps()
-                .signal(inst.id(), "approve", Map.of(), "dedup-1", tx)
+        runOnDuplicated(vertx, v -> RecordedSignalSegments.run(h.txOps(), inst, "approve", tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());
@@ -1491,12 +1485,15 @@ class WorkflowEngineBinderWiringTest {
         Harness h = buildHarness(propagator, holder);
         SqlClient tx = ActiveTransactionClient.create();
 
+        // The segment resolves the pinned plan before it binds; the strict binder still refuses before any work.
+        RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
+
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, tenantMetadata("T1"));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.dedup().claimOrResolveSignal(eq(inst.id()), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
 
-        runOnNonDuplicated(vertx, v -> h.txOps()
-                .signal(inst.id(), "approve", Map.of(), "dedup-1", tx)
+        runOnNonDuplicated(vertx, v -> RecordedSignalSegments.run(h.txOps(), inst, "approve", tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     assertThat(ar.failed())
                             .as("a non-duplicated context with non-null instance metadata must fail")
@@ -1520,11 +1517,9 @@ class WorkflowEngineBinderWiringTest {
 
         WorkflowInstance inst = instanceAt("wait-signal", WaitType.SIGNAL, "approve", null, null);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.dedup().claimOrResolveSignal(eq(inst.id()), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
         when(h.instances().updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
 
-        runOnNonDuplicated(vertx, v -> h.txOps()
-                .signal(inst.id(), "approve", Map.of(), "dedup-1", tx)
+        runOnNonDuplicated(vertx, v -> RecordedSignalSegments.run(h.txOps(), inst, "approve", tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());

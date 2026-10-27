@@ -110,7 +110,7 @@ class ExecutionLockIT {
             b.ready();
             b.commit();
 
-            // And every history entry of A has a lower sequence than B's, with no duplicate or gap
+            // And the signal command of A has a lower queue position than B's, and the history has no duplicate or gap
             long signalA = historySequence(x, "dedup-A");
             long signalB = historySequence(x, "dedup-B");
             assertTrue(signalA < signalB, "A's signal (" + signalA + ") must precede B's (" + signalB + ")");
@@ -287,10 +287,11 @@ class ExecutionLockIT {
 
     // --- Observation ---
 
+    /** The queue position of the recorded signal command with the key: a signal is applied later, in queue order. */
     private static long historySequence(WorkflowInstanceId id, String dedupKey) {
-        Row row = await(pool.preparedQuery("SELECT sequence FROM workflow_history WHERE workflow_id = $1"
-                                + " AND entry_type = 'SIGNAL_RECEIVED' AND payload_json::text LIKE $2")
-                        .execute(Tuple.of(id.value(), "%" + dedupKey + "%")))
+        Row row = await(pool.preparedQuery("SELECT seq FROM workflow_commands WHERE workflow_id = $1"
+                                + " AND kind = 'SIGNAL' AND dedup_key = $2")
+                        .execute(Tuple.of(id.value(), dedupKey)))
                 .iterator()
                 .next();
         return row.getLong(0);
@@ -305,9 +306,9 @@ class ExecutionLockIT {
     }
 
     private static long signalHistoryCount(WorkflowInstanceId id, String dedupKey) {
-        return await(pool.preparedQuery("SELECT count(*) FROM workflow_history WHERE workflow_id = $1"
-                                + " AND entry_type = 'SIGNAL_RECEIVED' AND payload_json::text LIKE $2")
-                        .execute(Tuple.of(id.value(), "%" + dedupKey + "%")))
+        return await(pool.preparedQuery("SELECT count(*) FROM workflow_commands WHERE workflow_id = $1"
+                                + " AND kind = 'SIGNAL' AND dedup_key = $2")
+                        .execute(Tuple.of(id.value(), dedupKey)))
                 .iterator()
                 .next()
                 .getLong(0);

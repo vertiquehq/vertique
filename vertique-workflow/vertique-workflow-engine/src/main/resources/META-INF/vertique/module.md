@@ -61,16 +61,18 @@ or the four public ops/callback interfaces.
 
 ### Record-Time Payload Bounds
 
-The engine contains a standalone internal validator for encoded JSON payloads. Its byte limit is
+The engine validates the encoded JSON of every recorded signal payload and explicit signal carrier before it takes the
+execution lock. Its byte limit is
 `workflow.recording.maxPayloadBytes` (default `262144`, minimum `1024`); its fixed depth limit is 64,
 counting every object and array as one level. Values exactly at either limit pass. Size is measured
 over UTF-8 JSON bytes, including escaping and structural characters.
 
 The validator walks containers iteratively before encoding, so excessively nested JSON is refused
-without a stack overflow. It performs no I/O, locking, transaction work or schema validation.
+without a stack overflow, and it counts bytes and nesting while it encodes and stops as soon as a bound is crossed, so an
+oversized value is never fully encoded in memory. It performs no I/O, locking, transaction work or schema validation.
 Exceeding either bound throws `WorkflowInvalidPayloadException` naming `maxPayloadBytes` or depth 64;
-messages, violation details and causes expose no submitted values. Production entry points do not yet
-invoke this validator.
+messages, violation details and causes expose no submitted values. A recorded signal's refusal also names the instance and
+the signal.
 
 ### Transaction Ownership
 
@@ -88,8 +90,7 @@ also emits `WORKFLOW_STARTED`. A caller that needs the instance running awaits t
 before it reads the instance or signals it. A rolled-back caller leaves no instance, command, queue row or dedup row. The
 carrier captured from the caller's workflow-boundary context drops the identity snapshot namespace before it is stored, so no
 later drive can bind an identity from the instance. A `PENDING` instance counts as a live pin: retirement of its version is
-refused with reason `PINNED_INSTANCES`. A signal to a `PENDING` instance fails as not waiting. Signals, timers and the other
-operations still run inline in the caller's transaction.
+refused with reason `PINNED_INSTANCES`. Timers and the other operations still run inline in the caller's transaction.
 
 **Execution lock.** Every transaction that changes an instance takes that instance's execution lock before its first
 workflow change, through `WorkflowCommandRepository.lockInstance`, so one transaction at a time changes an instance and
@@ -101,14 +102,64 @@ at most `workflow.recording.lockTimeoutMs` (default 5000); a timeout or a deadlo
 `WorkflowPersistenceException` whose `retryable()` is true and rolls the caller's transaction back, so retry the whole
 transaction. The lock lasts until the transaction ends, and taking it again inside the same transaction costs nothing.
 
-A signal is refused, with nothing changed (no state, history, dedup row or timer), when the version the instance is pinned to
-does not wait for it: the future fails with `WorkflowSignalRejectedException` naming the instance, the signal and the
-pinned definition id and version. The check reads the pinned plan, so it applies after the pin is resolved and its plan hash
-verified and before the instance's waiting state is examined. `WorkflowEngine` also overrides the contract-aware
-`signal(id, contractName, signalName, payload, signalDedupKey)` and `query(id, contractName)`: a caller whose contract
-differs from the pinned definition's contract is refused with `WorkflowDefinitionContractMismatchException`, naming the
-definition id and version and both contract names and never a payload or state. `query` looks up the pinned plan first and fails
-as described under "Work this node cannot run" when the node has no code for it. The contract-less `signal` and `query(id)` perform no contract check. A replayed start whose existing instance is pinned to a definition of another contract than the client's fails with `WorkflowIdempotencyConflictException` of kind `start`; the comparison is never skipped. A node without the pinned plan compares against the contract the durable registry stores for the pin, which it reads through the start transaction and so takes no further connection. With no stored row for the pin the start fails with `WorkflowVersionNotRunnableException`.
+**Recorded signals.** Every `signal` overload (instance- and branch-addressed, with or without an explicit carrier) records a
+`SIGNAL` command in the caller's transaction and returns once it is recorded; it does not apply the signal. An executor applies
+it afterwards, in a segment of its own, in queue order behind the commands recorded before it, so a signal sent right after a
+start waits for the start's segment instead of failing as not waiting. A caller that needs the effect awaits the probe
+(`executionProbe().awaitIdle`). The call checks, in this order and without the execution lock until the bounds have passed:
+
+1. a committed duplicate (same instance, branch address and dedup key) returns success and reads nothing else;
+2. the instance exists (`WorkflowInstanceNotFoundException`) and has not ended (`WorkflowSignalRejectedException`);
+3. a caller that names a contract (`signal(id, contractName, ...)`) matches the contract of the pinned definition
+   (`WorkflowDefinitionContractMismatchException`); the contract is read from the node's plan or, without one, from the pinned
+   definition row, so recording needs no plan on this node;
+4. the pinned definition row declares the name for the addressed wait (`WorkflowSignalRejectedException` naming the instance,
+   the signal and the version). A row that stores no declaration admits every name and the executor rejects an undeclared one;
+5. the payload and the encoded explicit carrier meet the size and depth bounds (`WorkflowInvalidPayloadException`).
+
+The call then takes the execution lock, repeats the duplicate, instance and name checks on the locked read, raises the instance's
+open-signal count with one conditional update against `workflow.recording.maxOpenSignalsPerInstance` (default 100; zero updated
+rows fails with `WorkflowSignalLimitException`, which holds under any isolation level), claims the dedup key and inserts the
+command. A refusal before the claim writes nothing, so a caller that catches it can commit other work in the same transaction and
+the refused key stays free. The explicit carrier is stored as the command's explicit carrier after it is sanitized and stripped of
+the identity-snapshot namespace; ambient context of the recording caller is not yet stored, so until it is, a recorded signal
+binds the instance's carrier together with the explicit carrier, as the executor's context allows.
+
+**Executing a signal.** The executor applies a claimed `SIGNAL` under a savepoint:
+
+- the signal is applied and the command is `COMPLETE` when the instance waits for it (an instance-addressed signal at a
+  `WAITING` signal wait of that name, a branch-addressed one at a waiting branch) and no timeout of that wait was fired before
+  the signal was recorded;
+- the command is `PARKED` when the instance does not await it, is `FAILED`, or the signal is deadline-blocked there; a parked
+  command keeps its place and its slot of the open-signal count, blocks nothing, and spends no attempt;
+- the command is `REJECTED` when the pinned plan never waits for the name, when the instance had ended, when the application fails
+  deterministically (an invalid payload, or a callback or definition failure), or when it runs more nodes than
+  `workflow.executor.maxStepsPerSegment` (reason `STEP_LIMIT`). The savepoint is rolled back, so the instance, its version and its
+  wait are unchanged;
+- a branch-addressed signal for a branch that was superseded or ended, or for an ended instance, is `STALE`.
+
+Every reason written to the command's `last_error` and to history is a reason code and framework-composed text naming the signal;
+it never contains payload values, exception text or class names. History records `COMMAND_RECEIVED`, `SIGNAL_RECEIVED` and
+`COMMAND_COMPLETED` for an applied signal, `SIGNAL_PARKED` for a parked one, `COMMAND_REJECTED` or `COMMAND_STALE` with the reason,
+and `SIGNAL_APPLIED` for a signal that is applied after it was parked.
+
+**Parked signals.** After a segment has driven the instance to a wait, the parked signals that wait accepts are applied in queue
+order, each under its own savepoint, settled in the segment's transaction as `COMPLETE` (history `SIGNAL_APPLIED`, `COMMAND_COMPLETED`)
+or, when its application fails deterministically, `REJECTED` alone. The segment applies a parked signal only while the nodes it has
+executed are at most half of `maxStepsPerSegment`. When the next one would start beyond that, or its application overruns the cap
+inside its savepoint, that signal and every other signal the wait accepts are set back to `PENDING` at their original position and the
+segment commits at the wait; each then runs as the executing command of its own segment. A parked signal that is deadline-blocked at
+the wait stays parked. When a segment ends the instance, its parked signals are `REJECTED` with the reason "instance ended".
+`START` and `SIGNAL` segments call `ParkedSignals.drain` after their drive, outside the savepoint of the executing command. Flows that run
+inline in the caller's transaction (task completions, timer fires, retries, migrations, and branch continuations through the fork/join
+coordinator) apply the parked signals of the waits they reach at the end of the drive, after everything the drive wrote
+(`WorkflowTransitionDriver.afterInlineDrive`); a transaction whose caller drains itself is left alone, so a parked signal is applied
+exactly once and never nested inside another command's savepoint. Branch recovery through `WorkflowRecoveryBridge` does not drain; a signal
+parked for a branch it drives is applied by the next drive that ends at the instance.
+
+Every recording call refuses a signal name, fork step id or branch id of more than 255 characters with a value-free
+`WorkflowInvalidPayloadException`. Applying a recorded signal binds the instance's stored carrier without its identity-snapshot namespace,
+so no identity can be rebuilt from a carrier written before that namespace was dropped.
 
 A wrapper or decorator around `WorkflowEngine` must forward both overloads to the engine; inheriting the defaults silently drops the caller-contract check. The check guards against developer error, such as a client built for the wrong contract; it is not an authorization boundary, because the caller supplies the contract name. A client proxy generated by an older annotation processor does not call these overloads and fails with `WorkflowClientProxyLinkageException` until it is rebuilt.
 
@@ -247,10 +298,10 @@ and returns the engine as a `WorkflowEngineHandle`.
 release can add a part without breaking a caller. One setter per part, named like its accessor: `txRunner`, `registry`,
 `definitionStore`, `instances`, `history`, `dedup`, `branchTokens`, `joinStates`, `timerStore`, `taskStore`, `commands`, `clock`,
 `recorders`, `optionalIntentKinds`, `migrationRegistry`, `propagator`, `inboundContextInitializers`, `beanValidator`,
-`typeNames`, `stateCompatibility`, `executorConfig`, `executorObservers`, `commandWakeups` and `vertx`. `build()` throws a `NullPointerException` that names the first required part
+`typeNames`, `stateCompatibility`, `executorConfig`, `recordingConfig`, `executorObservers`, `commandWakeups` and `vertx`. `build()` throws a `NullPointerException` that names the first required part
 that is missing. Required: the repositories and stores (including the command repository, `commands`), the registry, the **definition store**, the type-name index and the
 clock. Defaulted: `recorders` and `inboundContextInitializers` to empty sets, `optionalIntentKinds` to
-`DEFAULT_OPTIONAL_INTENT_KINDS`, `executorConfig` to `WorkflowExecutorConfig.defaults()`, `executorObservers` to an empty set (the observers of the executor's events, see the executor observer in `vertique-workflow-core`), `commandWakeups` to `CommandWakeups.none()` (the source that wakes the executor's instances, see Executor), and `migrationRegistry`,
+`DEFAULT_OPTIONAL_INTENT_KINDS`, `executorConfig` to `WorkflowExecutorConfig.defaults()`, `recordingConfig` to `WorkflowRecordingConfig.defaults()` (the payload bound and the open-signal limit of recorded signals), `executorObservers` to an empty set (the observers of the executor's events, see the executor observer in `vertique-workflow-core`), `commandWakeups` to `CommandWakeups.none()` (the source that wakes the executor's instances, see Executor), and `migrationRegistry`,
 `beanValidator` and `stateCompatibility` to empty. `vertx` may be `null`; the executor of such an engine cannot be started. The
 `propagator` may be `null`. The `typeNames` index is the one the registry fills (`DefaultWorkflowRegistry#typeNames()`);
 with a different index a decision payload name resolves as a binary class name only. An empty `beanValidator` leaves
@@ -335,7 +386,7 @@ public interface AppComponent {
 
 `migrate(id, targetScope, targetVersion)` (and the transactional form with a trailing transaction) resolves the target in `targetScope`, which must be the instance's start scope or the default scope. Before it looks up the handler it refuses a target of another contract with `WorkflowDefinitionContractMismatchException`, and a target whose state class differs from the source's and does not extend it (or any differing state class when no `WorkflowStateCompatibility` is bound) with `WorkflowDefinitionException`, and a target version that this node evaluated as failing (see Failing scope rows) with `WorkflowDefinitionFailingException`, before any write; refusal messages name the definition key and repeat caller-supplied scope and id only in bounded form, never a state class name; it then finds the handler by both scopes and re-pins the instance's definition scope to the target. `migrate(id, targetVersion)` keeps meaning the instance's definition scope.
 
-Work this node cannot run. A key that the node's registry holds no plan for is not runnable on that node, whether or not another node can run it (a rolling deploy publishes a version that reaches the other nodes as a committed record before they have its code; a failing scope row has no registered plan at all). The plan lookup then fails with `WorkflowVersionNotRunnableException`: a start that resolves to such a key (explicit version or activation record) creates no instance and no start dedup row, and a signal (including the branch-aware forms), task completion, a typed-client query, retry, migration (its source or its target), the join advance and branch recovery leave the instance, its history and its dedup rows as they were, because the caller's transaction rolls back and a claimed signal dedup row is not kept (inside a timer transaction a join advance that resolves the plan again would commit, but it cannot fail there today: it uses the pin the caller already resolved, and migration refuses an instance with active branches). A timer callback (a standalone or signal-timeout timer, a task due date or a task reminder, on an instance or on a branch) leaves the same rows and the task's reminder counter as they were for a different reason: it resolves the pinned plan before its first write, and the timer fire executor queues the job again in the same transaction, which commits only that job bookkeeping while the timer row stays `SCHEDULED`. Branch recovery leaves the token scheduled for a node that has the code. No node marks an instance failed because it cannot run its pin, while `query(id)` still reads the stored instance and history without the plan, and only the contract-checked `query(id, contractName)` fails the same way, because it needs the pinned plan to compare contracts. A node whose deployed code lacks a non-retired version still fails startup with `CODE_UNAVAILABLE`, so deployments are roll-forward only: the not-runnable failures occur on nodes that are already running when another node publishes or activates.
+Work this node cannot run. A key that the node's registry holds no plan for is not runnable on that node, whether or not another node can run it (a rolling deploy publishes a version that reaches the other nodes as a committed record before they have its code; a failing scope row has no registered plan at all). The plan lookup then fails with `WorkflowVersionNotRunnableException`: a start that resolves to such a key (explicit version or activation record) creates no instance and no start dedup row, and a task completion, a typed-client query, retry, migration (its source or its target), the join advance and branch recovery leave the instance, its history and its dedup rows as they were, because the caller's transaction rolls back (inside a timer transaction a join advance that resolves the plan again would commit, but it cannot fail there today: it uses the pin the caller already resolved, and migration refuses an instance with active branches). A signal (including the branch-aware forms) needs no plan to be recorded, so a node without the pinned code records it like any other node; an executor of a node that cannot run the plan defers the recorded command (a deferral spends no attempt) and a node that can run it applies it. A timer callback (a standalone or signal-timeout timer, a task due date or a task reminder, on an instance or on a branch) leaves the same rows and the task's reminder counter as they were for a different reason: it resolves the pinned plan before its first write, and the timer fire executor queues the job again in the same transaction, which commits only that job bookkeeping while the timer row stays `SCHEDULED`. Branch recovery leaves the token scheduled for a node that has the code. No node marks an instance failed because it cannot run its pin, while `query(id)` still reads the stored instance and history without the plan, and only the contract-checked `query(id, contractName)` fails the same way, because it needs the pinned plan to compare contracts. A node whose deployed code lacks a non-retired version still fails startup with `CODE_UNAVAILABLE`, so deployments are roll-forward only: the not-runnable failures occur on nodes that are already running when another node publishes or activates.
 
 Every lookup of an instance's plan (signals, tasks, timers, retries, branch and join recovery, queries and migration) resolves the instance's full pin: its definition scope, definition id and definition version. An instance pinned to a definition scope never runs the plan that another scope holds under the same id and version, and migration resolves its target version in the instance's definition scope. The lifecycle, the startup restoration and the propagation pass register, mark and remove a runtime under the scope of the stored row they apply.
 
@@ -775,6 +826,8 @@ disposes of it in this order:
    `last_error` set. It is retried until the lease ends, and reported to observers as `TransientRetry`.
 3. A step-limit overrun (`StepLimitExceededException`: the segment executed more than `maxStepsPerSegment` nodes without a wait;
    the transition driver counts every node on the segment's transaction handle) and any other failure roll back the segment
+   (a `SIGNAL` is the exception: its deterministic failure and its own overrun are contained by its savepoint and reject only
+   that command, and an overrun inside a parked signal's savepoint re-queues it, see "Recorded signals")
    and fail the command: one transaction of its own, `PgWorkflowCommandRepository.failCommand`, tries the execution lock
    without waiting, locks the command row, writes only while the command is still `CLAIMED` with this token, settles it `FAILED`
    and, for a `START`, fails the instance (no state) with a `FAILED` history entry and a `WORKFLOW_FAILED` event (`errorType` the reason code, `errorMessage` the sanitized text), emitted through the engine's event recorders in the same transaction like the event of a fail node; a dead-lettered `START` emits it the same way from its claim. A busy lock is retried every 100 ms until one
@@ -782,13 +835,14 @@ disposes of it in this order:
    settled command has no token, so a late disposition writes nothing.
 
 No executor connection ever waits on an execution lock. The claim itself checks, in this order: an ended instance settles the
-command as rejected with a history entry (no attempt spent, never dead-lettered, the instance unchanged); otherwise a command
+command as rejected (stale for a branch-addressed signal) with a history entry (no attempt spent, never dead-lettered, the instance
+unchanged); a signal's reason says "instance ended"; otherwise a command
 that has spent `maxAttempts` attempts is dead-lettered with its attempts unchanged (a `START` also fails its instance); otherwise
 the claim spends an attempt. A peek routes a command whose instance has ended to the claim without making any plan resident.
 The command's `last_error` is built by `CommandErrors` (`<REASON_CODE>: <message>`, at most 4000 characters, framework-composed
 text that names only the kind, the cap or the counts); exception text and payloads go to the log only.
 
-**Observers.** The executor reports `CommandSettled`, `CommandDeferred`, `TransientRetry`, `LeaseExpired` and `QueueSnapshot` events to the
+**Observers.** The executor reports `CommandSettled` (outcome `COMPLETE`, `REJECTED`, `STALE`, `PARKED` or `FAILED`), `CommandDeferred`, `TransientRetry`, `LeaseExpired` and `QueueSnapshot` events to the
 `Set<WorkflowExecutorObserver>` it is built with (empty unless contributed; see `vertique-workflow-core`). Each observer runs in its
 own `try`, and a throwing observer is logged at warn level and affects nothing. A `QueueSnapshot` with the queue counts is read at most once per second
 per executor instance and only while an observer is registered. The PostgreSQL wake-up source also reports the notification
@@ -849,7 +903,7 @@ parameterized over `<TX>` (typically `SqlClient`):
 | `BranchTokenRepository<TX>` | Fork/join branch token CRUD, status queries, and recovery queries |
 | `JoinStateRepository<TX>` | Fork/join state insert, read variants, open-for-workflow list, and the optimistic `decide` CAS |
 | `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping. The client it hands the work is a `SqlConnection` whose `transaction()` reports the underlying pending transaction; the deadline-guarded connection of `vertique-db` meets that. Its internal overload `inTransaction(level, deadline, work)` bounds the transaction (the executor's segment deadline) and returns `TransactionDeadlineExceededException` unchanged; the default fails with `UnsupportedOperationException` without running the work |
-| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked, not-yet-available and stuck commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `findEarliestAvailabilityDelayMs()` is the executor's scalar scheduling hint, separate from the bounded diagnostic lists. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock. The executor's members: `recordStart` inserts a `START` command in the caller's transaction; `peek(limit)` reads the claimable heads without locks; `defer(head)` defers a head the node cannot run in one self-contained transaction and returns the new deferral count, or `0` when it wrote nothing (busy lock, no longer claimable, already deferred into the future, or the instance pinned otherwise than the head observed); `claim(head, claimedBy, leaseSeconds, maxAttempts)` is one self-contained transaction that tries the lock, locks the row, checks `claimable` again and settles an ended instance's command, dead-letters a command that spent `maxAttempts`, or claims (the three-argument overload never dead-letters); `retryTransient` and `failCommand` are the dispositions of a failed segment (the first locks only the command row, the second tries the execution lock in a transaction of its own); `findStuck` and `countQueue` read the stuck report and the queue snapshot; `fence`, `complete` and `reject` run in the segment's transaction, fenced on the command being `CLAIMED` with the claim's token (`complete` and `reject` return the number of rows updated, and `0` means the claim no longer stands); `release` returns a claim whose segment did not run to `PENDING` with its attempt restored, in one statement that takes no lock |
+| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked, not-yet-available and stuck commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `findEarliestAvailabilityDelayMs()` is the executor's scalar scheduling hint, separate from the bounded diagnostic lists. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock. The executor's members: `recordStart` inserts a `START` command in the caller's transaction; `peek(limit)` reads the claimable heads without locks; `defer(head)` defers a head the node cannot run in one self-contained transaction and returns the new deferral count, or `0` when it wrote nothing (busy lock, no longer claimable, already deferred into the future, or the instance pinned otherwise than the head observed); `claim(head, claimedBy, leaseSeconds, maxAttempts)` is one self-contained transaction that tries the lock, locks the row, checks `claimable` again and settles an ended instance's command, dead-letters a command that spent `maxAttempts`, or claims (the three-argument overload never dead-letters); `retryTransient` and `failCommand` are the dispositions of a failed segment (the first locks only the command row, the second tries the execution lock in a transaction of its own); `findStuck` and `countQueue` read the stuck report and the queue snapshot; `fence`, `complete` and `reject` run in the segment's transaction, fenced on the command being `CLAIMED` with the claim's token (`complete` and `reject` return the number of rows updated, and `0` means the claim no longer stands); `release` returns a claim whose segment did not run to `PENDING` with its attempt restored, in one statement that takes no lock. The signal members: `declaredSignalNames(pin, forkStepId, branchId, tx)` reads the names the pinned definition row declares for the addressed wait (empty when the row stores no declaration); `raiseOpenSignals(id, limit, tx)` creates the instance's queue row when missing and raises its open-signal count with one conditional update (`false` when the limit is reached); `lowerOpenSignals` undoes a raise; `recordSignal(...)` inserts the `SIGNAL` command with its name and address as target and its explicit carrier; `reject(id, token, lastError, tx)`, `stale(...)` and `park(...)` settle or park the claimed command (`park` restores the attempt the claim spent); `parkedSignalsAt`, `parkedSignals`, `readParked`, `settleParked` and `requeueParked` read and settle parked commands in the segment's transaction without a claim token (`requeueParked` is the guarded `PARKED` to `PENDING` write that keeps position, id, attempts and counters); `deadlineBlocked` answers the deadline guard; `wasParked` tells whether a command was parked before. Every write that takes a `SIGNAL` out of its open states lowers the open-signal count in the same statement |
 
 The adapter also provides:
 - A `WorkflowRecoveryBridge` is already bound by `WorkflowEngineModule`; no adapter re-binding needed.

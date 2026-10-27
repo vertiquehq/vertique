@@ -5,10 +5,13 @@ package dev.vertique.workflow.engine.spi;
 
 import dev.vertique.workflow.history.PendingCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.IntToLongFunction;
 
@@ -22,6 +25,10 @@ import java.util.function.IntToLongFunction;
  * connection for one statement and returns it. They judge eligibility against the database clock, through the one
  * eligibility rule of the executor protocol: a command is claimable when it is at the head of its queue, not held
  * back and available.
+ *
+ * <p>Every write that takes a {@code SIGNAL} command out of its open states ({@code PENDING}, {@code DEFERRED},
+ * {@code CLAIMED}, {@code PARKED}) lowers the instance's open-signal count in the same statement; moves between open
+ * states leave it unchanged.
  *
  * <p>The lock and sequence members run inside a caller's transaction. Every transaction that changes an instance
  * takes the instance's execution lock before its first workflow change, and holds it until it ends, so one
@@ -253,7 +260,8 @@ public interface WorkflowCommandRepository<TX> {
 
     /**
      * Completes the claimed command in the segment's transaction: state {@code COMPLETE}, token and lease cleared,
-     * settled now. The write is fenced on the command being {@code CLAIMED} with this token.
+     * settled now. The write is fenced on the command being {@code CLAIMED} with this token. A completed {@code SIGNAL}
+     * frees its slot of the instance's open-signal count in the same statement.
      *
      * @param commandId the command's row id
      * @param token     the claim token
@@ -264,7 +272,7 @@ public interface WorkflowCommandRepository<TX> {
 
     /**
      * Settles the claimed command as rejected, in the segment's transaction, because it no longer applies. The write
-     * is fenced like {@link #complete}.
+     * is fenced like {@link #complete}, and frees a {@code SIGNAL}'s open-signal slot.
      *
      * @param commandId the command's row id
      * @param token     the claim token
@@ -312,4 +320,190 @@ public interface WorkflowCommandRepository<TX> {
      */
     Future<DispositionResult> failCommand(
             ClaimedCommand claim, String reasonCode, String lastError, InstanceFailureListener<TX> failures);
+
+    /**
+     * Settles the claimed command as rejected with a reason, in the segment's transaction. The write is fenced like
+     * {@link #complete}. A rejected {@code SIGNAL} frees its slot of the instance's open-signal count in the same
+     * statement.
+     *
+     * @param commandId the command's row id
+     * @param token     the claim token
+     * @param lastError the sanitized, bounded reason to store
+     * @param tx        the segment's transaction handle
+     * @return a {@link Future} containing the number of rows updated; {@code 0} means the claim no longer stands
+     */
+    Future<Integer> reject(long commandId, UUID token, String lastError, TX tx);
+
+    /**
+     * Settles the claimed command as stale with a reason, in the segment's transaction: it addresses something that is
+     * no longer there. The write is fenced like {@link #complete}, and frees a {@code SIGNAL}'s open-signal slot.
+     *
+     * @param commandId the command's row id
+     * @param token     the claim token
+     * @param lastError the sanitized, bounded reason to store
+     * @param tx        the segment's transaction handle
+     * @return a {@link Future} containing the number of rows updated
+     */
+    Future<Integer> stale(long commandId, UUID token, String lastError, TX tx);
+
+    /**
+     * Parks the claimed command in the segment's transaction: {@code PARKED}, token and lease cleared and the attempt
+     * its claim spent restored, because the claim ended neither by crash nor by lease overrun. A parked command blocks
+     * nothing and keeps its position and its slot of the open-signal count. The write is fenced like {@link #complete}.
+     *
+     * @param commandId the command's row id
+     * @param token     the claim token
+     * @param tx        the segment's transaction handle
+     * @return a {@link Future} containing the number of rows updated
+     */
+    Future<Integer> park(long commandId, UUID token, TX tx);
+
+    /**
+     * Reads, in the caller's transaction, the signal names the pinned definition row declares for the addressed wait:
+     * the instance's waits, or the waits of one branch of one fork.
+     *
+     * @param pin        the definition row the instance is pinned to
+     * @param forkStepId the fork step of a branch-addressed signal, or {@code null}
+     * @param branchId   the branch of a branch-addressed signal, or {@code null}
+     * @param tx         the caller's transaction handle
+     * @return a {@link Future} containing the declared names, empty when the row stores no declaration (a row written
+     *     before names were stored, or no row) and a list that lacks the address's names when the row declares none for it
+     */
+    Future<Optional<List<String>>> declaredSignalNames(
+            DefinitionKey pin, @Nullable String forkStepId, @Nullable String branchId, TX tx);
+
+    /**
+     * Raises the instance's open-signal count by one while it is below the limit, in the caller's transaction, with one
+     * conditional update so that the limit holds under any isolation level. Creates the instance's queue row first when
+     * an instance from before the command log has none.
+     *
+     * @param instance the instance
+     * @param limit    the most open signals an instance may hold
+     * @param tx       the caller's transaction handle
+     * @return a {@link Future} containing {@code true} when the count was raised and {@code false} when the instance
+     *     already holds {@code limit} open signals
+     */
+    Future<Boolean> raiseOpenSignals(WorkflowInstanceId instance, int limit, TX tx);
+
+    /**
+     * Lowers the instance's open-signal count by one, in the caller's transaction. Undoes a
+     * {@link #raiseOpenSignals} whose recording did not go on.
+     *
+     * @param instance the instance
+     * @param tx       the caller's transaction handle
+     * @return a {@link Future} that completes when the count is lowered
+     */
+    Future<Void> lowerOpenSignals(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Records a {@code SIGNAL} command in the caller's transaction: the next position of the instance's queue, state
+     * {@code PENDING}, recorded and available at the database clock now, with the payload and the explicit carrier
+     * stored as recorded and the name and address stored as the command's target.
+     *
+     * <p>The caller must hold the instance's execution lock and have raised the open-signal count.
+     *
+     * @param instance            the instance
+     * @param signalName          the signal's name
+     * @param forkStepId          the fork step of a branch-addressed signal, or {@code null}
+     * @param branchId            the branch of a branch-addressed signal, or {@code null}
+     * @param dedupKey            the caller's idempotency key, kept for display
+     * @param payloadJson         the payload as JSON, or {@code null} when the signal has none
+     * @param explicitCarrierJson the sanitized explicit durable-context carrier as JSON, or {@code null}
+     * @param tx                  the caller's transaction handle
+     * @return a {@link Future} containing the command's row id
+     */
+    Future<Long> recordSignal(
+            WorkflowInstanceId instance,
+            String signalName,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            String dedupKey,
+            @Nullable String payloadJson,
+            @Nullable String explicitCarrierJson,
+            TX tx);
+
+    /**
+     * Lists the parked {@code SIGNAL} commands of an instance that carry the given name and address, in queue order.
+     *
+     * @param instance   the instance
+     * @param signalName the signal's name
+     * @param forkStepId the fork step of a branch-addressed signal, or {@code null} for instance-addressed ones
+     * @param branchId   the branch of a branch-addressed signal, or {@code null} for instance-addressed ones
+     * @param tx         the segment's transaction handle
+     * @return a {@link Future} containing the parked signals
+     */
+    Future<List<ParkedSignal>> parkedSignalsAt(
+            WorkflowInstanceId instance,
+            String signalName,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            TX tx);
+
+    /**
+     * Lists every parked {@code SIGNAL} command of an instance, in queue order.
+     *
+     * @param instance the instance
+     * @param tx       the segment's transaction handle
+     * @return a {@link Future} containing the parked signals
+     */
+    Future<List<ParkedSignal>> parkedSignals(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Reads a parked command's payload, target, key and explicit carrier, in the segment's transaction.
+     *
+     * @param instance  the instance
+     * @param commandId the command's row id
+     * @param tx        the segment's transaction handle
+     * @return a {@link Future} containing the command, or empty when it is no longer parked
+     */
+    Future<Optional<SegmentCommand>> readParked(WorkflowInstanceId instance, long commandId, TX tx);
+
+    /**
+     * Settles a parked command in the segment's transaction, with no claim token: a guarded {@code PARKED} to
+     * {@code COMPLETE}, {@code REJECTED} or {@code STALE} transition that frees a {@code SIGNAL}'s open-signal slot.
+     *
+     * @param commandId the command's row id
+     * @param state     the settled state
+     * @param lastError the sanitized, bounded reason to store, or {@code null} to store none
+     * @param tx        the segment's transaction handle
+     * @return a {@link Future} containing the number of rows updated; {@code 0} means the command was not parked
+     */
+    Future<Integer> settleParked(long commandId, String state, @Nullable String lastError, TX tx);
+
+    /**
+     * Sets a parked command back to {@code PENDING} in the segment's transaction, with no claim token: it keeps its
+     * position, id, attempts, transient count and deferral count, is available no later than now and keeps its slot of
+     * the open-signal count.
+     *
+     * @param commandId the command's row id
+     * @param tx        the segment's transaction handle
+     * @return a {@link Future} containing the number of rows updated; {@code 0} means the command was not parked
+     */
+    Future<Integer> requeueParked(long commandId, TX tx);
+
+    /**
+     * Answers which of the given parked signals are deadline-blocked at a wait: a timeout command of that wait whose
+     * fire time is at or before the signal's recording time and that is still pending, deferred, claimed or
+     * dead-lettered.
+     *
+     * @param instance   the instance
+     * @param waitStepId the step of the wait
+     * @param branchId   the branch of a branch wait, or {@code null} for an instance wait
+     * @param signals    the row ids of the parked signals to check
+     * @param tx         the segment's transaction handle
+     * @return a {@link Future} containing the ids of the deadline-blocked signals
+     */
+    Future<Set<Long>> deadlineBlocked(
+            WorkflowInstanceId instance, String waitStepId, @Nullable String branchId, Collection<Long> signals, TX tx);
+
+    /**
+     * Tells whether a signal command was parked before: whether the instance's history holds a parked entry for it. A
+     * signal that was parked and set back to pending is applied from the parked state when it runs.
+     *
+     * @param instance  the instance
+     * @param commandId the command's row id
+     * @param tx        the segment's transaction handle
+     * @return a {@link Future} containing {@code true} when the command was parked at least once
+     */
+    Future<Boolean> wasParked(WorkflowInstanceId instance, long commandId, TX tx);
 }

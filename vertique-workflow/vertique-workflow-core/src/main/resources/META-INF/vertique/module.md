@@ -165,7 +165,7 @@ The Postgres implementation opens its own transaction for each call. Code that a
 
 Instance state is modeled as a single current snapshot plus an append-only history: `query` returns the latest snapshot, and each transition that produced it is recorded as a separate history entry.
 
-`start` returns once the start is recorded: the instance exists as `PENDING` with no state, current step or subject, and the executor of `vertique-workflow-engine` runs its first segment afterwards (initial state, subject, steps up to the first wait). Await the instance with the execution probe before reading or signalling it. Signals, timers and the other operations still run inline.
+`start` returns once the start is recorded: the instance exists as `PENDING` with no state, current step or subject, and the executor of `vertique-workflow-engine` runs its first segment afterwards (initial state, subject, steps up to the first wait). Await the instance with the execution probe before reading it. `signal` returns once the signal is recorded as a command of its instance, not once it is applied: an executor applies it afterwards, in queue order behind the commands recorded before it, so it may be sent right after the start. Await the probe to observe its effect. A signal the instance does not await yet is parked and applied when the instance reaches a wait that accepts it. Timers and the other operations still run inline.
 
 Starts require an idempotency key. `StartCommand` has nine components: `definitionId`, `contractName`, `payload`, `idempotencyKey`, `businessKey`, `subjectRef`, `requestedDefinitionVersion`, `startScope` and `requestedTargetScope`; there is no shorter constructor, so a direct caller passes `null` for the optional components. `contractName` names the contract the caller started through and must not be blank. `requestedDefinitionVersion` may pin a new instance to a specific registered version; when omitted, the current version is used. A non-null `startScope` or `requestedTargetScope` must be nonblank, at most 255 code points and free of control characters and unpaired surrogates, or the constructor throws `IllegalArgumentException` that names the field and never repeats the value. A `null` `startScope` is the default scope. Idempotency and dedup keys are scoped to what they protect — a start key is scoped to the start scope and the definition id and a signal dedup key is scoped to the workflow instance; see `dev.vertique:vertique-workflow-postgresql` for the complete key-scope table across all operations.
 
@@ -279,7 +279,7 @@ OrderFulfillmentWorkflow byId = factory.create(OrderFulfillmentWorkflow.class, "
 - **Many definitions per contract.** Any number of definition ids and versions may name one contract. The registry reads a definition's id, version, state type and contract from the definition, and keeps no map from a contract to one definition. The registry no longer offers a lookup from a contract class to its definition; look a definition up with `resolve(key)`, `find(key)`, `registeredDefinition(key)`, `allRegistered()` or `definitionClass(definitionClass)`.
 - **One contract per scope and definition id.** Every version of a definition id in one scope must name the same contract; another scope may hold the same id under another contract. A scope other than the default one cannot load an id that the default scope holds, in any status, under another contract, unless the scope already holds that id; the load fails with `WorkflowDefinitionContractMismatchException`. A default-scope version registered later than a scope's own versions of the same id under another contract is accepted, and the scope keeps its own versions for clients of their contract. Registering a version whose contract name differs from that of an earlier version of the same scope and id fails with `WorkflowDefinitionException` naming `'<id>' v<version>`, the scope and both contract names; nothing is registered.
 - **Declared signals.** A definition that waits for a signal must declare it on its contract, as a `@WorkflowSignal` method of the contract interface or of an interface it extends. Registration fails with `WorkflowDefinitionException` naming the definition and the undeclared signals in sorted order; waits inside fork branches and waits guarded by a timeout count. Marker contracts are not exempt: an empty contract can only back a definition that waits for no signal. A contract may declare signals that some of its versions do not wait for, and it may grow: add the `@WorkflowSignal` method before registering a version that waits for the new signal.
-- **Signal sent to an older version.** A signal for an instance whose pinned version does not wait for it fails with `WorkflowSignalRejectedException` naming the instance, the signal and `'<id>' v<version>`, and changes nothing. A client of another contract than the instance's pinned contract is refused with `WorkflowDefinitionContractMismatchException`.
+- **Signal sent to an older version.** A signal for an instance whose pinned definition row does not declare it for the addressed wait fails when it is recorded with `WorkflowSignalRejectedException` naming the instance, the signal and `'<id>' v<version>`, and changes nothing; a row without stored names records it and the executor rejects it. A client of another contract than the instance's pinned contract is refused with `WorkflowDefinitionContractMismatchException`.
 
 `@WorkflowContract` has the single attribute `value()` and names no definition: a contract that sets `definitionId` or `definitionVersion` no longer compiles, because definitions carry their own id and version. `WorkflowClientFactory.create(Contract.class)` no longer exists, and the annotation processor no longer generates Dagger providers of typed clients: obtain a client from the factory, for example in your own `@Provides` method.
 
@@ -576,11 +576,15 @@ Bind `WorkflowRecordingConfig` directly, or install `WorkflowRecordingConfigModu
 |---|---|---|
 | `workflow.recording.lockTimeoutMs` | `5000` | How long, in milliseconds, a caller waits to take an instance's execution lock before its transaction fails with a retryable `WorkflowPersistenceException`; at least 1, and a smaller value fails parsing with a `ConfigurationException` naming the key |
 | `workflow.recording.maxPayloadBytes` | `262144` | Maximum encoded UTF-8 JSON payload size in bytes for record-time validation; at least 1024, and a smaller value fails parsing or direct construction with a `ConfigurationException` naming the key |
+| `workflow.recording.maxOpenSignalsPerInstance` | `100` | Most signals one instance may hold open (pending, deferred, claimed or parked); from 1 to 10000, and a value outside that range fails parsing or direct construction with a `ConfigurationException` naming the key. A signal recorded beyond it fails with `WorkflowSignalLimitException` and writes nothing |
 
 The timeout bounds only that one acquisition; the caller's own `lock_timeout` is unchanged afterwards.
-The one-argument `WorkflowRecordingConfig(lockTimeoutMs)` constructor uses the default payload-size limit.
-Record-time validation also has a fixed maximum depth of 64, counting each object and array as one level.
-The engine's bounds validator is standalone; production entry points do not yet invoke it.
+`WorkflowRecordingConfig(lockTimeoutMs)` and `WorkflowRecordingConfig(lockTimeoutMs, maxPayloadBytes)` use the default for the
+components they omit.
+Record-time validation also has a fixed maximum depth of 64, counting each object and array as one level. The engine applies the
+payload bounds to a recorded signal's payload and explicit carrier before it takes the execution lock. The open-signal limit is
+enforced by a counter on the instance's queue row, raised by a conditional update when a signal is recorded and lowered when a
+signal settles, so it holds under any isolation level; a parked signal stays counted.
 
 ### Executor Configuration
 
@@ -663,6 +667,7 @@ report invalid arguments through failed Futures.
 |---|---|---|
 | `WorkflowException` | `BusinessRuleException` | 400 |
 | `WorkflowInvalidPayloadException` | leaf of `WorkflowException`; implements `ViolationCarrier` | 400 |
+| `WorkflowSignalLimitException` | leaf of `WorkflowException`; not retryable | 400 |
 | `WorkflowConflictException` | `ConflictException` | 409 |
 | `WorkflowNotFoundException` | `NotFoundException` | 404 |
 | `WorkflowConfigurationException` | `ConfigurationException` | — |
@@ -670,11 +675,16 @@ report invalid arguments through failed Futures.
 | `WorkflowUnavailableException` | `UnavailableException` | 503 |
 | `WorkflowPersistenceException` | extends `WorkflowTechnicalException` (carries a `retryable` flag) | 500 |
 
+`WorkflowSignalLimitException` is thrown when a signal cannot be recorded because its instance already holds
+`workflow.recording.maxOpenSignalsPerInstance` open signals. The call fails in the caller's transaction and writes nothing, no
+command, history entry or deduplication key, so the same signal can be sent again once an open signal has settled. `instanceId()`
+and `limit()` expose what the message names; the message never contains a payload.
+
 `WorkflowNoCurrentVersionException` extends `WorkflowDefinitionMissingException` and is thrown by a start without a version that finds no current version: neither the start scope nor the default scope has an activation record (with a durable store) or, without one, the deployment registered no version of the id that is not deprecated and does not opt out. It exposes `scopeKey()` (the start scope) and `definitionId()` and no version, because none is current, and it never selects a version from another scope.
 
 `WorkflowDefinitionFailingException` extends `WorkflowConfigurationException` and is thrown by a start that selects a definition version marked failing (see Failing rows). It exposes `scopeKey()`, `definitionKey()` and `rule()`, and its message names the scope key, the definition id, the version and the rule only, never document content, state values or class names; the scope key and the id are repeated in bounded form (at most 64 code points, control characters replaced), and the accessors keep the full values. A failing row persists until an operator repairs it, so a retry cannot succeed and the exception is not the retryable `WorkflowUnavailableException`; running instances of the version and replays of earlier starts are not refused.
 
-`WorkflowVersionNotRunnableException` extends `WorkflowVersionPinUnavailableException`, so existing handlers keep working. It is thrown when the node that receives the work holds no code for the definition version: a start that resolves to the version, or a signal, task completion, typed-client query, retry, migration or timer on an instance pinned to it. It exposes `definitionKey()` and `scopeKey()`, and its message names the scope key, the definition id and the version only. The version can be runnable on another node, so the failure belongs to the node and not to the instance: nothing is written, and no node marks an instance failed because it cannot run its pin. See `vertique-workflow-engine` and `vertique-workflow-delayed` for how work is refused and timers are queued again.
+`WorkflowVersionNotRunnableException` extends `WorkflowVersionPinUnavailableException`, so existing handlers keep working. It is thrown when the node that receives the work holds no code for the definition version: a start that resolves to the version, or a task completion, typed-client query, retry, migration or timer on an instance pinned to it. A signal needs no plan to be recorded; the executor of a node without the code defers the recorded command instead. It exposes `definitionKey()` and `scopeKey()`, and its message names the scope key, the definition id and the version only. The version can be runnable on another node, so the failure belongs to the node and not to the instance: nothing is written, and no node marks an instance failed because it cannot run its pin. See `vertique-workflow-engine` and `vertique-workflow-delayed` for how work is refused and timers are queued again.
 
 `WorkflowUnknownTypeNameException` (a name no indexed class has) and `WorkflowTypeNameConflictException` (two classes under one name in a namespace) extend `WorkflowDefinitionException`, so they are configuration failures and existing handlers for definition errors keep working.
 

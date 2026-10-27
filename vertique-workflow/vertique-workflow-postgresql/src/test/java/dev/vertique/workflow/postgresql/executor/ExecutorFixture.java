@@ -23,11 +23,13 @@ import dev.vertique.db.IsolationLevel;
 import dev.vertique.db.exception.TransactionDeadlineExceededException;
 import dev.vertique.db.postgresql.PgConnectOptionsFactory;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
@@ -47,6 +49,7 @@ import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
@@ -76,6 +79,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -307,8 +311,8 @@ final class ExecutorFixture implements AutoCloseable {
         }
         workflowLogger.detachAppender(logs);
         logs.stop();
-        extraPools.forEach(Pool::close);
-        observer.close();
+        extraPools.forEach(pool -> awaitQuietly(pool.close()));
+        awaitQuietly(observer.close());
         awaitQuietly(vertx.close());
     }
 
@@ -342,6 +346,10 @@ final class ExecutorFixture implements AutoCloseable {
         private int maxStepsPerSegment = 1000;
         private long stuckAfterSeconds = 300;
         private Set<WorkflowExecutorObserver> observers = Set.of();
+        private WorkflowRecordingConfig recordingConfig;
+        private WorkflowDefinitionRegistryStore definitionStore;
+        private Set<WorkflowSideEffectRecorder<SqlClient>> additionalRecorders = Set.of();
+        private final SegmentControl segmentControl = new SegmentControl();
         private boolean listening;
         private WorkflowRegistry registry;
         private long queueUsageIntervalMs = 1000;
@@ -476,6 +484,32 @@ final class ExecutorFixture implements AutoCloseable {
             return this;
         }
 
+        /** Enables deterministic single-segment runs on one serial executor instance. */
+        NodeSpec singleSegments() {
+            instances = 1;
+            concurrency = 1;
+            segmentControl.enabled = true;
+            return this;
+        }
+
+        /** Overrides the recording bounds for this engine only. */
+        NodeSpec recordingConfig(WorkflowRecordingConfig config) {
+            this.recordingConfig = config;
+            return this;
+        }
+
+        /** Uses real durable definition rows, including their stored signal names. */
+        NodeSpec definitionStore(WorkflowDefinitionRegistryStore store) {
+            this.definitionStore = store;
+            return this;
+        }
+
+        /** Adds recorders of kinds the ordinary fixture does not own. */
+        NodeSpec recorders(WorkflowSideEffectRecorder<SqlClient>... recorders) {
+            this.additionalRecorders = Set.of(recorders);
+            return this;
+        }
+
         /** The one place that builds the executor configuration of a node. */
         private WorkflowExecutorConfig executorConfig() {
             return new WorkflowExecutorConfig(
@@ -495,12 +529,25 @@ final class ExecutorFixture implements AutoCloseable {
             Pool pool = pool(nodeVertx, poolSize > 0 ? poolSize : Math.max(20, instances * concurrency + 4));
             DeadlineRecordingRunner[] runnerRef = new DeadlineRecordingRunner[1];
             WorkflowRegistry registry = this.registry != null ? this.registry : newRegistry();
+            Set<WorkflowSideEffectRecorder<SqlClient>> recorders = new java.util.HashSet<>(additionalRecorders);
+            if (additionalRecorders.stream().noneMatch(recorder -> recorder.kind() == IntentKind.SERVICE)) {
+                recorders.add(new IntentRecorder());
+            }
+            recorders.add(new EventRecorder());
             PgWorkflowEngineTestSupport.ExecutorEngine engine = PgWorkflowEngineTestSupport.executorEngine(
                             pool, nodeVertx, registry)
-                    .recorders(Set.of(new IntentRecorder(), new EventRecorder()))
+                    .recorders(recorders)
                     .executorConfig(executorConfig())
                     .executorObservers(observers)
-                    .commandsDecorator(commandsDecorator);
+                    .commandsDecorator(real -> segmentControl.enabled
+                            ? segmentControl.commands(commandsDecorator.apply(real))
+                            : commandsDecorator.apply(real));
+            if (recordingConfig != null) {
+                engine.recordingConfig(recordingConfig);
+            }
+            if (definitionStore != null) {
+                engine.definitionStore(definitionStore);
+            }
             CommandNotificationListener listener = null;
             if (listening) {
                 listener = new CommandNotificationListener(
@@ -512,14 +559,15 @@ final class ExecutorFixture implements AutoCloseable {
             }
             if (recordDeadlines) {
                 engine.runnerDecorator(delegate -> {
-                    runnerRef[0] = new DeadlineRecordingRunner(runnerDecorator.apply(delegate), holdFirstDeadlineCall);
+                    runnerRef[0] = new DeadlineRecordingRunner(
+                            segmentControl.runner(runnerDecorator.apply(delegate)), holdFirstDeadlineCall);
                     return runnerRef[0];
                 });
             } else {
-                engine.runnerDecorator(runnerDecorator);
+                engine.runnerDecorator(delegate -> segmentControl.runner(runnerDecorator.apply(delegate)));
             }
             WorkflowEngineHandle handle = engine.build();
-            Node node = new Node(name, nodeVertx, ownVertx, pool, handle, runnerRef[0], listener);
+            Node node = new Node(name, nodeVertx, ownVertx, pool, handle, runnerRef[0], listener, segmentControl);
             nodes.add(node);
             return node;
         }
@@ -537,6 +585,7 @@ final class ExecutorFixture implements AutoCloseable {
         final CommandNotificationListener listener;
 
         private final boolean ownsVertx;
+        private final SegmentControl segmentControl;
 
         private Node(
                 String name,
@@ -545,8 +594,10 @@ final class ExecutorFixture implements AutoCloseable {
                 Pool pool,
                 WorkflowEngineHandle engine,
                 DeadlineRecordingRunner runner,
-                @Nullable CommandNotificationListener listener) {
+                @Nullable CommandNotificationListener listener,
+                SegmentControl segmentControl) {
             this.name = name;
+            this.segmentControl = segmentControl;
             this.listener = listener;
             this.vertx = vertx;
             this.ownsVertx = ownsVertx;
@@ -557,12 +608,35 @@ final class ExecutorFixture implements AutoCloseable {
 
         /** Starts the executor and waits until it is deployed. */
         void startExecutor() {
+            segmentControl.unlimited();
             await(engine.executor().start());
         }
 
         /** Stops the executor and waits until its in-flight segments ended. */
         void stopExecutor() {
             await(engine.executor().stop());
+        }
+
+        /**
+         * Runs exactly one claimed segment and stops after its commit or failure disposition. The claim gate closes
+         * before the claim is sent, so even an immediately runnable re-queue cannot start a second segment. Use a
+         * single executor instance with concurrency one; other executors must be stopped.
+         */
+        void runOneSegment() {
+            if (!segmentControl.enabled) {
+                throw new IllegalStateException("build this node with singleSegments() before running one segment");
+            }
+            CompletableFuture<Void> finished = segmentControl.one();
+            try {
+                await(engine.executor().start());
+                try {
+                    finished.get(IDLE.toMillis(), TimeUnit.MILLISECONDS);
+                } catch (Exception e) {
+                    throw new AssertionError("one segment did not finish", e);
+                }
+            } finally {
+                stopExecutor();
+            }
         }
 
         /** Records a start in the caller's own transaction and commits it. */
@@ -582,11 +656,69 @@ final class ExecutorFixture implements AutoCloseable {
             } catch (RuntimeException | AssertionError ignored) {
                 // the executor may never have been started, or its stop may have failed
             }
-            pool.close();
+            awaitQuietly(pool.close());
             if (ownsVertx) {
                 awaitQuietly(vertx.close());
             }
             nodes.remove(this);
+        }
+    }
+
+    /** Test-only admission gate; normal executor runs pass through without observation. */
+    private static final class SegmentControl {
+        private boolean enabled;
+        private final AtomicInteger permits = new AtomicInteger(-1);
+        private volatile CompletableFuture<Void> finished;
+
+        void unlimited() {
+            finished = null;
+            permits.set(-1);
+        }
+
+        CompletableFuture<Void> one() {
+            finished = new CompletableFuture<>();
+            permits.set(1);
+            return finished;
+        }
+
+        WorkflowCommandRepository<SqlClient> commands(WorkflowCommandRepository<SqlClient> real) {
+            return intercepting("claim", (call, member, arguments, forward) -> {
+                        int remaining = permits.get();
+                        if (remaining == 0 || (remaining > 0 && !permits.compareAndSet(1, 0))) {
+                            return Future.succeededFuture(Optional.empty());
+                        }
+                        @SuppressWarnings("unchecked")
+                        Future<Optional<ClaimedCommand>> answer = (Future<Optional<ClaimedCommand>>) forward.call();
+                        return answer.onComplete(result -> {
+                            if (remaining > 0
+                                    && (result.failed() || result.result().isEmpty())) {
+                                permits.compareAndSet(0, 1);
+                            }
+                        });
+                    })
+                    .apply(real);
+        }
+
+        WorkflowTransactionRunner<SqlClient> runner(WorkflowTransactionRunner<SqlClient> real) {
+            if (!enabled) return real;
+            return new WorkflowTransactionRunner<>() {
+                @Override
+                public <R> Future<R> inTransaction(
+                        @Nullable IsolationLevel level, Function<SqlClient, Future<R>> work) {
+                    return real.inTransaction(level, work);
+                }
+
+                @Override
+                public <R> Future<R> inTransaction(
+                        @Nullable IsolationLevel level, Duration deadline, Function<SqlClient, Future<R>> work) {
+                    return real.inTransaction(level, deadline, work).onComplete(result -> {
+                        CompletableFuture<Void> current = finished;
+                        if (current != null) {
+                            current.complete(null);
+                        }
+                    });
+                }
+            };
         }
     }
 

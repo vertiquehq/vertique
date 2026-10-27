@@ -174,7 +174,9 @@ final class ForkJoinCoordinator {
                         return evaluateJoinForRecoveredBranch(inst, advanced, rw, tx);
                     }
                     return Future.<Void>succeededFuture();
-                });
+                })
+                // a branch that reached a signal wait applies the parked signals its wait accepts
+                .compose(done -> driverPvd.get().afterInlineDrive(inst.id(), tx));
     }
 
     /**

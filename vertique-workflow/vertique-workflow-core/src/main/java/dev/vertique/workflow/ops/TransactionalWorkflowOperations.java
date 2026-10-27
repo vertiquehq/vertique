@@ -40,14 +40,15 @@ public interface TransactionalWorkflowOperations<TX> {
     Future<WorkflowInstanceId> start(StartCommand cmd, TX tx);
 
     /**
-     * Delivers an external signal to a waiting workflow instance within the given transaction.
+     * Records an external signal for a workflow instance within the given transaction. The signal is applied later, by
+     * an executor, in the order the instance's commands were recorded.
      *
      * @param id id of the workflow instance to signal
      * @param signalName name of the signal to deliver
      * @param payload signal payload
      * @param signalDedupKey caller-supplied dedup key; no random fallback
      * @param tx the active transaction context
-     * @return a {@link Future} that completes when the signal has been applied
+     * @return a {@link Future} that completes when the signal has been recorded, not when it has been applied
      */
     Future<Void> signal(WorkflowInstanceId id, String signalName, Object payload, String signalDedupKey, TX tx);
 
@@ -68,7 +69,7 @@ public interface TransactionalWorkflowOperations<TX> {
      * @param forkStepId optional fork step id; required when {@code branchId} is set
      * @param branchId optional branch id; required when {@code forkStepId} is set
      * @param tx the active transaction context
-     * @return a {@link Future} that completes when the signal is applied
+     * @return a {@link Future} that completes when the signal is recorded
      */
     default Future<Void> signal(
             WorkflowInstanceId id,
@@ -112,7 +113,7 @@ public interface TransactionalWorkflowOperations<TX> {
      * @param signalMetadata optional explicit durable-context carrier overriding the ambient
      *     capture as the bind base; {@code null} preserves today's semantics
      * @param tx the active transaction context
-     * @return a {@link Future} that completes when the signal is applied; fails with
+     * @return a {@link Future} that completes when the signal is recorded; fails with
      *     {@link UnsupportedOperationException} when {@code signalMetadata} is non-null and this
      *     method is not overridden by the implementation
      */

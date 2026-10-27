@@ -809,47 +809,45 @@ public class RequireVersionStabilityIT {
                                                 WaitType.SIGNAL, optInst.get().waitType(), "must be waiting on SIGNAL");
                                     });
 
-                                    // Send the signal — transition should fail at stability guard.
+                                    // Send the signal: it is recorded, and the executor's transition into the
+                                    // stability-required task fails at the stability guard, rejecting the signal.
                                     return engine.signal(workflowId, "advance", state, signalDedupKey)
-                                            .map(v -> {
+                                            .compose(recorded -> engine.executionProbe()
+                                                    .awaitIdle(workflowId, Duration.ofSeconds(10)))
+                                            .compose(idle -> pool.preparedQuery("SELECT state FROM workflow_commands"
+                                                            + " WHERE workflow_id = $1 AND kind = 'SIGNAL'")
+                                                    .execute(Tuple.of(workflowId.value())))
+                                            .compose(commands -> {
                                                 ctx.verify(
-                                                        () -> ctx.failNow(
-                                                                new AssertionError(
-                                                                        "Signal must have failed with WorkflowSubjectVersionUnavailableException")));
-                                                return null;
+                                                        () -> assertEquals(
+                                                                "REJECTED",
+                                                                commands.iterator()
+                                                                        .next()
+                                                                        .getString("state"),
+                                                                "the signal whose transition fails the stability guard must be rejected"));
+                                                // Workflow must still be WAITING on SIGNAL (prior step unchanged).
+                                                return pool.withTransaction(
+                                                        tx -> instanceRepo.findById(workflowId, tx));
                                             })
-                                            .recover(t -> Future.succeededFuture(t)
-                                                    .compose(ex -> {
-                                                        ctx.verify(
-                                                                () -> assertInstanceOf(
-                                                                        WorkflowSubjectVersionUnavailableException
-                                                                                .class,
-                                                                        ex,
-                                                                        "signal transition must fail with WorkflowSubjectVersionUnavailableException"));
-                                                        // Workflow must still be WAITING on SIGNAL (prior step
-                                                        // unchanged).
-                                                        return pool.withTransaction(
-                                                                tx -> instanceRepo.findById(workflowId, tx));
-                                                    })
-                                                    .map(optUpdated -> {
-                                                        ctx.verify(() -> {
-                                                            assertTrue(optUpdated.isPresent());
-                                                            var inst = optUpdated.get();
-                                                            assertEquals(
-                                                                    WorkflowStatus.WAITING,
-                                                                    inst.status(),
-                                                                    "workflow must still be WAITING after signal failure");
-                                                            assertEquals(
-                                                                    WaitType.SIGNAL,
-                                                                    inst.waitType(),
-                                                                    "workflow must still be waiting on SIGNAL");
-                                                            assertEquals(
-                                                                    "wait-signal",
-                                                                    inst.currentStepId(),
-                                                                    "current_step must remain at wait-signal");
-                                                        });
-                                                        return null;
-                                                    }));
+                                            .map(optUpdated -> {
+                                                ctx.verify(() -> {
+                                                    assertTrue(optUpdated.isPresent());
+                                                    var inst = optUpdated.get();
+                                                    assertEquals(
+                                                            WorkflowStatus.WAITING,
+                                                            inst.status(),
+                                                            "workflow must still be WAITING after signal failure");
+                                                    assertEquals(
+                                                            WaitType.SIGNAL,
+                                                            inst.waitType(),
+                                                            "workflow must still be waiting on SIGNAL");
+                                                    assertEquals(
+                                                            "wait-signal",
+                                                            inst.currentStepId(),
+                                                            "current_step must remain at wait-signal");
+                                                });
+                                                return null;
+                                            });
                                 });
                     })
                     .onComplete(ar -> {

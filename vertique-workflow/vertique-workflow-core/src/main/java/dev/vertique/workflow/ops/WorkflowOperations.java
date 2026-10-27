@@ -31,17 +31,21 @@ public interface WorkflowOperations {
     Future<WorkflowInstanceId> start(StartCommand cmd);
 
     /**
-     * Delivers an external signal to a waiting workflow instance.
+     * Delivers an external signal to a workflow instance by recording it.
      *
-     * <p>The signal is applied only if the instance is in {@code WAITING} status waiting for
-     * {@code signalName}. The {@code signalDedupKey} prevents duplicate signal delivery.
+     * <p>The call returns once the signal is recorded as a command of the instance; an executor applies it
+     * afterwards, in the order the instance's commands were recorded. A signal the instance does not await yet is
+     * parked and applied when the instance reaches a wait that accepts it. The call is refused only for a missing or
+     * ended instance, a name the instance's pinned definition does not declare for the addressed wait, a payload over
+     * the record-time size or depth bounds, or an instance that already holds the configured number of open signals.
+     * The {@code signalDedupKey} prevents duplicate signal delivery: a repeated key returns success and records
+     * nothing.
      *
      * @param id id of the workflow instance to signal
      * @param signalName name of the signal to deliver
-     * @param payload signal payload; coerced to the declared payload type if necessary
+     * @param payload signal payload; bound to the declared payload type when the signal is applied
      * @param signalDedupKey caller-supplied dedup key; no random fallback
-     * @return a {@link Future} that completes when the signal has been applied and the engine has
-     *     advanced to the next step (or transitioned to a terminal status)
+     * @return a {@link Future} that completes when the signal has been recorded, not when it has been applied
      */
     Future<Void> signal(WorkflowInstanceId id, String signalName, Object payload, String signalDedupKey);
 
@@ -65,7 +69,7 @@ public interface WorkflowOperations {
      * @param signalName name of the signal to deliver
      * @param payload signal payload; coerced to the declared payload type if necessary
      * @param signalDedupKey caller-supplied dedup key; no random fallback
-     * @return a {@link Future} that completes when the signal has been applied; it fails with a
+     * @return a {@link Future} that completes when the signal has been recorded; it fails with a
      *     {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException} when a
      *     contract-checking binding finds the instance pinned to a definition of another contract
      */

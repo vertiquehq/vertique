@@ -6,7 +6,6 @@ package dev.vertique.workflow.engine;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -81,6 +80,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * ambient correlation B as authoritative over the instance's persisted correlation A, while the
  * instance-fill half of the merge supplies tenant T for the namespace ambient lacks — proving the
  * base-wins/instance-fill contract (Contract Appendix C2) on the live (non-recovery) signal path.
+ *
+ * <p>A signal is applied by the segment that runs its recorded command, not by the call that records it, so the test
+ * drives that segment with the ambient correlation bound around it. The ambient context of the recording call itself is
+ * captured onto the command by a later change; until then the binder merges what is bound around the segment, which is
+ * what this test pins down.
  *
  * <p>Uses the {@code runOnDuplicated} pattern plus the shared {@link TenantCtx} /
  * {@link TenantCtxCodec} test fixture, extended with the real {@link CorrelationContext}
@@ -223,7 +227,6 @@ class WorkflowLiveSignalContextTest {
 
         WorkflowInstance inst = instanceWaitingOnSignal(instanceMetadata);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.dedup().claimOrResolveSignal(eq(inst.id()), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
 
         AtomicReference<Optional<TenantCtx>> capturedTenant = new AtomicReference<>();
         AtomicReference<Optional<CorrelationContext>> capturedCorrelation = new AtomicReference<>();
@@ -241,8 +244,7 @@ class WorkflowLiveSignalContextTest {
                     .create(new CorrelationIdentifier("req-B", "test"), new CorrelationIdentifier("corr-B", "test"));
             h.holder().bind(CorrelationContext.class, ambientCorrelationB);
 
-            h.txOps()
-                    .signal(inst.id(), "approve", Map.of(), "dedup-1", tx)
+            RecordedSignalSegments.run(h.txOps(), inst, "approve", tx)
                     .onComplete(ar -> ctx.verify(() -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());

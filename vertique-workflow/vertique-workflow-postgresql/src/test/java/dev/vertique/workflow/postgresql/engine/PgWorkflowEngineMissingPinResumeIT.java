@@ -4,8 +4,6 @@
 package dev.vertique.workflow.postgresql.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.db.DbPoolConfig;
@@ -17,10 +15,8 @@ import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
-import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
@@ -58,10 +54,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * the transaction is rolled back leaving the instance state unchanged (FR-WF-DEF-062).
  *
  * <p>Engine A knows v1 and is used to create a WAITING instance. Engine B has an empty registry
- * (does NOT know v1) and is used to attempt signal delivery. The attempt must fail with the typed
- * exception carrying the correct {@code definitionId}, {@code version}, and {@code instanceId}.
- * After the failure the instance row must still be WAITING with its original version counter
- * (proving the transaction rolled back).
+ * (does NOT know v1) and is used to send a signal. Recording a signal needs no plan, so the call succeeds and the
+ * signal waits as a recorded command; engine B applies nothing, and engine A runs it. When no engine on the node
+ * knows the version, the executor defers the recorded signal and the instance stays as it was.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -202,14 +197,14 @@ public class PgWorkflowEngineMissingPinResumeIT {
     // --- Tests ---
 
     /**
-     * FR-WF-DEF-062: Attempting to resume (signal) via engine B throws
-     * {@link WorkflowVersionPinUnavailableException} with {@code instanceId} populated. The
-     * instance row must be unchanged after the failed attempt.
+     * FR-WF-DEF-062: A signal sent through engine B, which lacks the pinned version, is recorded: recording needs no
+     * plan. Engine B applies nothing and the instance row stays as it was; engine A, which has the version, runs the
+     * recorded command and the instance completes.
      */
     @Test
     @DisplayName(
-            "FR-WF-DEF-062 — signal via engine without pinned version throws typed exception with instanceId; instance unchanged")
-    void signalViaEngineWithoutPinnedVersionThrowsTypedExceptionAndRollsBack(VertxTestContext ctx) {
+            "FR-WF-DEF-062 — signal via engine without pinned version is recorded, changes nothing, and the engine with the version applies it")
+    void signalViaEngineWithoutPinnedVersionIsRecordedAndAppliedByTheEngineWithIt(VertxTestContext ctx) {
         String key = "missing-pin-signal-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
                 DEF_ID,
@@ -230,47 +225,31 @@ public class PgWorkflowEngineMissingPinResumeIT {
                     assertEquals(WorkflowStatus.WAITING, view.instance().status(), "must be WAITING before signal");
                     return id;
                 }))
-                .compose(id -> {
-                    long versionBeforeAttempt = -1; // captured below via query.
-                    return engineA.query(id).compose(view -> {
-                        long capturedVersion = view.instance().version();
-                        // Engine B attempts to signal — must fail.
-                        return engineB.signal(id, "go", "payload", "dedup-" + UUID.randomUUID())
-                                .compose(
-                                        // Should not reach here.
-                                        v -> io.vertx.core.Future.<WorkflowView>failedFuture(
-                                                new AssertionError("signal must have failed")),
-                                        e -> {
-                                            // Validate the exception type and fields.
-                                            assertInstanceOf(
-                                                    WorkflowVersionPinUnavailableException.class,
-                                                    e,
-                                                    "must throw WorkflowVersionPinUnavailableException; got: " + e);
-                                            WorkflowVersionPinUnavailableException ex =
-                                                    (WorkflowVersionPinUnavailableException) e;
-                                            assertEquals(DEF_ID, ex.definitionId(), "definitionId must match");
-                                            assertEquals(1L, ex.version(), "version must be 1");
-                                            assertNotNull(ex.instanceId(), "instanceId must be populated");
-                                            assertEquals(
-                                                    id.value(),
-                                                    ex.instanceId().value(),
-                                                    "instanceId must match the started instance");
-
-                                            // Verify the instance is still WAITING and version is unchanged.
-                                            return engineA.query(id).map(afterView -> {
-                                                assertEquals(
-                                                        WorkflowStatus.WAITING,
-                                                        afterView.instance().status(),
-                                                        "instance must still be WAITING after failed signal");
-                                                assertEquals(
-                                                        capturedVersion,
-                                                        afterView.instance().version(),
-                                                        "instance version must be unchanged (tx rolled back)");
-                                                return afterView;
-                                            });
-                                        });
-                    });
-                })
+                .compose(id -> engineA.query(id).compose(view -> {
+                    long capturedVersion = view.instance().version();
+                    // Engine B records the signal even though it holds no plan for the pinned version.
+                    return engineB.signal(id, "go", "payload", "dedup-" + UUID.randomUUID())
+                            .compose(recorded -> pool.preparedQuery("SELECT count(*) AS c FROM workflow_commands"
+                                            + " WHERE workflow_id = $1 AND kind = 'SIGNAL'")
+                                    .execute(Tuple.of(id.value()))
+                                    .map(rows -> rows.iterator().next().getLong("c")))
+                            .compose(commands -> {
+                                assertEquals(1L, commands, "the signal must be recorded as one command");
+                                // Engine A, which has the version, runs it.
+                                return engineA.executionProbe().awaitIdle(id, IDLE_TIMEOUT);
+                            })
+                            .compose(idle -> engineA.query(id))
+                            .map(afterView -> {
+                                assertEquals(
+                                        WorkflowStatus.COMPLETED,
+                                        afterView.instance().status(),
+                                        "the engine with the pinned version must apply the recorded signal");
+                                assertTrue(
+                                        afterView.instance().version() > capturedVersion,
+                                        "the application must advance the instance version");
+                                return afterView;
+                            });
+                }))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "test chain must complete: " + ar.cause());
                     ctx.completeNow();
@@ -287,8 +266,9 @@ public class PgWorkflowEngineMissingPinResumeIT {
      * deployment are discovered after a rollback.
      */
     @Test
-    @DisplayName("FR-WF-DEF-062 — resume when DB row references unknown version throws typed exception with instanceId")
-    void resumeWhenDbRowReferencesUnknownVersionThrowsTypedException(VertxTestContext ctx) {
+    @DisplayName(
+            "FR-WF-DEF-062 — signal for an instance whose DB row references an unknown version is recorded and deferred")
+    void resumeWhenDbRowReferencesUnknownVersionIsRecordedAndDeferred(VertxTestContext ctx) {
         String key = "missing-pin-db-version-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
                 DEF_ID,
@@ -311,27 +291,22 @@ public class PgWorkflowEngineMissingPinResumeIT {
                             .map(v -> id);
                 })
                 .compose(id -> {
-                    // Engine A does not know v99 — signal must fail.
+                    // Engine A does not know v99: the signal is recorded, and the executor can run no command of the
+                    // instance, so it defers the signal and applies nothing.
                     return engineA.signal(id, "go", "payload", "dedup-" + UUID.randomUUID())
-                            .compose(
-                                    v -> io.vertx.core.Future.<WorkflowInstanceId>failedFuture(
-                                            new AssertionError("signal must have failed")),
-                                    e -> {
-                                        assertInstanceOf(
-                                                WorkflowVersionPinUnavailableException.class,
-                                                e,
-                                                "must throw WorkflowVersionPinUnavailableException; got: " + e);
-                                        WorkflowVersionPinUnavailableException ex =
-                                                (WorkflowVersionPinUnavailableException) e;
-                                        assertEquals(DEF_ID, ex.definitionId(), "definitionId must match");
-                                        assertEquals(99L, ex.version(), "version must be 99");
-                                        assertNotNull(ex.instanceId(), "instanceId must be populated");
-                                        assertEquals(
-                                                id.value(),
-                                                ex.instanceId().value(),
-                                                "instanceId must match the instance");
-                                        return io.vertx.core.Future.succeededFuture(id);
-                                    });
+                            .compose(recorded -> engineA.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                            .compose(idle -> {
+                                assertEquals(1, idle.deferred().size(), "the signal must be reported as deferred");
+                                assertEquals(
+                                        "SIGNAL", idle.deferred().get(0).kind(), "the deferred command is the signal");
+                                return pool.preparedQuery("SELECT status FROM workflow_instances WHERE id = $1")
+                                        .execute(Tuple.of(id.value()))
+                                        .map(rows -> rows.iterator().next().getString("status"));
+                            })
+                            .map(status -> {
+                                assertEquals("WAITING", status, "the instance must be left as it was");
+                                return id;
+                            });
                 })
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "test chain must complete: " + ar.cause());

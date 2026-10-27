@@ -522,6 +522,7 @@ public class DocumentDefinitionEndToEndJsonIT {
                         id, "payment.captured", new PaymentCapturedDoc("auth-def"), "pay-" + UUID.randomUUID()))
                 .compose(v -> engine.signal(
                         id, "shipment.created", new ShipmentCreatedDoc("track-ghi"), "ship-" + UUID.randomUUID()))
-                .map(v -> id);
+                .compose(v -> probe.awaitIdle(id, java.time.Duration.ofSeconds(10)))
+                .map(idle -> id);
     }
 }

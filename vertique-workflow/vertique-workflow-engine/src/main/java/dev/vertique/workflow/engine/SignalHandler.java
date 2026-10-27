@@ -4,14 +4,28 @@
 package dev.vertique.workflow.engine;
 
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.workflow.engine.executor.ClaimLostException;
+import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.executor.DeadlineGuard;
+import dev.vertique.workflow.engine.executor.ParkedSignals;
+import dev.vertique.workflow.engine.executor.Savepoints;
+import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.CommandHead;
+import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
+import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -28,13 +42,19 @@ import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.BiFunction;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Package-private collaborator owning the workflow-signal delivery paths.
@@ -53,9 +73,11 @@ import java.util.function.BiFunction;
  *   <li>{@link #findWaitSignalNode} — the static {@link WaitSignalNode} lookup helper.</li>
  * </ul>
  *
- * <p>The public {@code signal(...)} transaction entrypoints stay on {@link WorkflowEngine}; they
- * open the transaction via the runner and delegate their bodies to {@link #applyBranchSignal} and
- * {@link #doApplySignal} on this handler.
+ * <p>The public {@code signal(...)} entrypoints on {@link WorkflowEngine} only record a {@code SIGNAL}
+ * command. This handler runs inside an executor segment: {@link #runSegment} decides what becomes of a
+ * claimed signal command (apply, park, reject, stale) and applies it under a savepoint through
+ * {@link #doApplySignal} or {@link #applyBranchSignal}; the parked signals of the waits a segment
+ * reached are applied by {@link #parkedSignals()}.
  *
  * <p><b>No Dagger cycle.</b> This handler is injected eagerly by the engine facade. It depends on the
  * {@link WorkflowTransitionDriver} (for the post-signal continuation), the {@link ForkJoinCoordinator}
@@ -70,6 +92,8 @@ import java.util.function.BiFunction;
 @Singleton
 final class SignalHandler {
 
+    private static final Logger log = LoggerFactory.getLogger(SignalHandler.class);
+
     // --- Dependencies ---
 
     private final WorkflowRegistry registry;
@@ -82,6 +106,11 @@ final class SignalHandler {
     private final WorkflowTransitionDriver driver;
     private final TimerLifecycleService timerLifecycle;
     private final Clock clock;
+    private final WorkflowCommandRepository<SqlClient> commands;
+    private final WorkflowContextBinder contextBinder;
+    private final WorkflowHistoryRecorder historyRecorder;
+    private final DeadlineGuard deadlineGuard;
+    private final ParkedSignals parkedSignals;
 
     /**
      * Constructs a new signal handler.
@@ -100,6 +129,9 @@ final class SignalHandler {
      * @param timerLifecycle the timer-lifecycle service owning the canonical
      *     {@code appendTimerCancelledHistory} used when a signal arrives before its timeout timer
      * @param clock the clock used to timestamp history entries and state updates
+     * @param commands the command repository the signal segments settle their commands through
+     * @param contextBinder the binder that installs the durable context of a drive
+     * @param historyRecorder the recorder of the history entries of command outcomes
      */
     @Inject
     SignalHandler(
@@ -112,7 +144,10 @@ final class SignalHandler {
             ForkJoinCoordinator forkJoin,
             WorkflowTransitionDriver driver,
             TimerLifecycleService timerLifecycle,
-            Clock clock) {
+            Clock clock,
+            WorkflowCommandRepository<SqlClient> commands,
+            WorkflowContextBinder contextBinder,
+            WorkflowHistoryRecorder historyRecorder) {
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -123,6 +158,14 @@ final class SignalHandler {
         this.driver = driver;
         this.timerLifecycle = timerLifecycle;
         this.clock = clock;
+        this.commands = commands;
+        this.contextBinder = contextBinder;
+        this.historyRecorder = historyRecorder;
+        this.deadlineGuard = new DeadlineGuard(commands);
+        this.parkedSignals = new ParkedSignals(commands, deadlineGuard, new ParkedHost());
+        if (driver != null) {
+            driver.attachParkedSignals(parkedSignals);
+        }
     }
 
     // --- Branch-scoped signal ---
@@ -160,7 +203,12 @@ final class SignalHandler {
         }
         // Coerce the payload to the declared type.
         Class<?> payloadClass = rw.signalPayloadTypes().get(signalName);
-        Object coercedPayload = WorkflowPayloads.coercePayload(payload, payloadClass);
+        Object coercedPayload;
+        try {
+            coercedPayload = coerce(payload, payloadClass, inst, signalName);
+        } catch (WorkflowInvalidPayloadException e) {
+            return Future.failedFuture(e);
+        }
         // Run the state updater on the parent instance state. (Branch-local state is recorded in
         // result_json at branch completion; mid-branch state-mutation is propagated through the
         // parent instance state for V1.)
@@ -322,7 +370,12 @@ final class SignalHandler {
 
         // Coerce payload to the declared signal payload type.
         Class<?> payloadClass = rw.signalPayloadTypes().get(ctx.signalName());
-        Object coercedPayload = WorkflowPayloads.coercePayload(ctx.payload(), payloadClass);
+        Object coercedPayload;
+        try {
+            coercedPayload = coerce(ctx.payload(), payloadClass, inst, ctx.signalName());
+        } catch (WorkflowInvalidPayloadException e) {
+            return Future.failedFuture(e);
+        }
 
         // Decode current state.
         Object stateObj = Json.decodeValue(Buffer.buffer(inst.stateJson()), rw.stateType());
@@ -363,14 +416,439 @@ final class SignalHandler {
                 })
                 .compose(v -> history.nextSequence(inst.id(), tx))
                 .compose(seq -> {
-                    String histPayload = Json.encode(
-                            new SignalReceivedHistoryPayload(ctx.signalName(), ctx.dedupKey(), coercedPayload));
+                    String histPayload = Json.encode(new SignalReceivedHistoryPayload(
+                            ctx.signalName(), ctx.dedupKey(), coercedPayload, ctx.commandId()));
                     return history.append(
                             new WorkflowHistoryEntry(
                                     inst.id(), seq, WorkflowEntryType.SIGNAL_RECEIVED, histPayload, clock.instant()),
                             tx);
                 })
                 .compose(v -> driver.driveTransitions(updated, rw, tx));
+    }
+
+    // --- Recorded signals in a segment ---
+
+    /**
+     * The application of parked signals at the waits a segment has reached.
+     *
+     * @return the parked-signal application
+     */
+    ParkedSignals parkedSignals() {
+        return parkedSignals;
+    }
+
+    /**
+     * Runs the work of a claimed {@code SIGNAL} command inside the segment's transaction and settles it, except when
+     * its application succeeds: then the executor completes it.
+     *
+     * <ul>
+     *   <li>The instance has ended: the command is rejected, or stale when it addresses a branch.</li>
+     *   <li>The pinned plan never waits for the name: the command is rejected.</li>
+     *   <li>The instance is not at a wait that accepts the signal, is {@code FAILED}, or the signal is
+     *       deadline-blocked there: the command is parked and the attempt its claim spent is restored.</li>
+     *   <li>A branch-addressed signal whose branch was superseded or ended is stale.</li>
+     *   <li>Otherwise the signal is applied under a savepoint. A deterministic failure or a step-limit overrun rolls
+     *       back to the savepoint and the command is rejected; the instance is unchanged. After a success the parked
+     *       signals of the waits the instance has reached are applied.</li>
+     * </ul>
+     *
+     * @param head the peeked head the claim came from
+     * @param claim the claim
+     * @param command the fenced command
+     * @param tx the segment's transaction handle
+     * @return the outcome the executor acts on
+     */
+    Future<WorkflowSegments.Outcome> runSegment(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        SignalTarget signal;
+        try {
+            signal = SignalTarget.of(command);
+        } catch (RuntimeException e) {
+            return Future.failedFuture(e);
+        }
+        return instances.findById(command.workflowId(), tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.<WorkflowSegments.Outcome>failedFuture(
+                        new WorkflowInstanceNotFoundException(command.workflowId()));
+            }
+            WorkflowInstance inst = found.get();
+            if (isEnded(inst.status())) {
+                String reason = CommandErrors.signalInstanceEnded(
+                        signal.name(), inst.status().name(), signal.branchAddressed());
+                return signal.branchAddressed()
+                        ? stale(claim, command, signal, reason, tx)
+                        : reject(claim, command, signal, reason, tx);
+            }
+            if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
+                    || !inst.definitionId().equals(head.definitionId())
+                    || inst.definitionVersion() != head.definitionVersion()
+                    || !java.util.Objects.equals(inst.planHash(), head.planHash())) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            }
+            RuntimeWorkflow rw;
+            try {
+                rw = PinnedPlans.resolve(registry, inst);
+                WorkflowPayloads.requirePlanHashMatches(inst, rw);
+            } catch (WorkflowVersionNotRunnableException | WorkflowPlanHashDriftException e) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            } catch (Exception e) {
+                return Future.failedFuture(e);
+            }
+            if (!waitsForSignal(rw, signal.name())) {
+                return reject(
+                        claim,
+                        command,
+                        signal,
+                        CommandErrors.signalUndeclared(signal.name(), inst.definitionVersion()),
+                        tx);
+            }
+            return signal.branchAddressed()
+                    ? decideBranch(claim, command, signal, inst, rw, tx)
+                    : decideInstance(claim, command, signal, inst, rw, tx);
+        });
+    }
+
+    private Future<WorkflowSegments.Outcome> decideInstance(
+            ClaimedCommand claim,
+            SegmentCommand command,
+            SignalTarget signal,
+            WorkflowInstance inst,
+            RuntimeWorkflow rw,
+            SqlClient tx) {
+        boolean awaited = inst.status() == WorkflowStatus.WAITING
+                && inst.waitType() == WaitType.SIGNAL
+                && signal.name().equals(inst.waitKey());
+        if (!awaited) {
+            return park(claim, command, signal, tx);
+        }
+        return deadlineGuard
+                .blocked(inst.id(), inst.currentStepId(), null, command.commandId(), tx)
+                .compose(blocked ->
+                        blocked ? park(claim, command, signal, tx) : apply(claim, command, signal, inst, null, rw, tx));
+    }
+
+    private Future<WorkflowSegments.Outcome> decideBranch(
+            ClaimedCommand claim,
+            SegmentCommand command,
+            SignalTarget signal,
+            WorkflowInstance inst,
+            RuntimeWorkflow rw,
+            SqlClient tx) {
+        return branchTokens
+                .findByWorkflowAndFork(inst.id(), signal.forkStepId(), tx)
+                .compose(tokens -> {
+                    Optional<BranchToken> branch = tokens.stream()
+                            .filter(token -> signal.branchId().equals(token.branchId()))
+                            .findFirst();
+                    if (branch.isPresent() && isFinished(branch.get().status())) {
+                        return stale(claim, command, signal, CommandErrors.signalBranchEnded(signal.name()), tx);
+                    }
+                    boolean awaited = inst.status() != WorkflowStatus.FAILED
+                            && branch.isPresent()
+                            && branch.get().status() == BranchStatus.WAITING
+                            && branch.get().waitType() == WaitType.SIGNAL
+                            && signal.name().equals(branch.get().waitKey());
+                    if (!awaited) {
+                        return park(claim, command, signal, tx);
+                    }
+                    BranchToken waiting = branch.get();
+                    return deadlineGuard
+                            .blocked(inst.id(), waiting.currentStepId(), signal.branchId(), command.commandId(), tx)
+                            .compose(blocked -> blocked
+                                    ? park(claim, command, signal, tx)
+                                    : apply(claim, command, signal, inst, waiting, rw, tx));
+                });
+    }
+
+    /** A branch that can never receive a signal again: superseded, ended, or being compensated. */
+    private static boolean isFinished(BranchStatus status) {
+        return switch (status) {
+            case SUPERSEDED, COMPLETED, FAILED, CANCELLED, EXPIRED, COMPENSATING, COMPENSATED -> true;
+            default -> false;
+        };
+    }
+
+    private Future<WorkflowSegments.Outcome> apply(
+            ClaimedCommand claim,
+            SegmentCommand command,
+            SignalTarget signal,
+            WorkflowInstance inst,
+            @Nullable BranchToken waiting,
+            RuntimeWorkflow rw,
+            SqlClient tx) {
+        return commands.wasParked(inst.id(), command.commandId(), tx).compose(parkedBefore -> historyRecorder
+                .appendCommandHistory(
+                        inst.id(), WorkflowEntryType.COMMAND_RECEIVED, command.commandId(), command.kind(), tx)
+                .compose(
+                        received -> Savepoints.attempt(tx, () -> applyRecorded(inst, waiting, command, signal, rw, tx)))
+                .compose(attempt -> switch (attempt) {
+                    case Savepoints.Attempt.Applied<Void> applied ->
+                        // A signal that was parked and set back to pending is applied from the parked state.
+                        appliedHistory(command, signal.name(), parkedBefore, tx)
+                                .compose(done -> parkedSignals.drain(inst.id(), tx))
+                                .map(done -> WorkflowSegments.Outcome.APPLIED);
+                    case Savepoints.Attempt.Contained<Void> contained -> {
+                        log.warn(
+                                "Signal '{}' (command {}) of instance {} failed and was rejected: {}",
+                                signal.name(),
+                                command.commandId(),
+                                inst.id().value(),
+                                contained.cause().getClass().getName());
+                        String reason = contained.kind() == Savepoints.Containment.STEP_LIMIT
+                                ? CommandErrors.signalStepLimit(signal.name(), driver.stepCap(tx))
+                                : CommandErrors.signalFailure(signal.name());
+                        yield reject(claim, command, signal, reason, tx);
+                    }
+                }));
+    }
+
+    /**
+     * Writes the history of an applied signal command: {@code SIGNAL_APPLIED} when it was parked first, then
+     * {@code COMMAND_COMPLETED}.
+     */
+    private Future<Void> appliedHistory(SegmentCommand command, String signalName, boolean parkedBefore, SqlClient tx) {
+        Future<Void> signalApplied = parkedBefore
+                ? historyRecorder.appendSignalCommandHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.SIGNAL_APPLIED,
+                        command.commandId(),
+                        signalName,
+                        null,
+                        tx)
+                : Future.succeededFuture();
+        return signalApplied.compose(done -> historyRecorder.appendCommandHistory(
+                command.workflowId(), WorkflowEntryType.COMMAND_COMPLETED, command.commandId(), command.kind(), tx));
+    }
+
+    /**
+     * Applies a recorded signal to the instance: state update, history and the drive to the next wait. Runs inside the
+     * savepoint of the signal, whether it executes as a command of its own or was parked.
+     */
+    private Future<Void> applyRecorded(
+            WorkflowInstance inst,
+            @Nullable BranchToken waiting,
+            SegmentCommand command,
+            SignalTarget signal,
+            RuntimeWorkflow rw,
+            SqlClient tx) {
+        Object raw;
+        DurableMetadata carrier;
+        try {
+            raw = command.payloadJson() == null ? null : Json.decodeValue(command.payloadJson());
+            carrier = command.explicitCarrierJson() == null
+                    ? null
+                    : DurableMetadata.fromCarrier(new JsonObject(command.explicitCarrierJson()));
+        } catch (RuntimeException e) {
+            return Future.failedFuture(new WorkflowInvalidPayloadException(
+                    "The recorded signal '" + EchoedNames.bounded(signal.name()) + "' cannot be read", List.of()));
+        }
+        // The instance carrier of an instance recorded before the identity snapshot was dropped may still hold one; no
+        // drive may bind an identity from it.
+        WorkflowInstance bindable = withoutIdentity(inst);
+        if (!signal.branchAddressed()) {
+            return contextBinder.withBound(
+                    bindable,
+                    carrier,
+                    () -> doApplySignal(
+                            inst,
+                            new SignalDeliveryContext(
+                                    signal.name(), raw, command.dedupKey(), null, command.commandId()),
+                            tx));
+        }
+        if (waiting == null) {
+            return Future.failedFuture(
+                    new WorkflowSignalRejectedException("Instance '" + inst.id().value()
+                            + "' has no branch waiting for signal '" + EchoedNames.bounded(signal.name()) + "'"));
+        }
+        DurableMetadata effectiveBase = carrier == null
+                ? null
+                : bindable.metadata() == null
+                        ? carrier
+                        : carrier.merge(bindable.metadata(), DurableMetadata.MergePolicy.CALLER_WINS);
+        return applyBranchSignal(inst, waiting, rw, signal.name(), raw, tx, effectiveBase);
+    }
+
+    /** The instance as a drive may bind it: its carrier without the identity-snapshot namespace. */
+    private static WorkflowInstance withoutIdentity(WorkflowInstance inst) {
+        DurableMetadata metadata = inst.metadata();
+        if (metadata == null || !metadata.has(WorkflowEngine.IDENTITY_SNAPSHOT_NAMESPACE)) {
+            return inst;
+        }
+        DurableMetadata stripped = metadata.without(WorkflowEngine.IDENTITY_SNAPSHOT_NAMESPACE);
+        return new WorkflowInstance(
+                inst.id(),
+                inst.definitionId(),
+                inst.definitionVersion(),
+                inst.planHash(),
+                inst.version(),
+                inst.status(),
+                inst.businessKey(),
+                inst.subjectRef(),
+                inst.currentStepId(),
+                inst.waitType(),
+                inst.waitKey(),
+                inst.waitAuxId(),
+                inst.stateJson(),
+                inst.errorType(),
+                inst.errorMessage(),
+                inst.createdAt(),
+                inst.updatedAt(),
+                stripped.isEmpty() ? null : stripped,
+                inst.scopeKey(),
+                inst.definitionScopeKey());
+    }
+
+    private Future<WorkflowSegments.Outcome> park(
+            ClaimedCommand claim, SegmentCommand command, SignalTarget signal, SqlClient tx) {
+        return commands.park(command.commandId(), claim.token(), tx)
+                .compose(rows -> requireRow(rows))
+                .compose(done -> historyRecorder.appendSignalCommandHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.SIGNAL_PARKED,
+                        command.commandId(),
+                        signal.name(),
+                        null,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.PARKED);
+    }
+
+    private Future<WorkflowSegments.Outcome> reject(
+            ClaimedCommand claim, SegmentCommand command, SignalTarget signal, String reason, SqlClient tx) {
+        return commands.reject(command.commandId(), claim.token(), reason, tx)
+                .compose(rows -> requireRow(rows))
+                .compose(done -> historyRecorder.appendSignalCommandHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_REJECTED,
+                        command.commandId(),
+                        signal.name(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_REJECTED);
+    }
+
+    private Future<WorkflowSegments.Outcome> stale(
+            ClaimedCommand claim, SegmentCommand command, SignalTarget signal, String reason, SqlClient tx) {
+        return commands.stale(command.commandId(), claim.token(), reason, tx)
+                .compose(rows -> requireRow(rows))
+                .compose(done -> historyRecorder.appendSignalCommandHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_STALE,
+                        command.commandId(),
+                        signal.name(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_STALE);
+    }
+
+    /** A settlement that updated no row means the claim no longer stands: the segment rolls back. */
+    private static Future<Void> requireRow(Integer rows) {
+        return rows != null && rows > 0 ? Future.succeededFuture() : Future.failedFuture(new ClaimLostException());
+    }
+
+    private static boolean isEnded(WorkflowStatus status) {
+        return status == WorkflowStatus.COMPLETED
+                || status == WorkflowStatus.COMPENSATED
+                || status == WorkflowStatus.CANCELLED
+                || status == WorkflowStatus.EXPIRED;
+    }
+
+    /** The engine side of the parked-signal application. */
+    private final class ParkedHost implements ParkedSignals.Host {
+
+        @Override
+        public Future<ParkedSignals.Waits> waits(WorkflowInstanceId instance, SqlClient tx) {
+            return instances.findById(instance, tx).compose(found -> {
+                if (found.isEmpty()) {
+                    return Future.failedFuture(new WorkflowInstanceNotFoundException(instance));
+                }
+                WorkflowInstance inst = found.get();
+                if (isEnded(inst.status())) {
+                    return Future.succeededFuture(
+                            new ParkedSignals.Waits(inst.status().name(), List.of()));
+                }
+                List<ParkedSignals.WaitAddress> open = new ArrayList<>();
+                if (inst.status() == WorkflowStatus.WAITING && inst.waitType() == WaitType.SIGNAL) {
+                    open.add(new ParkedSignals.WaitAddress(inst.currentStepId(), inst.waitKey(), null, null));
+                }
+                return branchTokens.findActiveByWorkflow(instance, tx).map(tokens -> {
+                    for (BranchToken token : tokens) {
+                        if (token.status() == BranchStatus.WAITING && token.waitType() == WaitType.SIGNAL) {
+                            open.add(new ParkedSignals.WaitAddress(
+                                    token.currentStepId(), token.waitKey(), token.forkStepId(), token.branchId()));
+                        }
+                    }
+                    return new ParkedSignals.Waits(null, List.copyOf(open));
+                });
+            });
+        }
+
+        @Override
+        public Future<Void> apply(SegmentCommand command, SqlClient tx) {
+            SignalTarget signal = SignalTarget.of(command);
+            return instances.findById(command.workflowId(), tx).compose(found -> {
+                if (found.isEmpty()) {
+                    return Future.failedFuture(new WorkflowInstanceNotFoundException(command.workflowId()));
+                }
+                WorkflowInstance inst = found.get();
+                RuntimeWorkflow rw;
+                try {
+                    rw = PinnedPlans.resolve(registry, inst);
+                    WorkflowPayloads.requirePlanHashMatches(inst, rw);
+                } catch (Exception e) {
+                    // This node cannot run the pinned plan: the whole segment fails rather than rejecting a signal.
+                    return Future.failedFuture(e);
+                }
+                if (!signal.branchAddressed()) {
+                    return applyRecorded(inst, null, command, signal, rw, tx);
+                }
+                return branchTokens
+                        .findByWaitForBranch(
+                                inst.id(),
+                                signal.forkStepId(),
+                                signal.branchId(),
+                                WaitType.SIGNAL.name(),
+                                signal.name(),
+                                tx)
+                        .compose(waiting -> applyRecorded(inst, waiting.orElse(null), command, signal, rw, tx));
+            });
+        }
+
+        @Override
+        public Future<Void> applied(SegmentCommand command, SqlClient tx) {
+            return appliedHistory(command, SignalTarget.of(command).name(), true, tx);
+        }
+
+        @Override
+        public Future<Void> rejected(
+                WorkflowInstanceId instance, long commandId, String signalName, String reason, SqlClient tx) {
+            return historyRecorder.appendSignalCommandHistory(
+                    instance, WorkflowEntryType.COMMAND_REJECTED, commandId, signalName, reason, tx);
+        }
+
+        @Override
+        public int stepsUsed(SqlClient tx) {
+            return driver.stepsUsed(tx);
+        }
+
+        @Override
+        public int stepCap(SqlClient tx) {
+            return driver.stepCap(tx);
+        }
+    }
+
+    /**
+     * Binds a recorded payload to the declared signal type. A payload that does not bind is a deterministic failure of
+     * the signal; the refusal names the instance and the signal, never a value or a binder message.
+     */
+    private static Object coerce(Object payload, Class<?> payloadClass, WorkflowInstance inst, String signalName) {
+        try {
+            return WorkflowPayloads.coercePayload(payload, payloadClass);
+        } catch (RuntimeException e) {
+            throw new WorkflowInvalidPayloadException(
+                    "The payload of signal '" + EchoedNames.bounded(signalName) + "' for instance '"
+                            + inst.id().value() + "' does not bind to the declared signal type",
+                    List.of());
+        }
     }
 
     // --- Internal helpers ---

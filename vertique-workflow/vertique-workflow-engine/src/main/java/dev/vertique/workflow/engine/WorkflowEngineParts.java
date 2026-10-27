@@ -7,6 +7,7 @@ import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -65,6 +66,7 @@ public final class WorkflowEngineParts {
     private final WorkflowTypeNames typeNames;
     private final Optional<WorkflowStateCompatibility> stateCompatibility;
     private final WorkflowExecutorConfig executorConfig;
+    private final WorkflowRecordingConfig recordingConfig;
     private final Set<WorkflowExecutorObserver> executorObservers;
     private final CommandWakeups commandWakeups;
     private final @Nullable Vertx vertx;
@@ -91,6 +93,7 @@ public final class WorkflowEngineParts {
         this.typeNames = Objects.requireNonNull(b.typeNames, "typeNames");
         this.stateCompatibility = b.stateCompatibility;
         this.executorConfig = Objects.requireNonNull(b.executorConfig, "executorConfig");
+        this.recordingConfig = Objects.requireNonNull(b.recordingConfig, "recordingConfig");
         this.executorObservers = Set.copyOf(b.executorObservers);
         this.commandWakeups = Objects.requireNonNull(b.commandWakeups, "commandWakeups");
         this.vertx = b.vertx;
@@ -219,6 +222,14 @@ public final class WorkflowEngineParts {
         return executorConfig;
     }
 
+    /**
+     * The recording bounds: the payload size bound that applies to a signal's payload and explicit carrier, and the
+     * most signals an instance may hold open; {@link WorkflowRecordingConfig#defaults()} by default.
+     */
+    public WorkflowRecordingConfig recordingConfig() {
+        return recordingConfig;
+    }
+
     /** The source that wakes the executor's instances when a command becomes pending or deferred; none by default. */
     public CommandWakeups commandWakeups() {
         return commandWakeups;
@@ -260,6 +271,7 @@ public final class WorkflowEngineParts {
         private WorkflowTypeNames typeNames;
         private Optional<WorkflowStateCompatibility> stateCompatibility = Optional.empty();
         private WorkflowExecutorConfig executorConfig = WorkflowExecutorConfig.defaults();
+        private WorkflowRecordingConfig recordingConfig = WorkflowRecordingConfig.defaults();
         private Set<WorkflowExecutorObserver> executorObservers = Set.of();
         private CommandWakeups commandWakeups = CommandWakeups.none();
         private @Nullable Vertx vertx;
@@ -390,6 +402,12 @@ public final class WorkflowEngineParts {
         /** Sets the executor configuration. */
         public Builder executorConfig(WorkflowExecutorConfig executorConfig) {
             this.executorConfig = Objects.requireNonNull(executorConfig, "executorConfig");
+            return this;
+        }
+
+        /** Sets the recording configuration. */
+        public Builder recordingConfig(WorkflowRecordingConfig recordingConfig) {
+            this.recordingConfig = Objects.requireNonNull(recordingConfig, "recordingConfig");
             return this;
         }
 

@@ -48,6 +48,13 @@ The recorder must never make a live downstream call. The outbox row is the durab
 
 `WorkflowSignalContributor` registers the `workflow.signals.post` service contract. Service delivery uses inbox deduplication before calling `TransactionalWorkflowOperations.signal(...)` in the same SQL transaction.
 
+The endpoint's reply means the signal is **recorded**, not applied: `signal` records a `SIGNAL` command of the instance and returns,
+and an executor applies it afterwards in queue order. A signal the instance does not await yet is parked and applied when the instance
+reaches a wait that accepts it. The call is refused only for what recording refuses: a missing or ended instance, a name the instance's
+pinned definition does not declare for the addressed wait, a payload or carrier over the record-time bounds, or an instance that already
+holds `workflow.recording.maxOpenSignalsPerInstance` open signals (`WorkflowSignalLimitException`). A refusal rolls the inbox record back
+with the transaction, so the relay retries it.
+
 Signal dedup happens at two layers:
 
 | Layer | Scope | Purpose |
@@ -80,7 +87,7 @@ has two consequences:
   legitimate duplicate delivery of a previously-successful carrier is never re-decoded.
 
 **Security.** `WorkflowSignalEndpoint.post` is an internal-relay-only endpoint. The `metadata`
-carrier is bound as the *authoritative* durable-context base for the signal's drive — it is never
+carrier is stored with the recorded signal, without its identity-snapshot namespace, and the executor binds it as the *authoritative* durable-context base for the signal's drive — it is never
 populated from untrusted or end-user input, only from the relay that produced it via
 `DurableMetadata.toCarrier()`. The carrier's provenance is not independently authenticated against
 the caller's identity — a future revision may derive the tenant namespace from the authenticated

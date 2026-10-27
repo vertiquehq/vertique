@@ -9,6 +9,7 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
 import io.vertx.sqlclient.SqlClient;
@@ -103,6 +104,32 @@ final class WorkflowHistoryRecorder {
             WorkflowInstanceId workflowId, WorkflowEntryType type, long commandId, String kind, SqlClient tx) {
         return history.nextSequence(workflowId, tx).compose(seq -> {
             String payload = Json.encode(new CommandHistoryPayload(commandId, kind));
+            return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
+        });
+    }
+
+    /**
+     * Appends a history entry about what became of a recorded {@code SIGNAL} command. The entry names the command, the
+     * signal and the sanitized reason, never a payload value or exception text.
+     *
+     * @param workflowId the instance
+     * @param type the entry type
+     * @param commandId the command's row id
+     * @param signalName the signal's name
+     * @param reason the sanitized reason, or {@code null} for an outcome without one
+     * @param tx the active transaction
+     * @return a future that completes when the entry is appended
+     */
+    Future<Void> appendSignalCommandHistory(
+            WorkflowInstanceId workflowId,
+            WorkflowEntryType type,
+            long commandId,
+            String signalName,
+            @Nullable String reason,
+            SqlClient tx) {
+        return history.nextSequence(workflowId, tx).compose(seq -> {
+            String payload = Json.encode(
+                    new SignalCommandHistoryPayload(commandId, "SIGNAL", EchoedNames.bounded(signalName), reason));
             return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
         });
     }
