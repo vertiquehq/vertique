@@ -61,16 +61,10 @@ public class DefinitionOwnershipIT {
     public interface HeldV1 extends OrderDocumentSignals {}
 
     @WorkflowContract
-    public interface V3FirstVersion3 extends OrderDocumentSignals {}
+    public interface V3FirstContract extends OrderDocumentSignals {}
 
     @WorkflowContract
-    public interface V3FirstVersion4 extends OrderDocumentSignals {}
-
-    @WorkflowContract
-    public interface V4FirstVersion3 extends OrderDocumentSignals {}
-
-    @WorkflowContract
-    public interface V4FirstVersion4 extends OrderDocumentSignals {}
+    public interface V4FirstContract extends OrderDocumentSignals {}
 
     @WorkflowContract
     public interface StaleV1 extends OrderDocumentSignals {}
@@ -186,20 +180,14 @@ public class DefinitionOwnershipIT {
         }
     }
 
-    private record OrderScenario(
-            String definitionId,
-            Class<?> version3Contract,
-            Class<?> version4Contract,
-            boolean version3CompletesFirst) {}
+    private record OrderScenario(String definitionId, Class<?> contract, boolean version3CompletesFirst) {}
 
     @Test
     @DisplayName("concurrent publications of two versions of one scope leave both versions available")
     void concurrentPublicationsOfTwoVersionsLeaveBothAvailable(Vertx vertx) {
         List<OrderScenario> scenarios = List.of(
-                new OrderScenario(
-                        "tenant-a:ownership-v3-first-doc", V3FirstVersion3.class, V3FirstVersion4.class, true),
-                new OrderScenario(
-                        "tenant-a:ownership-v4-first-doc", V4FirstVersion3.class, V4FirstVersion4.class, false));
+                new OrderScenario("tenant-a:ownership-v3-first-doc", V3FirstContract.class, true),
+                new OrderScenario("tenant-a:ownership-v4-first-doc", V4FirstContract.class, false));
 
         try (Fixture fixture = new Fixture(vertx, db)) {
             Node nodeA = fixture.node();
@@ -215,13 +203,13 @@ public class DefinitionOwnershipIT {
                 CompiledDefinitionRef loaded3 = await(nodeA.service()
                         .load(
                                 "tenant-a",
-                                document(id, 3, scenario.version3Contract()),
+                                document(id, 3, scenario.contract()),
                                 DocumentFormat.YAML,
                                 source(id + "-3")));
                 CompiledDefinitionRef loaded4 = await(nodeB.service()
                         .load(
                                 "tenant-a",
-                                document(id, 4, scenario.version4Contract()),
+                                document(id, 4, scenario.contract()),
                                 DocumentFormat.YAML,
                                 source(id + "-4")));
                 WorkflowDefinitionSqlObserver.CompletionLockGate gate3 =

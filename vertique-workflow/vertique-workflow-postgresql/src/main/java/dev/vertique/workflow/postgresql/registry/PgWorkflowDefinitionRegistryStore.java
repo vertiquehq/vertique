@@ -263,6 +263,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             return mutate(record.key(), (tx, rows) -> encoding(tx).compose(ignored -> {
                 if (row(rows, record.key()).isPresent()) throw invalid(record.key(), "definition already exists");
                 requireDefaultContract(rows, record);
+                requireScopeRules(rows, record);
                 return insert(tx, record, document, DefinitionStatus.CANDIDATE);
             }));
         });
@@ -379,10 +380,12 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             validateDocument(record, document);
             return mutate(record.key(), (tx, rows) -> encoding(tx).compose(ignored -> {
                 Optional<Row> current = row(rows, record.key());
-                if (current.isEmpty())
+                if (current.isEmpty()) {
+                    requireScopeRules(rows, record);
                     return insert(tx, record, document, DefinitionStatus.AVAILABLE)
                             .compose(inserted -> activateFirstPublication(tx, record.key(), activateDefault))
                             .map(ReconcileOutcome.INSERTED);
+                }
                 Row old = current.orElseThrow();
                 if (!"DOCUMENT".equals(old.getString("kind")))
                     return Future.succeededFuture(ReconcileOutcome.KIND_CONFLICT);
@@ -587,6 +590,34 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                                     + "': the default scope holds it under contract '"
                                     + EchoedNames.bounded(defaultRow.getString("contract_name")) + "'");
                 });
+    }
+
+    /**
+     * Refuses a version whose contract or state type differs from the other versions of its scope and id. The rows
+     * are the locked rows of the id across every scope; only the same scope's rows in a status other than RETIRED
+     * take part, and a retired version leaves the rules to the versions that remain.
+     */
+    private static void requireScopeRules(RowSet<Row> rows, WorkflowDefinitionRecord record) {
+        DefinitionKey key = record.key();
+        for (Row r : rows) {
+            if (!key.scopeKey().equals(r.getString("scope_key"))
+                    || key.definitionVersion() == r.getLong("definition_version")
+                    || DefinitionStatus.RETIRED.name().equals(r.getString("status"))) continue;
+            String described = "definition '" + EchoedNames.bounded(key.definitionId()) + "' v"
+                    + key.definitionVersion() + " in scope '" + EchoedNames.bounded(key.scopeKey()) + "'";
+            if (!record.contractName().equals(r.getString("contract_name")))
+                throw new WorkflowDefinitionException(described + " names contract '"
+                        + EchoedNames.bounded(record.contractName()) + "' but earlier versions of '"
+                        + EchoedNames.bounded(key.definitionId()) + "' in that scope name contract '"
+                        + EchoedNames.bounded(r.getString("contract_name"))
+                        + "'; every version of a definition in a scope must name the same contract");
+            if (!record.stateTypeName().equals(r.getString("state_type_name")))
+                throw new WorkflowDefinitionException(described + " has state type '"
+                        + EchoedNames.bounded(record.stateTypeName()) + "' but earlier versions of '"
+                        + EchoedNames.bounded(key.definitionId()) + "' in that scope have state type '"
+                        + EchoedNames.bounded(r.getString("state_type_name"))
+                        + "'; every version of a definition in a scope must have the same state type");
+        }
     }
 
     /**
