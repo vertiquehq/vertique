@@ -310,7 +310,12 @@ public interface WorkflowCommandRepository<TX> {
      * one transaction of its own that tries the execution lock without waiting. Locks the command row and writes only
      * while it is still {@code CLAIMED} with this token: the command is {@code FAILED} with token and lease cleared
      * and the last error stored, and its instance is {@code FAILED} with the reason and a history entry. A settled
-     * command has no token, so a late call writes nothing.
+     * command has no token, so a late call writes nothing. A {@code TIMER} command also closes its timer row as failed.
+     *
+     * <p>Only a {@code START}, a {@code RETRY} and a {@code TIMER} fail their instance, and any command that overran the
+     * step cap. A {@code SIGNAL}, a {@code COMPLETION} or a {@code MIGRATION} whose failure is deterministic failed
+     * before it could run under its savepoint (its recorded target cannot be read): it is rejected instead, a completion
+     * reopens its task, and the instance is unchanged ({@link DispositionResult#REJECTED}).
      *
      * @param claim       the claim
      * @param reasonCode  the reason code stored on the instance
@@ -462,6 +467,50 @@ public interface WorkflowCommandRepository<TX> {
      * @return a {@link Future} containing the timer's id, its command's row id and its fire time
      */
     Future<RecordedTimer> recordTimer(TimerCommandSpec timer, TX tx);
+
+    /**
+     * Offers again the timers of an instance whose command can no longer fire them: a timer whose last command failed
+     * (the timer row is {@code FAILED}) and a still-scheduled timer whose last command was settled stale because the
+     * instance had failed. For each such timer, one new {@code TIMER} command takes the next position of the queue,
+     * state {@code PENDING}, for the same timer row and with the same target, and the timer row is {@code SCHEDULED}
+     * again and linked to it. The new command keeps the timer's original fire time, which is not moved to the
+     * recording: a deadline stands as it was, and the command is available at once. No new timer row is created.
+     *
+     * <p>The caller must hold the instance's execution lock.
+     *
+     * @param instance the instance whose timers are offered again
+     * @param tx       the caller's transaction handle
+     * @return a {@link Future} containing the number of timers offered again
+     */
+    Future<Integer> rearmTimers(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Lists the tasks of an instance that are still {@code OPEN} or {@code COMPLETING} and belong to no branch, read
+     * from the task rows rather than from the instance's wait, so that a cancellation also finds the task of an
+     * instance that failed.
+     *
+     * <p>The caller must hold the instance's execution lock.
+     *
+     * @param instance the instance
+     * @param tx       the caller's transaction handle
+     * @return a {@link Future} containing the task ids
+     */
+    Future<List<UUID>> liveTasks(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Lists the targets of the commands of a kind that an instance has recorded and no executor has settled yet
+     * ({@code PENDING}, {@code DEFERRED} or {@code CLAIMED}), so that a requester records a {@code RETRY} or a
+     * {@code MIGRATION} once while one is on its way.
+     *
+     * <p>The caller must hold the instance's execution lock.
+     *
+     * @param instance the instance
+     * @param kind     the command kind, {@code RETRY} or {@code MIGRATION}
+     * @param tx       the caller's transaction handle
+     * @return a {@link Future} containing the stored target of each such command, as JSON text; the empty text for a
+     *     command that has none
+     */
+    Future<List<String>> unsettledTargets(WorkflowInstanceId instance, String kind, TX tx);
 
     /**
      * Lists the parked {@code SIGNAL} commands of an instance that carry the given name and address, in queue order.

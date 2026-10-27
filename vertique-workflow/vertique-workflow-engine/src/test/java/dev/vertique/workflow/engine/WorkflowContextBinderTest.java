@@ -214,6 +214,29 @@ class WorkflowContextBinderTest {
             });
             return result.get(10, TimeUnit.SECONDS);
         }
+
+        /** Binds the instance carrier through the caller-side entry point; answers what the operation saw. */
+        Effective bindForCaller(Vertx vertx, @Nullable DurableMetadata instanceCarrier) throws Exception {
+            CompletableFuture<Effective> result = new CompletableFuture<>();
+            runOnDuplicated(vertx, v -> {
+                try {
+                    binder.withBound(
+                                    instanceWithMetadata(instanceCarrier),
+                                    null,
+                                    () -> Future.succeededFuture(observed()))
+                            .onComplete(ar -> {
+                                if (ar.succeeded()) {
+                                    result.complete(ar.result());
+                                } else {
+                                    result.completeExceptionally(ar.cause());
+                                }
+                            });
+                } catch (Throwable t) {
+                    result.completeExceptionally(t);
+                }
+            });
+            return result.get(10, TimeUnit.SECONDS);
+        }
     }
 
     private static DurableMetadata tenant(String id) {
@@ -375,6 +398,22 @@ class WorkflowContextBinderTest {
             assertThat(seen.tenant()).contains("T");
             assertThat(seen.identity()).isEmpty();
         }
+    }
+
+    @Test
+    @DisplayName("a caller-side bind fills from the instance carrier without its identity snapshot")
+    void callerSideBindNeverFillsAnIdentityFromTheInstanceCarrier(Vertx vertx) throws Exception {
+        // Given an instance carrier with tenant T and an identity snapshot, and a caller that has no identity
+        Harness h = new Harness();
+        DurableMetadata withSnapshot =
+                tenant("T").merge(identity("user-77"), DurableMetadata.MergePolicy.FAIL_ON_CONFLICT);
+
+        // When a cancel or a reassignment binds the instance carrier
+        Effective seen = h.bindForCaller(vertx, withSnapshot);
+
+        // Then tenant T is bound and no identity is
+        assertThat(seen.tenant()).contains("T");
+        assertThat(seen.identity()).isEmpty();
     }
 
     /** What an executor bind did on one context. */

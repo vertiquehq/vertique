@@ -734,6 +734,93 @@ public class PgWorkflowRetentionServiceIT {
         }
     }
 
+    @Test
+    @DisplayName("Purge never deletes an archived instance that is live again, and a retry clears its archive stamp")
+    void purgeSkipsAnArchivedInstanceThatIsLiveAgain() throws Exception {
+        // Given an archived row that is live (a state a retry of an archived instance leaves behind) and an archived
+        // failed one, both past the purge threshold
+        UUID live = UUID.randomUUID();
+        UUID failed = UUID.randomUUID();
+        blocking(insertInstance(live, "def-live", "WAITING", PAST, PAST));
+        blocking(insertInstance(failed, "def-live", "FAILED", PAST, PAST));
+
+        // When the archived rows are purged
+        PurgeResult purge = blocking(retentionService.purgeArchivedBefore(FUTURE, null, 100));
+
+        // Then only the failed one is deleted
+        assertEquals(1, purge.purgedCount());
+        assertEquals(1L, count("workflow_instances", "id", live));
+        assertEquals(0L, count("workflow_instances", "id", failed));
+
+        // And a retry of an archived failed instance clears the stamp, so the instance is not purged while it lives
+        try (RetentionTestSupport executor = RetentionTestSupport.open(db.toPoolConfig())) {
+            UUID retried = executor.deadLetteredStart("archived-then-retried");
+            assertEquals(
+                    1,
+                    blocking(retentionService.archiveFailedBefore(FUTURE, null, 100))
+                            .archivedCount());
+            assertNotNull(archivedAt(retried));
+            executor.recordRetry(retried);
+            executor.startExecutor();
+            try {
+                executor.awaitIdle(retried);
+            } finally {
+                executor.stopExecutor();
+            }
+            assertEquals("WAITING", statusOf(retried));
+            assertNull(archivedAt(retried), "a live instance is not archived");
+            assertEquals(
+                    0,
+                    blocking(retentionService.purgeArchivedBefore(FUTURE, null, 100))
+                            .purgedCount());
+            assertEquals(1L, count("workflow_instances", "id", retried));
+        }
+    }
+
+    @Test
+    @DisplayName("A candidate skipped for its busy execution lock stays unlocked while the run writes the others")
+    void skippedCandidateKeepsNoRowLock() throws Exception {
+        // Given a busy completed instance A and a free completed instance B, both past retention, and a trigger that
+        // keeps the run inside its archive write for two seconds
+        UUID busy = UUID.randomUUID();
+        UUID free = UUID.randomUUID();
+        blocking(insertCompletedInstance(busy, "def-row-lock", PAST));
+        blocking(insertCompletedInstance(free, "def-row-lock", PAST.plusSeconds(1)));
+        blocking(pool.query("CREATE OR REPLACE FUNCTION retention_it_sleep() RETURNS trigger AS $$ BEGIN"
+                        + " PERFORM pg_sleep(2); RETURN NULL; END $$ LANGUAGE plpgsql")
+                .execute());
+        blocking(pool.query("CREATE TRIGGER retention_it_sleep BEFORE UPDATE ON workflow_instances"
+                        + " FOR EACH STATEMENT EXECUTE FUNCTION retention_it_sleep()")
+                .execute());
+        SqlConnection session = blocking(pool.getConnection());
+        Transaction holder = blocking(session.begin());
+        try {
+            int[] key = RetentionTestSupport.lockKeyOf(busy);
+            blocking(session.preparedQuery("SELECT pg_advisory_xact_lock($1::int4, $2::int4)")
+                    .execute(Tuple.of(key[0], key[1])));
+
+            // When the archive run starts and is inside its write of B
+            Future<RetentionResult> run = retentionService.archiveCompletedBefore(FUTURE, null, 100);
+            Thread.sleep(800);
+
+            // Then another transaction can lock the row of A without waiting
+            Future<io.vertx.sqlclient.RowSet<io.vertx.sqlclient.Row>> probe = pool.withTransaction(
+                    conn -> conn.preparedQuery("SELECT id FROM workflow_instances WHERE id = $1 FOR UPDATE NOWAIT")
+                            .execute(Tuple.of(busy)));
+            assertEquals(1, blocking(probe).size());
+
+            // And the run archived B only
+            assertEquals(1, blocking(run).archivedCount());
+            assertNotNull(archivedAt(free));
+            assertNull(archivedAt(busy));
+        } finally {
+            blocking(holder.rollback());
+            blocking(session.close());
+            blocking(pool.query("DROP TRIGGER IF EXISTS retention_it_sleep ON workflow_instances")
+                    .execute());
+        }
+    }
+
     // --- Helpers of the retention tests ---
 
     private void seedCommandsQueueAndHistory(UUID id) {

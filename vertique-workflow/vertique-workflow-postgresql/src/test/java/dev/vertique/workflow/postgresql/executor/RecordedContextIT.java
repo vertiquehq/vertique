@@ -22,11 +22,15 @@ import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.CorrelationCtx;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.IdentitySnapshotCtx;
 import dev.vertique.workflow.postgresql.executor.ExecutorFixture.Node;
+import dev.vertique.workflow.postgresql.executor.RecordedCompletionIT.Decision;
+import dev.vertique.workflow.postgresql.executor.RecordedCompletionIT.OpenTask;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.Definition;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.ExplicitCarriers;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.SignalFixture;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.Start;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.State;
+import dev.vertique.workflow.postgresql.executor.TimerCommandIT.TaskDriver;
+import dev.vertique.workflow.postgresql.executor.TimerCommandIT.TimerFixture;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.internal.ContextInternal;
@@ -35,12 +39,14 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -275,6 +281,56 @@ public class RecordedContextIT {
                 assertThat(seen.correlation()).contains("C");
             });
             assertThat(correlationsOf(f, id)).containsOnlyKeys("a-intent").containsEntry("a-intent", "C");
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "a branch timer and a branch task completion bind no identity snapshot from the branch token's carrier")
+    void branchTimerAndTaskDrivesStripTheIdentitySnapshot() {
+        SecurityProbe probe = new SecurityProbe();
+        try (SignalFixture f =
+                new SignalFixture(db.toPoolConfig(), new BranchWithTimerAndTask(probe), List.of(), new JsonObject())) {
+            probe.attach(f.fixture);
+            TimerFixture timers = new TimerFixture(f);
+            TaskDriver tasks = new TaskDriver(f);
+            Node node = f.node("engine").identityCarriage().build();
+
+            // Given a fork whose two branch tokens carry correlation C and an identity snapshot, one branch waiting
+            // on a timer and the other on a task
+            WorkflowInstanceId id = f.waiting(node, "branch-timer-task");
+            DurableMetadata carrier = DurableMetadata.of("correlation", new JsonObject().put("correlationId", "C"))
+                    .with(IDENTITY_NAMESPACE, new JsonObject().put("subject", "user-77"));
+            seedTokenCarrier(f, id, "a", carrier);
+            seedTokenCarrier(f, id, "b", carrier);
+
+            // When the branch timer fires
+            timers.dueNow(timers.only(id, "FIRE").id());
+            f.idle(node, id);
+
+            // Then the branch's next step saw correlation C and no identity
+            assertThat(probe.at("timer")).singleElement().satisfies(seen -> {
+                assertNoIdentityBound(seen);
+                assertThat(seen.correlation()).contains("C");
+            });
+
+            // When the branch task is completed
+            UUID taskId = await(f.fixture
+                            .observer()
+                            .preparedQuery("SELECT task_id FROM workflow_tasks WHERE workflow_id = $1")
+                            .execute(Tuple.of(id.value())))
+                    .iterator()
+                    .next()
+                    .getUUID("task_id");
+            tasks.complete(node, new OpenTask(id, taskId), new JsonObject(), "task-key");
+            f.idle(node, id);
+
+            // Then that branch's next step saw correlation C and no identity either, and the instance ended
+            assertThat(probe.at("task")).singleElement().satisfies(seen -> {
+                assertNoIdentityBound(seen);
+                assertThat(seen.correlation()).contains("C");
+            });
+            assertThat(f.fixture.instanceOf(id).status()).isEqualTo("COMPLETED");
         }
     }
 
@@ -610,6 +666,55 @@ public class RecordedContextIT {
                 wf.dispatch("a-intent", "signal.service", state -> Map.of("ref", state.ref()), "a-done");
                 wf.complete("a-done");
                 waitFor(wf, "b-note", "note", "b-done");
+                wf.complete("b-done");
+                wf.join("join")
+                        .allRequired((state, results) -> state)
+                        .toStep("done")
+                        .onFailure("done")
+                        .endJoin();
+                wf.complete("done");
+            };
+        }
+
+        @Override
+        public void define(WorkflowBuilder<State> wf) {
+            wf.init(Start.class, start -> new State(start.ref(), List.of(), false, false));
+            body(probe).accept(wf);
+        }
+    }
+
+    /** A fork of a branch that waits on a timer and a branch that waits on a task, each followed by a probe. */
+    static final class BranchWithTimerAndTask extends Definition {
+        private final SecurityProbe probe;
+
+        BranchWithTimerAndTask(SecurityProbe probe) {
+            super("context-branch-timer-task", body(probe));
+            this.probe = probe;
+        }
+
+        private static Consumer<WorkflowBuilder<State>> body(SecurityProbe probe) {
+            return wf -> {
+                wf.initialStep("fork")
+                        .fork("fork")
+                        .branch("a", "a-timer", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                        .branch("b", "b-task", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                        .join("join");
+                wf.timer("a-timer", Duration.ofSeconds(60)).toStep("a-probe");
+                wf.decide("a-probe", state -> {
+                    probe.observe("timer", state.ref());
+                    return "a-done";
+                });
+                wf.complete("a-done");
+                wf.task("b-task")
+                        .assignToRole("compliance")
+                        .decision("approve", Decision.class)
+                        .onDecision((state, decision) -> state)
+                        .toStep("b-probe")
+                        .build();
+                wf.decide("b-probe", state -> {
+                    probe.observe("task", state.ref());
+                    return "b-done";
+                });
                 wf.complete("b-done");
                 wf.join("join")
                         .allRequired((state, results) -> state)

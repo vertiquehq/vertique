@@ -208,10 +208,53 @@ public class RecordedCompletionIT {
             assertThat(t.task(task).requireVersionStability()).isTrue();
             assertThat(different).isInstanceOf(WorkflowStaleSubjectVersionException.class);
             assertThat(missing).isInstanceOf(WorkflowStaleSubjectVersionException.class);
+            // And the refusal repeats the caller's version, not the version the task was created for
+            assertThat(different.getMessage()).contains("v2").doesNotContain("v3");
             assertThat(t.completions(task.id())).isEmpty();
             assertThat(t.task(task).status()).isEqualTo("OPEN");
             assertThat(t.counts(task.id())).isEqualTo(before);
             assertThat(planless.resolves()).isZero();
+        }
+    }
+
+    @Test
+    @DisplayName("a reviewed version or an actor id too long to store is refused before the lock, without echoing it")
+    void oversizedCallerIdentifiersAreRefusedWithoutAnEcho() {
+        try (TaskFixture t = new TaskFixture()) {
+            // Given an open task, and a version and an actor id of 300 characters
+            Definition stable = new ReviewFixture("recorded-review-bounds", true);
+            t.f.seed(stable, List.of(), new JsonObject());
+            Node node = t.f.node("executor").build();
+            OpenTask task = t.openTask(node, stable, "bounds", Schemas.lenient(), "v3");
+            Counts before = t.counts(task.id());
+            String longVersion = "v" + "9".repeat(299);
+            String longActor = "u" + "8".repeat(299);
+
+            // When the caller completes with the long version, and again as the long actor
+            Throwable version =
+                    failureOf(t.completeAsync(node, task, "approve", new JsonObject(), "k1", longVersion), IDLE);
+            Throwable actor = failureOf(
+                    t.f.caller(() -> node.pool.withTransaction(tx -> node.engine.taskCompleted(
+                            new TaskCompletionCommand(
+                                    task.taskId(),
+                                    "approve",
+                                    new JsonObject(),
+                                    "k2",
+                                    new WorkflowActor.User(longActor),
+                                    "v3"),
+                            tx))),
+                    IDLE);
+
+            // Then both are refused as invalid input with a message that holds neither value, and nothing is recorded
+            assertThat(version).isInstanceOf(WorkflowInvalidPayloadException.class);
+            assertThat(version.getMessage())
+                    .contains("reviewed subject version")
+                    .doesNotContain("9999");
+            assertThat(actor).isInstanceOf(WorkflowInvalidPayloadException.class);
+            assertThat(actor.getMessage()).contains("completing actor id").doesNotContain("8888");
+            assertThat(t.completions(task.id())).isEmpty();
+            assertThat(t.task(task).status()).isEqualTo("OPEN");
+            assertThat(t.counts(task.id())).isEqualTo(before);
         }
     }
 

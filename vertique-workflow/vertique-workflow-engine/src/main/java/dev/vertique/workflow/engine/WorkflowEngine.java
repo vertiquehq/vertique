@@ -1505,6 +1505,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         .compose(superseded -> initialize(inst, rw, claim, start.get(), false, tx))
                         .map(done -> true);
             });
+        } else if (inst.waitType() != null) {
+            // The instance failed at a wait it never left: it goes back to that wait, whose task, timers and branches
+            // are all still there. The wait's handler does not run again, so nothing is recorded twice.
+            drove = resumeWait(inst, tx).map(done -> true);
         } else {
             drove = redrive(inst, rw, tx).map(done -> true);
         }
@@ -1528,20 +1532,41 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 .withWait(null, null)
                 .withError(null, null)
                 .withUpdatedAt(clock.instant());
+        return reopen(inst, retried, tx).compose(v -> driver.driveTransitions(retried, rw, tx));
+    }
+
+    /**
+     * Returns a {@code FAILED} instance that failed at a wait to {@code WAITING} at that wait. The wait columns the
+     * failure kept stand as they were, the wait's task and branches are untouched and the wait's handler does not run;
+     * the timers whose command failed (or was settled because the instance had failed) are offered again, each with one
+     * new command that keeps the original fire time, so a deadline stands and a timer that was due fires at once.
+     */
+    private Future<Void> resumeWait(WorkflowInstance inst, SqlClient tx) {
+        long prevVersion = inst.version();
+        WorkflowInstance resumed = inst.withVersion(prevVersion + 1)
+                .withStatus(WorkflowStatus.WAITING)
+                .withError(null, null)
+                .withUpdatedAt(clock.instant());
+        return reopen(inst, resumed, tx)
+                .compose(v -> commands.rearmTimers(inst.id(), tx))
+                .mapEmpty();
+    }
+
+    /** Writes the instance's return from {@code FAILED} and the {@code RETRIED} entry. */
+    private Future<Void> reopen(WorkflowInstance failed, WorkflowInstance reopened, SqlClient tx) {
         return instances
-                .updateOptimistic(retried, prevVersion, tx)
+                .updateOptimistic(reopened, failed.version(), tx)
                 .compose(rowCount ->
-                        requireRowUpdated(rowCount, "instance '" + inst.id().value() + "' during retry"))
-                .compose(v -> history.nextSequence(inst.id(), tx))
+                        requireRowUpdated(rowCount, "instance '" + failed.id().value() + "' during retry"))
+                .compose(v -> history.nextSequence(failed.id(), tx))
                 .compose(seq -> {
                     String histPayload =
                             Json.encode(new RetriedHistoryPayload("FAILED", WorkflowPayloads.commandCorrelationId()));
                     return history.append(
                             new WorkflowHistoryEntry(
-                                    inst.id(), seq, WorkflowEntryType.RETRIED, histPayload, clock.instant()),
+                                    failed.id(), seq, WorkflowEntryType.RETRIED, histPayload, clock.instant()),
                             tx);
-                })
-                .compose(v -> driver.driveTransitions(retried, rw, tx));
+                });
     }
 
     /**
@@ -2078,16 +2103,19 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * claimed is cancelled, so its late settlement finds nothing to settle and writes nothing.
      *
      * @param id the workflow instance id; must not be null
-     * @param reason human-readable reason for the cancellation; stored in history
+     * @param callerReason human-readable reason for the cancellation; cut at 255 code points, with control characters
+     *     replaced, and then stored in history
      * @param tx the active SQL transaction; must not be null
      * @return a {@link Future} that completes when the cancellation has been persisted
      */
     @Override
-    public Future<Void> cancel(WorkflowInstanceId id, String reason, SqlClient tx) {
+    public Future<Void> cancel(WorkflowInstanceId id, String callerReason, SqlClient tx) {
         Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("cancel", tx);
         if (invalidClient != null) {
             return invalidClient;
         }
+        // The reason is stored in the history, the instance and the events: bound it once, here.
+        String reason = boundedReason(callerReason);
 
         // Non-locking read: same lock-order rationale as signal(). The optimistic UPDATE catches
         // concurrent writes; using findByIdForUpdate would invert the timers-before-instances
@@ -2106,6 +2134,32 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     // Binder-row bind (Contract Appendix C2): instance-owned cancel drive.
                     return contextBinder.withBound(inst, null, () -> doCancel(id, reason, inst, tx));
                 });
+    }
+
+    /** The most code points of a cancellation's reason that are stored. */
+    static final int MAX_REASON_CODE_POINTS = 255;
+
+    /**
+     * Cuts a caller's cancellation reason at {@value #MAX_REASON_CODE_POINTS} code points and replaces every control
+     * character and unpaired surrogate with a question mark, so that the reason can neither flood the history nor forge
+     * a log line.
+     */
+    @Nullable
+    static String boundedReason(@Nullable String reason) {
+        if (reason == null) {
+            return null;
+        }
+        StringBuilder out = new StringBuilder(Math.min(reason.length(), MAX_REASON_CODE_POINTS));
+        int index = 0;
+        int kept = 0;
+        while (index < reason.length() && kept < MAX_REASON_CODE_POINTS) {
+            int codePoint = reason.codePointAt(index);
+            index += Character.charCount(codePoint);
+            boolean unpairedSurrogate = codePoint >= Character.MIN_SURROGATE && codePoint <= Character.MAX_SURROGATE;
+            out.appendCodePoint(Character.isISOControl(codePoint) || unpairedSurrogate ? '?' : codePoint);
+            kept++;
+        }
+        return out.toString();
     }
 
     /**
@@ -2162,25 +2216,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             }
 
             // Tasks: the task the instance waits for, whether open or reserved by a completion, with its history and
-            // event, then every other task a cancelled completion reserved.
+            // event, then every other task a cancelled completion reserved, then every task that is still live in the
+            // task rows (the wait of an instance that failed may be gone).
             Future<Void> tasksDone = timersDone;
             if (taskId != null) {
-                tasksDone = tasksDone
-                        .compose(v -> taskStore.markCancelled(taskId, reason, now, cancelledByActor, tx))
-                        .compose(transition -> taskLifecycle
-                                .appendTaskCancelledHistory(inst, taskId, reason, cancelledByActor, now, tx)
-                                .compose(taskCancelledSeq -> emitEvent(
-                                        inst,
-                                        WorkflowEventType.TASK_CANCELLED,
-                                        taskCancelledSeq,
-                                        taskId,
-                                        inst.currentStepId(),
-                                        attrs(
-                                                "cause",
-                                                "WORKFLOW_CANCELLED",
-                                                "cancelledBy",
-                                                WorkflowActorMaps.toMap(cancelledByActor)),
-                                        tx)));
+                tasksDone = tasksDone.compose(v -> cancelOwnTask(inst, taskId, reason, now, cancelledByActor, tx));
             }
             for (SettledCommand command : cancelled) {
                 UUID reserved = command.taskId();
@@ -2190,7 +2230,14 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                             .<Void>mapEmpty());
                 }
             }
-            return tasksDone;
+            return tasksDone.compose(v -> commands.liveTasks(id, tx)).compose(live -> {
+                Future<Void> leftovers = Future.succeededFuture();
+                for (UUID leftover : live) {
+                    leftovers = leftovers.compose(
+                            v -> cancelLeftoverTask(inst, leftover, reason, now, cancelledByActor, tx));
+                }
+                return leftovers;
+            });
         });
 
         // Cancel branch-owned waits for any active fan-out branches.
@@ -2255,6 +2302,43 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
+     * Cancels a task the cancellation found in the task rows and nothing else named: its due-date timer and reminders,
+     * then the task, with its history and event.
+     */
+    private Future<Void> cancelLeftoverTask(
+            WorkflowInstance inst, UUID taskId, String reason, Instant now, WorkflowActor actor, SqlClient tx) {
+        return taskStore.findById(taskId, tx).compose(found -> {
+            Future<Void> timers = Future.succeededFuture();
+            UUID dueTimerId = found.map(task -> task.dueDateTimerId()).orElse(null);
+            if (dueTimerId != null) {
+                timers = timerStore
+                        .markCancelled(dueTimerId, clock.instant(), tx)
+                        .compose(transition -> transition == TimerStatusTransition.APPLIED
+                                ? timerLifecycle.appendTimerCancelledHistory(
+                                        inst, dueTimerId, TimerCancelledCause.WORKFLOW_CANCELLED, tx)
+                                : Future.<Void>succeededFuture());
+            }
+            return timers.compose(v -> reminderScheduler.cancelPendingReminders(taskId, inst, tx))
+                    .compose(v -> cancelOwnTask(inst, taskId, reason, now, actor, tx));
+        });
+    }
+
+    /** Cancels a task of the instance, open or reserved by a completion, and writes its history and event. */
+    private Future<Void> cancelOwnTask(
+            WorkflowInstance inst, UUID taskId, String reason, Instant now, WorkflowActor actor, SqlClient tx) {
+        return taskStore.markCancelled(taskId, reason, now, actor, tx).compose(transition -> taskLifecycle
+                .appendTaskCancelledHistory(inst, taskId, reason, actor, now, tx)
+                .compose(taskCancelledSeq -> emitEvent(
+                        inst,
+                        WorkflowEventType.TASK_CANCELLED,
+                        taskCancelledSeq,
+                        taskId,
+                        inst.currentStepId(),
+                        attrs("cause", "WORKFLOW_CANCELLED", "cancelledBy", WorkflowActorMaps.toMap(actor)),
+                        tx)));
+    }
+
+    /**
      * {@inheritDoc}
      *
      * <p>Records a {@code RETRY} command in the caller's transaction and returns once it is recorded; no workflow code
@@ -2285,13 +2369,24 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         return Future.<Void>failedFuture(retryRefusal(id, inst.status()));
                     }
                     if (inst.status() == WorkflowStatus.FAILED) {
-                        return commands.recordRetry(id, tx).<Void>mapEmpty();
+                        return recordRetryOnce(id, tx);
                     }
                     return commands.hasDeadLetters(id, tx)
                             .compose(dead -> dead
-                                    ? commands.recordRetry(id, tx).<Void>mapEmpty()
+                                    ? recordRetryOnce(id, tx)
                                     : Future.<Void>failedFuture(retryRefusal(id, inst.status())));
                 });
+    }
+
+    /**
+     * Records a retry unless one is already on its way for the instance: a repeated call, for instance after an
+     * uncertain response, then succeeds and records nothing, because one retry recovers everything a second would.
+     */
+    private Future<Void> recordRetryOnce(WorkflowInstanceId id, SqlClient tx) {
+        return commands.unsettledTargets(id, "RETRY", tx)
+                .compose(pending -> pending.isEmpty()
+                        ? commands.recordRetry(id, tx).<Void>mapEmpty()
+                        : Future.<Void>succeededFuture());
     }
 
     private static WorkflowSignalRejectedException retryRefusal(WorkflowInstanceId id, WorkflowStatus status) {

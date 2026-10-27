@@ -9,11 +9,17 @@ import java.util.function.Supplier;
 
 /**
  * Package-private seam that binds the durable context of one instance-owned drive and runs it. A caller of the engine's
- * timer and task callbacks binds the ambient context with the instance's own; an executor segment binds the context its
- * timer recorded, without an identity.
+ * timer and task callbacks is an executor segment: it binds the context its timer recorded, without an identity.
  */
-@FunctionalInterface
 interface DriveBinding {
+
+    /**
+     * The id of the command whose operation the binding serves, named by the failure of a branch drive that is refused
+     * because a security context or a deferred-execution origin is already bound.
+     *
+     * @return the command id
+     */
+    long commandId();
 
     /**
      * Binds the context and runs the drive inside it.

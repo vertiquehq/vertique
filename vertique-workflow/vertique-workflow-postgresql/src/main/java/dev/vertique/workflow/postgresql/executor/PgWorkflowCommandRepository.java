@@ -114,6 +114,13 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final String insertSignal;
     private final String insertCompletion;
     private final String insertTimer;
+    private final String selectRearmable;
+    private final String insertRearmed;
+    private final String relinkTimer;
+    private final String failTimerRow;
+    private final String cancelTimerRowOfCommand;
+    private final String selectLiveTasks;
+    private final String selectUnsettledTargets;
     private final String insertRecovery;
     private final String deadLettersExist;
     private final String readStartRow;
@@ -245,8 +252,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 "UPDATE " + commands + " SET state = 'FAILED', claim_token = NULL, lease_until = NULL,"
                         + " settled_at = now(), last_error = $2 WHERE id = $1");
         this.failInstance = "UPDATE " + instances + " SET status = 'FAILED', error_type = $2, error_message = $3,"
-                + " version = version + 1, wait_type = NULL, wait_key = NULL, wait_aux_id = NULL,"
-                + " updated_at = now(), completed_at = now() WHERE id = $1 AND status NOT IN " + ENDED_OR_FAILED
+                + " version = version + 1, updated_at = now(), completed_at = now() WHERE id = $1 AND status NOT IN "
+                + ENDED_OR_FAILED
                 + " RETURNING id";
         String history = PgTableNames.qualify(schemas, "workflow", "workflow_history");
         this.insertHistory = "INSERT INTO " + history
@@ -305,6 +312,32 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " (workflow_id, seq, kind, timer_kind, timer_id, task_id, target_json, state, recorded_at,"
                 + " available_at, fire_at) SELECT $1, $2, 'TIMER', $3, $4, $5, $8::jsonb, 'PENDING', fire.at,"
                 + " fire.fire_at, fire.fire_at FROM fire RETURNING id, recorded_at, fire_at";
+        // A timer whose last command cannot fire it any more: a failed one (the row is FAILED) or one a failed instance
+        // settled stale (the row is still SCHEDULED). The replacement keeps the original fire time.
+        String timerTable = PgTableNames.qualify(schemas, "workflow", "workflow_timers");
+        this.selectRearmable =
+                "SELECT t.timer_id, l.fire_at, t.task_id, l.timer_kind, l.target_json::text AS target_json"
+                        + " FROM " + timerTable
+                        + " t JOIN LATERAL (SELECT c.timer_kind, c.target_json, c.state, c.fire_at FROM "
+                        + commands + " c WHERE c.workflow_id = t.workflow_id AND c.timer_id = t.timer_id"
+                        + " ORDER BY c.id DESC LIMIT 1) l ON TRUE WHERE t.workflow_id = $1"
+                        + " AND ((t.status = 'FAILED' AND l.state = 'FAILED') OR (t.status = 'SCHEDULED' AND l.state = 'STALE'))"
+                        + " ORDER BY l.fire_at, t.timer_id FOR UPDATE OF t";
+        this.insertRearmed = "INSERT INTO " + commands
+                + " (workflow_id, seq, kind, timer_kind, timer_id, task_id, target_json, state, recorded_at,"
+                + " available_at, fire_at) VALUES ($1, $2, 'TIMER', $3, $4, $5, $6::jsonb, 'PENDING',"
+                + " clock_timestamp(), LEAST($7::timestamptz, clock_timestamp()), $7::timestamptz) RETURNING id";
+        this.relinkTimer = "UPDATE " + timerTable + " SET status = 'SCHEDULED', command_id = $2, failed_at = NULL,"
+                + " failure_reason = NULL WHERE timer_id = $1";
+        this.failTimerRow = "UPDATE " + timerTable + " SET status = 'FAILED', failed_at = now(), failure_reason = $2"
+                + " WHERE status = 'SCHEDULED' AND timer_id = (SELECT timer_id FROM " + commands + " WHERE id = $1)";
+        this.cancelTimerRowOfCommand = "UPDATE " + timerTable + " SET status = 'CANCELLED', cancelled_at = now()"
+                + " WHERE status = 'SCHEDULED' AND timer_id = (SELECT timer_id FROM " + commands + " WHERE id = $1)";
+        this.selectLiveTasks = "SELECT task_id FROM " + PgTableNames.qualify(schemas, "workflow", "workflow_tasks")
+                + " WHERE workflow_id = $1 AND branch_token_id IS NULL AND status IN ('OPEN','COMPLETING')"
+                + " ORDER BY task_id";
+        this.selectUnsettledTargets = "SELECT COALESCE(target_json::text, '') AS target FROM " + commands
+                + " WHERE workflow_id = $1 AND kind = $2 AND state IN ('PENDING','DEFERRED','CLAIMED') ORDER BY seq";
         this.insertRecovery = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
                 + " (workflow_id, seq, kind, state, recorded_at, available_at, target_json, context_json)"
                 + " SELECT $1, $2, $3, 'PENDING', recorded.at, recorded.at, $4::jsonb, $5::jsonb FROM recorded"
@@ -608,6 +641,9 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                     : Future.succeededFuture();
             return reservation
                     .compose(ignored -> conn.preparedQuery(settleEnded).execute(Tuple.of(id, outcome.reason(), state)))
+                    .compose(ignored -> "TIMER".equals(kind)
+                            ? conn.preparedQuery(cancelTimerRowOfCommand).execute(Tuple.of(id))
+                            : Future.succeededFuture())
                     .compose(ignored ->
                             appendCommandHistory(conn, head, entryType(outcome.settlement()), outcome.reason(), state))
                     .map(ignored -> new ClaimedCommand(
@@ -1024,6 +1060,10 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                         written = written.compose(done -> "COMPLETION".equals(kind)
                                         ? tx.preparedQuery(cancelReservedTask).execute(Tuple.of(id))
                                         : Future.succeededFuture())
+                                .compose(done -> "TIMER".equals(kind)
+                                        ? tx.preparedQuery(cancelTimerRowOfCommand)
+                                                .execute(Tuple.of(id))
+                                        : Future.succeededFuture())
                                 .compose(done -> appendSettledHistory(
                                         tx,
                                         instance,
@@ -1107,6 +1147,71 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             .map(done -> new RecordedTimer(timerId, commandId, fireAt.toInstant()));
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordTimer")));
+    }
+
+    @Override
+    public Future<List<UUID>> liveTasks(WorkflowInstanceId instance, SqlClient tx) {
+        return tx.preparedQuery(selectLiveTasks)
+                .execute(Tuple.of(instance.value()))
+                .map(rows -> {
+                    List<UUID> tasks = new ArrayList<>(rows.size());
+                    for (Row row : rows) {
+                        tasks.add(row.getUUID("task_id"));
+                    }
+                    return List.copyOf(tasks);
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_tasks liveTasks")));
+    }
+
+    @Override
+    public Future<List<String>> unsettledTargets(WorkflowInstanceId instance, String kind, SqlClient tx) {
+        return tx.preparedQuery(selectUnsettledTargets)
+                .execute(Tuple.of(instance.value(), kind))
+                .map(rows -> {
+                    List<String> targets = new ArrayList<>(rows.size());
+                    for (Row row : rows) {
+                        targets.add(row.getString("target"));
+                    }
+                    return List.copyOf(targets);
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands unsettledTargets")));
+    }
+
+    @Override
+    public Future<Integer> rearmTimers(WorkflowInstanceId instance, SqlClient tx) {
+        return tx.preparedQuery(selectRearmable)
+                .execute(Tuple.of(instance.value()))
+                .compose(rows -> {
+                    List<Row> due = new ArrayList<>(rows.size());
+                    for (Row row : rows) {
+                        due.add(row);
+                    }
+                    Future<Integer> chain = Future.succeededFuture(0);
+                    for (Row row : due) {
+                        chain = chain.compose(count -> rearm(instance, row, tx).map(done -> count + 1));
+                    }
+                    return chain;
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands rearmTimers")));
+    }
+
+    private Future<Void> rearm(WorkflowInstanceId instance, Row timer, SqlClient tx) {
+        UUID timerId = timer.getUUID("timer_id");
+        return nextQueueSequence(instance, tx)
+                .compose(seq -> {
+                    Tuple parameters = Tuple.tuple();
+                    parameters.addValue(instance.value());
+                    parameters.addValue(seq);
+                    parameters.addValue(timer.getString("timer_kind"));
+                    parameters.addValue(timerId);
+                    parameters.addValue(timer.getUUID("task_id"));
+                    parameters.addValue(jsonValue(timer.getString("target_json")));
+                    parameters.addValue(timer.getOffsetDateTime("fire_at"));
+                    return tx.preparedQuery(insertRearmed).execute(parameters);
+                })
+                .compose(inserted -> tx.preparedQuery(relinkTimer)
+                        .execute(Tuple.of(timerId, inserted.iterator().next().getLong("id"))))
+                .mapEmpty();
     }
 
     /** The wait a timeout belongs to, as the timeout command stores it; {@code null} for the other timers. */
@@ -1343,8 +1448,31 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                                 ? conn.preparedQuery(reopenReservedTask)
                                                         .execute(Tuple.of(claim.commandId()))
                                                 : Future.succeededFuture();
+                                        if (rejectsInsteadOfFailing(claim.kind(), reasonCode)) {
+                                            return reopened.compose(ignored -> conn.preparedQuery(rejectCommand)
+                                                            .execute(Tuple.of(
+                                                                    claim.commandId(),
+                                                                    claim.token(),
+                                                                    "REJECTED",
+                                                                    lastError)))
+                                                    .compose(ignored -> appendHistory(
+                                                            conn,
+                                                            claim.workflowId(),
+                                                            claim.commandId(),
+                                                            "COMMAND_REJECTED",
+                                                            new JsonObject()
+                                                                    .put("commandId", claim.commandId())
+                                                                    .put("kind", claim.kind())
+                                                                    .put("reason", lastError),
+                                                            "REJECTED"))
+                                                    .map(ignored -> DispositionResult.REJECTED);
+                                        }
                                         return reopened.compose(ignored -> conn.preparedQuery(failCommandRow)
                                                         .execute(Tuple.of(claim.commandId(), lastError)))
+                                                .compose(ignored -> "TIMER".equals(claim.kind())
+                                                        ? conn.preparedQuery(failTimerRow)
+                                                                .execute(Tuple.of(claim.commandId(), lastError))
+                                                        : Future.succeededFuture())
                                                 .compose(ignored -> failInstanceOf(
                                                         conn,
                                                         claim.workflowId(),
@@ -1356,6 +1484,16 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                     });
                         }))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands failCommand")));
+    }
+
+    /**
+     * Whether a command that failed deterministically is rejected without failing its instance: a signal, a completion
+     * or a migration, whose work runs under a savepoint, fails outside it only when its recorded target cannot be read.
+     * An overrun of the step cap fails the instance whatever the kind.
+     */
+    private static boolean rejectsInsteadOfFailing(String kind, String reasonCode) {
+        return CommandErrors.Reason.DETERMINISTIC_FAILURE.name().equals(reasonCode)
+                && ("SIGNAL".equals(kind) || "COMPLETION".equals(kind) || "MIGRATION".equals(kind));
     }
 
     @Override

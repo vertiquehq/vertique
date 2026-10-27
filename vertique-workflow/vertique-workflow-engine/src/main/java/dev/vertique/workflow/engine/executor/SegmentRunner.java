@@ -39,9 +39,11 @@ import org.slf4j.LoggerFactory;
  *       stays spent and the claim lapses at the end of its lease; the failure is not logged as an error;</li>
  *   <li>a transient failure: the command is rescheduled with a capped backoff and the attempt its claim spent is
  *       restored, in one transaction that locks only the command row;</li>
- *   <li>any other failure, and a step-limit overrun: the command is failed, and for a start its instance, in a
- *       transaction of its own that tries the execution lock until one margin before the lease ends and then releases
- *       the claim with its attempt restored, because the failure recurs on the next claim.</li>
+ *   <li>any other failure, and a step-limit overrun: the command is failed, and for a start, a retry or a timer its
+ *       instance, in a transaction of its own that tries the execution lock until one margin before the lease ends and
+ *       then releases the claim with its attempt restored, because the failure recurs on the next claim. A signal, a
+ *       completion or a migration that fails outside its savepoint (its recorded target cannot be read) is rejected
+ *       there instead, and its instance is unchanged; only a step-limit overrun fails the instance of those kinds.</li>
  * </ul>
  *
  * <p>A recorded {@code SIGNAL} settles itself inside its savepoint: the engine parks it, or rejects or stales it with a
@@ -305,6 +307,10 @@ final class SegmentRunner {
                 switch (result.result()) {
                     case APPLIED -> {
                         emitSettled(claim, "FAILED", claimStartNanos);
+                        return Future.<Void>succeededFuture();
+                    }
+                    case REJECTED -> {
+                        emitSettled(claim, "REJECTED", claimStartNanos);
                         return Future.<Void>succeededFuture();
                     }
                     case CLAIM_LOST -> {

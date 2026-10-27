@@ -154,21 +154,24 @@ final class ForkJoinCoordinator {
      * @param inst    the parent instance reflecting the current state (post-mutation if any)
      * @param cleared the branch token with wait fields cleared and {@code currentStepId} advanced
      * @param rw      the resolved runtime workflow
+     * @param commandId the id of the executor command whose operation continues the branch
      * @param tx      the active transaction
      * @return a {@link Future} that completes when transitions and (optionally) join evaluation finish
      */
-    Future<Void> driveAndMaybeJoin(WorkflowInstance inst, BranchToken cleared, RuntimeWorkflow rw, SqlClient tx) {
+    Future<Void> driveAndMaybeJoin(
+            WorkflowInstance inst, BranchToken cleared, RuntimeWorkflow rw, long commandId, SqlClient tx) {
         String parentSubjectVersion =
                 inst.subjectRef() == null ? null : inst.subjectRef().version();
         return branchEngine
-                .driveBranchTransitions(
+                .driveExecutorBranchTransitions(
                         cleared,
                         inst.stateJson(),
                         parentSubjectVersion,
                         rw,
                         BranchTransitionEngine.InstanceScope.of(inst),
                         tx,
-                        null)
+                        null,
+                        commandId)
                 .compose(advanced -> {
                     if (isBranchTerminal(advanced.status())) {
                         return evaluateJoinForRecoveredBranch(inst, advanced, rw, tx);
@@ -285,9 +288,12 @@ final class ForkJoinCoordinator {
         // workflow-native carrier (FR-CTX-178), distinct from the DELAYED_JOB boundary used by
         // workflow timers.
         dev.vertique.core.context.DurableMetadata branchMetadata = propagator != null
-                ? propagator.mergeCaptured(
-                        dev.vertique.core.context.DurableMetadata.empty(),
-                        dev.vertique.core.context.DispatchBoundary.WORKFLOW)
+                ? propagator
+                        .mergeCaptured(
+                                dev.vertique.core.context.DurableMetadata.empty(),
+                                dev.vertique.core.context.DispatchBoundary.WORKFLOW)
+                        // a branch never carries an identity: no drive of it rebuilds one
+                        .without(WorkflowEngine.IDENTITY_SNAPSHOT_NAMESPACE)
                 : dev.vertique.core.context.DurableMetadata.empty();
         // Build all branch tokens up-front so we can iterate after insert.
         java.util.List<dev.vertique.workflow.state.BranchToken> tokens =

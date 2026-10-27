@@ -181,7 +181,10 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 + " error_type = $9, error_message = $10, updated_at = NOW(),"
                 + " subject_type = $12, subject_id = $13, subject_version = $14,"
                 + " completed_at = CASE WHEN $3::varchar IN ('COMPLETED','FAILED','COMPENSATED','CANCELLED','EXPIRED')"
-                + "   THEN NOW() ELSE NULL END"
+                + "   THEN NOW() ELSE NULL END,"
+                // an instance returned to work (a retry of an archived failed instance) is no longer archived
+                + " archived_at = CASE WHEN $3::varchar IN ('COMPLETED','FAILED','COMPENSATED','CANCELLED','EXPIRED')"
+                + "   THEN archived_at ELSE NULL END"
                 + " WHERE id = $1 AND version = $11";
 
         this.sqlUpdateOptimisticLive =

@@ -276,9 +276,34 @@ final class MigrationExecutor {
                                 new dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException(
                                         id, "source instance is in terminal status: " + inst.status()));
                     }
-                    return commands.recordMigration(id, targetVersion, targetScope, tx)
-                            .<Void>mapEmpty();
+                    return commands.unsettledTargets(id, "MIGRATION", tx).compose(pending -> {
+                        if (pending.isEmpty()) {
+                            return commands.recordMigration(id, targetVersion, targetScope, tx)
+                                    .<Void>mapEmpty();
+                        }
+                        // A migration is on its way: the same one is recorded once, another one waits for it
+                        boolean same =
+                                pending.stream().anyMatch(stored -> isTarget(stored, targetScope, targetVersion));
+                        return same
+                                ? Future.<Void>succeededFuture()
+                                : Future.<Void>failedFuture(
+                                        new dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException(
+                                                id, "another migration of the instance is already pending"));
+                    });
                 });
+    }
+
+    /** Whether the stored target of a recorded migration is the given target. */
+    private static boolean isTarget(String stored, @jakarta.annotation.Nullable String scope, long version) {
+        try {
+            io.vertx.core.json.JsonObject json = new io.vertx.core.json.JsonObject(stored);
+            Long storedVersion = json.getLong("version");
+            return storedVersion != null
+                    && storedVersion == version
+                    && java.util.Objects.equals(json.getString("scope"), scope);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     // --- Execution in a segment ---

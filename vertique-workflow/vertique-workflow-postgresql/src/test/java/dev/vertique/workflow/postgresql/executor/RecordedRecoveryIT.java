@@ -219,13 +219,20 @@ public class RecordedRecoveryIT {
                     .hasMessageContaining("COMPLETED");
             assertThat(f.fixture.commandsOf(a)).isEqualTo(before);
 
-            // When two retries of the failed instance B are recorded and run
+            // When two retries of the failed instance B are recorded, one after the other, and run
             breakable.broken.set(false);
             retry(f, node, b);
             retry(f, node, b);
-            f.idle(node, b);
 
-            // Then the first retry recovered B and the second found nothing to recover
+            // Then the second call succeeded and recorded nothing, because one retry is already on its way
+            assertThat(f.fixture.commandsOf(b))
+                    .filteredOn(row -> row.kind().equals("RETRY"))
+                    .hasSize(1);
+
+            // And when a duplicate recorded some other way is queued behind it, the first retry recovers B and the
+            // duplicate finds nothing to recover
+            insertRetry(f, b);
+            f.idle(node, b);
             List<CommandRow> retries = f.fixture.commandsOf(b).stream()
                     .filter(row -> row.kind().equals("RETRY"))
                     .toList();
@@ -236,20 +243,21 @@ public class RecordedRecoveryIT {
     }
 
     @Test
-    @DisplayName("retry re-drives the failed step and applies a signal parked meanwhile in the same segment")
+    @DisplayName(
+            "a signal parked for the wait after a failed timeout is applied by the segment of the timeout offered again")
     void retryAppliesParkedSignalsAtTheReachedWait() {
         BreakableTimeout breakable = new BreakableTimeout();
         try (SignalFixture f = new SignalFixture(db.toPoolConfig(), breakable, List.of("approve", "finish"))) {
             TimerFixture timers = new TimerFixture(f);
             Node node = f.node("engine").build();
 
-            // Given an instance failed by its timeout path, and an approve signal parked while it was failed
+            // Given an instance failed by its timeout path, and a finish signal parked while it was failed
             WorkflowInstanceId id = f.waiting(node, "parked-retry");
             TimerRow timeout = timers.only(id, "TIMEOUT");
             timers.dueNow(timeout.id());
             f.idle(node, id);
             assertThat(f.fixture.instanceOf(id).status()).isEqualTo("FAILED");
-            f.record(node, id, "approve", signal("parked"), "k1");
+            f.record(node, id, "finish", signal("parked"), "k1");
             f.idle(node, id);
             CommandRow parked = f.signal(id, "k1");
             assertThat(parked.state()).isEqualTo("PARKED");
@@ -259,19 +267,22 @@ public class RecordedRecoveryIT {
             retry(f, node, id);
             f.idle(node, id);
 
-            // Then the retry and the signal are complete, applied by one segment
+            // Then the retry is complete and the signal, which the wait the instance failed in does not accept, was
+            // applied by the segment of the timeout, at the wait the timeout led to
             CommandRow retry = f.fixture.commandsOf(id).stream()
                     .filter(row -> row.kind().equals("RETRY"))
                     .findFirst()
                     .orElseThrow(() -> new AssertionError("no retry command of " + id));
             assertThat(retry.state()).isEqualTo("COMPLETE");
             assertThat(f.signal(id, "k1").state()).isEqualTo("COMPLETE");
+            TimerRow offered = timers.all(id).getLast();
+            assertThat(offered.state()).isEqualTo("COMPLETE");
             assertThat(f.entry(id, "SIGNAL_APPLIED", parked.id()).transaction())
-                    .isEqualTo(f.entry(id, "COMMAND_COMPLETED", retry.id()).transaction());
+                    .isEqualTo(f.entry(id, "COMMAND_COMPLETED", offered.id()).transaction());
 
-            // And the signal changed the state of the instance that then ended
+            // And the timeout was taken before the signal, which changed the state of the instance that then ended
             assertThat(f.fixture.instanceOf(id).status()).isEqualTo("COMPLETED");
-            assertThat(String.valueOf(f.fixture.instanceOf(id).stateJson())).contains("approve:parked");
+            assertThat(applied(f, id)).containsExactly("timeout:timeout", "finish:parked");
             assertThat(f.openSignals(id)).isZero();
         }
     }
@@ -518,6 +529,19 @@ public class RecordedRecoveryIT {
     /** Records a retry in the caller's own transaction, on a context of its own, and commits it. */
     private static void retry(SignalFixture f, Node node, WorkflowInstanceId id) {
         await(f.caller(() -> node.pool.withTransaction(tx -> node.engine.retry(id, tx))));
+    }
+
+    /** Queues a second pending retry for the instance with a statement of the database, as no caller can record one. */
+    private static void insertRetry(SignalFixture f, WorkflowInstanceId id) {
+        await(f.fixture.observer().withTransaction(connection -> connection
+                .preparedQuery("INSERT INTO workflow_commands (workflow_id, seq, kind, state, recorded_at,"
+                        + " available_at) SELECT $1, COALESCE(MAX(seq), 0) + 1, 'RETRY', 'PENDING',"
+                        + " clock_timestamp(), clock_timestamp() FROM workflow_commands WHERE workflow_id = $1")
+                .execute(io.vertx.sqlclient.Tuple.of(id.value()))
+                .compose(ignored -> connection
+                        .preparedQuery("UPDATE workflow_command_queues SET next_seq = next_seq + 1"
+                                + " WHERE workflow_id = $1")
+                        .execute(io.vertx.sqlclient.Tuple.of(id.value())))));
     }
 
     /** The signals the state of the instance records as applied, in order. */

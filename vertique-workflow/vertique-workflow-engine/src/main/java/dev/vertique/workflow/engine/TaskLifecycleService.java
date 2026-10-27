@@ -4,6 +4,7 @@
 package dev.vertique.workflow.engine;
 
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMaps;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
@@ -501,6 +502,14 @@ final class TaskLifecycleService {
      *     for a committed duplicate, which returns its earlier result
      */
     Future<TaskMutationResult> taskCompleted(TaskCompletionCommand cmd, SqlClient tx) {
+        String oversized = oversizedIdentifier(cmd);
+        if (oversized != null) {
+            // The value is stored with the command: refuse it before any lock is taken, and echo none of it.
+            return Future.failedFuture(new WorkflowInvalidPayloadException(
+                    "Completion of task '" + cmd.taskId() + "' is refused: the " + oversized + " exceeds "
+                            + MAX_IDENTIFIER_LENGTH + " characters",
+                    List.of(ViolationDetail.unlocated("the " + oversized + " is too long", "payload"))));
+        }
         String fingerprint;
         try {
             fingerprint = fingerprintCanonicalizer.fingerprintCompletion(cmd);
@@ -524,6 +533,18 @@ final class TaskLifecycleService {
                 return recordCompletion(cmd, fingerprint, task, tx);
             });
         });
+    }
+
+    /** The longest reviewed subject version or actor id a recorded completion carries, in characters. */
+    private static final int MAX_IDENTIFIER_LENGTH = 255;
+
+    /** Names the first caller-supplied identifier of the completion that is too long to store, or {@code null}. */
+    private static @Nullable String oversizedIdentifier(TaskCompletionCommand cmd) {
+        if (cmd.reviewedSubjectVersion() != null && cmd.reviewedSubjectVersion().length() > MAX_IDENTIFIER_LENGTH) {
+            return "reviewed subject version";
+        }
+        String actorId = WorkflowActorMaps.toMap(cmd.completedBy()).get("value");
+        return actorId != null && actorId.length() > MAX_IDENTIFIER_LENGTH ? "completing actor id" : null;
     }
 
     /**
@@ -607,8 +628,8 @@ final class TaskLifecycleService {
             }
             if (!Objects.equals(cmd.reviewedSubjectVersion(), locked.subjectVersionAtCreation())) {
                 return new WorkflowStaleSubjectVersionException("Task '" + cmd.taskId() + "' (step '"
-                        + locked.stepId() + "'): reviewed version '" + cmd.reviewedSubjectVersion()
-                        + "' did not match snapshot '" + locked.subjectVersionAtCreation() + "'");
+                        + locked.stepId() + "'): reviewed version '" + EchoedNames.bounded(cmd.reviewedSubjectVersion())
+                        + "' is not the version the task was created for");
             }
         }
         boolean offered =
@@ -822,7 +843,7 @@ final class TaskLifecycleService {
                 .compose(received -> Savepoints.attempt(tx, () -> {
                     if (task.branchTokenId() != null) {
                         // A branch drive never binds the recorded context: the branch token's own carrier is bound.
-                        return doBranchCompleteTask(cmd, task, tx);
+                        return doBranchCompleteTask(cmd, task, command.commandId(), tx);
                     }
                     return contextBinder.withRecordedBase(
                             inst, command.commandId(), null, recorded, () -> doCompleteTaskBound(cmd, task, inst, tx));
@@ -995,9 +1016,8 @@ final class TaskLifecycleService {
             if (!Objects.equals(cmd.reviewedSubjectVersion(), task.subjectVersionAtCreation())) {
                 return Future.failedFuture(
                         new WorkflowStaleSubjectVersionException("Task '" + cmd.taskId() + "' (step '" + htn.stepId()
-                                + "'): reviewed version '" + cmd.reviewedSubjectVersion()
-                                + "' did not match snapshot '"
-                                + task.subjectVersionAtCreation() + "'"));
+                                + "'): reviewed version '" + EchoedNames.bounded(cmd.reviewedSubjectVersion())
+                                + "' is not the version the task was created for"));
             }
         }
 
@@ -1163,10 +1183,12 @@ final class TaskLifecycleService {
      *
      * @param cmd  the completion command
      * @param task the non-locking task snapshot obtained in step 1 of {@link #taskCompleted}
+     * @param commandId the id of the executor command that applies the completion
      * @param tx   the active transaction
      * @return a {@link Future} resolving to the mutation result
      */
-    private Future<TaskMutationResult> doBranchCompleteTask(TaskCompletionCommand cmd, TaskRecord task, SqlClient tx) {
+    private Future<TaskMutationResult> doBranchCompleteTask(
+            TaskCompletionCommand cmd, TaskRecord task, long commandId, SqlClient tx) {
         UUID taskId = cmd.taskId();
         UUID branchTokenId = task.branchTokenId();
         WorkflowInstanceId workflowId = task.workflowId();
@@ -1230,9 +1252,8 @@ final class TaskLifecycleService {
                                     return Future.failedFuture(new WorkflowStaleSubjectVersionException(
                                             "Branch task '" + taskId + "' (step '" + htn.stepId()
                                                     + "'): reviewed version '"
-                                                    + cmd.reviewedSubjectVersion()
-                                                    + "' did not match snapshot '"
-                                                    + task.subjectVersionAtCreation() + "'"));
+                                                    + EchoedNames.bounded(cmd.reviewedSubjectVersion())
+                                                    + "' is not the version the task was created for"));
                                 }
                             }
 
@@ -1336,7 +1357,11 @@ final class TaskLifecycleService {
                                                                         // owning join. updatedInst carries newStateJson
                                                                         // and the post-applicator subject ref.
                                                                         .compose(v2 -> forkJoin.driveAndMaybeJoin(
-                                                                                updatedInst, cleared, rw, tx))
+                                                                                updatedInst,
+                                                                                cleared,
+                                                                                rw,
+                                                                                commandId,
+                                                                                tx))
                                                                         .map(v2 -> TaskMutationResult.APPLIED);
                                                             });
                                                 });
@@ -1391,11 +1416,12 @@ final class TaskLifecycleService {
      *
      * @param workflowId the owning workflow instance id
      * @param task       the task record (non-locking snapshot from the caller)
+     * @param commandId  the id of the executor command that fires the due date
      * @param tx         the active transaction
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> doBranchTaskDueFired(
-            WorkflowInstanceId workflowId, TaskRecord task, SqlClient tx) {
+            WorkflowInstanceId workflowId, TaskRecord task, long commandId, SqlClient tx) {
         // Resolve the pinned plan BEFORE any write: a node that cannot run the pinned version must
         // leave the reminders and the task untouched so the timer can be re-queued for a node that can.
         // The body acts on this instance snapshot and plan; it resolves nothing after its first write.
@@ -1410,7 +1436,7 @@ final class TaskLifecycleService {
             } catch (Exception e) {
                 return Future.<TaskMutationResult>failedFuture(e);
             }
-            return doBranchTaskDueFiredResolved(workflowId, task, inst, rw, tx);
+            return doBranchTaskDueFiredResolved(workflowId, task, inst, rw, commandId, tx);
         });
     }
 
@@ -1421,11 +1447,17 @@ final class TaskLifecycleService {
      * @param task       the task record (non-locking snapshot from the caller)
      * @param inst       the instance snapshot the plan was resolved for
      * @param rw         the plan resolved for {@code inst} and checked against its stored hash
+     * @param commandId  the id of the executor command that fires the due date
      * @param tx         the active transaction
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> doBranchTaskDueFiredResolved(
-            WorkflowInstanceId workflowId, TaskRecord task, WorkflowInstance inst, RuntimeWorkflow rw, SqlClient tx) {
+            WorkflowInstanceId workflowId,
+            TaskRecord task,
+            WorkflowInstance inst,
+            RuntimeWorkflow rw,
+            long commandId,
+            SqlClient tx) {
         UUID taskId = task.taskId();
         UUID branchTokenId = task.branchTokenId();
 
@@ -1542,7 +1574,11 @@ final class TaskLifecycleService {
                                                                     // post-onDueMutator
                                                                     // state and the current subject ref.
                                                                     return forkJoin.driveAndMaybeJoin(
-                                                                            updatedInstForDue, cleared, rw, tx);
+                                                                            updatedInstForDue,
+                                                                            cleared,
+                                                                            rw,
+                                                                            commandId,
+                                                                            tx);
                                                                 });
                                                     });
                                         })
@@ -1769,7 +1805,7 @@ final class TaskLifecycleService {
 
             // Branch fork: route branch-owned tasks through the branch-specific path.
             if (task.branchTokenId() != null) {
-                return doBranchTaskDueFired(workflowId, task, tx);
+                return doBranchTaskDueFired(workflowId, task, binding.commandId(), tx);
             }
 
             return instances.findById(workflowId, tx).compose(optInst -> {

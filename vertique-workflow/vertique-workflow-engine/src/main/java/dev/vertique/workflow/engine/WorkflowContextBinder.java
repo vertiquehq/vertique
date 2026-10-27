@@ -169,7 +169,9 @@ final class WorkflowContextBinder {
             return drive.get();
         }
 
-        DurableMetadata instanceMetadata = instance.metadata();
+        // The instance carrier fills what the caller's context lacks, but never with an identity: a caller-side drive
+        // runs under the caller's own security context, or none, and never under the one the instance was started by.
+        DurableMetadata instanceMetadata = withoutIdentity(instance.metadata());
         if (explicitCarrier == null && instanceMetadata == null) {
             // Gate: no carrier signal at all — run as today, no new bind (FR-WF-CTX-012).
             return drive.get();

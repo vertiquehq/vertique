@@ -87,7 +87,8 @@ public interface WorkflowOperations {
      * refused.
      *
      * @param id id of the workflow instance to cancel
-     * @param reason human-readable reason for the cancellation; stored in history
+     * @param reason human-readable reason for the cancellation; stored in history after it is cut at 255 code points
+     *     and its control characters are replaced
      * @return a {@link Future} that completes when the instance has been transitioned to
      *     {@code CANCELLED}
      */

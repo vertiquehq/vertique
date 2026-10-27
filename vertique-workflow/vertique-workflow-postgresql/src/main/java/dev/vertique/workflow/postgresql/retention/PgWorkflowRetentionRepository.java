@@ -25,13 +25,14 @@ import java.util.UUID;
  * batch-size validation, {@link Instant}/{@link OffsetDateTime} conversion, result construction)
  * live in {@link PgWorkflowRetentionService} which delegates to this repository.
  *
- * <p>Both operations pick their candidates with {@code FOR UPDATE SKIP LOCKED} so multiple
- * concurrent batch runs (e.g., rolling cron jobs on different application nodes) progress without
- * blocking one another, and try each candidate's execution lock without waiting: an instance whose
- * lock another transaction holds (a segment running, a command being recorded, a cancellation) is
- * skipped this run and removed by a later one. Under the lock a second statement reads the
+ * <p>Both operations pick their candidates by their cutoff column, and try each candidate's execution lock without
+ * waiting, before they touch the instance's row: an instance whose lock another transaction holds (a segment running,
+ * a command being recorded, a cancellation, another retention run) is skipped this run, keeps no lock of any kind and
+ * is removed by a later one, so multiple concurrent batch runs (e.g., rolling cron jobs on different application nodes)
+ * progress without blocking one another or the writers of the instances they skip. Under the lock a second statement reads the
  * eligibility again, with a snapshot taken after the lock was won, and keeps out every instance that
- * is no longer eligible or has an active command ({@code PENDING}, {@code DEFERRED} or
+ * is no longer eligible (a purge also needs an ended or {@code FAILED} instance: an archived instance that a retry
+ * returned to work is never purged while it lives) or has an active command ({@code PENDING}, {@code DEFERRED} or
  * {@code CLAIMED}): a retry recorded on an archive-eligible failed instance keeps it. Each method
  * opens its own transaction via {@link Pool#withTransaction}, so the locks are released when the
  * batch ends.
@@ -65,6 +66,9 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
 
     /** Name of the migration instance whose schema mapping places the workflow tables. */
     private static final String INSTANCE_NAME = "workflow";
+
+    /** The statuses an instance can be purged in: the ended ones and {@code FAILED}; a live instance is never purged. */
+    private static final String ENDED_OR_FAILED = "('COMPLETED','COMPENSATED','CANCELLED','EXPIRED','FAILED')";
 
     /** The namespace prefix of the execution lock's key, as the executors derive it. */
     private static final String EXECUTION_LOCK_NAMESPACE = "vertique.workflow.execution-lock:";
@@ -154,7 +158,6 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
                 + "    AND ($3::text IS NULL OR definition_id = $3)"
                 + "  ORDER BY completed_at ASC, id ASC"
                 + "  LIMIT $4"
-                + "  FOR UPDATE SKIP LOCKED"
                 + ") cand WHERE " + tryExecutionLock("cand.id");
 
         this.sqlArchiveEligible = "SELECT i.id FROM " + instances + " i"
@@ -170,16 +173,17 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
                 + "  SELECT id FROM " + instances
                 + "  WHERE archived_at IS NOT NULL"
                 + "    AND archived_at <= $1"
+                + "    AND status IN " + ENDED_OR_FAILED
                 + "    AND ($2::text IS NULL OR definition_id = $2)"
                 + "  ORDER BY archived_at ASC, id ASC"
                 + "  LIMIT $3"
-                + "  FOR UPDATE SKIP LOCKED"
                 + ") cand WHERE " + tryExecutionLock("cand.id");
 
         this.sqlPurgeEligible = "SELECT i.id FROM " + instances + " i"
                 + " WHERE i.id = ANY($1::uuid[])"
                 + "   AND i.archived_at IS NOT NULL"
                 + "   AND i.archived_at <= $2"
+                + "   AND i.status IN " + ENDED_OR_FAILED
                 + noActiveCommand;
 
         this.sqlPurge = "DELETE FROM " + instances + " WHERE id = ANY($1::uuid[])";

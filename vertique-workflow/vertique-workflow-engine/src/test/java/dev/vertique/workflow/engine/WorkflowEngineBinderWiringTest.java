@@ -1275,6 +1275,11 @@ class WorkflowEngineBinderWiringTest {
                     taskId,
                     new DriveBinding() {
                         @Override
+                        public long commandId() {
+                            return 1L;
+                        }
+
+                        @Override
                         public <T> Future<T> run(
                                 WorkflowInstance instance, java.util.function.Supplier<Future<T>> drive) {
                             return drive.get();

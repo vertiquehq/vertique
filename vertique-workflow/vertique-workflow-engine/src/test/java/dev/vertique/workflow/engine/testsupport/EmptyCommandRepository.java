@@ -161,6 +161,21 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
         return Future.succeededFuture(new RecordedTimer(UUID.randomUUID(), recordedTimers.size(), fireAt));
     }
 
+    @Override
+    public Future<Integer> rearmTimers(WorkflowInstanceId instance, SqlClient tx) {
+        return Future.succeededFuture(0);
+    }
+
+    @Override
+    public Future<List<String>> unsettledTargets(WorkflowInstanceId instance, String kind, SqlClient tx) {
+        return Future.succeededFuture(List.of());
+    }
+
+    @Override
+    public Future<List<UUID>> liveTasks(WorkflowInstanceId instance, SqlClient tx) {
+        return Future.succeededFuture(List.of());
+    }
+
     /**
      * The signal commands recorded through this repository, oldest first.
      *

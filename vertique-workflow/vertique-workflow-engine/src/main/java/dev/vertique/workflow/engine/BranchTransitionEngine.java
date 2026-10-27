@@ -353,6 +353,9 @@ final class BranchTransitionEngine {
                     meta,
                     () -> step(token, parentStateJson, parentSubjectVersion, rw, instanceScope, tx));
         }
+        // A branch drive never binds an identity, whoever starts it: the namespace is stripped from the document of
+        // every drive that does not go through the executor entry, such as the dispatch of a fork's branches.
+        meta = meta.without(WorkflowEngine.IDENTITY_SNAPSHOT_NAMESPACE);
         if (inboundExecScope != null) {
             // Substrate lifecycle helper composes propagator.bindFrom AND any registered
             // InboundContextInitializers (e.g. CorrelationContextSeeder) in one scope —

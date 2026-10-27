@@ -137,6 +137,66 @@ public class RecordedMigrationIT {
     }
 
     @Test
+    @DisplayName("the same migration is recorded once while one is pending, and a different one is refused")
+    void aPendingMigrationIsRecordedOnceAndAnotherTargetIsRefused() {
+        Versioned v1 = versioned(1, true);
+        try (SignalFixture f = new SignalFixture(db.toPoolConfig(), v1, List.of("paid", "note"))) {
+            // Given an instance waiting on version 1 with versions 2 and 3 available, and a migration to version 2
+            // recorded and not yet run
+            seed(f, versioned(2, true), List.of("paid", "note"));
+            seed(f, versioned(3, true), List.of("paid", "note"));
+            Node node = f.node("engine")
+                    .migrations(new DefaultWorkflowMigrationRegistry(Set.of(), f.registry))
+                    .build();
+            WorkflowInstanceId id = f.waiting(node, "pending-migration");
+            migrate(f, node, id, 2);
+
+            // When the same migration is recorded again, and a migration to another version is recorded
+            migrate(f, node, id, 2);
+            Throwable other = ExecutorFixture.failureOf(
+                    f.caller(() -> node.pool.withTransaction(tx -> node.engine.migrate(id, 3L, tx))), IDLE);
+
+            // Then the repeat succeeded and recorded nothing, and the other was refused with the pending one kept
+            assertThat(other)
+                    .isInstanceOf(dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException.class)
+                    .hasMessageContaining("already pending");
+            assertThat(f.fixture.commandsOf(id))
+                    .filteredOn(row -> row.kind().equals("MIGRATION"))
+                    .hasSize(1);
+        }
+    }
+
+    @Test
+    @DisplayName("a migration whose recorded target cannot be read is rejected and the instance stays unfailed")
+    void migrationWithAnUnreadableTargetIsRejectedWithoutFailingTheInstance() {
+        Versioned v1 = versioned(1, true);
+        try (SignalFixture f = new SignalFixture(db.toPoolConfig(), v1, List.of("paid", "note"))) {
+            // Given an instance waiting on version 1 and a recorded migration to version 2 whose target is damaged
+            seed(f, versioned(2, true), List.of("paid", "note"));
+            Node node = f.node("engine")
+                    .migrations(new DefaultWorkflowMigrationRegistry(Set.of(), f.registry))
+                    .build();
+            WorkflowInstanceId id = f.waiting(node, "unreadable-target");
+            JsonObject before = f.snapshot(id);
+            JsonObject pin = pin(f, id);
+            migrate(f, node, id, 2);
+            damageTarget(f, id, "MIGRATION");
+
+            // When the instance runs until idle
+            f.idle(node, id);
+
+            // Then the command is rejected once, the instance is unchanged and was not failed
+            CommandRow migration = migrationOf(f, id);
+            assertThat(migration.state()).isEqualTo("REJECTED");
+            assertThat(migration.lastError()).matches("(?s)^[A-Z][A-Z_]*: .+");
+            assertThat(f.entry(id, "COMMAND_REJECTED", migration.id())).isNotNull();
+            assertThat(f.snapshot(id)).isEqualTo(before);
+            assertThat(pin(f, id)).isEqualTo(pin);
+            assertThat(f.fixture.historyOf(id)).doesNotContain("FAILED", "WORKFLOW_MIGRATED");
+        }
+    }
+
+    @Test
     @DisplayName("a migration whose target class is missing is deferred and another executor migrates the instance")
     void migrationDefersWhenTheTargetIsNotRunnableHere() {
         Versioned v1 = versioned(1, false);
@@ -281,6 +341,15 @@ public class RecordedMigrationIT {
                             .toList());
         }
         return migrations.getFirst();
+    }
+
+    /** Replaces the recorded target of the instance's only command of the kind with a value no reader accepts. */
+    static void damageTarget(SignalFixture f, WorkflowInstanceId id, String kind) {
+        await(f.fixture
+                .observer()
+                .preparedQuery("UPDATE workflow_commands SET target_json = '\"damaged\"'::jsonb WHERE workflow_id = $1"
+                        + " AND kind = $2")
+                .execute(io.vertx.sqlclient.Tuple.of(id.value(), kind)));
     }
 
     /** The definition version and plan hash the instance is pinned to. */
