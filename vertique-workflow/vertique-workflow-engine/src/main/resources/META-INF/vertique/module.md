@@ -628,8 +628,11 @@ When a `WorkflowPlanSchemaProducer` is bound (`WorkflowSchemaModule`), startup r
 
 The engine orchestrates `WorkflowDefinitionLifecycle.publish` through the required SQL-free registry
 store and format-specific loaders. Parsing remains in the loader module. Publication claims a durable
-candidate, recompiles its stored source, verifies its key and plan hash, registers it locally, and
-completes the fenced claim, which makes the version `AVAILABLE`. Publishing a version that is already available
+candidate, recompiles its stored source, verifies its key and plan hash, builds its plan with the checks of an
+on-demand load (plan graph, signals, callbacks, contributed definition validators, per-plan validators, and for a scope other than the default one the check that its
+state type extends the state type of the default scope's code definition of the id, a default-scope document not counting), and completes the fenced claim only when the build succeeds, which makes the
+version `AVAILABLE`. A document that does not build is refused with a `WorkflowDefinitionException` (a failure that is not one is its cause and its message ends the text), the claim is released and the row stays a `CANDIDATE`. Publication registers nothing in memory and
+leaves the plan to the plan cache of each node, which builds it when a command first needs it. Publishing a version that is already available
 succeeds without a change, and publishing does not touch any other version or scope of the id. JVM fatal errors
 are not ordinary recovery cases.
 
@@ -762,7 +765,7 @@ store checks status and the pin count in one transaction, so a refusal is typed 
 or `INVALID_TRANSITION` for any other status). A retired row is refused by pin admission as a lifecycle failure. The node
 holds no runtime to remove: a plan that the plan cache still holds is not used for a retired row, because a start
 reads the row. Managed operations are serialized per definition id on the node.
-`publish` builds the plan before it completes the claim, so a document that a registration rule or validator refuses fails when it is published, and the claim is released.
+`publish` builds the plan before it completes the claim, so a document that a plan rule or validator refuses, or whose state type does not extend the default scope's, fails when it is published, and the claim is released.
 
 Every public transaction-aware engine entrypoint (`start`, the `signal` overloads, `cancel`, `retry`, `migrate`, the
 task and timer callbacks) requires a `SqlConnection` with a pending transaction begun through Vert.x and returns a

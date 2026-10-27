@@ -5,15 +5,18 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition;
+import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry.StateComparison;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import java.util.List;
@@ -135,6 +138,45 @@ public final class DefinitionPublication {
         DefaultWorkflowRegistry builder =
                 registry instanceof DefaultWorkflowRegistry framework ? framework : new DefaultWorkflowRegistry();
         return builder.build(key.scopeKey(), definition, nameBinding);
+    }
+
+    /**
+     * Builds the plan of a stored document for publication or reinstatement: the build of {@link #build}, with a
+     * failure of the document always leaving as a {@link WorkflowDefinitionException}, and, for a scope other than
+     * the default one, the check that the state type extends the state type of the default scope's code definition
+     * of the id.
+     *
+     * <p>The default scope's current state type is the one of the code definition registered for the id when the
+     * check runs; a document of the default scope is never registered and so does not count. A registry other than
+     * the framework's has no default scope to compare with and builds with the framework's rules alone. A refusal
+     * names the scope, id and version and never the document's content.
+     *
+     * @return the built plan, which the caller may validate but does not register
+     * @throws WorkflowDefinitionException when the document does not build or its state type does not extend the
+     *     default scope's; a failure that is not one is the cause of the exception thrown and its message ends the message
+     */
+    static RuntimeWorkflow buildPublished(
+            WorkflowRegistry registry,
+            DefinitionKey key,
+            WorkflowDefinition<?, ?> definition,
+            Map<String, String> nameBinding) {
+        RuntimeWorkflow plan;
+        try {
+            plan = build(registry, key, definition, nameBinding);
+        } catch (WorkflowDefinitionException refusal) {
+            throw refusal;
+        } catch (RuntimeException failure) {
+            throw new WorkflowDefinitionException(
+                    "Cannot build DOCUMENT " + key + " from its stored source: " + failure.getMessage(), failure);
+        }
+        if (!WorkflowScopes.DEFAULT.equals(key.scopeKey()) && registry instanceof DefaultWorkflowRegistry framework) {
+            StateComparison comparison = framework.compareWithDefault(plan);
+            if (!comparison.accepted())
+                throw new WorkflowDefinitionException("Definition " + key + ": the state type does not extend the"
+                        + " state type of the default scope's '" + EchoedNames.bounded(key.definitionId())
+                        + "' of the same contract");
+        }
+        return plan;
     }
 
     static WorkflowDefinitionLifecycleException failure(Reason reason, DefinitionKey key, String message) {

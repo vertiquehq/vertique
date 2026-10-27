@@ -220,7 +220,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                 || !record.planHash().equals(hash))
             throw failure(
                     Reason.DRIFT, key, "stored hash " + record.planHash() + " differs from compiled hash " + hash);
-        DefinitionPublication.build(registry.get(), key, definition, record.nameBinding());
+        DefinitionPublication.buildPublished(registry.get(), key, definition, record.nameBinding());
         return definition;
     }
 
