@@ -127,9 +127,26 @@ public final class WorkflowEngineFactory {
                         propagator,
                         parts.inboundContextInitializers());
         BranchTransitionEngine branchEngine = inboundExecScope == null
-                ? new BranchTransitionEngine(branchTokens, dedup, history, recorderRouter, taskStore, clock, propagator)
+                ? new BranchTransitionEngine(
+                        branchTokens,
+                        dedup,
+                        history,
+                        recorderRouter,
+                        taskStore,
+                        clock,
+                        propagator,
+                        null,
+                        parts.schemaProducer())
                 : new BranchTransitionEngine(
-                        branchTokens, dedup, history, recorderRouter, taskStore, clock, propagator, inboundExecScope);
+                        branchTokens,
+                        dedup,
+                        history,
+                        recorderRouter,
+                        taskStore,
+                        clock,
+                        propagator,
+                        inboundExecScope,
+                        parts.schemaProducer());
         BranchCompensationOrchestrator branchCompensation =
                 new BranchCompensationOrchestrator(history, recorderRouter, clock);
         // A factory-built engine runs no startup step, so the view of the activation records is seeded from the
@@ -172,7 +189,9 @@ public final class WorkflowEngineFactory {
                 executionProbe,
                 parts.commands(),
                 () -> executorHolder[0],
-                parts.recordingConfig());
+                parts.recordingConfig(),
+                parts.taskReservations(),
+                parts.schemaProducer());
         executorHolder[0] = new WorkflowExecutor(
                 parts.vertx(),
                 parts.executorConfig(),

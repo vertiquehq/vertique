@@ -45,8 +45,8 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Verifies that a parked signal is applied when a path that no executor segment owns (a task completion, a timer fire, a
- * branch task completion) drives its instance or branch into the wait the signal addresses.
+ * Verifies that a parked signal is applied when a path that drives its instance or branch into the wait the signal
+ * addresses (a task completion, a timer fire, a branch task completion) reaches that wait.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -78,7 +78,7 @@ public class InlineParkedSignalIT {
             f.idle(node, id);
             assertThat(f.signal(id, "early").state()).isEqualTo("PARKED");
 
-            // When the task is completed on the inline path, with no executor running
+            // When the task is completed and the executor applies the recorded completion
             UUID task = await(node.pool
                     .preparedQuery("SELECT task_id FROM workflow_tasks WHERE workflow_id = $1")
                     .execute(Tuple.of(id.value()))
@@ -86,8 +86,9 @@ public class InlineParkedSignalIT {
             await(f.caller(() -> node.pool.withTransaction(tx -> node.engine.taskCompleted(
                     new TaskCompletionCommand(task, "approve", null, "approve-1", new WorkflowActor.User("u"), null),
                     tx))));
+            f.idle(node, id);
 
-            // Then the parked signal was applied in that transaction and the instance went past the wait
+            // Then the parked signal was applied in that segment and the instance went past the wait
             CommandRow applied = f.signal(id, "early");
             assertThat(applied.state()).isEqualTo("COMPLETE");
             assertThat(f.snapshot(id).getString("status")).isEqualTo("COMPLETED");
@@ -193,7 +194,7 @@ public class InlineParkedSignalIT {
             f.idle(node, id);
             assertThat(f.signal(id, "early").state()).isEqualTo("PARKED");
 
-            // When the branch's task is completed on the inline path, with no executor running
+            // When the branch's task is completed and the executor applies the recorded completion
             UUID task = await(node.pool
                     .preparedQuery("SELECT task_id FROM workflow_tasks WHERE workflow_id = $1")
                     .execute(Tuple.of(id.value()))
@@ -201,6 +202,7 @@ public class InlineParkedSignalIT {
             await(f.caller(() -> node.pool.withTransaction(tx -> node.engine.taskCompleted(
                     new TaskCompletionCommand(task, "approve", null, "approve-1", new WorkflowActor.User("u"), null),
                     tx))));
+            f.idle(node, id);
 
             // Then the parked signal was applied and the branch completed, while the other branch still holds the join
             assertThat(f.signal(id, "early").state()).isEqualTo("COMPLETE");

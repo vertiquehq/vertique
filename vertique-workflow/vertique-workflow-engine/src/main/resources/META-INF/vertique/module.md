@@ -59,20 +59,63 @@ through `WorkflowEngineModule` using `@Binds`. Code outside the package (adapter
 code) never references the concrete class — it uses `WorkflowEngineHandle`, `WorkflowEngineFactory`,
 or the four public ops/callback interfaces.
 
-### Record-Time Payload Bounds
+### Record-Time Payload Checks
 
-The engine validates the encoded JSON of every recorded signal payload and explicit signal carrier before it takes the
-execution lock. Its byte limit is
+The engine validates the encoded JSON of every recorded signal payload and explicit signal carrier, and of every
+task completion's payload, before it takes the execution lock. Its byte limit is
 `workflow.recording.maxPayloadBytes` (default `262144`, minimum `1024`); its fixed depth limit is 64,
 counting every object and array as one level. Values exactly at either limit pass. Size is measured
 over UTF-8 JSON bytes, including escaping and structural characters.
 
 The validator walks containers iteratively before encoding, so excessively nested JSON is refused
 without a stack overflow, and it counts bytes and nesting while it encodes and stops as soon as a bound is crossed, so an
-oversized value is never fully encoded in memory. It performs no I/O, locking, transaction work or schema validation.
+oversized value is never fully encoded in memory. The bounds perform no I/O, locking or transaction work.
 Exceeding either bound throws `WorkflowInvalidPayloadException` naming `maxPayloadBytes` or depth 64;
 messages, violation details and causes expose no submitted values. A recorded signal's refusal also names the instance and
 the signal.
+
+A task completion's payload is also validated against the JSON Schema that the task's decision snapshot stores for the
+requested decision, still before the lock and without the plan. A violation throws `WorkflowInvalidPayloadException` with
+value-free violation details. The schema is checked first: one with a non-local `$ref` (anything not starting with `#`,
+at any schema position) is refused before it is compiled, so no reference is ever fetched from a file or the network.
+Compiled schemas are cached by the SHA-256 of the schema's canonical (key-sorted) JSON, so equal schemas share an entry
+whatever their key order; the cache holds at most `workflow.recording.schemaCacheMaxEntries` entries (default `256`,
+minimum `1`) and evicts the oldest-used first. Pattern keywords run through the framework's pattern-input guard, which
+bounds the strings they inspect. A schema that cannot be compiled is not the caller's fault: validation is skipped for
+it with a warning and the executor validates the completion against the plan when it applies it. A decision the snapshot
+does not offer, or one with no stored schema (a task created by an earlier version), is left to the checks under the lock
+and to the executor.
+
+### Recorded Task Completions
+
+`TransactionalTaskCallbacks.taskCompleted` (reached by `TaskService.complete`) records a completion and returns; it does not
+apply it. In the caller's transaction it:
+
+1. returns the earlier result of a committed duplicate (the same idempotency key and fingerprint) before any other check;
+2. reads the task row without a lock and checks the payload's bounds and schema (above); a refusal writes nothing and takes no lock;
+3. takes the instance's execution lock, then looks for a duplicate again (a key with another fingerprint is a
+   `WorkflowIdempotencyConflictException`) and locks the task row: the task must still be `OPEN`
+   (`WorkflowTaskNotWaitingException` otherwise), a supplied `expectedAssignment` must still match, the reviewed subject
+   version must match when the row records that the task requires version stability, and the decision must be in the
+   snapshot (the existing unknown-decision refusal);
+4. claims the idempotency key, inserts a `COMPLETION` command whose target holds the decision, the reviewed subject
+   version and the completing actor, and moves the task `OPEN` to `COMPLETING` through `TaskReservations.markCompleting`,
+   storing the command id as the reservation owner.
+
+Recording loads no plan and no payload class. A task created before decision schemas and the stability column were stored
+skips the checks that need them; the executor makes them from the plan.
+
+The executor applies the command in a segment, under a savepoint: the task must still be `COMPLETING` under this command
+(otherwise the command is `STALE`), the instance must wait for the task, and the decision is applied exactly as the
+plan describes (version stability from the plan, payload coercion and constraint checks, the due-date and reminder timers
+cancelled, the task `COMPLETED`, the decision applicator, the instance advanced to the decision's next step). A
+deterministic failure (an invalid payload, a decision applicator that throws, a stale reviewed version found from the
+plan) or a step-limit overrun rolls back to the savepoint: the command is `REJECTED` with a sanitized reason that starts
+with `DETERMINISTIC_FAILURE` or `STEP_LIMIT` (never exception text or payload values), the task is reopened
+(`COMPLETING` to `OPEN`, owner cleared) and the instance is unchanged. A completion for an instance that has `FAILED` is
+rejected and the task reopened; for an instance that has ended it is rejected and the task cancelled. A `COMPLETING` task
+refuses a second completion and a reassignment with `WorkflowTaskNotWaitingException`. While timers still fire as delayed jobs, a
+due-date or reminder timer that fires against a `COMPLETING` task finds it not `OPEN` and settles itself as stale.
 
 ### Transaction Ownership
 
@@ -298,12 +341,12 @@ and returns the engine as a `WorkflowEngineHandle`.
 
 `WorkflowEngineParts` is a final class with a builder as its only way in (`WorkflowEngineParts.builder()`), so a later
 release can add a part without breaking a caller. One setter per part, named like its accessor: `txRunner`, `registry`,
-`definitionStore`, `instances`, `history`, `dedup`, `branchTokens`, `joinStates`, `timerStore`, `taskStore`, `commands`, `clock`,
+`definitionStore`, `instances`, `history`, `dedup`, `branchTokens`, `joinStates`, `timerStore`, `taskStore`, `taskReservations`, `commands`, `clock`,
 `recorders`, `optionalIntentKinds`, `migrationRegistry`, `propagator`, `inboundContextInitializers`, `beanValidator`,
-`typeNames`, `stateCompatibility`, `executorConfig`, `recordingConfig`, `executorObservers`, `commandWakeups` and `vertx`. `build()` throws a `NullPointerException` that names the first required part
-that is missing. Required: the repositories and stores (including the command repository, `commands`), the registry, the **definition store**, the type-name index and the
+`typeNames`, `stateCompatibility`, `executorConfig`, `recordingConfig`, `executorObservers`, `commandWakeups`, `schemaProducer` and `vertx`. `build()` throws a `NullPointerException` that names the first required part
+that is missing. Required: the repositories and stores (including the command repository, `commands`, and the task reservations, `taskReservations`, through which a recorded completion owns its task), the registry, the **definition store**, the type-name index and the
 clock. Defaulted: `recorders` and `inboundContextInitializers` to empty sets, `optionalIntentKinds` to
-`DEFAULT_OPTIONAL_INTENT_KINDS`, `executorConfig` to `WorkflowExecutorConfig.defaults()`, `recordingConfig` to `WorkflowRecordingConfig.defaults()` (the payload bound and the open-signal limit of recorded signals), `executorObservers` to an empty set (the observers of the executor's events, see the executor observer in `vertique-workflow-core`), `commandWakeups` to `CommandWakeups.none()` (the source that wakes the executor's instances, see Executor), and `migrationRegistry`,
+`DEFAULT_OPTIONAL_INTENT_KINDS`, `executorConfig` to `WorkflowExecutorConfig.defaults()`, `recordingConfig` to `WorkflowRecordingConfig.defaults()` (the payload bound and the open-signal limit of recorded signals and the schema cache size of recorded completions), `schemaProducer` to empty (the producer of the payload schemas that a new task's decision snapshot stores; without it new tasks carry no schemas and the executor alone validates their completions), `executorObservers` to an empty set (the observers of the executor's events, see the executor observer in `vertique-workflow-core`), `commandWakeups` to `CommandWakeups.none()` (the source that wakes the executor's instances, see Executor), and `migrationRegistry`,
 `beanValidator` and `stateCompatibility` to empty. `vertx` may be `null`; the executor of such an engine cannot be started. The
 `propagator` may be `null`. The `typeNames` index is the one the registry fills (`DefaultWorkflowRegistry#typeNames()`);
 with a different index a decision payload name resolves as a binary class name only. An empty `beanValidator` leaves
@@ -328,7 +371,7 @@ WorkflowEngineHandle engine = WorkflowEngineFactory.create(WorkflowEngineParts.b
         .txRunner(txRunner).registry(registry).definitionStore(definitionStore)
         .instances(instances).history(history).dedup(dedup)
         .branchTokens(branchTokens).joinStates(joinStates)
-        .timerStore(timerStore).taskStore(taskStore).commands(commands)
+        .timerStore(timerStore).taskStore(taskStore).taskReservations(reservations).commands(commands)
         .clock(clock).recorders(recorders)
         .typeNames(registry.typeNames())
         .build());
@@ -923,18 +966,19 @@ constructor takes the recorder set only.
 
 ### Database Adapter SPIs (`dev.vertique.workflow.engine.spi`)
 
-A database adapter implements these seven interfaces to provide persistence for the engine. All are
+A database adapter implements these eight interfaces to provide persistence for the engine. All are
 parameterized over `<TX>` (typically `SqlClient`):
 
 | SPI | Responsibility |
 |---|---|
 | `WorkflowInstanceRepository<TX>` | Instance insert, optimistic update, migration update (which re-pins the definition scope, version and plan hash), and reads (by id without lock, with tx, with `FOR UPDATE`, by start scope, definition id and business key, filtered+paginated), and `findDefinitionContract(key, tx)`, which reads the contract name stored for a definition through the caller's transaction (the default returns empty, so a start replay on a node without the pinned plan refuses instead of guessing) |
 | `WorkflowHistoryRepository<TX>` | History append, next-sequence generation, and two list variants (recent, all) |
-| `WorkflowDedupRepository<TX>` | Start lookup and race-safe claim/resolve by start scope for start, race-safe claim/resolve for signal (scoped and unscoped), task completion/reassignment, and service dispatch |
+| `WorkflowDedupRepository<TX>` | Start lookup and race-safe claim/resolve by start scope for start, race-safe claim/resolve for signal (scoped and unscoped), task completion/reassignment, and service dispatch; `findTaskCompletion(taskId, key, tx)` reads, without writing, the fingerprint of a committed completion (the lock-free duplicate lookup) |
+| `TaskReservations<TX>` | `markCompleting(taskId, commandId, tx)` moves an `OPEN` task to `COMPLETING` and stores the completion command as its owner; `reopen(taskId, commandId, tx)` moves a `COMPLETING` task owned by that command back to `OPEN` and clears the owner. Both are compare-and-set and answer `false` when the task is not in the expected state. Engine-internal wiring, not application API; `TaskStore` is unchanged |
 | `BranchTokenRepository<TX>` | Fork/join branch token CRUD, status queries, and recovery queries |
 | `JoinStateRepository<TX>` | Fork/join state insert, read variants, open-for-workflow list, and the optimistic `decide` CAS |
 | `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping. The client it hands the work is a `SqlConnection` whose `transaction()` reports the underlying pending transaction; the deadline-guarded connection of `vertique-db` meets that. Its internal overload `inTransaction(level, deadline, work)` bounds the transaction (the executor's segment deadline) and returns `TransactionDeadlineExceededException` unchanged; the default fails with `UnsupportedOperationException` without running the work |
-| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked, not-yet-available and stuck commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `findEarliestAvailabilityDelayMs()` is the executor's scalar scheduling hint, separate from the bounded diagnostic lists. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock. The executor's members: `recordStart` inserts a `START` command in the caller's transaction; `peek(limit)` reads the claimable heads without locks; `defer(head)` defers a head the node cannot run in one self-contained transaction and returns the new deferral count, or `0` when it wrote nothing (busy lock, no longer claimable, already deferred into the future, or the instance pinned otherwise than the head observed); `claim(head, claimedBy, leaseSeconds, maxAttempts)` is one self-contained transaction that tries the lock, locks the row, checks `claimable` again and settles an ended instance's command, dead-letters a command that spent `maxAttempts`, or claims (the three-argument overload never dead-letters); `retryTransient` and `failCommand` are the dispositions of a failed segment (the first locks only the command row, the second tries the execution lock in a transaction of its own); `findStuck` and `countQueue` read the stuck report and the queue snapshot; `fence`, `complete` and `reject` run in the segment's transaction, fenced on the command being `CLAIMED` with the claim's token (`complete` and `reject` return the number of rows updated, and `0` means the claim no longer stands); `release` returns a claim whose segment did not run to `PENDING` with its attempt restored, in one statement that takes no lock. The signal members: `declaredSignalNames(pin, forkStepId, branchId, tx)` reads the names the pinned definition row declares for the addressed wait (empty when the row stores no declaration); `raiseOpenSignals(id, limit, tx)` creates the instance's queue row when missing and raises its open-signal count with one conditional update (`false` when the limit is reached); `lowerOpenSignals` undoes a raise; `recordSignal(...)` inserts the `SIGNAL` command with its name and address as target and its explicit carrier; `reject(id, token, lastError, tx)`, `stale(...)` and `park(...)` settle or park the claimed command (`park` restores the attempt the claim spent); `parkedSignalsAt`, `parkedSignals`, `readParked`, `settleParked` and `requeueParked` read and settle parked commands in the segment's transaction without a claim token (`requeueParked` is the guarded `PARKED` to `PENDING` write that keeps position, id, attempts and counters); `deadlineBlocked` answers the deadline guard; `wasParked` tells whether a command was parked before. Every write that takes a `SIGNAL` out of its open states lowers the open-signal count in the same statement |
+| `WorkflowCommandRepository<TX>` | Reads of the recorded command log for the execution probe: the number of runnable commands, and the deferred, parked, not-yet-available and stuck commands, of one instance or of every instance. Reads borrow a pooled connection and judge eligibility on the database clock. `findEarliestAvailabilityDelayMs()` is the executor's scalar scheduling hint, separate from the bounded diagnostic lists. `lockInstance(id, tx)` takes the instance's execution lock for the caller's transaction and waits up to the configured lock timeout; `tryLockInstance(id, tx)` takes it only if free and never waits; `nextQueueSequence(id, tx)` allocates the next position of the instance's command queue and requires the lock. The executor's members: `recordStart` inserts a `START` command in the caller's transaction; `peek(limit)` reads the claimable heads without locks; `defer(head)` defers a head the node cannot run in one self-contained transaction and returns the new deferral count, or `0` when it wrote nothing (busy lock, no longer claimable, already deferred into the future, or the instance pinned otherwise than the head observed); `claim(head, claimedBy, leaseSeconds, maxAttempts)` is one self-contained transaction that tries the lock, locks the row, checks `claimable` again and settles an ended instance's command, dead-letters a command that spent `maxAttempts`, or claims (the three-argument overload never dead-letters); `retryTransient` and `failCommand` are the dispositions of a failed segment (the first locks only the command row, the second tries the execution lock in a transaction of its own); `findStuck` and `countQueue` read the stuck report and the queue snapshot; `fence`, `complete` and `reject` run in the segment's transaction, fenced on the command being `CLAIMED` with the claim's token (`complete` and `reject` return the number of rows updated, and `0` means the claim no longer stands); `release` returns a claim whose segment did not run to `PENDING` with its attempt restored, in one statement that takes no lock. The signal members: `declaredSignalNames(pin, forkStepId, branchId, tx)` reads the names the pinned definition row declares for the addressed wait (empty when the row stores no declaration); `raiseOpenSignals(id, limit, tx)` creates the instance's queue row when missing and raises its open-signal count with one conditional update (`false` when the limit is reached); `lowerOpenSignals` undoes a raise; `recordSignal(...)` inserts the `SIGNAL` command with its name and address as target and its explicit carrier; `recordCompletion(instance, taskId, dedupKey, payloadJson, targetJson, tx)` inserts the `COMPLETION` command that owns a task's reservation; `reject(id, token, lastError, tx)`, `stale(...)` and `park(...)` settle or park the claimed command (`park` restores the attempt the claim spent); `parkedSignalsAt`, `parkedSignals`, `readParked`, `settleParked` and `requeueParked` read and settle parked commands in the segment's transaction without a claim token (`requeueParked` is the guarded `PARKED` to `PENDING` write that keeps position, id, attempts and counters); `deadlineBlocked` answers the deadline guard; `wasParked` tells whether a command was parked before. Every write that takes a `SIGNAL` out of its open states lowers the open-signal count in the same statement |
 
 The adapter also provides:
 - A `WorkflowRecoveryBridge` is already bound by `WorkflowEngineModule`; no adapter re-binding needed.
@@ -983,5 +1027,6 @@ which case `WorkflowReminderComposeValidator` refuses the plan (aborting startup
   consumed by `WorkflowExceptionMapper`, and paged-query types.
 - **deploy** — `VerticleDeployment` and `LifecyclePhase` for the `workflow-executor` deployment.
 - **context** — `DurableContextPropagator` injected into `ForkJoinCoordinator` for branch durable-context capture.
+- **vertx-json-schema** and **json-schema-validation** — compile and run the JSON Schemas that task snapshots store for decision payloads, through the framework's pattern-input guard (record-time completion validation).
 - **vertx-sql-client** — `io.vertx.sqlclient.SqlClient` used as the concrete `<TX>` type throughout
   all SPI signatures and the engine implementation.

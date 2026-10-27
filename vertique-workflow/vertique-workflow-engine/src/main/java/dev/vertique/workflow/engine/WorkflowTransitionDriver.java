@@ -740,9 +740,7 @@ final class WorkflowTransitionDriver {
         }
 
         UUID taskId = UUID.randomUUID();
-        List<TaskDecisionDescriptor> descriptors = htn.decisions().stream()
-                .map(d -> new TaskDecisionDescriptor(d.name(), d.payloadTypeName(), d.nextStepId()))
-                .toList();
+        List<TaskDecisionDescriptor> descriptors = taskPvd.get().decisionSnapshot(htn, rw);
 
         // Snapshot subject version for every task regardless of requireVersionStability (audit value).
         String subjectVersionAtCreation =

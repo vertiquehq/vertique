@@ -52,8 +52,9 @@ import java.util.UUID;
  *
  * <p>The {@code mark*} methods follow the same compare-and-swap pattern as
  * {@link dev.vertique.workflow.postgresql.timer.PgTimerStore}: an {@code UPDATE … WHERE status='OPEN'}
- * is issued; if zero rows are updated a follow-up {@code SELECT status} classifies which terminal
- * state was already present and returns the appropriate {@code LOST_TO_*} constant.
+ * is issued ({@code markCompleted} also accepts a {@code COMPLETING} task, the one a recorded completion has
+ * reserved through {@link PgTaskReservations}); if zero rows are updated a follow-up {@code SELECT status} classifies
+ * which terminal state was already present and returns the appropriate {@code LOST_TO_*} constant.
  *
  * <p>SQL follows the direct {@code tx.preparedQuery(SQL).execute(Tuple)} pattern used by all other
  * repositories in this module.
@@ -155,9 +156,10 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         this.sqlInsert = "INSERT INTO " + tasks
                 + " (task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
                 + " decisions_snapshot_json, due_at, due_date_timer_id, subject_version_at_creation,"
-                + " created_at, updated_at, branch_token_id, fork_step_id, branch_id, scope_key)"
+                + " created_at, updated_at, branch_token_id, fork_step_id, branch_id, scope_key,"
+                + " require_version_stability)"
                 + " VALUES ($1, $2, $3, 'OPEN', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,"
-                + " COALESCE((SELECT scope_key FROM " + instances + " WHERE id = $2), 'default'))";
+                + " COALESCE((SELECT scope_key FROM " + instances + " WHERE id = $2), 'default'), $15)";
 
         this.sqlSelectAllColumns = "SELECT task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
                 + " decisions_snapshot_json, decision_name, decision_payload_json,"
@@ -166,7 +168,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 + " completed_at, cancelled_at, expired_at, cancellation_reason,"
                 + " subject_version_at_creation,"
                 + " branch_token_id, fork_step_id, branch_id,"
-                + " created_at, updated_at, scope_key"
+                + " created_at, updated_at, scope_key, require_version_stability, reservation_command_id"
                 + " FROM " + tasks;
 
         this.sqlSelectJoinedColumns = "SELECT wt.task_id, wt.workflow_id, wt.step_id, wt.status,"
@@ -177,7 +179,8 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 + " wt.completed_at, wt.cancelled_at, wt.expired_at, wt.cancellation_reason,"
                 + " wt.subject_version_at_creation,"
                 + " wt.branch_token_id, wt.fork_step_id, wt.branch_id,"
-                + " wt.created_at, wt.updated_at, wt.scope_key"
+                + " wt.created_at, wt.updated_at, wt.scope_key, wt.require_version_stability,"
+                + " wt.reservation_command_id"
                 + " FROM " + tasks + " wt"
                 // The joined side exposes only the columns the filters read, so the unqualified
                 // keyset columns (updated_at, task_id) stay unambiguous on every page.
@@ -193,7 +196,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         this.sqlMarkCompleted = "UPDATE " + tasks
                 + " SET status = 'COMPLETED', decision_name = $2, decision_payload_json = $3::jsonb,"
                 + " completed_at = $4, completed_by = $5, updated_at = $6"
-                + " WHERE task_id = $1 AND status = 'OPEN'";
+                + " WHERE task_id = $1 AND status IN ('OPEN', 'COMPLETING')";
 
         this.sqlMarkCancelled = "UPDATE " + tasks
                 + " SET status = 'CANCELLED', cancellation_reason = $2,"
@@ -266,7 +269,8 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 toOffsetDateTime(now),
                 record.branchTokenId(),
                 record.forkStepId(),
-                record.branchId());
+                record.branchId(),
+                record.requireVersionStability());
 
         return tx.preparedQuery(sqlInsert)
                 .execute(params)
@@ -296,8 +300,9 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
     /**
      * {@inheritDoc}
      *
-     * <p>Executes a conditional {@code UPDATE … WHERE status='OPEN'} and, on zero rows updated,
-     * executes a follow-up {@code SELECT status} to classify the winning terminal state.
+     * <p>Executes a conditional {@code UPDATE … WHERE status IN ('OPEN','COMPLETING')}: the engine completes a task only
+     * while a recorded completion reserves it ({@code COMPLETING}), and the reservation's owner stays on the row. On zero
+     * rows updated, executes a follow-up {@code SELECT status} to classify the winning terminal state.
      */
     @Override
     public Future<TaskTransition> markCompleted(
@@ -676,7 +681,9 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 branchTokenId,
                 forkStepId,
                 branchId,
-                row.getString("scope_key"));
+                row.getString("scope_key"),
+                row.getBoolean("require_version_stability"),
+                row.getLong("reservation_command_id"));
     }
 
     /**

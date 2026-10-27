@@ -48,6 +48,7 @@ import dev.vertique.workflow.events.WorkflowEventIntent;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.postgresql.engine.PgWorkflowEngineTestSupport;
 import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
@@ -358,6 +359,7 @@ final class ExecutorFixture implements AutoCloseable {
         private Set<WorkflowExecutorObserver> observers = Set.of();
         private WorkflowRecordingConfig recordingConfig;
         private WorkflowDefinitionRegistryStore definitionStore;
+        private WorkflowPlanSchemaProducer schemaProducer;
         private Set<WorkflowSideEffectRecorder<SqlClient>> additionalRecorders = Set.of();
         private final SegmentControl segmentControl = new SegmentControl();
         private boolean listening;
@@ -524,6 +526,12 @@ final class ExecutorFixture implements AutoCloseable {
             return this;
         }
 
+        /** Stores the producer's decision schemas in the snapshot of every task this engine creates. */
+        NodeSpec schemaProducer(WorkflowPlanSchemaProducer producer) {
+            this.schemaProducer = producer;
+            return this;
+        }
+
         /** Adds recorders of kinds the ordinary fixture does not own. */
         NodeSpec recorders(WorkflowSideEffectRecorder<SqlClient>... recorders) {
             this.additionalRecorders = Set.of(recorders);
@@ -567,6 +575,9 @@ final class ExecutorFixture implements AutoCloseable {
             }
             if (definitionStore != null) {
                 engine.definitionStore(definitionStore);
+            }
+            if (schemaProducer != null) {
+                engine.schemaProducer(schemaProducer);
             }
             CommandNotificationListener listener = null;
             if (listening) {

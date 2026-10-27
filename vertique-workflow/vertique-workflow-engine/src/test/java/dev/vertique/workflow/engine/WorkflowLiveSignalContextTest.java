@@ -26,6 +26,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
@@ -191,6 +192,7 @@ class WorkflowLiveSignalContextTest {
                 .joinStates(joinStates)
                 .timerStore(timerStore)
                 .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
                 .clock(FIXED_CLOCK)
                 .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
                 .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)

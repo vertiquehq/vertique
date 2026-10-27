@@ -25,7 +25,9 @@ import dev.vertique.workflow.plan.TimerNode;
 import dev.vertique.workflow.plan.TimerSpec;
 import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowNode;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
@@ -56,6 +58,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -87,6 +90,7 @@ final class BranchTransitionEngine {
     private final WorkflowHistoryRepository<SqlClient> history;
     private final RecorderRouter recorders;
     private final TaskStore<SqlClient> taskStore;
+    private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
     private final Clock clock;
 
     /**
@@ -144,6 +148,8 @@ final class BranchTransitionEngine {
      *                     ctors that do not exercise branch-dispatch durable binding
      * @param inboundExecScope substrate lifecycle helper; {@code null} for legacy callers that do
      *                         not need first-ingress initializers to run on branch drive
+     * @param schemaProducer   produces the payload schema of each decision a branch task offers, for the task's
+     *                         decision snapshot; empty when no schema module is installed
      */
     @Inject
     BranchTransitionEngine(
@@ -154,7 +160,9 @@ final class BranchTransitionEngine {
             TaskStore<SqlClient> taskStore,
             Clock clock,
             dev.vertique.context.DurableContextPropagator propagator,
-            dev.vertique.context.InboundExecutionContextScope inboundExecScope) {
+            dev.vertique.context.InboundExecutionContextScope inboundExecScope,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+        this.schemaProducer = schemaProducer;
         this.branchTokens = branchTokens;
         this.dedup = dedup;
         this.history = history;
@@ -166,6 +174,22 @@ final class BranchTransitionEngine {
         this.executorBinder = propagator == null || inboundExecScope == null
                 ? null
                 : new WorkflowContextBinder(propagator, inboundExecScope);
+    }
+
+    /**
+     * Constructor without a decision-schema producer: the tasks this engine creates store no payload schemas in their
+     * decision snapshots.
+     */
+    BranchTransitionEngine(
+            BranchTokenRepository<SqlClient> branchTokens,
+            WorkflowDedupRepository<SqlClient> dedup,
+            WorkflowHistoryRepository<SqlClient> history,
+            RecorderRouter recorders,
+            TaskStore<SqlClient> taskStore,
+            Clock clock,
+            dev.vertique.context.DurableContextPropagator propagator,
+            dev.vertique.context.InboundExecutionContextScope inboundExecScope) {
+        this(branchTokens, dedup, history, recorders, taskStore, clock, propagator, inboundExecScope, Optional.empty());
     }
 
     /**
@@ -639,9 +663,7 @@ final class BranchTransitionEngine {
         }
 
         UUID taskId = UUID.randomUUID();
-        List<TaskDecisionDescriptor> descriptors = htn.decisions().stream()
-                .map(d -> new TaskDecisionDescriptor(d.name(), d.payloadTypeName(), d.nextStepId()))
-                .toList();
+        List<TaskDecisionDescriptor> descriptors = DecisionSnapshots.of(htn, rw, schemaProducer);
 
         Instant now = clock.instant();
 
@@ -1093,7 +1115,10 @@ final class BranchTransitionEngine {
                 parentSubjectVersion, // subjectVersionAtCreation
                 token.id(), // branchTokenId
                 token.forkStepId(), // forkStepId
-                token.branchId()); // branchId
+                token.branchId(), // branchId
+                WorkflowScopes.DEFAULT,
+                htn.requireVersionStability(),
+                null); // reservationCommandId
     }
 
     /**

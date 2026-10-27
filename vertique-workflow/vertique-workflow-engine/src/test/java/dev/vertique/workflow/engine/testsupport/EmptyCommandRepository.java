@@ -187,6 +187,17 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
     }
 
     @Override
+    public Future<Long> recordCompletion(
+            WorkflowInstanceId instance,
+            UUID taskId,
+            String dedupKey,
+            @Nullable String payloadJson,
+            String targetJson,
+            SqlClient tx) {
+        return Future.succeededFuture(1L);
+    }
+
+    @Override
     public Future<Long> recordSignal(
             WorkflowInstanceId instance,
             String signalName,

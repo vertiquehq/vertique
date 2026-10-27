@@ -42,7 +42,11 @@ public final class CommandErrors {
         /** A signal names no wait of the definition version its instance is pinned to. */
         UNDECLARED_SIGNAL,
         /** A branch-addressed signal arrived after its branch was superseded or ended. */
-        BRANCH_ENDED
+        BRANCH_ENDED,
+        /** A completion's task is no longer reserved by that completion. */
+        TASK_NOT_RESERVED,
+        /** A completion's instance had failed, so it cannot take the decision. */
+        INSTANCE_FAILED
     }
 
     private CommandErrors() {
@@ -196,6 +200,75 @@ public final class CommandErrors {
                 Reason.BRANCH_ENDED,
                 "SIGNAL command for signal '" + EchoedNames.bounded(signalName)
                         + "' is stale: its branch was superseded or ended");
+    }
+
+    /**
+     * The value for a completion whose application failed in a way a retry repeats; the completion is rejected, its
+     * task is open again and its instance is unchanged.
+     *
+     * @param decisionName the decision's name, echoed bounded
+     * @return the stored value
+     */
+    public static String completionFailure(String decisionName) {
+        return format(
+                Reason.DETERMINISTIC_FAILURE,
+                "COMPLETION command for decision '" + EchoedNames.bounded(decisionName)
+                        + "' failed with a non-retryable error and was rejected; the task is open again;"
+                        + " see the executor log");
+    }
+
+    /**
+     * The value for a completion whose application executed more nodes than the step cap allows a segment.
+     *
+     * @param decisionName the decision's name, echoed bounded
+     * @param cap          the step cap that was exceeded
+     * @return the stored value
+     */
+    public static String completionStepLimit(String decisionName, int cap) {
+        return format(
+                Reason.STEP_LIMIT,
+                "COMPLETION command for decision '" + EchoedNames.bounded(decisionName) + "' executed more than " + cap
+                        + " steps in one segment without reaching a wait and was rejected; the task is open again");
+    }
+
+    /**
+     * The value for a completion whose task is no longer reserved by it.
+     *
+     * @param decisionName the decision's name, echoed bounded
+     * @return the stored value
+     */
+    public static String completionNotReserved(String decisionName) {
+        return format(
+                Reason.TASK_NOT_RESERVED,
+                "COMPLETION command for decision '" + EchoedNames.bounded(decisionName)
+                        + "' is stale: its task is no longer reserved by it");
+    }
+
+    /**
+     * The value for a completion whose instance had failed.
+     *
+     * @param decisionName the decision's name, echoed bounded
+     * @return the stored value
+     */
+    public static String completionInstanceFailed(String decisionName) {
+        return format(
+                Reason.INSTANCE_FAILED,
+                "COMPLETION command for decision '" + EchoedNames.bounded(decisionName)
+                        + "' was rejected: its instance has failed; the task is open again");
+    }
+
+    /**
+     * The value for a completion whose instance had ended.
+     *
+     * @param decisionName the decision's name, echoed bounded
+     * @param status       the status of the ended instance
+     * @return the stored value
+     */
+    public static String completionInstanceEnded(String decisionName, String status) {
+        return format(
+                Reason.INSTANCE_ENDED,
+                "COMPLETION command for decision '" + EchoedNames.bounded(decisionName)
+                        + "' was rejected: instance ended with status " + token(status) + "; the task is cancelled");
     }
 
     /**

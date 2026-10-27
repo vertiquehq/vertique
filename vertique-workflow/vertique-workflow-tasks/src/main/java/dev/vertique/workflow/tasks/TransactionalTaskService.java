@@ -28,24 +28,30 @@ import java.util.UUID;
  *   <li>{@code tx} must not be null for every method.</li>
  * </ul>
  *
- * <p>Failure modes for {@link #complete}:
+ * <p>{@link #complete} validates the completion and <em>records</em> it: its future succeeds once the completion is
+ * recorded, the task is {@code COMPLETING} and the completion is waiting for the workflow executor, which applies it
+ * afterwards in its own transaction. The task becomes {@code COMPLETED} and the instance advances only then; a
+ * completion that cannot be applied is rejected and the task is {@code OPEN} again, so the caller may complete it again
+ * with a new idempotency key. Use the execution probe ({@code awaitIdle}) to wait for the outcome.
+ *
+ * <p>A request is refused, with nothing recorded, by a failed {@link Future}:
  * <ul>
- *   <li>{@link TaskMutationResult#APPLIED} and {@link TaskMutationResult#LOST_TO_RACE} both
- *       produce a succeeded {@link Future} — {@code LOST_TO_RACE} indicates an idempotent retry
- *       of a completion that already succeeded.</li>
- *   <li>{@link WorkflowTaskNotWaitingException} — the workflow is no longer waiting on this
- *       task.</li>
- *   <li>{@code WorkflowConflictException} — concurrent task transition or stale optimistic
- *       version.</li>
- *   <li>{@code WorkflowStaleAssignmentException} — a supplied {@code expectedAssignment} no
- *       longer matches the locked task row.</li>
- *   <li>{@code WorkflowIdempotencyConflictException} — same idempotency key reused with a
- *       different fingerprint.</li>
+ *   <li>{@code WorkflowInvalidPayloadException} — the payload is over the record-time size or depth bound, violates
+ *       the JSON Schema of the decision stored with the task, or names a decision the task does not offer.</li>
+ *   <li>{@link WorkflowTaskNotWaitingException} — the task is no longer {@code OPEN}: it is already being completed
+ *       ({@code COMPLETING}) or has ended.</li>
+ *   <li>{@code WorkflowStaleSubjectVersionException} — the task requires version stability and the reviewed subject
+ *       version is missing or differs from the one the task was created at.</li>
+ *   <li>{@code WorkflowStaleAssignmentException} — a supplied {@code expectedAssignment} no longer matches the locked
+ *       task row.</li>
+ *   <li>{@code WorkflowIdempotencyConflictException} — same idempotency key reused with a different fingerprint.</li>
  * </ul>
+ * A committed duplicate (same key, same fingerprint) succeeds with its earlier result before any of these checks.
  *
  * <p>For {@link #reassign}, {@code APPLIED} and {@code LOST_TO_RACE} produce a succeeded
- * {@link Future}; not-OPEN paths surface as {@code WorkflowConflictException} and a stale
- * {@code expectedAssignment} as {@code WorkflowStaleAssignmentException}.
+ * {@link Future}; not-OPEN paths surface as {@code WorkflowConflictException} (a {@code COMPLETING} task as its
+ * subclass {@link WorkflowTaskNotWaitingException}) and a stale {@code expectedAssignment} as
+ * {@code WorkflowStaleAssignmentException}.
  *
  * <p>{@link TaskMutationResult#STALE_NOOP} is reserved for the engine-internal due-date firing
  * path and is never observed by callers of this service. If a misbehaving SPI were to return it
@@ -79,16 +85,18 @@ public interface TransactionalTaskService<TX> {
      * Completes a task with the decision and actor carried by the command, within the supplied
      * transaction. Idempotent on {@code cmd.idempotencyKey()}.
      *
-     * <p>{@link TaskMutationResult#APPLIED} and {@link TaskMutationResult#LOST_TO_RACE} both
-     * produce a succeeded {@link Future}. No-wait / not-OPEN paths surface as failed
-     * {@link Future}s with typed exceptions ({@link WorkflowTaskNotWaitingException},
-     * {@code WorkflowConflictException}, {@code WorkflowStaleAssignmentException},
-     * {@code WorkflowIdempotencyConflictException}). The
-     * engine never returns {@link TaskMutationResult#STALE_NOOP} from completion.
+     * <p>The future succeeds once the completion is recorded, not once it is applied: the task is {@code COMPLETING}
+     * and the executor applies the decision afterwards. {@link TaskMutationResult#APPLIED} (recorded, or a committed
+     * duplicate's earlier result) and {@link TaskMutationResult#LOST_TO_RACE} both produce a succeeded
+     * {@link Future}. A request the task refuses surfaces as a failed {@link Future} with a typed exception
+     * ({@code WorkflowInvalidPayloadException}, {@link WorkflowTaskNotWaitingException},
+     * {@code WorkflowStaleSubjectVersionException}, {@code WorkflowStaleAssignmentException},
+     * {@code WorkflowIdempotencyConflictException}). The engine never returns
+     * {@link TaskMutationResult#STALE_NOOP} from completion.
      *
      * @param cmd the completion command; must not be null
      * @param tx the active transaction context; must not be null
-     * @return a {@link Future} that completes when the task completion has been persisted
+     * @return a {@link Future} that completes when the task completion has been recorded
      */
     Future<Void> complete(TaskCompletionCommand cmd, TX tx);
 

@@ -25,12 +25,12 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
-import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
@@ -259,6 +259,7 @@ class WorkflowEngineBinderWiringTest {
                 .joinStates(joinStates)
                 .timerStore(timerStore)
                 .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
                 .clock(FIXED_CLOCK)
                 .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
                 .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
@@ -321,6 +322,7 @@ class WorkflowEngineBinderWiringTest {
                 .joinStates(joinStates)
                 .timerStore(timerStore)
                 .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
                 .clock(FIXED_CLOCK)
                 .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
                 .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
@@ -662,6 +664,7 @@ class WorkflowEngineBinderWiringTest {
                 .joinStates(joinStates)
                 .timerStore(timerStore)
                 .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
                 .clock(FIXED_CLOCK)
                 .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
                 .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
@@ -688,7 +691,7 @@ class WorkflowEngineBinderWiringTest {
     // --- taskCompleted (instance-owned, no branch) ---
 
     @Test
-    @DisplayName("taskCompleted(): instance-owned no-branch completion binds via the binder")
+    @DisplayName("completion segment: instance-owned no-branch completion binds via the binder with instance fill")
     void taskCompleted_instanceOwnedNoBranch_bindsViaBinder(Vertx vertx, VertxTestContext ctx) {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
@@ -702,28 +705,22 @@ class WorkflowEngineBinderWiringTest {
 
         UUID taskId = UUID.randomUUID();
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, tenantMetadata("T1"));
-        TaskRecord task = minimalOpenTask(taskId, inst.id());
+        TaskRecord task = RecordedCompletionSegments.reserved(minimalOpenTask(taskId, inst.id()));
         when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.dedup().claimOrResolveTaskCompletion(eq(taskId), any(), eq(inst.id()), any(), eq(tx)))
-                .thenReturn(Future.succeededFuture(new DedupClaim(true, "fp")));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
         when(h.timerStore().findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
         when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
         when(h.taskStore().markCompleted(eq(taskId), eq("approve"), any(), any(), any(), eq(tx)))
                 .thenReturn(Future.succeededFuture(TaskTransition.APPLIED));
 
-        TaskCompletionCommand cmd = new TaskCompletionCommand(
-                taskId, "approve", Map.of(), "idem-1", new WorkflowActor.User("user-1"), null);
-
-        runOnDuplicated(vertx, v -> h.taskCallbacks()
-                .taskCompleted(cmd, tx)
+        runOnDuplicated(vertx, v -> RecordedCompletionSegments.run(h.txOps(), inst, task, tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());
                         return;
                     }
                     assertThat(captured.get())
-                            .as("instance fill (TenantCtx T1) must be observed inside the bound taskCompleted drive")
+                            .as("instance fill (TenantCtx T1) must be observed inside the bound completion drive")
                             .contains(new TenantCtx("T1"));
                     ctx.completeNow();
                 })));
@@ -1738,7 +1735,7 @@ class WorkflowEngineBinderWiringTest {
 
     @Test
     @DisplayName(
-            "taskCompleted(): non-duplicated context + non-null instance metadata fails with IllegalStateException")
+            "completion segment: non-duplicated context + non-null instance metadata fails with IllegalStateException")
     void taskCompleted_nonDuplicatedContextNonNullInstanceMetadata_throwsIllegalStateException(
             Vertx vertx, VertxTestContext ctx) {
         DefaultContextHolder holder = new DefaultContextHolder();
@@ -1746,28 +1743,29 @@ class WorkflowEngineBinderWiringTest {
         Harness h = buildHarness(propagator, holder);
         SqlClient tx = ActiveTransactionClient.create();
 
+        // The segment resolves the pinned plan before it binds; the strict binder still refuses before any work.
+        RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
+        when(h.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1L)))
+                .thenReturn(rw);
+
         UUID taskId = UUID.randomUUID();
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, tenantMetadata("T1"));
-        TaskRecord task = minimalOpenTask(taskId, inst.id());
+        TaskRecord task = RecordedCompletionSegments.reserved(minimalOpenTask(taskId, inst.id()));
         when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.dedup().claimOrResolveTaskCompletion(eq(taskId), any(), eq(inst.id()), any(), eq(tx)))
-                .thenReturn(Future.succeededFuture(new DedupClaim(true, "fp")));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
 
-        TaskCompletionCommand cmd = new TaskCompletionCommand(
-                taskId, "approve", Map.of(), "idem-1", new WorkflowActor.User("user-1"), null);
-
-        runOnNonDuplicated(vertx, v -> h.taskCallbacks()
-                .taskCompleted(cmd, tx)
+        runOnNonDuplicated(vertx, v -> RecordedCompletionSegments.run(h.txOps(), inst, task, tx)
                 .onComplete(ar -> ctx.verify(() -> {
-                    assertThat(ar.failed()).isTrue();
+                    assertThat(ar.failed())
+                            .as("a non-duplicated context with non-null instance metadata must fail")
+                            .isTrue();
                     assertThat(ar.cause()).isInstanceOf(IllegalStateException.class);
                     ctx.completeNow();
                 })));
     }
 
     @Test
-    @DisplayName("taskCompleted(): non-duplicated context + NULL instance metadata succeeds as today (bind gate skips)")
+    @DisplayName("completion segment: non-duplicated context + NULL instance metadata succeeds (bind gate skips)")
     void taskCompleted_nonDuplicatedContextNullInstanceMetadata_succeedsAsToday(Vertx vertx, VertxTestContext ctx) {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
@@ -1780,10 +1778,8 @@ class WorkflowEngineBinderWiringTest {
 
         UUID taskId = UUID.randomUUID();
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, null);
-        TaskRecord task = minimalOpenTask(taskId, inst.id());
+        TaskRecord task = RecordedCompletionSegments.reserved(minimalOpenTask(taskId, inst.id()));
         when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.dedup().claimOrResolveTaskCompletion(eq(taskId), any(), eq(inst.id()), any(), eq(tx)))
-                .thenReturn(Future.succeededFuture(new DedupClaim(true, "fp")));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
         when(h.timerStore().findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
         when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
@@ -1791,11 +1787,7 @@ class WorkflowEngineBinderWiringTest {
                 .thenReturn(Future.succeededFuture(TaskTransition.APPLIED));
         when(h.instances().updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
 
-        TaskCompletionCommand cmd = new TaskCompletionCommand(
-                taskId, "approve", Map.of(), "idem-1", new WorkflowActor.User("user-1"), null);
-
-        runOnNonDuplicated(vertx, v -> h.taskCallbacks()
-                .taskCompleted(cmd, tx)
+        runOnNonDuplicated(vertx, v -> RecordedCompletionSegments.run(h.txOps(), inst, task, tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());
@@ -2114,6 +2106,7 @@ class WorkflowEngineBinderWiringTest {
                 .joinStates(joinStates)
                 .timerStore(timerStore)
                 .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
                 .clock(FIXED_CLOCK)
                 .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
                 .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)

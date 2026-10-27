@@ -531,7 +531,8 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
     }
 
     @Test
-    @DisplayName("late completion on SUPERSEDED branch records BRANCH_LATE_CALLBACK_IGNORED and returns STALE_NOOP")
+    @DisplayName(
+            "late completion on SUPERSEDED branch is recorded, settled stale and records BRANCH_LATE_CALLBACK_IGNORED")
     void lateCompletionOnSupersededBranchIsNoOp(VertxTestContext ctx) {
         WorkflowInstanceId workflowId = seedInstance();
         UUID taskId = UUID.randomUUID();
@@ -595,16 +596,26 @@ public class PgWorkflowEngineBranchTaskCallbackIT {
         TaskCompletionCommand cmd = new TaskCompletionCommand(
                 taskId, "approve", null, "idem-key-2", new WorkflowActor.User("user-2"), null);
 
-        record Outcome(TaskMutationResult result, long ignoredCount) {}
+        record Outcome(TaskMutationResult result, long ignoredCount, String commandState, String taskStatus) {}
 
         pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
                 .compose(result -> engine.executionProbe()
                         .awaitIdle(workflowId, IDLE_TIMEOUT)
                         .map(r -> result))
                 .compose(result -> countHistoryAsync(workflowId, WorkflowEntryType.BRANCH_LATE_CALLBACK_IGNORED)
-                        .map(ignoredCount -> new Outcome(result, ignoredCount)))
+                        .compose(ignoredCount -> pool.preparedQuery("SELECT c.state, t.status FROM workflow_commands c"
+                                        + " JOIN workflow_tasks t ON t.task_id = c.task_id"
+                                        + " WHERE c.workflow_id = $1 AND c.kind = 'COMPLETION'")
+                                .execute(Tuple.of(workflowId.value()))
+                                .map(rows -> {
+                                    var row = rows.iterator().next();
+                                    return new Outcome(
+                                            result, ignoredCount, row.getString("state"), row.getString("status"));
+                                })))
                 .onComplete(ctx.succeeding(o -> ctx.verify(() -> {
-                    assertEquals(TaskMutationResult.STALE_NOOP, o.result(), "late completion must be STALE_NOOP");
+                    assertEquals(TaskMutationResult.APPLIED, o.result(), "the late completion is recorded");
+                    assertEquals("STALE", o.commandState(), "the executor settles it as stale");
+                    assertEquals("OPEN", o.taskStatus(), "the task it reserved is open again");
                     assertTrue(o.ignoredCount() >= 1L, "BRANCH_LATE_CALLBACK_IGNORED must be recorded");
                     ctx.completeNow();
                 })));

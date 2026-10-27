@@ -18,6 +18,7 @@ import dev.vertique.workflow.engine.WorkflowEngineModule;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
+import dev.vertique.workflow.engine.spi.TaskReservations;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
@@ -35,6 +36,7 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionRepository;
 import dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionService;
+import dev.vertique.workflow.postgresql.tasks.PgTaskReservations;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.query.WorkflowInstanceQueryService;
@@ -169,6 +171,21 @@ public abstract class WorkflowPostgresqlModule {
     @Singleton
     static PgTaskStore pgTaskStore(Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
         return new PgTaskStore(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
+     * Provides the {@link PgTaskReservations}, applying the schema mapping for the {@code workflow}
+     * instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL task reservations
+     */
+    @Provides
+    @Singleton
+    static PgTaskReservations pgTaskReservations(Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgTaskReservations(pool, mapper, schemas.orElseGet(DbSchemas::empty));
     }
 
     /**
@@ -340,6 +357,17 @@ public abstract class WorkflowPostgresqlModule {
     @Binds
     @Singleton
     abstract TaskStore<SqlClient> bindTaskStore(PgTaskStore impl);
+
+    /**
+     * Binds {@link PgTaskReservations} as the {@link TaskReservations} implementation for the
+     * {@link SqlClient}-typed stack.
+     *
+     * @param impl the task reservations singleton
+     * @return the reservations as the engine SPI interface
+     */
+    @Binds
+    @Singleton
+    abstract TaskReservations<SqlClient> bindTaskReservations(PgTaskReservations impl);
 
     // --- Repository SPI bindings ---
 

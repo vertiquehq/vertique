@@ -99,6 +99,9 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final String raiseOpenSignals;
     private final String lowerOpenSignals;
     private final String insertSignal;
+    private final String insertCompletion;
+    private final String cancelReservedTask;
+    private final String reopenReservedTask;
     private final String declaredNames;
     private final String parkedAt;
     private final String parkedAll;
@@ -263,6 +266,17 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " (workflow_id, seq, kind, state, recorded_at, available_at, payload_json, dedup_key, target_json,"
                 + " explicit_carrier_json, context_json) SELECT $1, $2, 'SIGNAL', 'PENDING', recorded.at, recorded.at,"
                 + " $3::jsonb, $4, $5::jsonb, $6::jsonb, $7::jsonb FROM recorded RETURNING id";
+        this.insertCompletion = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
+                + " (workflow_id, seq, kind, state, recorded_at, available_at, task_id, payload_json, dedup_key,"
+                + " target_json, context_json) SELECT $1, $2, 'COMPLETION', 'PENDING', recorded.at, recorded.at, $3,"
+                + " $4::jsonb, $5, $6::jsonb, $7::jsonb FROM recorded RETURNING id";
+        String tasks = PgTableNames.qualify(schemas, "workflow", "workflow_tasks");
+        this.cancelReservedTask = "UPDATE " + tasks + " SET status = 'CANCELLED', cancelled_at = now(),"
+                + " cancelled_by = '{\"kind\":\"SYSTEM\",\"value\":\"INSTANCE_ENDED\"}'::jsonb,"
+                + " cancellation_reason = 'INSTANCE_ENDED', updated_at = now()"
+                + " WHERE reservation_command_id = $1 AND status = 'COMPLETING'";
+        this.reopenReservedTask = "UPDATE " + tasks + " SET status = 'OPEN', reservation_command_id = NULL,"
+                + " updated_at = now() WHERE reservation_command_id = $1 AND status = 'COMPLETING'";
         this.declaredNames = "SELECT signal_names_json::text AS names FROM "
                 + PgTableNames.qualify(schemas, "workflow", "workflow_definitions")
                 + " WHERE scope_key = $1 AND definition_id = $2 AND definition_version = $3";
@@ -487,8 +501,11 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             String reason = "SIGNAL".equals(kind)
                     ? CommandErrors.signalInstanceEnded(looked.getString("signal_name"), instanceStatus, stale)
                     : CommandErrors.instanceEnded(kind, instanceStatus);
-            return conn.preparedQuery(settleEnded)
-                    .execute(Tuple.of(id, reason, state))
+            Future<?> reservation = "COMPLETION".equals(kind)
+                    ? conn.preparedQuery(cancelReservedTask).execute(Tuple.of(id))
+                    : Future.succeededFuture();
+            return reservation
+                    .compose(ignored -> conn.preparedQuery(settleEnded).execute(Tuple.of(id, reason, state)))
                     .compose(ignored -> appendCommandHistory(
                             conn, head, stale ? "COMMAND_STALE" : "COMMAND_REJECTED", reason, state))
                     .map(ignored -> new ClaimedCommand(
@@ -734,6 +751,28 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     }
 
     @Override
+    public Future<Long> recordCompletion(
+            WorkflowInstanceId instance,
+            UUID taskId,
+            String dedupKey,
+            @Nullable String payloadJson,
+            String targetJson,
+            SqlClient tx) {
+        return nextQueueSequence(instance, tx)
+                .compose(seq -> tx.preparedQuery(insertCompletion)
+                        .execute(Tuple.of(
+                                instance.value(),
+                                seq,
+                                taskId,
+                                jsonValue(payloadJson),
+                                dedupKey,
+                                jsonValue(targetJson),
+                                capturedContext(instance, seq))))
+                .map(rows -> rows.iterator().next().getLong("id"))
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordCompletion")));
+    }
+
+    @Override
     public Future<List<ParkedSignal>> parkedSignalsAt(
             WorkflowInstanceId instance,
             String signalName,
@@ -901,8 +940,12 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                         if (rows.size() == 0) {
                                             return Future.succeededFuture(DispositionResult.CLAIM_LOST);
                                         }
-                                        return conn.preparedQuery(failCommandRow)
-                                                .execute(Tuple.of(claim.commandId(), lastError))
+                                        Future<?> reopened = "COMPLETION".equals(claim.kind())
+                                                ? conn.preparedQuery(reopenReservedTask)
+                                                        .execute(Tuple.of(claim.commandId()))
+                                                : Future.succeededFuture();
+                                        return reopened.compose(ignored -> conn.preparedQuery(failCommandRow)
+                                                        .execute(Tuple.of(claim.commandId(), lastError)))
                                                 .compose(ignored -> failInstanceOf(
                                                         conn,
                                                         claim.workflowId(),

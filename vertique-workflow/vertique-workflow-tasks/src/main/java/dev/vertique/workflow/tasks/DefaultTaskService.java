@@ -89,7 +89,7 @@ public final class DefaultTaskService implements TaskService {
      * {@link TransactionalTaskService#complete}.
      *
      * @param cmd the completion command; must not be null
-     * @return a {@link Future} that completes when the task completion has been persisted
+     * @return a {@link Future} that completes when the task completion has been recorded
      */
     @Override
     public Future<Void> complete(TaskCompletionCommand cmd) {

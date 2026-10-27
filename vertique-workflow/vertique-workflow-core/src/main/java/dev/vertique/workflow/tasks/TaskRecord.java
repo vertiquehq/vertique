@@ -61,6 +61,12 @@ import java.util.UUID;
  * @param scopeKey the start scope of the owning workflow instance; {@link WorkflowScopes#DEFAULT} for tasks
  *     created without one. The PostgreSQL store derives the persisted value from the owning instance row on
  *     insert and ignores the value carried here. It is information, not an isolation boundary.
+ * @param requireVersionStability whether completing the task requires the caller's reviewed subject version to match
+ *     {@code subjectVersionAtCreation}, as the plan declared when the task was created; {@code null} for a task
+ *     created before the flag was stored, which leaves the check to the plan
+ * @param reservationCommandId the id of the recorded completion that reserves the task; null unless
+ *     {@code status == COMPLETING}. The store sets it through the engine's reservation, never from this record on
+ *     insert.
  */
 public record TaskRecord(
         UUID taskId,
@@ -86,7 +92,9 @@ public record TaskRecord(
         @Nullable UUID branchTokenId,
         @Nullable String forkStepId,
         @Nullable String branchId,
-        String scopeKey) {
+        String scopeKey,
+        @Nullable Boolean requireVersionStability,
+        @Nullable Long reservationCommandId) {
 
     /**
      * Validates that the scope key is present.
@@ -98,8 +106,67 @@ public record TaskRecord(
     }
 
     /**
+     * Creates a task record that carries no stability flag and no reservation. Retained so existing callers keep
+     * compiling; equivalent to the canonical constructor with both left {@code null}.
+     */
+    public TaskRecord(
+            UUID taskId,
+            WorkflowInstanceId workflowId,
+            String stepId,
+            TaskAssignment assignment,
+            TaskStatus status,
+            List<TaskDecisionDescriptor> decisions,
+            @Nullable Instant dueAt,
+            @Nullable UUID dueDateTimerId,
+            @Nullable Instant completedAt,
+            @Nullable Instant cancelledAt,
+            @Nullable Instant expiredAt,
+            Instant updatedAt,
+            @Nullable String decisionName,
+            @Nullable String decisionPayloadJson,
+            @Nullable WorkflowActor completedBy,
+            @Nullable WorkflowActor cancelledBy,
+            @Nullable WorkflowActor reassignedBy,
+            @Nullable String cancellationReason,
+            @Nullable String reassignmentReason,
+            @Nullable String subjectVersionAtCreation,
+            @Nullable UUID branchTokenId,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            String scopeKey) {
+        this(
+                taskId,
+                workflowId,
+                stepId,
+                assignment,
+                status,
+                decisions,
+                dueAt,
+                dueDateTimerId,
+                completedAt,
+                cancelledAt,
+                expiredAt,
+                updatedAt,
+                decisionName,
+                decisionPayloadJson,
+                completedBy,
+                cancelledBy,
+                reassignedBy,
+                cancellationReason,
+                reassignmentReason,
+                subjectVersionAtCreation,
+                branchTokenId,
+                forkStepId,
+                branchId,
+                scopeKey,
+                null,
+                null);
+    }
+
+    /**
      * Creates a task record in the default scope. Retained so existing callers keep compiling; equivalent to the
-     * canonical constructor with {@link WorkflowScopes#DEFAULT} as the scope key.
+     * canonical constructor with {@link WorkflowScopes#DEFAULT} as the scope key and no stability flag or
+     * reservation.
      */
     public TaskRecord(
             UUID taskId,

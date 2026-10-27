@@ -27,7 +27,7 @@ import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
-import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
@@ -52,6 +52,7 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
+import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
 import java.time.Duration;
@@ -77,12 +78,13 @@ import org.slf4j.LoggerFactory;
  * Integration tests for the rejection of caller payload mistakes on both task-completion paths of
  * the engine: the instance task path and the branch task path.
  *
- * <p>A completion whose decision is not declared, whose payload presence contradicts the decision
- * type, or whose payload cannot be bound to the declared type fails with
- * {@link WorkflowInvalidPayloadException}. The failure is value-free, leaves the task open, rolls
- * back the idempotency claim so a retry with the same key and a corrected payload completes, and
- * never logs the underlying cause above DEBUG. A failing decision applicator stays a definition
- * failure that chains the application exception as its cause without copying its message.
+ * <p>A completion whose decision is not declared fails in the caller's transaction with
+ * {@link WorkflowInvalidPayloadException}, value-free, and records nothing. A completion whose payload
+ * presence contradicts the decision type, whose payload cannot be bound to the declared type, or whose
+ * decision applicator throws is recorded and then rejected by the executor: the command is
+ * {@code REJECTED} with a sanitized reason that carries no payload value and no exception text, the
+ * task is {@code OPEN} again and a corrected completion under a fresh idempotency key applies. The
+ * underlying cause is never logged above DEBUG.
  *
  * <p>Each path has its own nested class with identical test names. The registry is built without a
  * plan validator so the branch-owned task plan is accepted.
@@ -336,13 +338,13 @@ public class PgWorkflowEnginePayloadRejectionIT {
     class InstancePath {
 
         @Test
-        @DisplayName("a void decision with a payload fails and leaves the task open")
+        @DisplayName("a void decision with a payload is recorded, rejected by the executor and the task reopens")
         void voidDecisionWithAPayloadFailsOnBothPathsAndLeavesTheTaskOpen() {
             assertVoidDecisionWithPayloadRejected(INSTANCE_DEFINITION_ID);
         }
 
         @Test
-        @DisplayName("an unbindable payload fails with the decode cause and no token in any field")
+        @DisplayName("an unbindable payload is rejected with a reason and history that carry no token")
         void unbindablePayloadFailsWithTheDecodeCauseAndNoTokenInAnyField() {
             assertUnbindablePayloadRejectedValueFree(INSTANCE_DEFINITION_ID);
         }
@@ -354,7 +356,7 @@ public class PgWorkflowEnginePayloadRejectionIT {
         }
 
         @Test
-        @DisplayName("a rejected completion retries with the same key and a corrected payload")
+        @DisplayName("a rejected completion applies on a retry with a fresh key and a corrected payload")
         void rejectedCompletionRetriesWithTheSameKeyAndACorrectedPayload() {
             assertRejectedCompletionRetries(INSTANCE_DEFINITION_ID);
         }
@@ -366,9 +368,9 @@ public class PgWorkflowEnginePayloadRejectionIT {
         }
 
         @Test
-        @DisplayName("a failing applicator chains its exception as the cause without copying its message")
+        @DisplayName("a failing applicator rejects the completion without copying its exception message")
         void applicatorFailureChainsTheCauseWithoutTheMessage() {
-            assertApplicatorFailureChained(INSTANCE_DEFINITION_ID, "decisionApplicator threw for decision 'explode'");
+            assertApplicatorFailureRejected(INSTANCE_DEFINITION_ID);
         }
     }
 
@@ -382,13 +384,13 @@ public class PgWorkflowEnginePayloadRejectionIT {
     class BranchPath {
 
         @Test
-        @DisplayName("a void decision with a payload fails and leaves the task open")
+        @DisplayName("a void decision with a payload is recorded, rejected by the executor and the task reopens")
         void voidDecisionWithAPayloadFailsOnBothPathsAndLeavesTheTaskOpen() {
             assertVoidDecisionWithPayloadRejected(BRANCH_DEFINITION_ID);
         }
 
         @Test
-        @DisplayName("an unbindable payload fails with the decode cause and no token in any field")
+        @DisplayName("an unbindable payload is rejected with a reason and history that carry no token")
         void unbindablePayloadFailsWithTheDecodeCauseAndNoTokenInAnyField() {
             assertUnbindablePayloadRejectedValueFree(BRANCH_DEFINITION_ID);
         }
@@ -400,7 +402,7 @@ public class PgWorkflowEnginePayloadRejectionIT {
         }
 
         @Test
-        @DisplayName("a rejected completion retries with the same key and a corrected payload")
+        @DisplayName("a rejected completion applies on a retry with a fresh key and a corrected payload")
         void rejectedCompletionRetriesWithTheSameKeyAndACorrectedPayload() {
             assertRejectedCompletionRetries(BRANCH_DEFINITION_ID);
         }
@@ -412,10 +414,9 @@ public class PgWorkflowEnginePayloadRejectionIT {
         }
 
         @Test
-        @DisplayName("a failing applicator chains its exception as the cause without copying its message")
+        @DisplayName("a failing applicator rejects the completion without copying its exception message")
         void applicatorFailureChainsTheCauseWithoutTheMessage() {
-            assertApplicatorFailureChained(
-                    BRANCH_DEFINITION_ID, "decisionApplicator threw for branch decision 'explode'");
+            assertApplicatorFailureRejected(BRANCH_DEFINITION_ID);
         }
     }
 
@@ -428,13 +429,14 @@ public class PgWorkflowEnginePayloadRejectionIT {
         UUID taskId = startAndFindOpenTask(definitionId);
 
         // When: it is completed with a payload
-        WorkflowInvalidPayloadException rejection =
-                completeExpectingInvalidPayload(taskId, "approve", Map.of("x", 1), "idem-" + UUID.randomUUID());
+        TaskMutationResult recorded = complete(taskId, "approve", Map.of("x", 1), "idem-" + UUID.randomUUID())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
 
-        // Then: one payload detail, the frozen message, and the task is still open
-        assertEquals(REJECTION_MESSAGE, rejection.getMessage());
-        assertSingleDetail(rejection, VOID_PAYLOAD_MESSAGE, "payload");
-        assertEquals("OPEN", taskStatus(taskId), "a rejected completion must leave the task OPEN");
+        // Then: the completion was recorded and rejected with a sanitized reason, and the task is open again
+        assertEquals(TaskMutationResult.APPLIED, recorded, "the completion is recorded");
+        assertRejectedAndReopened(taskId, "DETERMINISTIC_FAILURE");
     }
 
     private void assertUnbindablePayloadRejectedValueFree(String definitionId) {
@@ -442,20 +444,15 @@ public class PgWorkflowEnginePayloadRejectionIT {
         UUID taskId = startAndFindOpenTask(definitionId);
 
         // When: it is completed with a payload whose int field holds the sentinel string
-        WorkflowInvalidPayloadException rejection =
-                completeExpectingInvalidPayload(taskId, "count", unbindableCount(), "idem-" + UUID.randomUUID());
+        complete(taskId, "count", unbindableCount(), "idem-" + UUID.randomUUID())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
 
-        // Then: one binding detail, the decode failure as cause, no token anywhere, task open
-        assertEquals(REJECTION_MESSAGE, rejection.getMessage());
-        assertSingleDetail(rejection, BINDING_MESSAGE, "binding");
-        assertInstanceOf(DecodeException.class, rejection.getCause(), "the decode failure must be the cause");
-        assertTrue(
-                rejection.getCause().getMessage().contains(SENTINEL),
-                "precondition: the decode cause message echoes the payload value, so interpolating it would leak");
-        assertFalse(rejection.getMessage().contains(SENTINEL), "message must not carry the payload value");
+        // Then: rejected with a reason and history that carry no token, and the task is open again
+        assertRejectedAndReopened(taskId, "DETERMINISTIC_FAILURE");
         assertFalse(
-                rejection.violations().toString().contains(SENTINEL), "no detail field may carry the payload value");
-        assertEquals("OPEN", taskStatus(taskId), "a rejected completion must leave the task OPEN");
+                recordedText(taskId).contains(SENTINEL), "neither the reason nor the history may carry the payload");
     }
 
     private void assertUnknownDecisionRejected(String definitionId) {
@@ -472,25 +469,40 @@ public class PgWorkflowEnginePayloadRejectionIT {
         assertFalse(rejection.getMessage().contains("nope"), "message must not echo the decision name");
         assertFalse(rejection.violations().toString().contains("nope"), "no detail may echo the decision name");
         assertEquals("OPEN", taskStatus(taskId), "a rejected completion must leave the task OPEN");
+        assertEquals(0L, commandRows(taskId), "a refused completion records no command");
     }
 
     private void assertRejectedCompletionRetries(String definitionId) {
-        // Given: a completion rejected for an unbindable payload under key k1
+        // Given: a completion recorded and then rejected by the executor for an unbindable payload under key k1
         UUID taskId = startAndFindOpenTask(definitionId);
         String k1 = "idem-k1-" + UUID.randomUUID();
-        completeExpectingInvalidPayload(taskId, "count", unbindableCount(), k1);
-        assertEquals(0L, dedupRows(k1), "the rejected attempt must not leave a dedup claim");
+        complete(taskId, "count", unbindableCount(), k1)
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+        assertRejectedAndReopened(taskId, "DETERMINISTIC_FAILURE");
+        assertEquals(1L, dedupRows(k1), "the recorded attempt holds its claim");
 
-        // When: the same key is used with a corrected payload
-        TaskMutationResult retry = complete(taskId, "count", Map.of("n", 1), k1)
+        // When: the corrected payload is sent under the same key, then under a fresh key
+        CompletionException reused =
+                assertThrows(CompletionException.class, () -> complete(taskId, "count", Map.of("n", 1), k1)
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .join());
+        String k2 = "idem-k2-" + UUID.randomUUID();
+        TaskMutationResult retry = complete(taskId, "count", Map.of("n", 1), k2)
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
 
-        // Then: the retry is applied, the task is completed, and exactly one claim exists
-        assertEquals(TaskMutationResult.APPLIED, retry, "the corrected retry must be applied");
+        // Then: the key is spent, the fresh key applies, and the task is completed
+        assertInstanceOf(
+                WorkflowIdempotencyConflictException.class,
+                reused.getCause(),
+                "the rejected key now belongs to the rejected request");
+        assertEquals(TaskMutationResult.APPLIED, retry, "the corrected completion under a fresh key is recorded");
         assertEquals("COMPLETED", taskStatus(taskId));
-        assertEquals(1L, dedupRows(k1), "only the successful attempt may hold the claim");
+        assertEquals(1L, dedupRows(k2), "the fresh key holds its own claim");
     }
 
     private void assertRejectedCauseLoggedAtDebugOnly(String definitionId) {
@@ -499,15 +511,13 @@ public class PgWorkflowEnginePayloadRejectionIT {
         UUID taskId = startAndFindOpenTask(definitionId);
         logs.clear();
 
-        // When: an unbindable payload is rejected
-        WorkflowInvalidPayloadException rejection =
-                completeExpectingInvalidPayload(taskId, "count", unbindableCount(), "idem-info-" + UUID.randomUUID());
+        // When: an unbindable payload is recorded and rejected by the executor
+        complete(taskId, "count", unbindableCount(), "idem-info-" + UUID.randomUUID())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
 
         // Then: no event at INFO or above carries the decode cause or the payload value
-        assertInstanceOf(DecodeException.class, rejection.getCause());
-        assertTrue(
-                rejection.getCause().getMessage().contains(SENTINEL),
-                "precondition: the decode cause message echoes the payload value, so interpolating it would leak");
         for (ILoggingEvent event : logs.events()) {
             if (event.getLevel().isGreaterOrEqual(Level.INFO)) {
                 assertFalse(
@@ -522,7 +532,10 @@ public class PgWorkflowEnginePayloadRejectionIT {
         // When: the same rejection runs with DEBUG enabled
         logs.setLevel(Level.DEBUG);
         logs.clear();
-        completeExpectingInvalidPayload(taskId, "count", unbindableCount(), "idem-debug-" + UUID.randomUUID());
+        complete(taskId, "count", unbindableCount(), "idem-debug-" + UUID.randomUUID())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
 
         // Then: exactly one event carries the decode cause, and no message carries the payload value
         List<ILoggingEvent> events = logs.events();
@@ -537,34 +550,22 @@ public class PgWorkflowEnginePayloadRejectionIT {
                 "no log line may carry the payload value");
     }
 
-    private void assertApplicatorFailureChained(String definitionId, String expectedMessagePrefix) {
+    private void assertApplicatorFailureRejected(String definitionId) {
         // Given: an open task whose decision applicator throws an exception carrying the payload text
         UUID taskId = startAndFindOpenTask(definitionId);
 
-        // When: it is completed with a valid payload
-        CompletionException failure = assertThrows(CompletionException.class, () -> complete(
-                        taskId, "explode", Map.of("comment", APPLICATOR_SENTINEL), "idem-" + UUID.randomUUID())
+        // When: it is completed with a valid payload and the executor applies it
+        complete(taskId, "explode", Map.of("comment", APPLICATOR_SENTINEL), "idem-" + UUID.randomUUID())
                 .toCompletionStage()
                 .toCompletableFuture()
-                .join());
+                .join();
 
-        // Then: a definition failure naming the decision, without the application message, with the cause
-        WorkflowDefinitionException definitionFailure = assertInstanceOf(
-                WorkflowDefinitionException.class,
-                failure.getCause(),
-                "an applicator failure stays a definition failure");
-        assertTrue(
-                definitionFailure.getMessage().startsWith(expectedMessagePrefix),
-                "message must name the failed applicator step, was: " + definitionFailure.getMessage());
+        // Then: the command is rejected with a sanitized reason that copies neither the exception message nor the
+        // payload, the task is open again, and the failure is named by class only in the executor's log
+        assertRejectedAndReopened(taskId, "DETERMINISTIC_FAILURE");
         assertFalse(
-                definitionFailure.getMessage().contains(APPLICATOR_SENTINEL),
-                "message must not copy the application exception message");
-        IllegalStateException cause = assertInstanceOf(
-                IllegalStateException.class,
-                definitionFailure.getCause(),
-                "the applicator exception must be chained as the cause");
-        assertTrue(cause.getMessage().contains(APPLICATOR_SENTINEL));
-        assertEquals("OPEN", taskStatus(taskId), "a failed applicator must roll the completion back");
+                recordedText(taskId).contains(APPLICATOR_SENTINEL),
+                "neither the reason nor the history may copy the application exception message");
     }
 
     // =========================================================================
@@ -678,6 +679,65 @@ public class PgWorkflowEnginePayloadRejectionIT {
     private static long dedupRows(String key) {
         return pool.preparedQuery("SELECT count(*) FROM workflow_dedup WHERE kind = 'task-complete' AND key = $1")
                 .execute(Tuple.of(key))
+                .map(rs -> rs.iterator().next().getLong(0))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+    }
+
+    /**
+     * Asserts that the task's only recorded completion was rejected with a reason starting with the code, that its
+     * history entry carries the same reason, and that the task is {@code OPEN} again with no owner.
+     */
+    private static void assertRejectedAndReopened(UUID taskId, String reasonCode) {
+        Row command = pool.preparedQuery("SELECT state, last_error, id FROM workflow_commands WHERE task_id = $1")
+                .execute(Tuple.of(taskId))
+                .map(rs -> rs.iterator().next())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+        assertEquals("REJECTED", command.getString("state"));
+        assertTrue(
+                command.getString("last_error").startsWith(reasonCode),
+                "reason must start with the code, was: " + command.getString("last_error"));
+        assertEquals("OPEN", taskStatus(taskId), "a rejected completion must leave the task OPEN");
+        assertNull(taskOwner(taskId), "a reopened task has no reservation owner");
+        long rejections = pool.preparedQuery(
+                        "SELECT count(*) FROM workflow_history WHERE (payload_json->>'commandId')::bigint = $1"
+                                + " AND entry_type = 'COMMAND_REJECTED' AND payload_json->>'reason' LIKE $2")
+                .execute(Tuple.of(command.getLong("id"), reasonCode + "%"))
+                .map(rs -> rs.iterator().next().getLong(0))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+        assertEquals(1L, rejections, "the rejection is logged with the same sanitized reason");
+    }
+
+    /** The reasons and history payloads of every command recorded for the task, as one string. */
+    private static String recordedText(UUID taskId) {
+        return pool.preparedQuery("SELECT coalesce(string_agg(c.last_error, ' '), '') || ' ' ||"
+                        + " coalesce((SELECT string_agg(h.payload_json::text, ' ') FROM workflow_history h"
+                        + " WHERE (h.payload_json->>'commandId')::bigint = ANY (SELECT id FROM workflow_commands WHERE task_id = $1)), '')"
+                        + " AS text FROM workflow_commands c WHERE c.task_id = $1")
+                .execute(Tuple.of(taskId))
+                .map(rs -> rs.iterator().next().getString("text"))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+    }
+
+    private static Long taskOwner(UUID taskId) {
+        return pool.preparedQuery("SELECT reservation_command_id FROM workflow_tasks WHERE task_id = $1")
+                .execute(Tuple.of(taskId))
+                .map(rs -> rs.iterator().next().getLong("reservation_command_id"))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+    }
+
+    private static long commandRows(UUID taskId) {
+        return pool.preparedQuery("SELECT count(*) FROM workflow_commands WHERE task_id = $1")
+                .execute(Tuple.of(taskId))
                 .map(rs -> rs.iterator().next().getLong(0))
                 .toCompletionStage()
                 .toCompletableFuture()

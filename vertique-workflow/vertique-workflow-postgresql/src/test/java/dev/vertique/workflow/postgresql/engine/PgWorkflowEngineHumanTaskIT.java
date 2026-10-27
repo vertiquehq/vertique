@@ -4,6 +4,7 @@
 package dev.vertique.workflow.postgresql.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -20,7 +21,6 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
-import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowStaleAssignmentException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
@@ -54,10 +54,12 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
+import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -523,6 +525,21 @@ public class PgWorkflowEngineHumanTaskIT {
     }
 
     /**
+     * Reads the settled outcome of the workflow's only recorded completion: the command's state and sanitized reason
+     * and the status of the task it reserved.
+     *
+     * @param workflowId the workflow instance id to inspect
+     * @return a {@link Future} containing the row with {@code state}, {@code last_error} and {@code task_status}
+     */
+    private Future<Row> completionOutcome(WorkflowInstanceId workflowId) {
+        return pool.preparedQuery("SELECT c.state, c.last_error, t.status AS task_status FROM workflow_commands c"
+                        + " JOIN workflow_tasks t ON t.task_id = c.task_id"
+                        + " WHERE c.workflow_id = $1 AND c.kind = 'COMPLETION'")
+                .execute(Tuple.of(workflowId.value()))
+                .map(rows -> rows.iterator().next());
+    }
+
+    /**
      * Reads the JSONB column value for the task row identified by the given task UUID.
      *
      * @param taskId the task UUID
@@ -807,12 +824,12 @@ public class PgWorkflowEngineHumanTaskIT {
 
     /**
      * Calling {@code taskCompleted} twice with the same command succeeds both times;
-     * the second call returns {@link TaskMutationResult#LOST_TO_RACE} (idempotent retry —
-     * dedup row already exists with a matching fingerprint, so the original completion
-     * already advanced the workflow) and only one {@code TASK_COMPLETED} history entry exists.
+     * the second call returns the earlier result, {@link TaskMutationResult#APPLIED} (idempotent retry —
+     * the dedup row already exists with a matching fingerprint, so the original completion
+     * was already recorded) and only one {@code TASK_COMPLETED} history entry exists.
      */
     @Test
-    @DisplayName("idempotent completion: second call with same key+fingerprint returns LOST_TO_RACE")
+    @DisplayName("idempotent completion: second call with same key+fingerprint returns the earlier result")
     void idempotentCompletion(VertxTestContext ctx) {
         TaskState state = TaskState.of("idem-complete-" + UUID.randomUUID());
         String idemKey = "idem-comp-" + UUID.randomUUID();
@@ -835,9 +852,9 @@ public class PgWorkflowEngineHumanTaskIT {
                             })
                             .compose(secondResult -> {
                                 ctx.verify(() -> assertEquals(
-                                        TaskMutationResult.LOST_TO_RACE,
+                                        TaskMutationResult.APPLIED,
                                         secondResult,
-                                        "second call with same key+fingerprint must be LOST_TO_RACE"));
+                                        "second call with same key+fingerprint must return the earlier result"));
                                 return countHistoryEntries(workflowId, WorkflowEntryType.TASK_COMPLETED);
                             })
                             .map(count -> {
@@ -1419,7 +1436,7 @@ public class PgWorkflowEngineHumanTaskIT {
 
         /**
          * Decision declared with {@code Void.class}: completing with {@code null} payload succeeds;
-         * completing with a non-null payload fails with {@link WorkflowInvalidPayloadException}.
+         * completing with a non-null payload is recorded and then rejected by the executor, which reopens the task.
          */
         @Nested
         @DisplayName("Void decision")
@@ -1452,7 +1469,8 @@ public class PgWorkflowEngineHumanTaskIT {
             }
 
             @Test
-            @DisplayName("Void decision with non-null payload fails with WorkflowInvalidPayloadException")
+            @DisplayName(
+                    "Void decision with non-null payload is recorded, rejected by the executor and the task reopens")
             void voidDecisionNonNullPayloadFails(VertxTestContext ctx) {
                 TaskState state = TaskState.of("void-nonnull-" + UUID.randomUUID());
 
@@ -1466,29 +1484,34 @@ public class PgWorkflowEngineHumanTaskIT {
                                                 "idem-void-nonnull-" + UUID.randomUUID(),
                                                 new WorkflowActor.User("alice"),
                                                 null),
-                                        tx))))
-                        .onSuccess(r -> ctx.verify(() -> ctx.failNow(
-                                new AssertionError("Must have failed with WorkflowInvalidPayloadException"))))
-                        .onFailure(t -> ctx.verify(() -> {
-                            assertInstanceOf(
-                                    WorkflowInvalidPayloadException.class,
-                                    t,
-                                    "must fail with WorkflowInvalidPayloadException for Void decision with non-null payload");
+                                        tx)))
+                                .compose(recorded -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .compose(idle -> completionOutcome(workflowId))
+                                        .map(outcome -> Map.entry(recorded, outcome))))
+                        .onSuccess(result -> ctx.verify(() -> {
+                            assertEquals(TaskMutationResult.APPLIED, result.getKey(), "the completion is recorded");
+                            Row outcome = result.getValue();
+                            assertEquals("REJECTED", outcome.getString("state"));
+                            assertTrue(outcome.getString("last_error").startsWith("DETERMINISTIC_FAILURE"));
+                            assertFalse(outcome.getString("last_error").contains("unexpected-payload"));
+                            assertEquals("OPEN", outcome.getString("task_status"));
                             ctx.completeNow();
-                        }));
+                        }))
+                        .onFailure(ctx::failNow);
             }
         }
 
         /**
-         * Decision declared with {@code String.class}: completing with {@code null} payload fails;
-         * completing with a non-null payload succeeds.
+         * Decision declared with {@code String.class}: completing with {@code null} payload is recorded and then
+         * rejected by the executor, which reopens the task; completing with a non-null payload succeeds.
          */
         @Nested
         @DisplayName("String decision")
         class StringDecision {
 
             @Test
-            @DisplayName("String decision with null payload fails with WorkflowInvalidPayloadException")
+            @DisplayName("String decision with null payload is recorded, rejected by the executor and the task reopens")
             void stringDecisionNullPayloadFails(VertxTestContext ctx) {
                 TaskState state = TaskState.of("str-null-" + UUID.randomUUID());
 
@@ -1502,16 +1525,20 @@ public class PgWorkflowEngineHumanTaskIT {
                                                 "idem-str-null-" + UUID.randomUUID(),
                                                 new WorkflowActor.User("alice"),
                                                 null),
-                                        tx))))
-                        .onSuccess(r -> ctx.verify(() -> ctx.failNow(
-                                new AssertionError("Must have failed with WorkflowInvalidPayloadException"))))
-                        .onFailure(t -> ctx.verify(() -> {
-                            assertInstanceOf(
-                                    WorkflowInvalidPayloadException.class,
-                                    t,
-                                    "must fail with WorkflowInvalidPayloadException for String decision with null payload");
+                                        tx)))
+                                .compose(recorded -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .compose(idle -> completionOutcome(workflowId))
+                                        .map(outcome -> Map.entry(recorded, outcome))))
+                        .onSuccess(result -> ctx.verify(() -> {
+                            assertEquals(TaskMutationResult.APPLIED, result.getKey(), "the completion is recorded");
+                            Row outcome = result.getValue();
+                            assertEquals("REJECTED", outcome.getString("state"));
+                            assertTrue(outcome.getString("last_error").startsWith("DETERMINISTIC_FAILURE"));
+                            assertEquals("OPEN", outcome.getString("task_status"));
                             ctx.completeNow();
-                        }));
+                        }))
+                        .onFailure(ctx::failNow);
             }
 
             @Test
@@ -1968,7 +1995,7 @@ public class PgWorkflowEngineHumanTaskIT {
                             })
                             .compose(replay -> {
                                 ctx.verify(() -> assertEquals(
-                                        TaskMutationResult.LOST_TO_RACE,
+                                        TaskMutationResult.APPLIED,
                                         replay,
                                         "retry must resolve through dedup despite the wrong expectedAssignment"));
                                 return Future.all(

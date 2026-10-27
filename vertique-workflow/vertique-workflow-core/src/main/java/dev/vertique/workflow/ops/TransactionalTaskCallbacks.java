@@ -31,35 +31,37 @@ public interface TransactionalTaskCallbacks<TX> {
     /**
      * Called by the task service when an actor submits a task completion.
      *
-     * <p>The engine validates the decision name and payload, applies the decision applicator to
-     * the workflow state, updates the workflow instance, and appends a {@code TASK_COMPLETED}
-     * history entry — all within the caller's transaction.
+     * <p>The engine <em>records</em> the completion in the caller's transaction and returns; the workflow executor
+     * applies it afterwards. Without taking a lock it first returns the earlier result of a committed duplicate, then
+     * checks the payload's size and depth and, when the task stores a JSON Schema for the decision, the payload's
+     * conformance to it. Under the instance's execution lock it checks that the task is still {@code OPEN}, that a
+     * supplied {@code expectedAssignment} still matches, that the reviewed subject version matches when the task
+     * requires version stability, and that the task offers the decision. It then claims the idempotency key, records a
+     * {@code COMPLETION} command and moves the task from {@code OPEN} to {@code COMPLETING}, owned by that command. The
+     * executor completes the task and advances the workflow, or rejects the command and reopens the task.
      *
      * <p>Result contract:
      * <ul>
-     *   <li>{@link TaskMutationResult#APPLIED} — the decision was applied and the workflow
-     *       advanced.</li>
-     *   <li>{@link TaskMutationResult#LOST_TO_RACE} — the dedup row already existed for the same
-     *       idempotency key with a matching fingerprint (true idempotent retry of the same
-     *       command). The original completion already advanced the workflow; the service layer
-     *       translates this to a successful {@code Future<Void>}.</li>
+     *   <li>{@link TaskMutationResult#APPLIED} — the completion is recorded and the task reserved, or the key is a
+     *       committed duplicate (same key and fingerprint) and this is its earlier result.</li>
+     *   <li>{@link TaskMutationResult#LOST_TO_RACE} — not returned by the engine for a completion; a service layer
+     *       translates it, like {@code APPLIED}, to a successful {@code Future<Void>} if another implementation does.</li>
      * </ul>
      *
      * <p>{@link TaskMutationResult#STALE_NOOP} is <strong>never</strong> returned by this method.
-     * No-wait / not-OPEN paths surface as failed {@code Future}s with typed exceptions:
-     * {@code WorkflowTaskNotWaitingException} (instance not WAITING / not TASK / wait-key
-     * mismatch), {@code WorkflowConflictException} (concurrent task-row transition or stale
-     * optimistic version), {@code WorkflowStaleAssignmentException} (a supplied
-     * {@code expectedAssignment} no longer matches the locked row), or
-     * {@code WorkflowIdempotencyConflictException} (same idempotency key
-     * with a different fingerprint). The {@code TaskService} layer treats {@link
-     * TaskMutationResult#STALE_NOOP} from this method as an SPI contract violation and surfaces it
-     * as {@code IllegalStateException}.
+     * Refusals surface as failed {@code Future}s with typed exceptions, and write nothing:
+     * {@code WorkflowInvalidPayloadException} (bounds, schema or an unknown decision),
+     * {@code WorkflowTaskNotWaitingException} (the task is not {@code OPEN}: it is being completed or has ended),
+     * {@code WorkflowStaleAssignmentException} (a supplied {@code expectedAssignment} no longer matches the locked
+     * row), {@code WorkflowStaleSubjectVersionException} (a missing or different reviewed version on a task that
+     * requires stability), or {@code WorkflowIdempotencyConflictException} (same idempotency key with a different
+     * fingerprint). The {@code TaskService} layer treats {@link TaskMutationResult#STALE_NOOP} from this method as an
+     * SPI contract violation and surfaces it as {@code IllegalStateException}.
      *
      * @param cmd the completion command carrying the task id, decision, payload, idempotency key,
      *     and actor
      * @param tx the active transaction context; all writes must use this context
-     * @return a {@link Future} resolving to the mutation result
+     * @return a {@link Future} resolving to the mutation result once the completion is recorded
      */
     Future<TaskMutationResult> taskCompleted(TaskCompletionCommand cmd, TX tx);
 

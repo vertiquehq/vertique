@@ -19,6 +19,7 @@ import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
+import dev.vertique.workflow.engine.spi.TaskReservations;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
@@ -50,6 +51,7 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.plan.WorkflowPlan;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
@@ -347,6 +349,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             FailingDefinitions failing,
             WorkflowExecutionProbe executionProbe,
             WorkflowCommandRepository<SqlClient> commands,
+            TaskReservations<SqlClient> reservations,
             Supplier<WorkflowExecutorControl> executorControl) {
         this(
                 txRunner,
@@ -378,7 +381,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 executionProbe,
                 commands,
                 executorControl,
-                WorkflowRecordingConfig.defaults());
+                WorkflowRecordingConfig.defaults(),
+                reservations,
+                Optional.empty());
     }
 
     /**
@@ -425,7 +430,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * name resolves through; the factory passes the one index the registry fills. The {@code activations}
      * parameter is this engine's view of the activation records, which the factory builds empty. The
      * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes. The {@code executionProbe} parameter is the probe the handle exposes. The {@code commands} parameter is the
-     * command repository whose execution lock every instance-changing entry point takes.
+     * command repository whose execution lock every instance-changing entry point takes. The {@code reservations}
+     * parameter reserves a task for a recorded completion; the {@code schemaProducer} parameter, when present, supplies
+     * the payload schemas a new task's decision snapshot stores.
      *
      * <p>Package-visible (not {@code private}) so the factory in the same package can invoke it; it
      * is not part of any production API.
@@ -460,7 +467,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowExecutionProbe executionProbe,
             WorkflowCommandRepository<SqlClient> commands,
             Supplier<WorkflowExecutorControl> executorControl,
-            WorkflowRecordingConfig recordingConfig) {
+            WorkflowRecordingConfig recordingConfig,
+            TaskReservations<SqlClient> reservations,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
         this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
         this.maxOpenSignals = recordingConfig.maxOpenSignalsPerInstance();
         this.executionProbe = executionProbe;
@@ -551,7 +560,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 builtContextBinder,
                 payloadConstraintCheck,
                 typeNames,
-                commands);
+                commands,
+                reservations,
+                historyRecorder,
+                Optional.of(recordingConfig),
+                schemaProducer);
         taskLifecycleHolder[0] = this.taskLifecycle;
         // TimerLifecycleService needs the driver, coordinator, and task service eagerly; all three
         // are now built. The driver reaches resolveFireAt through the lazy Provider above
@@ -1201,13 +1214,27 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         }
     }
 
-    /** Runs a fenced command's work in the segment's transaction: a {@code START} or a recorded {@code SIGNAL}. */
+    /**
+     * Runs a fenced command's work in the segment's transaction: a {@code START}, a recorded {@code SIGNAL} or a
+     * recorded {@code COMPLETION}.
+     */
     private Future<WorkflowSegments.Outcome> runSegment(
             CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
         if ("SIGNAL".equals(command.kind())) {
             return driver.withStepCap(tx, maxSteps, () -> signalHandler
                     .parkedSignals()
                     .managing(tx, () -> signalHandler.runSegment(head, claim, command, tx)));
+        }
+        if ("COMPLETION".equals(command.kind())) {
+            return driver.withStepCap(
+                    tx, maxSteps, () -> signalHandler.parkedSignals().managing(tx, () -> taskLifecycle
+                            .runCompletion(head, claim, command, tx)
+                            .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
+                                    ? signalHandler
+                                            .parkedSignals()
+                                            .drain(command.workflowId(), tx)
+                                            .map(done -> outcome)
+                                    : Future.succeededFuture(outcome))));
         }
         if (!"START".equals(command.kind())) {
             return Future.failedFuture(
@@ -2066,19 +2093,16 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
-     * <p>Implementation steps:
+     * <p>Records the completion as a {@code COMPLETION} command in the caller's transaction and reserves the task
+     * ({@code OPEN} to {@code COMPLETING}); an executor applies it afterwards in its own segment. The steps, in order:
      * <ol>
-     *   <li>Non-locking task lookup to discover workflowId and decisionsSnapshot.</li>
-     *   <li>Fingerprint computation and idempotency dedup claim.</li>
-     *   <li>Decision validation and payload coercion.</li>
-     *   <li>Non-locking instance read; validates WAITING/TASK/wait-key slot.</li>
-     *   <li>Cancel the due-date timer (if present) — lock order: timers before tasks.</li>
-     *   <li>Lock the task row for completion; a supplied {@code expectedAssignment} must still match.</li>
-     *   <li>Write completion columns.</li>
-     *   <li>Apply decision applicator to state.</li>
-     *   <li>Optimistic UPDATE on workflow_instances.</li>
-     *   <li>Append TASK_COMPLETED history.</li>
-     *   <li>Drive transitions from the decision's next step.</li>
+     *   <li>A committed duplicate (same key and fingerprint) returns its earlier result.</li>
+     *   <li>Non-locking task read; the payload's size and depth bounds and, when the task's snapshot stores a schema for
+     *       the decision, the payload's conformance to it.</li>
+     *   <li>The execution lock; the duplicate again (another fingerprint is a conflict), then the task row lock: the task
+     *       must be {@code OPEN}, a supplied {@code expectedAssignment} must match, the reviewed subject version must
+     *       match when the row requires stability, and the decision must be in the snapshot.</li>
+     *   <li>The deduplication claim, the {@code COMPLETION} command and the reservation.</li>
      * </ol>
      *
      * @param cmd the completion command; must not be null

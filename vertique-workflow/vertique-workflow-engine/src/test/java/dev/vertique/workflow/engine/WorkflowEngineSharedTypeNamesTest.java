@@ -5,7 +5,6 @@ package dev.vertique.workflow.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -14,15 +13,14 @@ import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
-import dev.vertique.workflow.engine.spi.DedupClaim;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
-import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -221,18 +219,24 @@ class WorkflowEngineSharedTypeNamesTest {
                 null,
                 null,
                 null);
-        when(taskStore.findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(dedup.claimOrResolveTaskCompletion(eq(taskId), any(), eq(instance.id()), any(), eq(tx)))
-                .thenReturn(Future.succeededFuture(new DedupClaim(true, "fp")));
+        TaskRecord reserved = RecordedCompletionSegments.reserved(task);
+        when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
+        when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        when(taskStore.findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(reserved)));
         when(instances.findById(instance.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(instance)));
         when(timerStore.findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
         // The task lock is the first step after payload validation, so reaching it proves the payload type resolved.
         when(taskStore.lockForCompletion(taskId, tx)).thenReturn(Future.failedFuture(new ReachedTheTaskLock()));
-        TaskCompletionCommand command = new TaskCompletionCommand(
-                taskId, "approve", Map.of("approved", true), "idem-1", new WorkflowActor.User("user-1"), null);
 
-        // When: the task is completed with a payload that binds to the logically named decision type
-        runOnDuplicated(vertx, v -> engine.taskCompleted(command, tx)
+        // When: the recorded completion is applied with a payload that binds to the logically named decision type
+        runOnDuplicated(vertx, v -> RecordedCompletionSegments.run(
+                        engine,
+                        instance,
+                        reserved,
+                        "approve",
+                        Map.of("approved", true),
+                        new WorkflowActor.User("user-1"),
+                        tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     // Then: validation resolved the type by its logical name and the engine went on to lock the task
                     assertThat(ar.failed()).isTrue();
@@ -271,6 +275,7 @@ class WorkflowEngineSharedTypeNamesTest {
                 .joinStates(joinStates)
                 .timerStore(timerStore)
                 .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
                 .clock(FIXED_CLOCK)
                 .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
                 .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)

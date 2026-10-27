@@ -187,10 +187,9 @@ public class MixedCodeNodesIT {
     }
 
     @Test
-    @DisplayName("task completion through a node without the pinned code fails typed and a query still reads")
-    void taskCompletionThroughNodeWithoutPinnedCodeFailsTypedAndQueryReads(Vertx vertx) {
+    @DisplayName("task completion through a node without the pinned code is recorded and applied by a capable node")
+    void taskCompletionThroughNodeWithoutPinnedCodeIsRecordedAndAppliedByACapableNode(Vertx vertx) {
         String id = "mixed-code-task";
-        DefinitionKey pinned = new DefinitionKey(DEFAULT, id, 2);
 
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, id);
@@ -211,17 +210,21 @@ public class MixedCodeNodesIT {
                     b.app().pool().withTransaction(tx -> b.app().taskCallbacks().taskCompleted(completion, tx)));
             WorkflowView readOnB = await(b.app().workflowOperations().query(instance));
 
-            // Then the completion fails typed, naming the pinned version, and the query reads the stored instance
-            assertThat(completionRefused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
-                assertThat(failure.definitionKey()).isEqualTo(pinned);
-            });
+            // Then it is recorded: recording needs no code for the pinned version, and B applies nothing
+            assertThat(completionRefused)
+                    .as("recording through a node without the pinned code")
+                    .isNull();
             assertThat(readOnB.instance().id()).isEqualTo(instance);
 
-            // And the task stays open and the instance is unchanged
-            assertThat(Rows.of(database, instance)).isEqualTo(before);
+            // And the instance is unchanged, the key is recorded and the task is reserved by the recorded completion
+            Rows recorded = Rows.of(database, instance);
+            assertThat(recorded.instance()).isEqualTo(before.instance());
+            assertThat(recorded.dedup()).isEqualTo(before.dedup() + 1);
             assertThat(before.tasks()).contains("OPEN");
+            assertThat(recorded.tasks()).contains("COMPLETING");
 
-            // And A's query and completion succeed
+            // And the same completion through A, with the same key, is a duplicate, and A's executor applies the
+            // recorded command and advances the instance
             WorkflowView view = await(a.app().workflowOperations().query(instance));
             assertThat(view.instance().status()).isEqualTo(WorkflowStatus.WAITING);
             TaskMutationResult completed = await(

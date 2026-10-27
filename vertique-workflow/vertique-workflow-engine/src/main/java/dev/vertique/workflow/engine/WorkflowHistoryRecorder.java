@@ -18,6 +18,7 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Package-private collaborator responsible for appending generic workflow lifecycle history entries
@@ -130,6 +131,34 @@ final class WorkflowHistoryRecorder {
         return history.nextSequence(workflowId, tx).compose(seq -> {
             String payload = Json.encode(
                     new SignalCommandHistoryPayload(commandId, "SIGNAL", EchoedNames.bounded(signalName), reason));
+            return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
+        });
+    }
+
+    /**
+     * Appends a history entry about what became of a recorded {@code COMPLETION} command. The entry names the command,
+     * the task, the decision and the sanitized reason, never a payload value or exception text.
+     *
+     * @param workflowId the instance
+     * @param type the entry type
+     * @param commandId the command's row id
+     * @param taskId the task the completion reserved
+     * @param decisionName the decision's name
+     * @param reason the sanitized reason, or {@code null} for an outcome without one
+     * @param tx the active transaction
+     * @return a future that completes when the entry is appended
+     */
+    Future<Void> appendCompletionCommandHistory(
+            WorkflowInstanceId workflowId,
+            WorkflowEntryType type,
+            long commandId,
+            UUID taskId,
+            String decisionName,
+            @Nullable String reason,
+            SqlClient tx) {
+        return history.nextSequence(workflowId, tx).compose(seq -> {
+            String payload = Json.encode(new CompletionCommandHistoryPayload(
+                    commandId, "COMPLETION", taskId, EchoedNames.bounded(decisionName), reason));
             return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
         });
     }

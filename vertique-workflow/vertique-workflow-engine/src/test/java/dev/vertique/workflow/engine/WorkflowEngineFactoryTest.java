@@ -21,6 +21,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.ops.StartCommand;
@@ -145,6 +146,7 @@ class WorkflowEngineFactoryTest {
                 .joinStates(mock(JoinStateRepository.class))
                 .timerStore(mock(TimerStore.class))
                 .taskStore(mock(TaskStore.class))
+                .taskReservations(new AcceptingTaskReservations())
                 .commands(new EmptyCommandRepository())
                 .clock(CLOCK)
                 .typeNames(fixture.registry().typeNames());

@@ -423,6 +423,30 @@ public interface WorkflowCommandRepository<TX> {
             TX tx);
 
     /**
+     * Records a {@code COMPLETION} command in the caller's transaction: the next position of the instance's queue,
+     * state {@code PENDING}, recorded and available at the database clock now, owning the task it completes. The
+     * payload is stored as the command's payload and the decision, the reviewed subject version and the completing
+     * actor as its target.
+     *
+     * <p>The caller must hold the instance's execution lock.
+     *
+     * @param instance    the instance
+     * @param taskId      the task the completion reserves
+     * @param dedupKey    the caller's idempotency key, kept for display
+     * @param payloadJson the decision payload as JSON, or {@code null} when the decision has none
+     * @param targetJson  the decision, reviewed subject version and completing actor as JSON
+     * @param tx          the caller's transaction handle
+     * @return a {@link Future} containing the command's row id
+     */
+    Future<Long> recordCompletion(
+            WorkflowInstanceId instance,
+            UUID taskId,
+            String dedupKey,
+            @Nullable String payloadJson,
+            String targetJson,
+            TX tx);
+
+    /**
      * Lists the parked {@code SIGNAL} commands of an instance that carry the given name and address, in queue order.
      *
      * @param instance   the instance

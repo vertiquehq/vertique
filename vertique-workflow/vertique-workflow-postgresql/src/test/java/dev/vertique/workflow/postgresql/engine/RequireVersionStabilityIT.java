@@ -87,7 +87,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>Disabled ignores reviewed version: non-stability task accepts any reviewed value.</li>
  *   <li>History records reviewed version: {@code TASK_COMPLETED} payload carries the
  *       caller-supplied value.</li>
- *   <li>Idempotent retry: same key + same reviewed version → LOST_TO_RACE; only one history
+ *   <li>Idempotent retry: same key + same reviewed version → the earlier result; only one history
  *       entry.</li>
  *   <li>Idempotency conflict: same key + different reviewed version →
  *       {@link WorkflowIdempotencyConflictException}.</li>
@@ -1088,8 +1088,8 @@ public class RequireVersionStabilityIT {
     class IdempotencyTests {
 
         @Test
-        @DisplayName("idempotent retry with same key and same reviewedSubjectVersion returns LOST_TO_RACE")
-        void idempotentRetryReturnsLostToRace(VertxTestContext ctx) {
+        @DisplayName("idempotent retry with same key and same reviewedSubjectVersion returns the earlier result")
+        void idempotentRetryReturnsTheEarlierResult(VertxTestContext ctx) {
             StabilityState state = StabilityState.of("idem-retry-" + UUID.randomUUID());
             WorkflowSubjectRef ref = new WorkflowSubjectRef("Article", "art-60", "v3");
             String idemKey = "idem-retry-key-" + UUID.randomUUID();
@@ -1113,9 +1113,9 @@ public class RequireVersionStabilityIT {
                                 })
                                 .compose(secondResult -> {
                                     ctx.verify(() -> assertEquals(
-                                            TaskMutationResult.LOST_TO_RACE,
+                                            TaskMutationResult.APPLIED,
                                             secondResult,
-                                            "second call with same key+fingerprint must be LOST_TO_RACE"));
+                                            "second call with same key+fingerprint must return the earlier result"));
                                     // Only one TASK_COMPLETED history entry.
                                     return countHistoryEntries(workflowId, WorkflowEntryType.TASK_COMPLETED);
                                 })

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,7 +19,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import dagger.Component;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.core.validation.ViolationDetail;
-import dev.vertique.core.validation.ViolationPathForm;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -53,6 +53,7 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
+import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Singleton;
 import jakarta.validation.Valid;
@@ -83,11 +84,14 @@ import org.slf4j.LoggerFactory;
  * path, the branch task path and the start path.
  *
  * <p>When a {@link BeanValidator} is bound, the coerced payload is checked after coercion and before
- * any mutation; a violation fails the future with {@link WorkflowInvalidPayloadException} carrying
- * one detail per violation whose path is an RFC 6901 pointer over wire names. The tests use the real
+ * any mutation. On a start the violation fails the future with {@link WorkflowInvalidPayloadException}
+ * carrying one detail per violation whose path is an RFC 6901 pointer over wire names. A task completion is
+ * recorded first and applied by the executor, so its violation is not returned to the caller: the command is
+ * {@code REJECTED} with a sanitized reason that carries no payload value, key or message, the task is
+ * {@code OPEN} again and a corrected completion under a fresh key applies. The tests use the real
  * Hibernate Validator obtained from {@link ValidationModule} through a test Dagger component, and two
  * engines that share the pool, the registry and the stores: one assembled with a bound validator and
- * one without. Details are matched by path, never by position.
+ * one without. Each completion runs on the engine that started the instance.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -381,30 +385,27 @@ public class PgWorkflowEnginePayloadConstraintIT {
     // =========================================================================
 
     @Test
-    @DisplayName("a size violation on a wire-renamed property fails on both completion paths")
+    @DisplayName(
+            "a size violation on a wire-renamed property is rejected on both completion paths and a fresh key applies")
     void sizeViolationOnAWireRenamedPropertyFailsOnBothCompletionPaths() {
         for (String definitionId : List.of(INSTANCE_DEFINITION_ID, BRANCH_DEFINITION_ID)) {
             // Given: a validator-bound engine and an open task whose decision carries a size limit
-            UUID taskId = startAndFindOpenTask(definitionId);
+            UUID taskId = startAndFindOpenTask(validatingEngine, definitionId);
             String key = "idem-" + UUID.randomUUID();
 
             // When: it is completed with a value over the limit under the wire name
-            WorkflowInvalidPayloadException rejection =
-                    completeExpectingViolations(taskId, "rename", Map.of("display_name", "toolong"), key);
+            TaskMutationResult recorded =
+                    completeSettled(validatingEngine, taskId, "rename", Map.of("display_name", "toolong"), key);
 
-            // Then: one size detail at the wire-name pointer, and the task is still open
-            assertEquals(DECISION_REJECTION, rejection.getMessage(), definitionId);
-            assertEquals(1, rejection.violations().size(), definitionId + ": " + rejection.violations());
-            ViolationDetail detail = detailAt(rejection, "/display_name");
-            assertEquals("size", detail.type(), definitionId);
-            assertEquals("OPEN", taskStatus(taskId), definitionId + ": a rejected completion must leave the task OPEN");
-            assertEquals(0L, dedupRows(key), definitionId + ": a rejected attempt must not leave a dedup claim");
+            // Then: the completion was recorded and rejected with a sanitized reason, and the task is open again
+            assertEquals(TaskMutationResult.APPLIED, recorded, definitionId);
+            assertRejectedAndReopened(taskId, definitionId);
+            assertFalse(recordedText(taskId).contains("toolong"), definitionId + ": the reason carries no value");
+            assertEquals(1L, dedupRows(key), definitionId + ": a recorded attempt holds its claim");
 
-            // When: the same key is retried within the limit
-            TaskMutationResult retry = complete(validatingEngine, taskId, "rename", Map.of("display_name", "abc"), key)
-                    .toCompletionStage()
-                    .toCompletableFuture()
-                    .join();
+            // When: a valid payload is sent under a fresh key
+            TaskMutationResult retry = completeSettled(
+                    validatingEngine, taskId, "rename", Map.of("display_name", "abc"), "idem-" + UUID.randomUUID());
 
             // Then: the retry is applied
             assertEquals(TaskMutationResult.APPLIED, retry, definitionId);
@@ -417,18 +418,11 @@ public class PgWorkflowEnginePayloadConstraintIT {
     void withoutABoundValidatorTheSamePayloadCompletes() {
         for (String definitionId : List.of(INSTANCE_DEFINITION_ID, BRANCH_DEFINITION_ID)) {
             // Given: an engine assembled without a validator and an open task with a size limit
-            UUID taskId = startAndFindOpenTask(definitionId);
+            UUID taskId = startAndFindOpenTask(plainEngine, definitionId);
 
             // When: it is completed with the value that a bound validator rejects
-            TaskMutationResult result = complete(
-                            plainEngine,
-                            taskId,
-                            "rename",
-                            Map.of("display_name", "toolong"),
-                            "idem-" + UUID.randomUUID())
-                    .toCompletionStage()
-                    .toCompletableFuture()
-                    .join();
+            TaskMutationResult result = completeSettled(
+                    plainEngine, taskId, "rename", Map.of("display_name", "toolong"), "idem-" + UUID.randomUUID());
 
             // Then: the completion is applied and the task is completed
             assertEquals(TaskMutationResult.APPLIED, result, definitionId);
@@ -437,101 +431,85 @@ public class PgWorkflowEnginePayloadConstraintIT {
     }
 
     @Test
-    @DisplayName("a nested violation path is an indexed pointer and a map violation ends at the map property")
+    @DisplayName("nested violations are rejected without echoing a caller-chosen map key")
     void nestedViolationPathIsAnIndexedPointer() {
         for (String definitionId : List.of(INSTANCE_DEFINITION_ID, BRANCH_DEFINITION_ID)) {
             // Given: an open task whose decision holds a list and a map of constrained items
-            UUID listTask = startAndFindOpenTask(definitionId);
+            UUID listTask = startAndFindOpenTask(validatingEngine, definitionId);
 
             // When: a list item violates its constraint
-            WorkflowInvalidPayloadException listRejection = completeExpectingViolations(
+            completeSettled(
+                    validatingEngine,
                     listTask,
                     "nested",
                     Map.of("items", List.of(Map.of("name", "")), "byKey", Map.of()),
                     "idem-" + UUID.randomUUID());
 
-            // Then: one required detail at the indexed pointer
-            assertEquals(1, listRejection.violations().size(), definitionId + ": " + listRejection.violations());
-            assertEquals("required", detailAt(listRejection, "/items/0/name").type(), definitionId);
-            assertEquals("OPEN", taskStatus(listTask), definitionId);
+            // Then: the completion is rejected and the task is open again
+            assertRejectedAndReopened(listTask, definitionId);
 
             // Given: a second open task
-            UUID mapTask = startAndFindOpenTask(definitionId);
+            UUID mapTask = startAndFindOpenTask(validatingEngine, definitionId);
 
             // When: a map value under a caller-chosen key violates its constraint
-            WorkflowInvalidPayloadException mapRejection = completeExpectingViolations(
+            completeSettled(
+                    validatingEngine,
                     mapTask,
                     "nested",
                     Map.of("items", List.of(Map.of("name", "ok")), "byKey", Map.of(KEY_SENTINEL, Map.of("name", ""))),
                     "idem-" + UUID.randomUUID());
 
-            // Then: one required detail at the map property, and no field contains the key
-            assertEquals(1, mapRejection.violations().size(), definitionId + ": " + mapRejection.violations());
-            assertEquals("required", detailAt(mapRejection, "/byKey").type(), definitionId);
+            // Then: it is rejected too, and nothing recorded contains the key
+            assertRejectedAndReopened(mapTask, definitionId);
             assertFalse(
-                    mapRejection.getMessage().contains(KEY_SENTINEL),
-                    definitionId + ": message must not carry the key");
-            assertFalse(
-                    mapRejection.violations().toString().contains(KEY_SENTINEL),
-                    definitionId + ": no detail field may carry the key");
-            assertEquals("OPEN", taskStatus(mapTask), definitionId);
+                    recordedText(mapTask).contains(KEY_SENTINEL),
+                    definitionId + ": neither the reason nor the history may carry the key");
         }
     }
 
     @Test
-    @DisplayName("a completion with many violations reports every one, with no truncation marker")
+    @DisplayName("a completion with many violations is rejected once, with a bounded reason")
     void aCompletionWithManyViolationsReportsEveryOne() {
         // Given: a validator-bound engine and an open task whose decision holds a list of constrained items
-        UUID taskId = startAndFindOpenTask(INSTANCE_DEFINITION_ID);
+        UUID taskId = startAndFindOpenTask(validatingEngine, INSTANCE_DEFINITION_ID);
         List<Map<String, String>> blankItems = new ArrayList<>();
         for (int index = 0; index < 150; index++) {
             blankItems.add(Map.of("name", ""));
         }
 
         // When: it is completed with 150 items that each violate their constraint
-        WorkflowInvalidPayloadException rejection = completeExpectingViolations(
-                taskId, "nested", Map.of("items", blankItems, "byKey", Map.of()), "idem-" + UUID.randomUUID());
+        completeSettled(
+                validatingEngine,
+                taskId,
+                "nested",
+                Map.of("items", blankItems, "byKey", Map.of()),
+                "idem-" + UUID.randomUUID());
 
-        // Then: the rejection carries all 150 details
-        assertEquals(DECISION_REJECTION, rejection.getMessage());
-        List<ViolationDetail> details = rejection.violations();
-        assertEquals(150, details.size(), "every violation is reported");
-
-        // And: each is a real violation of a list item at its own pointer, and none is an unlocated marker
-        for (ViolationDetail detail : details) {
-            assertEquals("required", detail.type());
-            assertEquals(ViolationPathForm.JSON_POINTER, detail.form(), "a located detail states a pointer");
-            assertTrue(detail.path().startsWith("/items/"), "a detail addresses a list item: " + detail.path());
-        }
-        assertEquals(
-                150L,
-                details.stream().map(ViolationDetail::path).distinct().count(),
-                "the details address distinct items");
-        assertEquals("OPEN", taskStatus(taskId), "a rejected completion must leave the task OPEN");
+        // Then: one command is rejected, its reason stays within the column bound and the task is open again
+        assertRejectedAndReopened(taskId, INSTANCE_DEFINITION_ID);
+        assertEquals(1L, commandRows(taskId), "one recorded completion");
+        assertTrue(lastError(taskId).length() <= 4000, "the reason is bounded, not one line per violation");
     }
 
     @Test
-    @DisplayName("default messages are value-free and application messages pass through")
+    @DisplayName("a rejected completion carries neither the default nor the application message values")
     void defaultMessagesAreValueFreeAndApplicationMessagesPassThrough() {
         // Given: an open task whose decision has a default-message and an application-message constraint
-        UUID taskId = startAndFindOpenTask(INSTANCE_DEFINITION_ID);
+        UUID taskId = startAndFindOpenTask(validatingEngine, INSTANCE_DEFINITION_ID);
 
         // When: both properties violate their limits with sentinel values
-        WorkflowInvalidPayloadException rejection = completeExpectingViolations(
-                taskId, "pair", Map.of("a", SENTINEL, "b", APPLICATION_SENTINEL), "idem-" + UUID.randomUUID());
+        completeSettled(
+                validatingEngine,
+                taskId,
+                "pair",
+                Map.of("a", SENTINEL, "b", APPLICATION_SENTINEL),
+                "idem-" + UUID.randomUUID());
 
-        // Then: the exception message is the frozen one
-        assertEquals(DECISION_REJECTION, rejection.getMessage());
-        assertEquals(2, rejection.violations().size(), "one detail per violation: " + rejection.violations());
-
-        // And: the default message does not carry the submitted value
-        ViolationDetail defaultDetail = detailAt(rejection, "/a");
-        assertEquals("size", defaultDetail.type());
-        assertFalse(defaultDetail.message().contains(SENTINEL), "a default message must be value-free");
-
-        // And: the application message is passed through unchanged, interpolation included
-        ViolationDetail applicationDetail = detailAt(rejection, "/b");
-        assertEquals("custom " + APPLICATION_SENTINEL, applicationDetail.message());
+        // Then: the completion is rejected, and neither the reason nor the history echoes a submitted value or an
+        // application message
+        assertRejectedAndReopened(taskId, INSTANCE_DEFINITION_ID);
+        assertFalse(recordedText(taskId).contains(SENTINEL), "nothing recorded may carry a submitted value");
+        assertFalse(recordedText(taskId).contains(APPLICATION_SENTINEL), "an application message is not echoed");
     }
 
     @Test
@@ -551,7 +529,7 @@ public class PgWorkflowEnginePayloadConstraintIT {
         assertEquals(0L, startDedupRows(key), "a rejected start must not retain the claim");
 
         // When: the same key is retried with a valid payload
-        WorkflowInstanceId created = start(START_DEFINITION_ID, Map.of("requester", "ann"), key);
+        WorkflowInstanceId created = start(validatingEngine, START_DEFINITION_ID, Map.of("requester", "ann"), key);
 
         // Then: the retry creates the instance and holds the claim
         assertNotNull(created, "the corrected retry must create an instance");
@@ -648,12 +626,13 @@ public class PgWorkflowEnginePayloadConstraintIT {
     /**
      * Starts the definition and returns the id of its single open task.
      *
+     * @param starter the engine that starts the instance and applies its completions
      * @param definitionId the fixture definition to start
      * @return the open task id
      */
-    private UUID startAndFindOpenTask(String definitionId) {
+    private UUID startAndFindOpenTask(WorkflowEngineHandle starter, String definitionId) {
         String id = UUID.randomUUID().toString();
-        WorkflowInstanceId workflowId = start(definitionId, new State(id), "start-" + id);
+        WorkflowInstanceId workflowId = start(starter, definitionId, new State(id), "start-" + id);
         UUID taskId = pool.preparedQuery(
                         "SELECT task_id FROM workflow_tasks WHERE workflow_id = $1 AND status = 'OPEN'")
                 .execute(Tuple.of(workflowId.value()))
@@ -666,19 +645,19 @@ public class PgWorkflowEnginePayloadConstraintIT {
     }
 
     /**
-     * Starts the definition on the validator-bound engine and waits for the result.
+     * Starts the definition on an engine and waits for the result.
      *
+     * @param starter the engine to start on
      * @param definitionId the definition to start
      * @param payload the raw start payload
      * @param key the start idempotency key
      * @return the created instance id; fails with {@link CompletionException} when the start fails
      */
-    private static WorkflowInstanceId start(String definitionId, Object payload, String key) {
-        return validatingEngine
-                .start(new StartCommand(
+    private static WorkflowInstanceId start(
+            WorkflowEngineHandle starter, String definitionId, Object payload, String key) {
+        return starter.start(new StartCommand(
                         definitionId, contractNameOf(definitionId), payload, key, null, null, null, null, null))
-                .compose(started -> validatingEngine
-                        .executionProbe()
+                .compose(started -> starter.executionProbe()
                         .awaitIdle(started, IDLE_TIMEOUT)
                         .map(idle -> started))
                 .toCompletionStage()
@@ -702,8 +681,8 @@ public class PgWorkflowEnginePayloadConstraintIT {
     }
 
     private static WorkflowInvalidPayloadException assertInvalidStart(Object payload, String key) {
-        CompletionException failure =
-                assertThrows(CompletionException.class, () -> start(START_DEFINITION_ID, payload, key));
+        CompletionException failure = assertThrows(
+                CompletionException.class, () -> start(validatingEngine, START_DEFINITION_ID, payload, key));
         return assertInstanceOf(
                 WorkflowInvalidPayloadException.class,
                 failure.getCause(),
@@ -720,25 +699,59 @@ public class PgWorkflowEnginePayloadConstraintIT {
     }
 
     /**
-     * Completes the task on the validator-bound engine and returns the rejection the future fails with.
+     * Records a completion on an engine, waits for its executor to settle it and returns the recorded result.
      *
+     * @param engine the engine that started the task's instance
      * @param taskId the open task
      * @param decision the decision name
      * @param payload the raw payload
      * @param key the idempotency key
-     * @return the rejection; the assertion fails when the future fails with any other type
+     * @return the result of recording the completion
      */
-    private static WorkflowInvalidPayloadException completeExpectingViolations(
-            UUID taskId, String decision, Object payload, String key) {
-        CompletionException failure =
-                assertThrows(CompletionException.class, () -> complete(validatingEngine, taskId, decision, payload, key)
-                        .toCompletionStage()
-                        .toCompletableFuture()
-                        .join());
-        return assertInstanceOf(
-                WorkflowInvalidPayloadException.class,
-                failure.getCause(),
-                "completion must fail with WorkflowInvalidPayloadException");
+    private static TaskMutationResult completeSettled(
+            WorkflowEngineHandle engine, UUID taskId, String decision, Object payload, String key) {
+        return complete(engine, taskId, decision, payload, key)
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+    }
+
+    /**
+     * Asserts that the task's only recorded completion was rejected with a sanitized reason, that its history entry
+     * carries the same reason, and that the task is {@code OPEN} again with no reservation owner.
+     */
+    private static void assertRejectedAndReopened(UUID taskId, String context) {
+        Row command = pool.preparedQuery("SELECT id, state, last_error FROM workflow_commands WHERE task_id = $1"
+                        + " ORDER BY id DESC LIMIT 1")
+                .execute(Tuple.of(taskId))
+                .map(rs -> rs.iterator().next())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+        assertEquals("REJECTED", command.getString("state"), context);
+        assertTrue(command.getString("last_error").startsWith("DETERMINISTIC_FAILURE"), context);
+        assertEquals("OPEN", taskStatus(taskId), context + ": a rejected completion must leave the task OPEN");
+        assertNull(reservationOwner(taskId), context);
+        assertEquals(
+                1L,
+                count(
+                        "SELECT count(*) FROM workflow_history WHERE (payload_json->>'commandId')::bigint = $1"
+                                + " AND entry_type = 'COMMAND_REJECTED'",
+                        Tuple.of(command.getLong("id"))),
+                context + ": the rejection is logged");
+    }
+
+    /** The reasons and history payloads of every command recorded for the task, as one string. */
+    private static String recordedText(UUID taskId) {
+        return pool.preparedQuery("SELECT coalesce(string_agg(last_error, ' '), '') || ' ' ||"
+                        + " coalesce((SELECT string_agg(h.payload_json::text, ' ') FROM workflow_history h"
+                        + " WHERE (h.payload_json->>'commandId')::bigint IN (SELECT id FROM workflow_commands WHERE task_id = $1)), '') AS text"
+                        + " FROM workflow_commands WHERE task_id = $1")
+                .execute(Tuple.of(taskId))
+                .map(rs -> rs.iterator().next().getString("text"))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
     }
 
     /** Returns the single detail whose path equals {@code path}, whatever the detail order. */
@@ -748,6 +761,20 @@ public class PgWorkflowEnginePayloadConstraintIT {
                 .toList();
         assertEquals(1, matching.size(), "exactly one detail at " + path + " expected in " + rejection.violations());
         return matching.get(0);
+    }
+
+    private static String lastError(UUID taskId) {
+        return pool.preparedQuery(
+                        "SELECT last_error FROM workflow_commands WHERE task_id = $1 ORDER BY id DESC LIMIT 1")
+                .execute(Tuple.of(taskId))
+                .map(rs -> rs.iterator().next().getString("last_error"))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+    }
+
+    private static long commandRows(UUID taskId) {
+        return count("SELECT count(*) FROM workflow_commands WHERE task_id = $1", Tuple.of(taskId));
     }
 
     private static String taskStatus(UUID taskId) {
@@ -777,6 +804,15 @@ public class PgWorkflowEnginePayloadConstraintIT {
         return pool.preparedQuery(sql)
                 .execute(params)
                 .map(rs -> rs.iterator().next().getLong(0))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+    }
+
+    private static Long reservationOwner(UUID taskId) {
+        return pool.preparedQuery("SELECT reservation_command_id FROM workflow_tasks WHERE task_id = $1")
+                .execute(Tuple.of(taskId))
+                .map(rs -> rs.iterator().next().getLong("reservation_command_id"))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();

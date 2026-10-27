@@ -8,11 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -37,6 +41,111 @@ class RecordTimePayloadValidatorTest {
                 () -> assertRefused(validator, overSizeLimit, "1025 encoded bytes", "maxPayloadBytes"),
                 () -> assertDepthBounds(validator, Kind.OBJECT),
                 () -> assertDepthBounds(validator, Kind.ARRAY));
+    }
+
+    @Test
+    @DisplayName("a schema with a non-local $ref is refused before it is compiled or any reference is resolved")
+    void schemaWithNonLocalRefIsRefusedBeforeCompilation() {
+        // Given schemas whose $ref is local, remote, a relative file, or nested remote inside properties, and a
+        // compiler that stands for any resolver and fails the test when it is reached
+        JsonObject payload = new JsonObject().put("a", 1);
+        JsonObject local = new JsonObject(
+                "{\"type\":\"object\",\"properties\":{\"a\":{\"$ref\":\"#/$defs/x\"}},\"$defs\":{\"x\":{\"type\":\"integer\"}}}");
+        JsonObject remote = new JsonObject("{\"$ref\":\"https://example.test/s.json\"}");
+        JsonObject relative = new JsonObject("{\"$ref\":\"other.json#/a\"}");
+        JsonObject nested = new JsonObject(
+                "{\"type\":\"object\",\"properties\":{\"a\":{\"$ref\":\"https://example.test/s.json\"}}}");
+        AtomicInteger resolverCalls = new AtomicInteger();
+        var validator = new RecordTimePayloadValidator(new WorkflowRecordingConfig(5000L, 1024), schema -> {
+            resolverCalls.incrementAndGet();
+            throw new AssertionError("a non-local $ref must be refused before compilation");
+        });
+        var realCompiler = new RecordTimePayloadValidator(new WorkflowRecordingConfig(5000L, 1024));
+
+        // When a valid payload is validated against each
+        // Then the local schema validates it and the others are refused naming the subject, without any resolution
+        assertAll(
+                "non-local $ref",
+                () -> assertDoesNotThrow(
+                        () -> realCompiler.validate(payload, local, "decision 'approve'"),
+                        "a local $ref is resolved within the schema"),
+                () -> assertNonLocalRef(validator, payload, remote, "remote $ref"),
+                () -> assertNonLocalRef(validator, payload, relative, "relative $ref"),
+                () -> assertNonLocalRef(validator, payload, nested, "nested remote $ref"),
+                () -> assertThat(resolverCalls).as("resolver calls").hasValue(0));
+    }
+
+    private static void assertNonLocalRef(
+            RecordTimePayloadValidator validator, Object payload, JsonObject schema, String description) {
+        WorkflowInvalidPayloadException refusal = assertThrows(
+                WorkflowInvalidPayloadException.class,
+                () -> validator.validate(payload, schema, "decision 'approve'"),
+                description + " is refused");
+        assertThat(refusal.getMessage())
+                .as(description + " names the subject and the reason")
+                .contains("decision 'approve'", "non-local $ref");
+    }
+
+    @Test
+    @DisplayName("compiled schemas are cached by the hash of their canonical JSON within the configured bound")
+    void compiledSchemasAreCachedBySchemaHashWithinTheBound() {
+        // Given a cache of two entries and schemas A, A' (A with its keys in another order), B and C
+        CountingCompiler compiler = new CountingCompiler();
+        var validator = new RecordTimePayloadValidator(new WorkflowRecordingConfig(5000L, 1024, 100, 2), compiler);
+        JsonObject a = new JsonObject()
+                .put("type", "object")
+                .put(
+                        "properties",
+                        new JsonObject()
+                                .put("x", new JsonObject().put("type", "integer"))
+                                .put("y", new JsonObject().put("type", "string")));
+        JsonObject aReordered = new JsonObject()
+                .put(
+                        "properties",
+                        new JsonObject()
+                                .put("y", new JsonObject().put("type", "string"))
+                                .put("x", new JsonObject().put("type", "integer")))
+                .put("type", "object");
+        JsonObject b = new JsonObject().put("type", "object").put("required", new JsonArray().add("b"));
+        JsonObject c = new JsonObject().put("type", "object").put("required", new JsonArray().add("c"));
+        JsonObject payload = new JsonObject().put("x", 1);
+
+        // When payloads are validated against A, A', B, C and then A again
+        List<Integer> compilations = new ArrayList<>();
+        List<Integer> cached = new ArrayList<>();
+        for (JsonObject schema : List.of(a, aReordered, b, c, a)) {
+            validator.validate(payload, schema, "decision 'approve'");
+            compilations.add(compiler.compilations());
+            cached.add(validator.schemaCacheSize());
+        }
+
+        // Then A' hits A's entry, C evicts the oldest entry, A compiles again and the cache never exceeds two entries
+        assertThat(compilations).containsExactly(1, 1, 2, 3, 4);
+        assertThat(cached).allSatisfy(size -> assertThat(size).isLessThanOrEqualTo(2));
+
+        // And the cache bound is configuration: at least one entry, 256 by default
+        ConfigurationException refused =
+                assertThrows(ConfigurationException.class, () -> new WorkflowRecordingConfig(5000L, 1024, 100, 0));
+        assertThat(refused.getMessage()).contains("workflow.recording.schemaCacheMaxEntries");
+        assertThat(WorkflowRecordingConfig.defaults().schemaCacheMaxEntries()).isEqualTo(256);
+        assertThat(new WorkflowRecordingConfig(5000L, 1024).schemaCacheMaxEntries())
+                .isEqualTo(256);
+    }
+
+    /** A schema compiler that accepts every payload and counts how often it was asked to compile. */
+    private static final class CountingCompiler implements RecordTimePayloadValidator.SchemaCompiler {
+
+        private final AtomicInteger compilations = new AtomicInteger();
+
+        @Override
+        public RecordTimePayloadValidator.CompiledSchema compile(JsonObject schema) {
+            compilations.incrementAndGet();
+            return payload -> List.of();
+        }
+
+        int compilations() {
+            return compilations.get();
+        }
     }
 
     /** Checks both sides of the depth boundary and a chain too deep for a recursive walk. */

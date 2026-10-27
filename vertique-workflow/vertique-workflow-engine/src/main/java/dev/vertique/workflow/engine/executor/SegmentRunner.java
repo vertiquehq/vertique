@@ -46,7 +46,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>A recorded {@code SIGNAL} settles itself inside its savepoint: the engine parks it, or rejects or stales it with a
  * reason, and answers with the matching outcome, so only an applied signal is completed here. A signal's deterministic
- * failure and its own step-limit overrun never reach the dispositions above.
+ * failure and its own step-limit overrun never reach the dispositions above. A recorded {@code COMPLETION} does the same:
+ * the engine applies it under a savepoint and, when it is rejected, reopens the task it reserved and answers with the
+ * matching outcome.
  *
  * <p>No executor connection ever waits on an execution lock.
  */

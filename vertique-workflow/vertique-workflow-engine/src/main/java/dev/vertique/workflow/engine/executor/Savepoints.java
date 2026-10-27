@@ -6,6 +6,7 @@ package dev.vertique.workflow.engine.executor;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
+import dev.vertique.workflow.exception.WorkflowStaleSubjectVersionException;
 import dev.vertique.workflow.exception.WorkflowSubjectVersionUnavailableException;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
@@ -19,8 +20,9 @@ import java.util.function.Supplier;
  * <p>A failure is classified before the connection is touched again. A failure that stands for a lost or timed-out
  * transaction (the segment deadline, a lost claim, a transient database failure) and any failure that is not a
  * deterministic one of the operation itself is passed on as it is, and the segment rolls back as a whole. Only a
- * step-limit overrun and a deterministic failure (an invalid payload, a callback or definition failure, a task that
- * requires a versioned subject on an instance that has none) are contained:
+ * step-limit overrun and a deterministic failure (an invalid payload, a callback or definition failure, a reviewed
+ * subject version that does not match the task's, a task that requires a versioned subject on an instance that has
+ * none) are contained:
  * the transaction rolls back to the savepoint and the outcome is returned for the caller to settle.
  */
 public final class Savepoints {
@@ -116,6 +118,7 @@ public final class Savepoints {
             if (cause instanceof WorkflowInvalidPayloadException
                     || cause instanceof WorkflowDefinitionException
                     || cause instanceof WorkflowSignalRejectedException
+                    || cause instanceof WorkflowStaleSubjectVersionException
                     || cause instanceof WorkflowSubjectVersionUnavailableException) {
                 return Containment.DETERMINISTIC;
             }

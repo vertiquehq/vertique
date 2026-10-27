@@ -104,12 +104,13 @@ public final class TransactionalDefaultTaskService implements TransactionalTaskS
     /**
      * {@inheritDoc}
      *
-     * <p>Delegates to {@link TransactionalTaskCallbacks#taskCompleted}. The SPI owns the entire
-     * completion path: dedup, decision validation, payload coercion, persistence, and history.
-     * The engine surfaces &quot;not waiting&quot; / &quot;already terminal&quot; as a failed
-     * {@link Future} with {@link WorkflowTaskNotWaitingException} or
-     * {@link dev.vertique.workflow.exception.WorkflowConflictException} <em>directly</em> — it does
-     * not return {@link TaskMutationResult#STALE_NOOP} for completion. Translates the result:
+     * <p>Delegates to {@link TransactionalTaskCallbacks#taskCompleted}. The SPI owns the recording: the duplicate
+     * lookup, the payload checks against the decision schema stored with the task, the deduplication claim, the
+     * reservation of the task ({@code COMPLETING}) and the {@code COMPLETION} command. The decision is applied
+     * afterwards by the executor, so the returned future completes when the completion is recorded. The engine surfaces
+     * &quot;not waiting&quot; (a task that is not {@code OPEN}, including one already being completed) as a failed
+     * {@link Future} with {@link WorkflowTaskNotWaitingException} <em>directly</em> — it does not return
+     * {@link TaskMutationResult#STALE_NOOP} for completion. Translates the result:
      * <ul>
      *   <li>{@link TaskMutationResult#APPLIED} → succeeded {@link Future}.</li>
      *   <li>{@link TaskMutationResult#LOST_TO_RACE} → succeeded {@link Future} (idempotent retry;
@@ -121,7 +122,7 @@ public final class TransactionalDefaultTaskService implements TransactionalTaskS
      *
      * @param cmd the completion command; must not be null
      * @param tx the active transaction context; must not be null
-     * @return a {@link Future} that completes when the task completion has been persisted
+     * @return a {@link Future} that completes when the task completion has been recorded
      */
     @Override
     public Future<Void> complete(TaskCompletionCommand cmd, SqlClient tx) {

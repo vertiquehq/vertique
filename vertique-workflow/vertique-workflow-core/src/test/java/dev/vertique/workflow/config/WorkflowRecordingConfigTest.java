@@ -125,6 +125,36 @@ class WorkflowRecordingConfigTest {
                 .isEqualTo(100);
     }
 
+    @ParameterizedTest
+    @CsvSource({"absent, 256", "1, 1", "2048, 2048", "0, -1", "-5, -1"})
+    @DisplayName("the schema cache size defaults to 256 and is at least one")
+    void schemaCacheMaxEntriesDefaultsTo256AndIsAtLeastOne(String input, int expected) {
+        // Given a missing key or one explicit value
+        JsonObject config = "absent".equals(input)
+                ? new JsonObject()
+                : new JsonObject()
+                        .put(
+                                "workflow",
+                                new JsonObject()
+                                        .put(
+                                                "recording",
+                                                new JsonObject()
+                                                        .put("schemaCacheMaxEntries", Integer.parseInt(input))));
+
+        // When parsed through the production configuration module
+        // Then the accepted value is retained or the configuration error names the full key
+        if (expected < 0) {
+            assertThatThrownBy(() -> configured(config))
+                    .isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("workflow.recording.schemaCacheMaxEntries");
+        } else {
+            assertThat(configured(config).schemaCacheMaxEntries()).isEqualTo(expected);
+        }
+        assertThat(WorkflowRecordingConfig.defaults().schemaCacheMaxEntries()).isEqualTo(256);
+        assertThat(new WorkflowRecordingConfig(5000L, 1024, 100).schemaCacheMaxEntries())
+                .isEqualTo(256);
+    }
+
     private static JsonObject withMaxPayloadBytes(int value) {
         return new JsonObject()
                 .put("workflow", new JsonObject().put("recording", new JsonObject().put("maxPayloadBytes", value)));

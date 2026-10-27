@@ -25,12 +25,14 @@ import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegist
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.postgresql.executor.PgWorkflowCommandRepository;
 import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
 import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
+import dev.vertique.workflow.postgresql.tasks.PgTaskReservations;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
@@ -439,6 +441,7 @@ public final class PgWorkflowEngineTestSupport {
                 handle);
         boolean mocked = Mockito.mockingDetails(pool).isMock();
         WorkflowEngineHandle engine = WorkflowEngineFactory.create(parts.commands(commands)
+                .taskReservations(new PgTaskReservations(pool, new PgDbExceptionMapper()))
                 .vertx(mocked ? null : ownerOf(pool))
                 .executorConfig(new WorkflowExecutorConfig(1, 8, 100, 60))
                 .build());
@@ -479,8 +482,9 @@ public final class PgWorkflowEngineTestSupport {
     }
 
     /**
-     * Decorates a command repository so that a peek returns only the heads of instances in {@code own}, and so that a
-     * peek that fails because the pool was closed stops the executor.
+     * Decorates a command repository so that a peek returns only the heads of instances in {@code own} (the instances
+     * whose start or task completion this engine recorded), and so that a peek that fails because the pool was closed
+     * stops the executor.
      */
     @SuppressWarnings("unchecked")
     private static WorkflowCommandRepository<SqlClient> ownStartsOnly(
@@ -491,6 +495,11 @@ public final class PgWorkflowEngineTestSupport {
                 WorkflowCommandRepository.class.getClassLoader(),
                 new Class<?>[] {WorkflowCommandRepository.class},
                 (proxy, method, arguments) -> {
+                    if ("recordCompletion".equals(method.getName())
+                            && arguments[0] instanceof dev.vertique.workflow.ops.WorkflowInstanceId completed) {
+                        // a completion this engine records is run by this engine, whoever started the instance
+                        own.add(completed.value());
+                    }
                     boolean peek = "peek".equals(method.getName());
                     Object[] forwarded = arguments;
                     int limit = 0;
@@ -584,6 +593,7 @@ public final class PgWorkflowEngineTestSupport {
         private WorkflowExecutorConfig executorConfig = WorkflowExecutorConfig.defaults();
         private WorkflowRecordingConfig recordingConfig;
         private WorkflowDefinitionRegistryStore definitionStore;
+        private WorkflowPlanSchemaProducer schemaProducer;
         private DurableContextPropagator propagator;
         private Set<InboundContextInitializer> inboundContextInitializers = Set.of();
         private Set<WorkflowExecutorObserver> executorObservers = Set.of();
@@ -612,6 +622,12 @@ public final class PgWorkflowEngineTestSupport {
         /** The recording bounds, when a proof overrides the engine defaults. */
         public ExecutorEngine recordingConfig(WorkflowRecordingConfig recordingConfig) {
             this.recordingConfig = recordingConfig;
+            return this;
+        }
+
+        /** The producer of the decision schemas new tasks store in their snapshots; none by default. */
+        public ExecutorEngine schemaProducer(WorkflowPlanSchemaProducer schemaProducer) {
+            this.schemaProducer = schemaProducer;
             return this;
         }
 
@@ -677,6 +693,7 @@ public final class PgWorkflowEngineTestSupport {
                     .joinStates(new PgJoinStateRepository(pool, ex))
                     .timerStore(new PgTimerStore(ex))
                     .taskStore(new PgTaskStore(pool, ex))
+                    .taskReservations(new PgTaskReservations(pool, ex))
                     .clock(Clock.systemUTC())
                     .recorders(recorders)
                     .optionalIntentKinds(Set.of(IntentKind.WORKFLOW_EVENT))
@@ -693,6 +710,9 @@ public final class PgWorkflowEngineTestSupport {
                     .commandWakeups(commandWakeups);
             if (recordingConfig != null) {
                 parts.recordingConfig(recordingConfig);
+            }
+            if (schemaProducer != null) {
+                parts.schemaProducer(Optional.of(schemaProducer));
             }
             return WorkflowEngineFactory.create(parts.build());
         }

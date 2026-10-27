@@ -11,6 +11,7 @@ import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
+import dev.vertique.workflow.engine.spi.TaskReservations;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
@@ -19,6 +20,7 @@ import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.sideeffect.IntentKind;
@@ -55,6 +57,7 @@ public final class WorkflowEngineParts {
     private final JoinStateRepository<SqlClient> joinStates;
     private final TimerStore<SqlClient> timerStore;
     private final TaskStore<SqlClient> taskStore;
+    private final TaskReservations<SqlClient> taskReservations;
     private final WorkflowCommandRepository<SqlClient> commands;
     private final Clock clock;
     private final Set<WorkflowSideEffectRecorder<SqlClient>> recorders;
@@ -69,6 +72,7 @@ public final class WorkflowEngineParts {
     private final WorkflowRecordingConfig recordingConfig;
     private final Set<WorkflowExecutorObserver> executorObservers;
     private final CommandWakeups commandWakeups;
+    private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
     private final @Nullable Vertx vertx;
 
     private WorkflowEngineParts(Builder b) {
@@ -82,6 +86,7 @@ public final class WorkflowEngineParts {
         this.joinStates = Objects.requireNonNull(b.joinStates, "joinStates");
         this.timerStore = Objects.requireNonNull(b.timerStore, "timerStore");
         this.taskStore = Objects.requireNonNull(b.taskStore, "taskStore");
+        this.taskReservations = Objects.requireNonNull(b.taskReservations, "taskReservations");
         this.commands = Objects.requireNonNull(b.commands, "commands");
         this.clock = Objects.requireNonNull(b.clock, "clock");
         this.recorders = Set.copyOf(b.recorders);
@@ -96,6 +101,7 @@ public final class WorkflowEngineParts {
         this.recordingConfig = Objects.requireNonNull(b.recordingConfig, "recordingConfig");
         this.executorObservers = Set.copyOf(b.executorObservers);
         this.commandWakeups = Objects.requireNonNull(b.commandWakeups, "commandWakeups");
+        this.schemaProducer = b.schemaProducer;
         this.vertx = b.vertx;
     }
 
@@ -156,6 +162,11 @@ public final class WorkflowEngineParts {
     /** The task store. */
     public TaskStore<SqlClient> taskStore() {
         return taskStore;
+    }
+
+    /** The reservations through which a recorded completion owns its task. */
+    public TaskReservations<SqlClient> taskReservations() {
+        return taskReservations;
     }
 
     /** The command repository SPI the execution probe reads. */
@@ -241,6 +252,14 @@ public final class WorkflowEngineParts {
     }
 
     /**
+     * The producer of the payload schemas a new task's decision snapshot stores; empty by default, in which case the
+     * tasks it creates carry no schemas and the executor alone validates their completions.
+     */
+    public Optional<WorkflowPlanSchemaProducer> schemaProducer() {
+        return schemaProducer;
+    }
+
+    /**
      * The Vert.x instance the executor is deployed on when the owner starts it through
      * {@link WorkflowEngineHandle#executor()}; {@code null} when none is supplied, in which case that start fails.
      */
@@ -260,6 +279,7 @@ public final class WorkflowEngineParts {
         private JoinStateRepository<SqlClient> joinStates;
         private TimerStore<SqlClient> timerStore;
         private TaskStore<SqlClient> taskStore;
+        private TaskReservations<SqlClient> taskReservations;
         private WorkflowCommandRepository<SqlClient> commands;
         private Clock clock;
         private Set<WorkflowSideEffectRecorder<SqlClient>> recorders = Set.of();
@@ -274,6 +294,7 @@ public final class WorkflowEngineParts {
         private WorkflowRecordingConfig recordingConfig = WorkflowRecordingConfig.defaults();
         private Set<WorkflowExecutorObserver> executorObservers = Set.of();
         private CommandWakeups commandWakeups = CommandWakeups.none();
+        private Optional<WorkflowPlanSchemaProducer> schemaProducer = Optional.empty();
         private @Nullable Vertx vertx;
 
         private Builder() {}
@@ -335,6 +356,12 @@ public final class WorkflowEngineParts {
         /** Sets the task store. */
         public Builder taskStore(TaskStore<SqlClient> taskStore) {
             this.taskStore = taskStore;
+            return this;
+        }
+
+        /** Sets the task reservations. */
+        public Builder taskReservations(TaskReservations<SqlClient> taskReservations) {
+            this.taskReservations = taskReservations;
             return this;
         }
 
@@ -420,6 +447,12 @@ public final class WorkflowEngineParts {
         /** Sets the observers the executor reports its events to. */
         public Builder executorObservers(Set<WorkflowExecutorObserver> executorObservers) {
             this.executorObservers = Objects.requireNonNull(executorObservers, "executorObservers");
+            return this;
+        }
+
+        /** Sets the producer of the payload schemas a new task's decision snapshot stores. */
+        public Builder schemaProducer(Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+            this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
             return this;
         }
 

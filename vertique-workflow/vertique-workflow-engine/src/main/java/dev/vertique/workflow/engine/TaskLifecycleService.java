@@ -3,10 +3,20 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMaps;
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
+import dev.vertique.workflow.engine.executor.ClaimLostException;
+import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.executor.Savepoints;
+import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DedupClaim;
+import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.TaskReservations;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
@@ -29,6 +39,7 @@ import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.HumanTaskNode.AssignmentSpec;
 import dev.vertique.workflow.plan.ReminderSpec;
 import dev.vertique.workflow.plan.WorkflowNode;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.state.BranchStatus;
@@ -45,24 +56,31 @@ import dev.vertique.workflow.state.payload.TaskExpiredHistoryPayload;
 import dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload;
 import dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload;
 import dev.vertique.workflow.tasks.TaskAssignment;
+import dev.vertique.workflow.tasks.TaskDecisionDescriptor;
 import dev.vertique.workflow.tasks.TaskReassignmentResult;
 import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.tasks.TaskTransition;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,8 +92,9 @@ import org.slf4j.LoggerFactory;
  * (PRD-WF-006, Slice C7). It absorbs the {@code TransactionalTaskCallbacks} bodies and their
  * supporting helpers:
  * <ul>
- *   <li>{@link #taskCompleted} / {@link #doCompleteTask} / {@link #doCompleteTaskBound} /
- *       {@link #doBranchCompleteTask} — task completion (single-path and branch-owned).</li>
+ *   <li>{@link #taskCompleted} — records a task completion behind a reservation of the task; {@link #runCompletion}
+ *       applies it in an executor segment through {@link #doCompleteTaskBound} (single-path) or
+ *       {@link #doBranchCompleteTask} (branch-owned).</li>
  *   <li>{@link #taskDueFired} / {@link #doTaskDueFiredBound} / {@link #advanceForDueExpired} /
  *       {@link #doBranchTaskDueFired} — due-date expiry.</li>
  *   <li>{@link #taskReassigned} — task reassignment.</li>
@@ -165,6 +184,18 @@ final class TaskLifecycleService {
     /** Takes the execution lock of a task's instance before a completion or a reassignment writes. */
     private final WorkflowCommandRepository<SqlClient> commands;
 
+    /** Reserves a task for a recorded completion and reopens it when the completion is rejected. */
+    private final TaskReservations<SqlClient> reservations;
+
+    /** Writes the history of what became of a recorded completion. */
+    private final WorkflowHistoryRecorder historyRecorder;
+
+    /** The size, depth and schema checks a completion meets before it is recorded. */
+    private final RecordTimePayloadValidator recordValidator;
+
+    /** Produces the payload schema of each decision a new task offers; absent when no schema module is installed. */
+    private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
+
     /**
      * Constructs a new task-lifecycle service.
      *
@@ -194,6 +225,11 @@ final class TaskLifecycleService {
      *     payload name the index does not know is resolved as a binary class name
      * @param commands the command repository whose execution lock a completion or a reassignment takes after it has
      *     found the task's instance
+     * @param reservations the reservations through which a recorded completion owns its task
+     * @param historyRecorder the recorder of the history entries of command outcomes
+     * @param recording the recording configuration whose bounds a completion's payload must meet, or empty for the
+     *     defaults
+     * @param schemaProducer the producer of the payload schemas a new task's decision snapshot stores, if any
      */
     @Inject
     TaskLifecycleService(
@@ -214,8 +250,16 @@ final class TaskLifecycleService {
             WorkflowContextBinder contextBinder,
             PayloadConstraintCheck payloadConstraintCheck,
             WorkflowTypeNames typeNames,
-            WorkflowCommandRepository<SqlClient> commands) {
+            WorkflowCommandRepository<SqlClient> commands,
+            TaskReservations<SqlClient> reservations,
+            WorkflowHistoryRecorder historyRecorder,
+            Optional<WorkflowRecordingConfig> recording,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
         this.commands = commands;
+        this.reservations = reservations;
+        this.historyRecorder = historyRecorder;
+        this.recordValidator = new RecordTimePayloadValidator(recording.orElseGet(WorkflowRecordingConfig::defaults));
+        this.schemaProducer = schemaProducer;
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -295,7 +339,8 @@ final class TaskLifecycleService {
      * @param subjectVersionAtCreation  snapshot of the subject version at creation time, or
      *                                  {@code null} when the instance has no versioned subject ref
      * @param now                       the creation timestamp
-     * @return a new {@link TaskRecord} ready for {@link TaskStore#insertOpen}
+     * @return a new {@link TaskRecord} ready for {@link TaskStore#insertOpen}; it records the node's
+     *     {@code requireVersionStability} so the requirement can be checked from the row
      */
     static TaskRecord buildTaskRecord(
             UUID taskId,
@@ -331,7 +376,22 @@ final class TaskLifecycleService {
                 null, // branchTokenId
                 null, // forkStepId
                 null, // branchId
-                inst.scopeKey());
+                inst.scopeKey(),
+                htn.requireVersionStability(),
+                null); // reservationCommandId
+    }
+
+    /**
+     * Builds the decision snapshot a new task stores: each decision's name, payload type and next step, and the JSON
+     * Schema of its payload when a schema producer is installed. A task whose snapshot carries no schemas is validated
+     * by the executor alone.
+     *
+     * @param htn the human task node the task is created for
+     * @param rw  the resolved runtime workflow the node belongs to
+     * @return the descriptors, one per decision of the node
+     */
+    List<TaskDecisionDescriptor> decisionSnapshot(HumanTaskNode htn, RuntimeWorkflow rw) {
+        return DecisionSnapshots.of(htn, rw, schemaProducer);
     }
 
     /**
@@ -415,117 +475,484 @@ final class TaskLifecycleService {
     // --- Task completion ---
 
     /**
-     * Completes a human task.
+     * Records the completion of a human task and returns once it is recorded; an executor applies it afterwards.
      *
-     * <p>Implementation steps:
+     * <p>Everything here reads the task row alone, never the plan:
      * <ol>
-     *   <li>Non-locking task lookup to discover workflowId and decisionsSnapshot.</li>
-     *   <li>Fingerprint computation and idempotency dedup claim.</li>
-     *   <li>Decision validation and payload coercion.</li>
-     *   <li>Non-locking instance read; validates WAITING/TASK/wait-key slot.</li>
-     *   <li>Cancel the due-date timer (if present) — lock order: timers before tasks.</li>
-     *   <li>Lock the task row for completion; a supplied {@code expectedAssignment} must still match.</li>
-     *   <li>Write completion columns.</li>
-     *   <li>Apply decision applicator to state.</li>
-     *   <li>Optimistic UPDATE on workflow_instances.</li>
-     *   <li>Append TASK_COMPLETED history.</li>
-     *   <li>Drive transitions from the decision's next step.</li>
+     *   <li>A committed duplicate (the same key and fingerprint) returns its earlier result at once, before any other
+     *       check.</li>
+     *   <li>Then, without a lock, the payload's size and depth bounds and, when the task's decision snapshot carries a
+     *       schema for the requested decision, the payload's conformance to it. A refusal writes nothing and takes no
+     *       lock.</li>
+     *   <li>Under the execution lock: the duplicate again (a key with another fingerprint is a conflict), the task
+     *       still {@code OPEN}, the expected assignment, the reviewed subject version when the task requires
+     *       stability, and the decision.</li>
+     *   <li>Then the deduplication claim, the {@code COMPLETION} command and the reservation of the task
+     *       ({@code OPEN} to {@code COMPLETING}, owned by the command).</li>
      * </ol>
+     *
+     * <p>A task created before decision schemas and the stability flag were stored skips the checks that need them; the
+     * executor runs them from the plan.
      *
      * @param cmd the completion command; must not be null
      * @param tx  the active transaction context
-     * @return a {@link Future} resolving to the mutation result
+     * @return a {@link Future} resolving to {@link TaskMutationResult#APPLIED} once the completion is recorded, and also
+     *     for a committed duplicate, which returns its earlier result
      */
     Future<TaskMutationResult> taskCompleted(TaskCompletionCommand cmd, SqlClient tx) {
-        // Step 1: Non-locking task lookup.
-        return taskStore.findById(cmd.taskId(), tx).compose(optTask -> {
-            if (optTask.isEmpty()) {
-                return Future.failedFuture(new WorkflowTaskNotFoundException(cmd.taskId()));
+        String fingerprint;
+        try {
+            fingerprint = fingerprintCanonicalizer.fingerprintCompletion(cmd);
+        } catch (Exception e) {
+            return Future.failedFuture(e);
+        }
+        return dedup.findTaskCompletion(cmd.taskId(), cmd.idempotencyKey(), tx).compose(committed -> {
+            if (committed.isPresent() && fingerprint.equals(committed.get())) {
+                return Future.succeededFuture(TaskMutationResult.APPLIED);
             }
-            TaskRecord task = optTask.get();
+            return taskStore.findById(cmd.taskId(), tx).compose(optTask -> {
+                if (optTask.isEmpty()) {
+                    return Future.<TaskMutationResult>failedFuture(new WorkflowTaskNotFoundException(cmd.taskId()));
+                }
+                TaskRecord task = optTask.get();
+                try {
+                    checkPayload(cmd, task);
+                } catch (WorkflowInvalidPayloadException e) {
+                    return Future.<TaskMutationResult>failedFuture(e);
+                }
+                return recordCompletion(cmd, fingerprint, task, tx);
+            });
+        });
+    }
 
-            // Step 2: Fingerprint and dedup.
-            String fingerprint;
+    /**
+     * Checks the payload's bounds and, when the task's snapshot holds a schema for the requested decision, its
+     * conformance to that schema. A decision the snapshot does not hold, or one without a schema, is left to the checks
+     * under the lock and to the executor.
+     */
+    private void checkPayload(TaskCompletionCommand cmd, TaskRecord task) {
+        JsonObject schema = task.decisions().stream()
+                .filter(decision -> decision.name().equals(cmd.decisionName()))
+                .map(TaskDecisionDescriptor::payloadSchema)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+        try {
+            if (schema == null) {
+                recordValidator.validate(cmd.payload());
+            } else {
+                recordValidator.validate(
+                        cmd.payload(), schema, "decision '" + EchoedNames.bounded(cmd.decisionName()) + "'");
+            }
+        } catch (WorkflowInvalidPayloadException e) {
+            throw new WorkflowInvalidPayloadException(
+                    "Completion of task '" + task.taskId() + "' of instance '"
+                            + task.workflowId().value() + "' is refused: " + e.getMessage(),
+                    e.violations());
+        }
+    }
+
+    /** The part of the recording that runs under the instance's execution lock. */
+    private Future<TaskMutationResult> recordCompletion(
+            TaskCompletionCommand cmd, String fingerprint, TaskRecord task, SqlClient tx) {
+        return commands.lockInstance(task.workflowId(), tx)
+                .compose(locked -> dedup.findTaskCompletion(cmd.taskId(), cmd.idempotencyKey(), tx))
+                .compose(committed -> {
+                    if (committed.isPresent()) {
+                        return duplicateOf(cmd, fingerprint, committed.get());
+                    }
+                    return taskStore.lockForCompletion(cmd.taskId(), tx).compose(optLocked -> {
+                        if (optLocked.isEmpty()) {
+                            return Future.<TaskMutationResult>failedFuture(
+                                    new WorkflowTaskNotFoundException(cmd.taskId()));
+                        }
+                        TaskRecord locked = optLocked.get();
+                        RuntimeException refusal = refusalOf(cmd, locked);
+                        if (refusal != null) {
+                            return Future.<TaskMutationResult>failedFuture(refusal);
+                        }
+                        return reserve(cmd, fingerprint, locked, tx);
+                    });
+                });
+    }
+
+    /** The result of a completion whose key is already committed: the earlier result, or a conflict. */
+    private static Future<TaskMutationResult> duplicateOf(
+            TaskCompletionCommand cmd, String fingerprint, String existingFingerprint) {
+        if (fingerprint.equals(existingFingerprint)) {
+            return Future.succeededFuture(TaskMutationResult.APPLIED);
+        }
+        return Future.failedFuture(new WorkflowIdempotencyConflictException(
+                "task-complete", cmd.idempotencyKey(), existingFingerprint, fingerprint));
+    }
+
+    /**
+     * Why the locked task row cannot take the completion, in the order the checks run, or {@code null} when it can:
+     * the task is not {@code OPEN}, the caller's expected assignment is stale, the reviewed subject version is missing or
+     * different on a task that requires stability, or the decision is not in the snapshot.
+     */
+    @Nullable
+    private static RuntimeException refusalOf(TaskCompletionCommand cmd, TaskRecord locked) {
+        if (locked.status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
+            return new WorkflowTaskNotWaitingException(cmd.taskId());
+        }
+        if (cmd.expectedAssignment() != null && !cmd.expectedAssignment().equals(locked.assignment())) {
+            return new WorkflowStaleAssignmentException(cmd.taskId(), cmd.expectedAssignment(), locked.assignment());
+        }
+        if (Boolean.TRUE.equals(locked.requireVersionStability())) {
+            if (cmd.reviewedSubjectVersion() == null) {
+                return new WorkflowStaleSubjectVersionException("Task '" + cmd.taskId() + "' (step '" + locked.stepId()
+                        + "') requires a reviewedSubjectVersion but the caller did not supply one");
+            }
+            if (!Objects.equals(cmd.reviewedSubjectVersion(), locked.subjectVersionAtCreation())) {
+                return new WorkflowStaleSubjectVersionException("Task '" + cmd.taskId() + "' (step '"
+                        + locked.stepId() + "'): reviewed version '" + cmd.reviewedSubjectVersion()
+                        + "' did not match snapshot '" + locked.subjectVersionAtCreation() + "'");
+            }
+        }
+        boolean offered =
+                locked.decisions().stream().anyMatch(decision -> decision.name().equals(cmd.decisionName()));
+        return offered ? null : WorkflowPayloads.unknownDecision();
+    }
+
+    /** The deduplication claim, the {@code COMPLETION} command and the reservation, under the execution lock. */
+    private Future<TaskMutationResult> reserve(
+            TaskCompletionCommand cmd, String fingerprint, TaskRecord task, SqlClient tx) {
+        return dedup.claimOrResolveTaskCompletion(
+                        cmd.taskId(), cmd.idempotencyKey(), task.workflowId(), fingerprint, tx)
+                .compose((DedupClaim claim) -> {
+                    if (!claim.inserted()) {
+                        return duplicateOf(cmd, fingerprint, claim.existingFingerprint());
+                    }
+                    String payloadJson = cmd.payload() == null ? null : Json.encode(cmd.payload());
+                    return commands.recordCompletion(
+                                    task.workflowId(),
+                                    cmd.taskId(),
+                                    cmd.idempotencyKey(),
+                                    payloadJson,
+                                    CompletionTarget.of(cmd).encode(),
+                                    tx)
+                            .compose(commandId ->
+                                    reservations.markCompleting(cmd.taskId().toString(), commandId, tx))
+                            .compose(reserved -> reserved
+                                    ? Future.succeededFuture(TaskMutationResult.APPLIED)
+                                    : Future.<TaskMutationResult>failedFuture(
+                                            new WorkflowTaskNotWaitingException(cmd.taskId())));
+                });
+    }
+
+    /**
+     * What a recorded completion carries beyond its payload: the task, the decision, the reviewed subject version and
+     * the completing actor. Stored as the command's target and read back by the executor.
+     *
+     * @param taskId                the task the completion reserves
+     * @param decisionName          the decision
+     * @param reviewedSubjectVersion the subject version the reviewer saw, or {@code null}
+     * @param completedBy           the actor completing the task
+     */
+    private record CompletionTarget(
+            UUID taskId, String decisionName, @Nullable String reviewedSubjectVersion, WorkflowActor completedBy) {
+
+        static CompletionTarget of(TaskCompletionCommand cmd) {
+            return new CompletionTarget(
+                    cmd.taskId(), cmd.decisionName(), cmd.reviewedSubjectVersion(), cmd.completedBy());
+        }
+
+        String encode() {
+            JsonObject target = new JsonObject()
+                    .put("taskId", taskId.toString())
+                    .put("decision", decisionName)
+                    .put("completedBy", new JsonObject(new LinkedHashMap<>(WorkflowActorMaps.toMap(completedBy))));
+            if (reviewedSubjectVersion != null) {
+                target.put("reviewedSubjectVersion", reviewedSubjectVersion);
+            }
+            return target.encode();
+        }
+
+        static CompletionTarget of(SegmentCommand command) {
+            JsonObject target = new JsonObject(command.targetJson());
+            JsonObject actor = target.getJsonObject("completedBy");
+            String value = actor.getString("value");
+            WorkflowActor completedBy =
+                    switch (actor.getString("kind")) {
+                        case "USER" -> new WorkflowActor.User(value);
+                        case "SERVICE" -> new WorkflowActor.Service(value);
+                        default -> new WorkflowActor.System(value);
+                    };
+            return new CompletionTarget(
+                    UUID.fromString(target.getString("taskId")),
+                    target.getString("decision"),
+                    target.getString("reviewedSubjectVersion"),
+                    completedBy);
+        }
+
+        TaskCompletionCommand toCommand(@Nullable String payloadJson, String idempotencyKey) {
+            Object payload = payloadJson == null ? null : Json.decodeValue(payloadJson);
+            return new TaskCompletionCommand(
+                    taskId, decisionName, payload, idempotencyKey, completedBy, reviewedSubjectVersion);
+        }
+    }
+
+    // --- Recorded completions in a segment ---
+
+    /**
+     * Runs the work of a claimed {@code COMPLETION} command inside the segment's transaction and settles it, except when
+     * its application succeeds: then the executor completes it.
+     *
+     * <ul>
+     *   <li>The instance has ended: the command is rejected and the task, no longer completable, is cancelled.</li>
+     *   <li>The task is not {@code COMPLETING} under this command: the command is stale and no task is touched.</li>
+     *   <li>The instance has failed, or no longer waits for the task: the command is rejected and the task reopened.</li>
+     *   <li>Otherwise the decision is applied under a savepoint: the task is completed and the instance advances. A
+     *       deterministic failure or a step-limit overrun rolls back to the savepoint, the command is rejected with a
+     *       sanitized reason and the task is reopened; the instance is unchanged.</li>
+     * </ul>
+     *
+     * @param head    the peeked head the claim came from
+     * @param claim   the claim
+     * @param command the fenced command
+     * @param tx      the segment's transaction handle
+     * @return the outcome the executor acts on
+     */
+    Future<WorkflowSegments.Outcome> runCompletion(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        CompletionTarget target;
+        try {
+            target = CompletionTarget.of(command);
+        } catch (RuntimeException e) {
+            return Future.failedFuture(
+                    new IllegalStateException("The recorded completion " + command.commandId() + " cannot be read"));
+        }
+        CompletionTarget recorded = target;
+        return instances.findById(command.workflowId(), tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.<WorkflowSegments.Outcome>failedFuture(
+                        new dev.vertique.workflow.exception.WorkflowInstanceNotFoundException(command.workflowId()));
+            }
+            WorkflowInstance inst = found.get();
+            if (isEnded(inst.status())) {
+                return rejectEnded(claim, command, recorded, inst, tx);
+            }
+            if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
+                    || !inst.definitionId().equals(head.definitionId())
+                    || inst.definitionVersion() != head.definitionVersion()
+                    || !Objects.equals(inst.planHash(), head.planHash())) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            }
+            RuntimeWorkflow rw;
             try {
-                fingerprint = fingerprintCanonicalizer.fingerprintCompletion(cmd);
+                rw = resolveAndCheckPlanHash(inst);
+            } catch (dev.vertique.workflow.exception.WorkflowVersionNotRunnableException
+                    | WorkflowPlanHashDriftException e) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
             } catch (Exception e) {
                 return Future.failedFuture(e);
             }
-
-            // The execution lock comes before the dedup claim, the first write.
-            return commands.lockInstance(task.workflowId(), tx)
-                    .compose(locked -> dedup.claimOrResolveTaskCompletion(
-                            cmd.taskId(), cmd.idempotencyKey(), task.workflowId(), fingerprint, tx))
-                    .compose((DedupClaim claim) -> {
-                        if (!claim.inserted()) {
-                            if (fingerprint.equals(claim.existingFingerprint())) {
-                                // Idempotent retry — same key, same fingerprint. The original
-                                // command already advanced the workflow; surface as LOST_TO_RACE
-                                // so the public TaskService.complete(...) caller observes
-                                // success. STALE_NOOP is reserved for stale due-date / no-wait
-                                // cases where the workflow has legitimately moved past the task.
-                                return Future.succeededFuture(TaskMutationResult.LOST_TO_RACE);
-                            }
-                            // Conflict — same key, different fingerprint.
-                            return Future.failedFuture(new WorkflowIdempotencyConflictException(
-                                    "task-complete", cmd.idempotencyKey(), claim.existingFingerprint(), fingerprint));
-                        }
-                        return doCompleteTask(cmd, task, fingerprint, tx);
-                    });
+            return taskStore.findById(recorded.taskId(), tx).compose(optTask -> {
+                if (optTask.isEmpty()
+                        || optTask.get().status() != dev.vertique.workflow.tasks.TaskStatus.COMPLETING
+                        || !Objects.equals(optTask.get().reservationCommandId(), command.commandId())) {
+                    return settleStale(
+                            claim,
+                            command,
+                            recorded,
+                            CommandErrors.completionNotReserved(recorded.decisionName()),
+                            false,
+                            tx);
+                }
+                TaskRecord task = optTask.get();
+                if (inst.status() == WorkflowStatus.FAILED) {
+                    return settleRejected(
+                            claim,
+                            command,
+                            recorded,
+                            CommandErrors.completionInstanceFailed(recorded.decisionName()),
+                            tx);
+                }
+                if (task.branchTokenId() == null && !waitsForTask(inst, recorded.taskId())) {
+                    return settleRejected(
+                            claim, command, recorded, CommandErrors.completionFailure(recorded.decisionName()), tx);
+                }
+                return applyCompletion(claim, command, recorded, task, inst, rw, tx);
+            });
         });
     }
 
-    /**
-     * Performs the actual task-completion writes after the dedup claim has been won.
-     *
-     * <p>Branch-forks on {@link TaskRecord#branchTokenId()}: when the task is branch-owned,
-     * delegates to {@link #doBranchCompleteTask} which gates on the branch token's wait state
-     * instead of the parent instance's.
-     *
-     * @param cmd         the completion command
-     * @param task        the task record fetched in step 1
-     * @param fingerprint the computed fingerprint (unused after claim, kept for context)
-     * @param tx          the active transaction
-     * @return a {@link Future} resolving to the mutation result
-     */
-    private Future<TaskMutationResult> doCompleteTask(
-            TaskCompletionCommand cmd, TaskRecord task, String fingerprint, SqlClient tx) {
-        // Branch fork: route branch-owned tasks through the branch-specific path. The branch-owned
-        // path (doBranchCompleteTask) MUST NOT be binder-bound — bind-once routing rule, C2.
-        if (task.branchTokenId() != null) {
-            return doBranchCompleteTask(cmd, task, tx);
+    private static boolean waitsForTask(WorkflowInstance inst, UUID taskId) {
+        return inst.status() == WorkflowStatus.WAITING
+                && inst.waitType() == WaitType.TASK
+                && taskId.toString().equals(inst.waitKey());
+    }
+
+    private static boolean isEnded(WorkflowStatus status) {
+        return status == WorkflowStatus.COMPLETED
+                || status == WorkflowStatus.COMPENSATED
+                || status == WorkflowStatus.CANCELLED
+                || status == WorkflowStatus.EXPIRED;
+    }
+
+    private Future<WorkflowSegments.Outcome> applyCompletion(
+            ClaimedCommand claim,
+            SegmentCommand command,
+            CompletionTarget target,
+            TaskRecord task,
+            WorkflowInstance inst,
+            RuntimeWorkflow rw,
+            SqlClient tx) {
+        TaskCompletionCommand cmd;
+        DurableMetadata recorded;
+        try {
+            cmd = target.toCommand(command.payloadJson(), command.dedupKey());
+            recorded = WorkflowContextBinder.decodeCarrier(command.contextJson());
+        } catch (RuntimeException e) {
+            return Future.failedFuture(
+                    new IllegalStateException("The recorded completion " + command.commandId() + " cannot be read"));
         }
+        return historyRecorder
+                .appendCommandHistory(
+                        inst.id(), WorkflowEntryType.COMMAND_RECEIVED, command.commandId(), command.kind(), tx)
+                .compose(received -> Savepoints.attempt(tx, () -> {
+                    if (task.branchTokenId() != null) {
+                        // A branch drive never binds the recorded context: the branch token's own carrier is bound.
+                        return doBranchCompleteTask(cmd, task, tx);
+                    }
+                    return contextBinder.withRecordedBase(
+                            inst, command.commandId(), null, recorded, () -> doCompleteTaskBound(cmd, task, inst, tx));
+                }))
+                .compose(attempt -> switch (attempt) {
+                    case Savepoints.Attempt.Applied<TaskMutationResult> applied ->
+                        applied.value() == TaskMutationResult.APPLIED
+                                ? historyRecorder
+                                        .appendCommandHistory(
+                                                inst.id(),
+                                                WorkflowEntryType.COMMAND_COMPLETED,
+                                                command.commandId(),
+                                                command.kind(),
+                                                tx)
+                                        .map(done -> WorkflowSegments.Outcome.APPLIED)
+                                : settleStale(
+                                        claim,
+                                        command,
+                                        target,
+                                        CommandErrors.completionNotReserved(target.decisionName()),
+                                        true,
+                                        tx);
+                    case Savepoints.Attempt.Contained<TaskMutationResult> contained -> {
+                        log.warn(
+                                "Completion of task {} (command {}) of instance {} failed and was rejected: {}",
+                                target.taskId(),
+                                command.commandId(),
+                                inst.id().value(),
+                                contained.cause().getClass().getName());
+                        String reason = contained.kind() == Savepoints.Containment.STEP_LIMIT
+                                ? CommandErrors.completionStepLimit(target.decisionName(), driver.stepCap(tx))
+                                : CommandErrors.completionFailure(target.decisionName());
+                        yield settleRejected(claim, command, target, reason, tx);
+                    }
+                });
+    }
 
-        // Load the plan to get the applicator callback and payload type.
-        // The decisions snapshot on the task record carries name/payloadTypeName/nextStepId but
-        // not the applicatorCallbackId — that lives in the plan. We resolve the plan below.
-        WorkflowInstanceId workflowId = task.workflowId();
-
-        return instances.findById(workflowId, tx).compose(optInst -> {
-            if (optInst.isEmpty()
-                    || optInst.get().status() != WorkflowStatus.WAITING
-                    || optInst.get().waitType() != WaitType.TASK
-                    || !cmd.taskId().toString().equals(optInst.get().waitKey())) {
-                // Roll back the dedup row by failing the future (transaction will roll back).
-                return Future.failedFuture(new WorkflowTaskNotWaitingException(cmd.taskId()));
-            }
-            WorkflowInstance inst = optInst.get();
-
-            // Binder-row bind (Contract Appendix C2): instance-owned (no branch) task-completion
-            // drive.
-            return contextBinder.withBound(inst, null, () -> doCompleteTaskBound(cmd, task, inst, tx));
-        });
+    /** Rejects the command and reopens its task, in the segment's transaction. */
+    private Future<WorkflowSegments.Outcome> settleRejected(
+            ClaimedCommand claim, SegmentCommand command, CompletionTarget target, String reason, SqlClient tx) {
+        return commands.reject(command.commandId(), claim.token(), reason, tx)
+                .compose(TaskLifecycleService::requireRow)
+                .compose(done -> reservations.reopen(target.taskId().toString(), command.commandId(), tx))
+                .compose(reopened -> {
+                    if (!reopened) {
+                        log.warn(
+                                "The task {} was not reserved by its rejected completion {}",
+                                target.taskId(),
+                                command.commandId());
+                    }
+                    return historyRecorder.appendCompletionCommandHistory(
+                            command.workflowId(),
+                            WorkflowEntryType.COMMAND_REJECTED,
+                            command.commandId(),
+                            target.taskId(),
+                            target.decisionName(),
+                            reason,
+                            tx);
+                })
+                .map(done -> WorkflowSegments.Outcome.SETTLED_REJECTED);
     }
 
     /**
-     * Executes the task-completion drive body after the instance-owned binder-row bind is in
-     * effect. Extracted so {@link #doCompleteTask} can pass it to
-     * {@link WorkflowContextBinder#withBound} as a {@link java.util.function.Supplier}.
+     * Settles the command as stale, in the segment's transaction. When {@code reopen} is set, the task it still
+     * reserves is reopened; a stale command never touches a task another command reserves.
+     */
+    private Future<WorkflowSegments.Outcome> settleStale(
+            ClaimedCommand claim,
+            SegmentCommand command,
+            CompletionTarget target,
+            String reason,
+            boolean reopen,
+            SqlClient tx) {
+        Future<Boolean> released = reopen
+                ? reservations.reopen(target.taskId().toString(), command.commandId(), tx)
+                : Future.succeededFuture(false);
+        return released.compose(ignored -> commands.stale(command.commandId(), claim.token(), reason, tx))
+                .compose(TaskLifecycleService::requireRow)
+                .compose(done -> historyRecorder.appendCompletionCommandHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_STALE,
+                        command.commandId(),
+                        target.taskId(),
+                        target.decisionName(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_STALE);
+    }
+
+    /** Rejects the command of an ended instance and cancels the task it reserved. */
+    private Future<WorkflowSegments.Outcome> rejectEnded(
+            ClaimedCommand claim,
+            SegmentCommand command,
+            CompletionTarget target,
+            WorkflowInstance inst,
+            SqlClient tx) {
+        String reason = CommandErrors.completionInstanceEnded(
+                target.decisionName(), inst.status().name());
+        Instant now = clock.instant();
+        return reservations
+                .reopen(target.taskId().toString(), command.commandId(), tx)
+                .compose(reopened -> reopened
+                        ? taskStore
+                                .markCancelled(
+                                        target.taskId(),
+                                        "INSTANCE_ENDED",
+                                        now,
+                                        new WorkflowActor.System("INSTANCE_ENDED"),
+                                        tx)
+                                .<Void>mapEmpty()
+                        : Future.<Void>succeededFuture())
+                .compose(done -> commands.reject(command.commandId(), claim.token(), reason, tx))
+                .compose(TaskLifecycleService::requireRow)
+                .compose(done -> historyRecorder.appendCompletionCommandHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_REJECTED,
+                        command.commandId(),
+                        target.taskId(),
+                        target.decisionName(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_REJECTED);
+    }
+
+    /** A settlement that updated no row means the claim no longer stands: the segment rolls back. */
+    private static Future<Void> requireRow(Integer rows) {
+        return rows != null && rows > 0 ? Future.succeededFuture() : Future.failedFuture(new ClaimLostException());
+    }
+
+    /**
+     * Applies a recorded single-path completion after the instance-owned binder-row bind is in effect: the decision is
+     * validated against the plan, the due-date and reminder timers are cancelled, the task is completed, the
+     * applicator runs and the instance advances to the decision's next step.
      *
-     * @param cmd  the completion command
-     * @param task the task record fetched in step 1
+     * @param cmd  the completion command, rebuilt from the recorded command
+     * @param task the task row, {@code COMPLETING} under this completion
      * @param inst the loaded (WAITING/TASK-slot-matched) instance snapshot
-     * @param tx   the active transaction
+     * @param tx   the segment's transaction
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> doCompleteTaskBound(
@@ -549,8 +976,7 @@ final class TaskLifecycleService {
                             + (node == null ? "null" : node.getClass().getSimpleName())));
         }
 
-        // Step 3a: Version-stability check (cycle 5, §B.3).
-        // Runs after plan-node load and before any row mutations so it does not hold locks.
+        // Version-stability check from the plan, for tasks whose row does not record the requirement.
         if (htn.requireVersionStability()) {
             if (cmd.reviewedSubjectVersion() == null) {
                 return Future.failedFuture(
@@ -575,7 +1001,7 @@ final class TaskLifecycleService {
             return Future.failedFuture(WorkflowPayloads.unknownDecision());
         }
 
-        // Step 3b: Payload-nullability validation + coercion.
+        // Payload-nullability validation + coercion.
         Object coercedPayload;
         try {
             coercedPayload = WorkflowPayloads.validateAndCoerceTaskPayload(
@@ -586,7 +1012,8 @@ final class TaskLifecycleService {
             return Future.failedFuture(e);
         }
 
-        // Step 5: Cancel the due-date timer if present (timers before tasks, lock order).
+        // Cancel the due-date timer if present (timers before tasks, lock order). A due-date timer that already fired
+        // against the reserved task settled itself as stale and holds nothing back.
         UUID dueDateTimerId = inst.waitAuxId();
         Future<Void> cancelTimerFuture = Future.succeededFuture();
         if (dueDateTimerId != null) {
@@ -595,12 +1022,7 @@ final class TaskLifecycleService {
                     .compose(transition -> switch (transition) {
                         case APPLIED, LOST_TO_CANCELLED ->
                             appendTimerCancelledHistory(inst, dueDateTimerId, TimerCancelledCause.TASK_COMPLETED, tx);
-                        case LOST_TO_FIRED ->
-                            Future.failedFuture(new WorkflowConflictException("Due-date timer '" + dueDateTimerId
-                                    + "' already fired; cannot complete task '" + cmd.taskId() + "'"));
-                        case LOST_TO_FAILED ->
-                            Future.failedFuture(new WorkflowConflictException("Due-date timer '" + dueDateTimerId
-                                    + "' is in FAILED state; cannot complete task '" + cmd.taskId() + "'"));
+                        case LOST_TO_FIRED, LOST_TO_FAILED -> Future.<Void>succeededFuture();
                     });
         }
 
@@ -608,29 +1030,21 @@ final class TaskLifecycleService {
         HumanTaskNode.TaskDecision finalDecision = planDecision;
 
         return cancelTimerFuture
-                // Step 5b: Cancel pending reminder timers (lock order: timers before tasks).
+                // Cancel pending reminder timers (lock order: timers before tasks).
                 .compose(v -> reminderScheduler.cancelPendingReminders(cmd.taskId(), inst, tx))
-                // Step 6: Lock the task row.
+                // Lock the task row.
                 .compose(v -> taskStore.lockForCompletion(cmd.taskId(), tx))
                 .compose(optLocked -> {
                     if (optLocked.isEmpty()
-                            || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
+                            || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.COMPLETING) {
                         return Future.<TaskMutationResult>failedFuture(
-                                new WorkflowConflictException("Task '" + cmd.taskId() + "' is no longer OPEN"));
-                    }
-                    // Precondition: the assignment the caller saw must still match the locked row.
-                    if (cmd.expectedAssignment() != null
-                            && !cmd.expectedAssignment().equals(optLocked.get().assignment())) {
-                        return Future.<TaskMutationResult>failedFuture(new WorkflowStaleAssignmentException(
-                                cmd.taskId(),
-                                cmd.expectedAssignment(),
-                                optLocked.get().assignment()));
+                                new WorkflowConflictException("Task '" + cmd.taskId() + "' is no longer COMPLETING"));
                     }
 
                     Instant now = clock.instant();
                     String payloadJson = finalCoercedPayload != null ? Json.encode(finalCoercedPayload) : null;
 
-                    // Step 7: Mark completed.
+                    // Mark completed.
                     return taskStore
                             .markCompleted(cmd.taskId(), cmd.decisionName(), payloadJson, now, cmd.completedBy(), tx)
                             .compose(transition -> {
@@ -639,7 +1053,7 @@ final class TaskLifecycleService {
                                             + "' completion lost to concurrent terminal transition"));
                                 }
 
-                                // Step 8: Apply decision applicator.
+                                // Apply decision applicator.
                                 Object stateObj = Json.decodeValue(Buffer.buffer(inst.stateJson()), rw.stateType());
                                 Object newState;
                                 try {
@@ -653,7 +1067,7 @@ final class TaskLifecycleService {
                                             "decisionApplicator threw for decision '" + cmd.decisionName() + "'", e));
                                 }
 
-                                // Step 9: Optimistic UPDATE on workflow_instances.
+                                // Optimistic UPDATE on workflow_instances.
                                 long prevVersion = inst.version();
                                 WorkflowInstance advanced = inst.withVersion(prevVersion + 1)
                                         .withStatus(WorkflowStatus.RUNNING)
@@ -671,7 +1085,7 @@ final class TaskLifecycleService {
                                                         "Optimistic concurrency conflict completing task '"
                                                                 + cmd.taskId() + "'"));
                                             }
-                                            // Step 10: Append TASK_COMPLETED history + emit event.
+                                            // Append TASK_COMPLETED history + emit event.
                                             return history.nextSequence(inst.id(), tx)
                                                     .compose(seq -> {
                                                         String hp = Json.encode(new TaskCompletedHistoryPayload(
@@ -705,7 +1119,7 @@ final class TaskLifecycleService {
                                                                         tx));
                                                     });
                                         })
-                                        // Step 11: Drive transitions from the next step.
+                                        // Drive transitions from the next step.
                                         .compose(v -> driver.driveTransitions(advanced, rw, tx))
                                         .map(v -> TaskMutationResult.APPLIED);
                             });
@@ -755,16 +1169,8 @@ final class TaskLifecycleService {
                 .compose(v -> taskStore.lockForCompletion(taskId, tx))
                 .compose(optLocked -> {
                     if (optLocked.isEmpty()
-                            || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
+                            || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.COMPLETING) {
                         return Future.<TaskMutationResult>succeededFuture(TaskMutationResult.STALE_NOOP);
-                    }
-                    // Precondition: the assignment the caller saw must still match the locked row.
-                    if (cmd.expectedAssignment() != null
-                            && !cmd.expectedAssignment().equals(optLocked.get().assignment())) {
-                        return Future.<TaskMutationResult>failedFuture(new WorkflowStaleAssignmentException(
-                                taskId,
-                                cmd.expectedAssignment(),
-                                optLocked.get().assignment()));
                     }
                     // Step 3: Lock the branch token.
                     return branchTokens.findByIdForUpdate(branchTokenId, tx).compose(optBranch -> {
@@ -1585,6 +1991,12 @@ final class TaskLifecycleService {
         return taskStore
                 .lockForCompletion(cmd.taskId(), tx)
                 .compose(optLocked -> {
+                    if (optLocked.isPresent()
+                            && optLocked.get().status() == dev.vertique.workflow.tasks.TaskStatus.COMPLETING) {
+                        // A task being completed is reserved by its recorded completion and cannot move.
+                        return Future.<TaskReassignmentResult>failedFuture(
+                                new WorkflowTaskNotWaitingException(cmd.taskId()));
+                    }
                     if (optLocked.isEmpty()
                             || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
                         return Future.<TaskReassignmentResult>failedFuture(new WorkflowConflictException(

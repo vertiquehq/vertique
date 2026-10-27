@@ -13,6 +13,7 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
@@ -118,6 +119,7 @@ class WorkflowEngineReplayContractTest {
                 .joinStates(mock(JoinStateRepository.class))
                 .timerStore(mock(dev.vertique.workflow.timer.TimerStore.class))
                 .taskStore(mock(dev.vertique.workflow.tasks.TaskStore.class))
+                .taskReservations(new AcceptingTaskReservations())
                 .clock(Clock.fixed(NOW, ZoneOffset.UTC))
                 .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
                 .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
