@@ -14,12 +14,14 @@ import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.engine.executor.ClaimLostException;
 import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.SettledCommand;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
 import dev.vertique.workflow.engine.spi.TaskReservations;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
@@ -72,6 +74,7 @@ import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerRecord;
+import dev.vertique.workflow.timer.TimerStatusTransition;
 import dev.vertique.workflow.timer.TimerStore;
 import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
@@ -1244,7 +1247,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
                         // A command the segment applied may have ended the instance: its dead-lettered commands are
                         // settled
-                        ? commands.rejectDeadLetters(command.workflowId(), tx).map(rejected -> outcome)
+                        ? commands.settleEnded(command.workflowId(), tx).map(settled -> outcome)
                         : Future.succeededFuture(outcome));
     }
 
@@ -1296,8 +1299,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 return Future.failedFuture(new WorkflowInstanceNotFoundException(command.workflowId()));
             }
             WorkflowInstance inst = found.get();
+            if (inst.status() == WorkflowStatus.CANCELLED) {
+                return settleMet(claim, command, metInstance(command, inst).orElseThrow(), tx);
+            }
             if (inst.status() != WorkflowStatus.PENDING) {
-                // The instance no longer waits for its start: it was cancelled or already initialized.
+                // The instance no longer waits for its start: it was already initialized.
                 return Future.succeededFuture(WorkflowSegments.Outcome.STALE);
             }
             if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
@@ -1446,13 +1452,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         new WorkflowInstanceNotFoundException(command.workflowId()));
             }
             WorkflowInstance inst = found.get();
-            if (isEnded(inst.status())) {
-                return rejectCommand(
-                        claim,
-                        command,
-                        CommandErrors.instanceEnded(
-                                command.kind(), inst.status().name()),
-                        tx);
+            Optional<EndedInstanceOutcomes.Outcome> met = metInstance(command, inst);
+            if (met.isPresent() && met.get().settlement() != EndedInstanceOutcomes.Settlement.EXECUTES) {
+                return settleMet(claim, command, met.get(), tx);
             }
             if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
                     || !inst.definitionId().equals(head.definitionId())
@@ -1509,7 +1511,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         return drove.compose(drive ->
                         drive ? signalHandler.parkedSignals().drain(inst.id(), tx) : Future.<Void>succeededFuture())
                 .compose(done -> instances.findById(inst.id(), tx))
-                .compose(after -> after.isPresent() && !isEnded(after.get().status())
+                .compose(after -> after.isPresent()
+                                && !EndedInstanceOutcomes.isEnded(after.get().status())
                         ? commands.reofferDeadLetters(inst.id(), tx).<Void>mapEmpty()
                         : Future.<Void>succeededFuture())
                 .compose(done -> historyRecorder.appendCommandHistory(
@@ -1555,20 +1558,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         new WorkflowInstanceNotFoundException(command.workflowId()));
             }
             WorkflowInstance inst = found.get();
-            if (isEnded(inst.status())) {
-                return rejectCommand(
-                        claim,
-                        command,
-                        CommandErrors.instanceEnded(
-                                command.kind(), inst.status().name()),
-                        tx);
-            }
-            if (inst.status() == WorkflowStatus.FAILED) {
-                return rejectCommand(
-                        claim,
-                        command,
-                        CommandErrors.migrationRejected(CommandErrors.MigrationRejection.INSTANCE_STATE),
-                        tx);
+            Optional<EndedInstanceOutcomes.Outcome> met = metInstance(command, inst);
+            if (met.isPresent()) {
+                return settleMet(claim, command, met.get(), tx);
             }
             Optional<MigrationExecutor.Prepared> prepared;
             try {
@@ -1602,11 +1594,39 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         });
     }
 
+    /** What the outcome table makes of the command that meets the instance, empty when the instance is live. */
+    private static Optional<EndedInstanceOutcomes.Outcome> metInstance(SegmentCommand command, WorkflowInstance inst) {
+        return EndedInstanceOutcomes.of(command.kind(), inst.status().name(), EndedInstanceOutcomes.Target.none());
+    }
+
+    /** Settles the claimed command of a retry, a migration or a start as the outcome table states. */
+    private Future<WorkflowSegments.Outcome> settleMet(
+            ClaimedCommand claim, SegmentCommand command, EndedInstanceOutcomes.Outcome outcome, SqlClient tx) {
+        return outcome.settlement() == EndedInstanceOutcomes.Settlement.CANCELLED
+                ? cancelCommand(claim, command, outcome.reason(), tx)
+                : rejectCommand(claim, command, outcome.reason(), tx);
+    }
+
+    /** Settles the claimed command as cancelled with a reason, and logs it, in the segment's transaction. */
+    private Future<WorkflowSegments.Outcome> cancelCommand(
+            ClaimedCommand claim, SegmentCommand command, String reason, SqlClient tx) {
+        return commands.cancel(command.commandId(), claim.token(), reason, tx)
+                .compose(ClaimLostException::requireRow)
+                .compose(done -> historyRecorder.appendCommandOutcomeHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_CANCELLED,
+                        command.commandId(),
+                        command.kind(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_CANCELLED);
+    }
+
     /** Settles the claimed command as rejected with a reason, and logs it, in the segment's transaction. */
     private Future<WorkflowSegments.Outcome> rejectCommand(
             ClaimedCommand claim, SegmentCommand command, String reason, SqlClient tx) {
         return commands.reject(command.commandId(), claim.token(), reason, tx)
-                .compose(WorkflowEngine::requireClaimRow)
+                .compose(ClaimLostException::requireRow)
                 .compose(done -> historyRecorder.appendCommandOutcomeHistory(
                         command.workflowId(),
                         WorkflowEntryType.COMMAND_REJECTED,
@@ -1621,7 +1641,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private Future<WorkflowSegments.Outcome> staleCommand(
             ClaimedCommand claim, SegmentCommand command, String reason, SqlClient tx) {
         return commands.stale(command.commandId(), claim.token(), reason, tx)
-                .compose(WorkflowEngine::requireClaimRow)
+                .compose(ClaimLostException::requireRow)
                 .compose(done -> historyRecorder.appendCommandOutcomeHistory(
                         command.workflowId(),
                         WorkflowEntryType.COMMAND_STALE,
@@ -1630,18 +1650,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         reason,
                         tx))
                 .map(done -> WorkflowSegments.Outcome.SETTLED_STALE);
-    }
-
-    /** A settlement that updated no row means the claim no longer stands: the segment rolls back. */
-    private static Future<Void> requireClaimRow(Integer rows) {
-        return rows != null && rows > 0 ? Future.succeededFuture() : Future.failedFuture(new ClaimLostException());
-    }
-
-    private static boolean isEnded(WorkflowStatus status) {
-        return switch (status) {
-            case COMPLETED, COMPENSATED, CANCELLED, EXPIRED -> true;
-            default -> false;
-        };
     }
 
     /** The caller-supplied subject recorded on a start command, or {@code null}. */
@@ -2050,21 +2058,24 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
-     * <p>Transitions a non-terminal instance to {@code CANCELLED} and appends a history entry.
-     * When the instance is WAITING on a timer ({@code wait_type=TIMER}) or a signal with a timeout
-     * branch ({@code wait_type=SIGNAL} and {@code wait_aux_id != null}), the associated timer is
-     * cancelled first before the instance row is updated.
+     * <p>Cancels the instance synchronously, in the caller's transaction, under the instance's execution lock, which it
+     * waits for. An instance that has ended is refused; a {@code FAILED} instance, which a retry could resume, and an
+     * instance that was never initialized ({@code PENDING}, or {@code FAILED} before its start ran) are cancelled. In
+     * lock order it:
      *
-     * <p>When the instance is WAITING on a human task ({@code wait_type=TASK}), the task row is
-     * cancelled via {@link TaskStore#markCancelled} and a {@code TASK_CANCELLED} history entry is
-     * appended. If the task also has a due-date timer ({@code wait_aux_id != null}), that timer is
-     * cancelled first, preserving the lock-order invariant: timers → tasks → instances.
+     * <ol>
+     *   <li>cancels, in one statement, every pending, deferred, claimed, parked and dead-lettered command, with its token
+     *       and lease cleared and one {@code COMMAND_CANCELLED} entry each;</li>
+     *   <li>cancels the timers those commands fire, writing {@code TIMER_CANCELLED} for each that was still scheduled;</li>
+     *   <li>cancels the task the instance waits for (and its reminders), the tasks that cancelled completions reserved
+     *       and the tasks of active branches;</li>
+     *   <li>cancels the active branches;</li>
+     *   <li>marks the instance {@code CANCELLED} and appends the cancellation entry.</li>
+     * </ol>
      *
-     * <p>When the instance has active fan-out branch tokens (status {@code WAITING/JOIN}), every
-     * active branch's owned timers and tasks are closed via
-     * {@link #cancelBranchOwnedWaits(BranchToken, SqlClient)} and each branch token is transitioned
-     * to {@code CANCELLED} before the instance row is updated. Full lock order:
-     * timers → tasks → branch tokens → instance.
+     * <p>An instance cancelled before it was initialized keeps no state and no current step, and no initial state is
+     * computed. A segment that was running holds the lock, so the cancellation follows its commit; a command that was
+     * claimed is cancelled, so its late settlement finds nothing to settle and writes nothing.
      *
      * @param id the workflow instance id; must not be null
      * @param reason human-readable reason for the cancellation; stored in history
@@ -2109,48 +2120,78 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * @return a {@link Future} that completes when the cancellation has been persisted
      */
     private Future<Void> doCancel(WorkflowInstanceId id, String reason, WorkflowInstance inst, SqlClient tx) {
-        // Determine whether an active timer must be cancelled alongside the workflow.
-        UUID activeTimerId = TimerLifecycleService.resolveActiveTimerId(inst);
-        Future<Void> cancelTimerFuture = Future.succeededFuture();
-        if (activeTimerId != null) {
-            cancelTimerFuture = timerStore
-                    .markCancelled(activeTimerId, clock.instant(), tx)
-                    .compose(transition -> timerLifecycle.appendTimerCancelledHistory(
-                            inst, activeTimerId, TimerCancelledCause.WORKFLOW_CANCELLED, tx));
-        }
-
-        // When waiting on a TASK, cancel pending reminder timers (lock order: timers first),
-        // then cancel the task row, append TASK_CANCELLED history, and emit TASK_CANCELLED event.
-        // Lock order: due-date timer (above) → reminder timers (here) → task → instance (below).
-        Future<Void> cancelTaskFuture = cancelTimerFuture;
+        UUID waitTaskId = null;
         if (inst.waitType() == WaitType.TASK) {
-            UUID taskId;
             try {
-                taskId = UUID.fromString(inst.waitKey());
+                waitTaskId = UUID.fromString(inst.waitKey());
             } catch (IllegalArgumentException e) {
                 return Future.failedFuture(new WorkflowDefinitionException(
                         "Invalid task UUID in wait_key for instance '" + id.value() + "'"));
             }
-            WorkflowActor cancelledByActor = new WorkflowActor.System("workflow-cancelled");
-            Instant now = clock.instant();
-            cancelTaskFuture = cancelTimerFuture
-                    .compose(v -> reminderScheduler.cancelPendingReminders(taskId, inst, tx))
-                    .compose(v -> taskStore.markCancelled(taskId, reason, now, cancelledByActor, tx))
-                    .compose(transition -> taskLifecycle
-                            .appendTaskCancelledHistory(inst, taskId, reason, cancelledByActor, now, tx)
-                            .compose(taskCancelledSeq -> emitEvent(
-                                    inst,
-                                    WorkflowEventType.TASK_CANCELLED,
-                                    taskCancelledSeq,
-                                    taskId,
-                                    inst.currentStepId(),
-                                    attrs(
-                                            "cause",
-                                            "WORKFLOW_CANCELLED",
-                                            "cancelledBy",
-                                            WorkflowActorMaps.toMap(cancelledByActor)),
-                                    tx)));
         }
+        UUID taskId = waitTaskId;
+        UUID activeTimerId = TimerLifecycleService.resolveActiveTimerId(inst);
+        WorkflowActor cancelledByActor = new WorkflowActor.System("workflow-cancelled");
+        Instant now = clock.instant();
+
+        // Command rows first, in ascending id order: every command the instance still has is cancelled in one
+        // statement.
+        Future<Void> cancelTaskFuture = commands.cancelAll(id, tx).compose(cancelled -> {
+            // Timers: the timer the instance waits on, the reminders of the task it waits for, then every other timer
+            // whose command was cancelled and that is still scheduled.
+            Future<Void> timersDone = Future.succeededFuture();
+            if (activeTimerId != null) {
+                timersDone = timerStore
+                        .markCancelled(activeTimerId, clock.instant(), tx)
+                        .compose(transition -> timerLifecycle.appendTimerCancelledHistory(
+                                inst, activeTimerId, TimerCancelledCause.WORKFLOW_CANCELLED, tx));
+            }
+            if (taskId != null) {
+                timersDone = timersDone.compose(v -> reminderScheduler.cancelPendingReminders(taskId, inst, tx));
+            }
+            for (SettledCommand command : cancelled) {
+                UUID timerId = command.timerId();
+                if (timerId != null && !timerId.equals(activeTimerId)) {
+                    timersDone = timersDone
+                            .compose(v -> timerStore.markCancelled(timerId, clock.instant(), tx))
+                            .compose(transition -> transition == TimerStatusTransition.APPLIED
+                                    ? timerLifecycle.appendTimerCancelledHistory(
+                                            inst, timerId, TimerCancelledCause.WORKFLOW_CANCELLED, tx)
+                                    : Future.<Void>succeededFuture());
+                }
+            }
+
+            // Tasks: the task the instance waits for, whether open or reserved by a completion, with its history and
+            // event, then every other task a cancelled completion reserved.
+            Future<Void> tasksDone = timersDone;
+            if (taskId != null) {
+                tasksDone = tasksDone
+                        .compose(v -> taskStore.markCancelled(taskId, reason, now, cancelledByActor, tx))
+                        .compose(transition -> taskLifecycle
+                                .appendTaskCancelledHistory(inst, taskId, reason, cancelledByActor, now, tx)
+                                .compose(taskCancelledSeq -> emitEvent(
+                                        inst,
+                                        WorkflowEventType.TASK_CANCELLED,
+                                        taskCancelledSeq,
+                                        taskId,
+                                        inst.currentStepId(),
+                                        attrs(
+                                                "cause",
+                                                "WORKFLOW_CANCELLED",
+                                                "cancelledBy",
+                                                WorkflowActorMaps.toMap(cancelledByActor)),
+                                        tx)));
+            }
+            for (SettledCommand command : cancelled) {
+                UUID reserved = command.taskId();
+                if ("COMPLETION".equals(command.kind()) && reserved != null && !reserved.equals(taskId)) {
+                    tasksDone = tasksDone.compose(v -> taskStore
+                            .markCancelled(reserved, reason, now, cancelledByActor, tx)
+                            .<Void>mapEmpty());
+                }
+            }
+            return tasksDone;
+        });
 
         // Cancel branch-owned waits for any active fan-out branches.
         // Lock order: timers → tasks (inside cancelBranchOwnedWaits) → branch tokens (below)
@@ -2166,11 +2207,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             }
             return branchTokens.findActiveByWorkflow(id, tx).compose(activeBranches -> {
                 Future<Void> branchChain = Future.succeededFuture();
-                Instant now = clock.instant();
+                Instant branchNow = clock.instant();
                 for (BranchToken branch : activeBranches) {
                     // timers → tasks (cancelBranchOwnedWaits), then branch token.
                     final BranchToken b = branch;
-                    BranchToken cancelledBranch = b.withClearedWait(BranchStatus.CANCELLED, b.currentStepId(), now);
+                    BranchToken cancelledBranch =
+                            b.withClearedWait(BranchStatus.CANCELLED, b.currentStepId(), branchNow);
                     branchChain = branchChain
                             .compose(v2 -> cancelBranchOwnedWaits(b, tx))
                             .compose(v2 -> branchTokens
@@ -2239,7 +2281,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         return Future.<Void>failedFuture(new WorkflowInstanceNotFoundException(id));
                     }
                     WorkflowInstance inst = found.get();
-                    if (isEnded(inst.status())) {
+                    if (EndedInstanceOutcomes.isEnded(inst.status())) {
                         return Future.<Void>failedFuture(retryRefusal(id, inst.status()));
                     }
                     if (inst.status() == WorkflowStatus.FAILED) {
@@ -2455,17 +2497,14 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Returns {@code true} if the given status is a terminal state (no further transitions
-     * possible).
+     * Returns {@code true} if the given status is terminal: the instance has ended and takes no further transition. A
+     * {@code FAILED} instance is not terminal, because a retry can resume it, and so it can be cancelled.
      *
      * @param status the status to check
-     * @return {@code true} for terminal statuses
+     * @return {@code true} for ended statuses
      */
     private static boolean isTerminal(WorkflowStatus status) {
-        return switch (status) {
-            case COMPLETED, FAILED, COMPENSATED, CANCELLED, EXPIRED -> true;
-            default -> false;
-        };
+        return EndedInstanceOutcomes.isEnded(status);
     }
 
     // --- Event emission helpers (delegating to WorkflowEventEmitter) ---

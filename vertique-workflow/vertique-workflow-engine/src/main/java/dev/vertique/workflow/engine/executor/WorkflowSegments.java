@@ -44,7 +44,12 @@ public interface WorkflowSegments {
          * The engine settled the command as stale in the segment's transaction, with its reason and history; the
          * executor writes no settlement.
          */
-        SETTLED_STALE
+        SETTLED_STALE,
+        /**
+         * The engine settled the command as cancelled in the segment's transaction, because its instance was cancelled,
+         * with its reason and history; the executor writes no settlement.
+         */
+        SETTLED_CANCELLED
     }
 
     /**

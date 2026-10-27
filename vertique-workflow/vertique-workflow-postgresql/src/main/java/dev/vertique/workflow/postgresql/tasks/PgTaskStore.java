@@ -201,7 +201,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         this.sqlMarkCancelled = "UPDATE " + tasks
                 + " SET status = 'CANCELLED', cancellation_reason = $2,"
                 + " cancelled_at = $3, cancelled_by = $4, updated_at = $5"
-                + " WHERE task_id = $1 AND status = 'OPEN'";
+                + " WHERE task_id = $1 AND status IN ('OPEN', 'COMPLETING')";
 
         this.sqlMarkExpired = "UPDATE " + tasks + " SET status = 'EXPIRED', expired_at = $2, updated_at = $3"
                 + " WHERE task_id = $1 AND status = 'OPEN'";
@@ -327,8 +327,8 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
     /**
      * {@inheritDoc}
      *
-     * <p>Executes a conditional {@code UPDATE … WHERE status='OPEN'} and, on zero rows updated,
-     * executes a follow-up {@code SELECT status} to classify the winning terminal state.
+     * <p>Executes a conditional {@code UPDATE … WHERE status IN ('OPEN', 'COMPLETING')} and, on zero rows
+     * updated, executes a follow-up {@code SELECT status} to classify the winning terminal state.
      */
     @Override
     public Future<TaskTransition> markCancelled(

@@ -12,6 +12,7 @@ import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.Deferral;
+import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DispositionResult;
@@ -20,6 +21,7 @@ import dev.vertique.workflow.engine.spi.ParkedSignal;
 import dev.vertique.workflow.engine.spi.QueueCounts;
 import dev.vertique.workflow.engine.spi.RecordedTimer;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.SettledCommand;
 import dev.vertique.workflow.engine.spi.TimerCommandSpec;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.history.PendingCommand;
@@ -30,6 +32,7 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.timer.TimerPurpose;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStatus;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
@@ -116,8 +119,9 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final String readStartRow;
     private final String supersedeStartRow;
     private final String reofferRows;
-    private final String deadOfEnded;
-    private final String rejectDeadRow;
+    private final String cancelAllRows;
+    private final String lockEndedLeftovers;
+    private final String settleLeftovers;
     private final PgTimerStore timers;
     private final String cancelReservedTask;
     private final String reopenReservedTask;
@@ -324,13 +328,37 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " SET open_signals = open_signals + (SELECT count(*) FROM reoffered WHERE kind = 'SIGNAL')"
                 + " WHERE workflow_id = $1 AND EXISTS (SELECT 1 FROM reoffered WHERE kind = 'SIGNAL')"
                 + " RETURNING workflow_id) SELECT count(*)::int AS n FROM reoffered";
-        this.deadOfEnded =
-                "SELECT c.id, c.seq, c.kind, c.target_json->>'name' AS signal_name, i.status AS instance_status"
+        // R6: one statement locks every unsettled command of the instance in ascending id order and cancels it; a
+        // signal
+        // that was open frees its slot of the open-signal count in the same statement, a dead-lettered one frees none.
+        this.cancelAllRows = "WITH targets AS (SELECT c.id, c.state FROM " + commands
+                + " c WHERE c.workflow_id = $1 AND c.state IN ('PENDING','DEFERRED','CLAIMED','PARKED','DEAD')"
+                + " ORDER BY c.id FOR UPDATE OF c), settled AS (UPDATE " + commands
+                + " c SET state = 'CANCELLED', claim_token = NULL, lease_until = NULL, settled_at = now(),"
+                + " last_error = CASE c.kind WHEN 'START' THEN $2::text WHEN 'SIGNAL' THEN $3::text"
+                + " WHEN 'COMPLETION' THEN $4::text WHEN 'RETRY' THEN $5::text WHEN 'MIGRATION' THEN $6::text"
+                + " ELSE $7::text END FROM targets t WHERE c.id = t.id RETURNING c.id, c.kind, c.task_id, c.timer_id,"
+                + " c.last_error, c.target_json->>'name' AS signal_name, t.state AS prior_state), lowered AS (UPDATE "
+                + queues
+                + " SET open_signals = GREATEST(open_signals - (SELECT count(*) FROM settled WHERE kind = 'SIGNAL'"
+                + " AND prior_state <> 'DEAD')::int, 0) WHERE workflow_id = $1 AND EXISTS (SELECT 1 FROM settled"
+                + " WHERE kind = 'SIGNAL' AND prior_state <> 'DEAD') RETURNING workflow_id)"
+                + " SELECT id, kind, task_id, timer_id, last_error, signal_name FROM settled ORDER BY id";
+        this.lockEndedLeftovers =
+                "SELECT c.id, c.kind, c.state, c.target_json->>'name' AS signal_name, i.status AS instance_status"
                         + " FROM " + commands + " c JOIN " + instances
                         + " i ON i.id = c.workflow_id WHERE c.workflow_id = $1"
-                        + " AND c.state = 'DEAD' AND i.status IN " + ENDED + " ORDER BY c.id FOR UPDATE OF c";
-        this.rejectDeadRow = "UPDATE " + commands + " SET state = 'REJECTED', claim_token = NULL, lease_until = NULL,"
-                + " settled_at = now(), last_error = $2 WHERE id = $1 AND state = 'DEAD'";
+                        + " AND c.state IN ('PARKED','DEAD') AND i.status IN " + ENDED
+                        + " ORDER BY c.id FOR UPDATE OF c";
+        this.settleLeftovers = "WITH settled AS (UPDATE " + commands
+                + " c SET state = r.state, claim_token = NULL, lease_until = NULL, settled_at = now(),"
+                + " last_error = r.reason FROM unnest($2::bigint[], $3::text[], $4::text[], $5::text[])"
+                + " AS r(id, state, reason, prior) WHERE c.id = r.id AND c.state IN ('PARKED','DEAD')"
+                + " RETURNING c.id, c.kind, r.prior), lowered AS (UPDATE " + queues
+                + " SET open_signals = GREATEST(open_signals - (SELECT count(*) FROM settled WHERE kind = 'SIGNAL'"
+                + " AND prior = 'PARKED')::int, 0) WHERE workflow_id = $1 AND EXISTS (SELECT 1 FROM settled"
+                + " WHERE kind = 'SIGNAL' AND prior = 'PARKED') RETURNING workflow_id)"
+                + " SELECT count(*)::int AS n FROM settled";
         this.timers = new PgTimerStore(exceptionMapper, schemas);
         String tasks = PgTableNames.qualify(schemas, "workflow", "workflow_tasks");
         this.cancelReservedTask = "UPDATE " + tasks + " SET status = 'CANCELLED', cancelled_at = now(),"
@@ -563,23 +591,25 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         boolean lapsed = "CLAIMED".equals(looked.getString("state"));
         String instanceStatus = looked.getString("instance_status");
         long id = head.commandId();
-        if (isEnded(instanceStatus)) {
-            // The outcome table settles a signal of an ended instance as rejected, a branch-addressed one and a timer
-            // as
-            // stale.
-            boolean stale = "TIMER".equals(kind)
-                    || "SIGNAL".equals(kind) && Boolean.TRUE.equals(looked.getBoolean("branch_signal"));
-            String state = stale ? "STALE" : "REJECTED";
-            String reason = "SIGNAL".equals(kind)
-                    ? CommandErrors.signalInstanceEnded(looked.getString("signal_name"), instanceStatus, stale)
-                    : CommandErrors.instanceEnded(kind, instanceStatus);
-            Future<?> reservation = "COMPLETION".equals(kind)
+        Optional<EndedInstanceOutcomes.Outcome> met = EndedInstanceOutcomes.isEnded(instanceStatus)
+                ? EndedInstanceOutcomes.of(
+                        kind,
+                        instanceStatus,
+                        EndedInstanceOutcomes.Target.signal(
+                                looked.getString("signal_name"),
+                                Boolean.TRUE.equals(looked.getBoolean("branch_signal")),
+                                false))
+                : Optional.empty();
+        if (met.isPresent()) {
+            EndedInstanceOutcomes.Outcome outcome = met.get();
+            String state = outcome.settlement().name();
+            Future<?> reservation = outcome.reservation() == EndedInstanceOutcomes.Reservation.CANCEL
                     ? conn.preparedQuery(cancelReservedTask).execute(Tuple.of(id))
                     : Future.succeededFuture();
             return reservation
-                    .compose(ignored -> conn.preparedQuery(settleEnded).execute(Tuple.of(id, reason, state)))
-                    .compose(ignored -> appendCommandHistory(
-                            conn, head, stale ? "COMMAND_STALE" : "COMMAND_REJECTED", reason, state))
+                    .compose(ignored -> conn.preparedQuery(settleEnded).execute(Tuple.of(id, outcome.reason(), state)))
+                    .compose(ignored ->
+                            appendCommandHistory(conn, head, entryType(outcome.settlement()), outcome.reason(), state))
                     .map(ignored -> new ClaimedCommand(
                             id,
                             head.workflowId(),
@@ -617,10 +647,12 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 });
     }
 
-    private static boolean isEnded(String instanceStatus) {
-        return switch (instanceStatus) {
-            case "COMPLETED", "COMPENSATED", "CANCELLED", "EXPIRED" -> true;
-            default -> false;
+    /** The history entry type that records a command settled with the given settlement. */
+    private static String entryType(EndedInstanceOutcomes.Settlement settlement) {
+        return switch (settlement) {
+            case STALE -> "COMMAND_STALE";
+            case CANCELLED -> "COMMAND_CANCELLED";
+            default -> "COMMAND_REJECTED";
         };
     }
 
@@ -913,34 +945,117 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     }
 
     @Override
-    public Future<Integer> rejectDeadLetters(WorkflowInstanceId instance, SqlClient tx) {
-        return tx.preparedQuery(deadOfEnded)
-                .execute(Tuple.of(instance.value()))
+    public Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, SqlClient tx) {
+        Tuple parameters = Tuple.tuple();
+        parameters.addValue(instance.value());
+        for (String kind : List.of("START", "SIGNAL", "COMPLETION", "RETRY", "MIGRATION", "TIMER")) {
+            parameters.addValue(CommandErrors.instanceCancelled(kind));
+        }
+        return tx.preparedQuery(cancelAllRows)
+                .execute(parameters)
                 .compose(rows -> {
+                    List<SettledCommand> cancelled = new ArrayList<>(rows.size());
                     Future<Void> written = Future.succeededFuture();
                     for (Row row : rows) {
                         long id = row.getLong("id");
                         String kind = row.getString("kind");
-                        String status = row.getString("instance_status");
-                        String reason = "SIGNAL".equals(kind)
-                                ? CommandErrors.signalInstanceEnded(row.getString("signal_name"), status, false)
-                                : CommandErrors.instanceEnded(kind, status);
-                        JsonObject payload = new JsonObject()
-                                .put("commandId", id)
-                                .put("kind", kind)
-                                .put("reason", reason);
+                        cancelled.add(new SettledCommand(id, kind, row.getUUID("task_id"), row.getUUID("timer_id")));
+                        written = written.compose(done -> appendSettledHistory(
+                                tx,
+                                instance,
+                                id,
+                                kind,
+                                row.getString("signal_name"),
+                                row.getString("last_error"),
+                                "COMMAND_CANCELLED",
+                                "CANCELLED"));
+                    }
+                    return written.map(done -> List.copyOf(cancelled));
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands cancelAll")));
+    }
+
+    @Override
+    public Future<Integer> cancel(long commandId, UUID token, String lastError, SqlClient tx) {
+        return settle(settleClaimed, "CANCELLED", commandId, token, lastError, tx, "cancel");
+    }
+
+    @Override
+    public Future<Integer> settleEnded(WorkflowInstanceId instance, SqlClient tx) {
+        return tx.preparedQuery(lockEndedLeftovers)
+                .execute(Tuple.of(instance.value()))
+                .compose(rows -> {
+                    int count = rows.size();
+                    if (count == 0) {
+                        return Future.succeededFuture(0);
+                    }
+                    Long[] ids = new Long[count];
+                    String[] states = new String[count];
+                    String[] reasons = new String[count];
+                    String[] priors = new String[count];
+                    List<Row> locked = new ArrayList<>(count);
+                    int index = 0;
+                    for (Row row : rows) {
+                        EndedInstanceOutcomes.Outcome outcome = EndedInstanceOutcomes.atEnd(
+                                row.getString("kind"), row.getString("instance_status"), row.getString("signal_name"));
+                        ids[index] = row.getLong("id");
+                        states[index] = outcome.settlement().name();
+                        reasons[index] = outcome.reason();
+                        priors[index] = row.getString("state");
+                        locked.add(row);
+                        index++;
+                    }
+                    Tuple parameters = Tuple.tuple();
+                    parameters.addValue(instance.value());
+                    parameters.addValue(ids);
+                    parameters.addValue(states);
+                    parameters.addValue(reasons);
+                    parameters.addValue(priors);
+                    Future<Void> written = tx.preparedQuery(settleLeftovers)
+                            .execute(parameters)
+                            .mapEmpty();
+                    for (int i = 0; i < count; i++) {
+                        Row row = locked.get(i);
+                        long id = ids[i];
+                        String kind = row.getString("kind");
+                        EndedInstanceOutcomes.Settlement settlement =
+                                EndedInstanceOutcomes.Settlement.valueOf(states[i]);
+                        String reason = reasons[i];
                         written = written.compose(done -> "COMPLETION".equals(kind)
                                         ? tx.preparedQuery(cancelReservedTask).execute(Tuple.of(id))
                                         : Future.succeededFuture())
-                                .compose(done -> tx.preparedQuery(rejectDeadRow).execute(Tuple.of(id, reason)))
-                                .compose(
-                                        done -> appendHistory(tx, instance, id, "COMMAND_REJECTED", payload, "REJECTED")
-                                                .mapEmpty());
+                                .compose(done -> appendSettledHistory(
+                                        tx,
+                                        instance,
+                                        id,
+                                        kind,
+                                        row.getString("signal_name"),
+                                        reason,
+                                        entryType(settlement),
+                                        settlement.name()));
                     }
-                    int count = rows.size();
                     return written.map(done -> count);
                 })
-                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands rejectDeadLetters")));
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands settleEnded")));
+    }
+
+    /** Writes the history entry of a command a bulk write settled; a signal's entry also names the signal, bounded. */
+    private Future<Void> appendSettledHistory(
+            SqlClient tx,
+            WorkflowInstanceId instance,
+            long commandId,
+            String kind,
+            @Nullable String signalName,
+            String reason,
+            String entryType,
+            String outcome) {
+        JsonObject payload =
+                new JsonObject().put("commandId", commandId).put("kind", kind).put("reason", reason);
+        if ("SIGNAL".equals(kind)) {
+            payload.put("signalName", EchoedNames.bounded(signalName));
+        }
+        return appendHistory(tx, instance, commandId, entryType, payload, outcome)
+                .mapEmpty();
     }
 
     @Override

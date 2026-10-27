@@ -621,14 +621,47 @@ public interface WorkflowCommandRepository<TX> {
     Future<Integer> reofferDeadLetters(WorkflowInstanceId instance, TX tx);
 
     /**
-     * Settles the dead-lettered commands of an instance that has ended as {@code REJECTED}, with a history entry each,
-     * in the segment's transaction; a dead-lettered completion also cancels the task it still reserves. Writes nothing
-     * while the instance has not ended. A signal's open-signal slot was released when it was dead-lettered, so nothing
-     * is lowered again.
+     * Cancels every command of the instance that is not settled, in the caller's transaction, with one statement that
+     * locks the command rows in ascending id order: the {@code PENDING}, {@code DEFERRED} and {@code CLAIMED} commands
+     * and the {@code PARKED} and {@code DEAD} ones, whatever their kind, including the commands of timers that have not
+     * fired. Each goes to {@code CANCELLED} with its token and lease cleared, settled now, with a sanitized reason, and
+     * gets one {@code COMMAND_CANCELLED} history entry that names the command and its kind and never a payload value. A
+     * {@code SIGNAL} that was open ({@code PENDING}, {@code DEFERRED}, {@code CLAIMED} or {@code PARKED}) frees its slot
+     * of the open-signal count in the same statement; a dead-lettered one released its slot when it was dead-lettered
+     * and frees none again, so the count is never lowered below zero.
+     *
+     * <p>The caller must hold the instance's execution lock. It finishes the rows that belong to the commands: the
+     * timers they fire and the task a completion reserves.
+     *
+     * @param instance the instance being cancelled
+     * @param tx       the caller's transaction handle
+     * @return a {@link Future} containing the cancelled commands in ascending id order
+     */
+    Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Cancels the claimed command as cancelled with a reason, in the segment's transaction: its instance was cancelled
+     * after it was claimed. The write is fenced like {@link #complete}, and frees a {@code SIGNAL}'s open-signal slot.
+     *
+     * @param commandId the command's row id
+     * @param token     the claim token
+     * @param lastError the sanitized, bounded reason to store
+     * @param tx        the segment's transaction handle
+     * @return a {@link Future} containing the number of rows updated; {@code 0} means the claim no longer stands
+     */
+    Future<Integer> cancel(long commandId, UUID token, String lastError, TX tx);
+
+    /**
+     * Settles the parked and dead-lettered commands of an instance that has ended, in the segment's transaction: each
+     * is locked in ascending id order and set {@code REJECTED} with a sanitized reason (or {@code CANCELLED} when the
+     * instance was cancelled) in one statement, with a history entry each. A dead-lettered completion also cancels the
+     * task it still reserves. A parked {@code SIGNAL} frees its slot of the open-signal count in the same statement; a
+     * dead-lettered one released its slot when it was dead-lettered, so nothing is lowered again. Writes nothing while
+     * the instance has not ended. Commands that are still active are left to settle when they next execute.
      *
      * @param instance the instance
      * @param tx       the segment's transaction handle
-     * @return a {@link Future} containing the number of commands rejected
+     * @return a {@link Future} containing the number of commands settled
      */
-    Future<Integer> rejectDeadLetters(WorkflowInstanceId instance, TX tx);
+    Future<Integer> settleEnded(WorkflowInstanceId instance, TX tx);
 }

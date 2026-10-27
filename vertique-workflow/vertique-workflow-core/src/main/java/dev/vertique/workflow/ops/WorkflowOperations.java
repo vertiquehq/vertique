@@ -79,7 +79,12 @@ public interface WorkflowOperations {
     }
 
     /**
-     * Cancels a running or waiting workflow instance.
+     * Cancels a workflow instance that has not ended: one that is pending, running, waiting, compensating or failed.
+     * The call is synchronous and records no command. Under the instance's execution lock, which it waits for, it
+     * cancels every pending, deferred, claimed, parked and dead-lettered command of the instance, the timers they fire
+     * and the open and reserved tasks, cancels the active branches and marks the instance {@code CANCELLED}. An
+     * instance cancelled before its start ran keeps no state and no current step. An instance that has ended is
+     * refused.
      *
      * @param id id of the workflow instance to cancel
      * @param reason human-readable reason for the cancellation; stored in history

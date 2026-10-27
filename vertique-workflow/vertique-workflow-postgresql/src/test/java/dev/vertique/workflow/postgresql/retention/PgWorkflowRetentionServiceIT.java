@@ -4,13 +4,19 @@
 package dev.vertique.workflow.postgresql.retention;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.postgresql.executor.RetentionTestSupport;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
+import dev.vertique.workflow.retention.WorkflowRetentionService.PurgeResult;
+import dev.vertique.workflow.retention.WorkflowRetentionService.RetentionResult;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
@@ -19,6 +25,8 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
+import io.vertx.sqlclient.SqlConnection;
+import io.vertx.sqlclient.Transaction;
 import io.vertx.sqlclient.Tuple;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -26,9 +34,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -588,5 +598,201 @@ public class PgWorkflowRetentionServiceIT {
         });
 
         ctx.completeNow();
+    }
+
+    // --- Retention under the execution lock ---
+
+    /** How long a retention run that must not wait for a lock may take. */
+    private static final long NO_WAIT_SECONDS = 5;
+
+    @Test
+    @DisplayName("Retention skips an instance whose execution lock is held and removes it later")
+    void retentionSkipsALockedInstanceAndRemovesItLater() throws Exception {
+        // Given a completed instance past retention with commands, a queue row and history, and an archived instance
+        // past the purge threshold with the same rows
+        UUID completed = UUID.randomUUID();
+        UUID archived = UUID.randomUUID();
+        blocking(insertCompletedInstance(completed, "def-locked", PAST));
+        blocking(insertInstance(archived, "def-locked", "COMPLETED", PAST, PAST.plusSeconds(60)));
+        for (UUID id : List.of(completed, archived)) {
+            seedCommandsQueueAndHistory(id);
+        }
+
+        // And session A holds both execution locks
+        SqlConnection session = blocking(pool.getConnection());
+        Transaction holder = blocking(session.begin());
+        try {
+            for (UUID id : List.of(completed, archived)) {
+                int[] key = RetentionTestSupport.lockKeyOf(id);
+                blocking(session.preparedQuery("SELECT pg_advisory_xact_lock($1::int4, $2::int4)")
+                        .execute(Tuple.of(key[0], key[1])));
+            }
+
+            // When archive and purge run
+            RetentionResult archive =
+                    blocking(retentionService.archiveCompletedBefore(FUTURE, null, 100), NO_WAIT_SECONDS);
+            PurgeResult purge = blocking(retentionService.purgeArchivedBefore(FUTURE, null, 100), NO_WAIT_SECONDS);
+
+            // Then they return without waiting and leave both instances with all their rows
+            assertEquals(0, archive.archivedCount(), "the locked instance must not be archived");
+            assertEquals(0, purge.purgedCount(), "the locked instance must not be purged");
+            for (UUID id : List.of(completed, archived)) {
+                assertEquals(1L, count("workflow_instances", "id", id), "instance " + id);
+                assertEquals(2L, count("workflow_commands", "workflow_id", id), "commands of " + id);
+                assertEquals(1L, count("workflow_command_queues", "workflow_id", id), "queue row of " + id);
+                assertEquals(1L, count("workflow_history", "workflow_id", id), "history of " + id);
+            }
+            assertNull(archivedAt(completed), "the locked instance stays unarchived");
+        } finally {
+            blocking(holder.rollback());
+            blocking(session.close());
+        }
+
+        // When A has released the locks and they run again
+        RetentionResult archiveAgain = blocking(retentionService.archiveCompletedBefore(FUTURE, null, 100));
+        PurgeResult purgeAgain = blocking(retentionService.purgeArchivedBefore(FUTURE, null, 100));
+
+        // Then the completed instance is archived and both are purged with no command, queue or history row left
+        assertEquals(1, archiveAgain.archivedCount());
+        assertEquals(2, purgeAgain.purgedCount());
+        for (UUID id : List.of(completed, archived)) {
+            assertEquals(0L, count("workflow_instances", "id", id), "instance " + id);
+            assertEquals(0L, count("workflow_commands", "workflow_id", id), "commands of " + id);
+            assertEquals(0L, count("workflow_command_queues", "workflow_id", id), "queue row of " + id);
+            assertEquals(0L, count("workflow_history", "workflow_id", id), "history of " + id);
+        }
+    }
+
+    @Test
+    @DisplayName("A start dead-lettered by a crash is archived and purged by the failed-instance policy")
+    void deadLetteredStartIsArchivedByTheFailedPolicy() throws Exception {
+        try (RetentionTestSupport executor = RetentionTestSupport.open(db.toPoolConfig())) {
+            // Given a start dead-lettered by a crashing executor (the instance is failed without state) and a
+            // completed instance, both older than the cutoff
+            UUID failed = executor.deadLetteredStart("dead-start");
+            UUID completed = UUID.randomUUID();
+            blocking(insertCompletedInstance(completed, "def-failed-policy", PAST));
+            assertEquals("FAILED", statusOf(failed));
+            assertEquals(1L, count("workflow_commands", "workflow_id", failed));
+            assertEquals(1L, count("workflow_command_queues", "workflow_id", failed));
+            assertTrue(count("workflow_history", "workflow_id", failed) > 0, "the failure is logged");
+
+            // When the failed policy runs
+            RetentionResult archive = blocking(retentionService.archiveFailedBefore(FUTURE, null, 100));
+
+            // Then only the failed instance is archived
+            assertEquals(1, archive.archivedCount());
+            assertNotNull(archivedAt(failed), "the failed instance is archived");
+            assertNull(archivedAt(completed), "the completed instance is untouched by the failed policy");
+
+            // When the archived instances are purged
+            PurgeResult purge = blocking(retentionService.purgeArchivedBefore(FUTURE, null, 100));
+
+            // Then the failed instance is gone with its commands, queue row and history, and the completed one stays
+            assertEquals(1, purge.purgedCount());
+            assertEquals(0L, count("workflow_instances", "id", failed));
+            assertEquals(0L, count("workflow_commands", "workflow_id", failed));
+            assertEquals(0L, count("workflow_command_queues", "workflow_id", failed));
+            assertEquals(0L, count("workflow_history", "workflow_id", failed));
+            assertEquals(1L, count("workflow_instances", "id", completed));
+        }
+    }
+
+    @Test
+    @DisplayName("A pending retry keeps an archive-eligible failed instance")
+    void pendingRetryKeepsAnArchiveEligibleFailedInstance() throws Exception {
+        try (RetentionTestSupport executor = RetentionTestSupport.open(db.toPoolConfig())) {
+            // Given a failed instance with a retry recorded and committed, the executor stopped, and a second failed
+            // instance with no active command, both older than the cutoff
+            UUID withRetry = executor.deadLetteredStart("with-retry");
+            UUID without = executor.deadLetteredStart("without-retry");
+            executor.recordRetry(withRetry);
+            assertEquals("PENDING", stateOfCommand(withRetry, "RETRY"));
+
+            // When the failed policy runs
+            RetentionResult archive = blocking(retentionService.archiveFailedBefore(FUTURE, null, 100));
+
+            // Then only the second instance is archived and the retry of the first is still pending
+            assertEquals(1, archive.archivedCount());
+            assertNull(archivedAt(withRetry), "the instance with a pending retry is kept");
+            assertNotNull(archivedAt(without), "the instance with no active command is archived");
+            assertEquals("PENDING", stateOfCommand(withRetry, "RETRY"));
+            assertEquals(2L, count("workflow_commands", "workflow_id", withRetry));
+
+            // When the executor starts and the first instance is idle
+            executor.startExecutor();
+            try {
+                executor.awaitIdle(withRetry);
+            } finally {
+                executor.stopExecutor();
+            }
+
+            // Then the retry executed and the instance is no longer failed
+            assertEquals("COMPLETE", stateOfCommand(withRetry, "RETRY"));
+            assertFalse(statusOf(withRetry).equals("FAILED"), "the retry recovered the instance");
+            assertNull(archivedAt(withRetry));
+        }
+    }
+
+    // --- Helpers of the retention tests ---
+
+    private void seedCommandsQueueAndHistory(UUID id) {
+        blocking(pool.preparedQuery("INSERT INTO workflow_command_queues (workflow_id, next_seq, open_signals)"
+                        + " VALUES ($1, 3, 0)")
+                .execute(Tuple.of(id)));
+        blocking(pool.preparedQuery("INSERT INTO workflow_commands (workflow_id, seq, kind, state, recorded_at,"
+                        + " available_at, settled_at) VALUES ($1, 1, 'START', 'COMPLETE', now(), now(), now()),"
+                        + " ($1, 2, 'SIGNAL', 'REJECTED', now(), now(), now())")
+                .execute(Tuple.of(id)));
+        blocking(insertHistoryRow(id, 1L));
+    }
+
+    private long count(String table, String column, UUID id) {
+        return blocking(pool.preparedQuery("SELECT COUNT(*) FROM " + table + " WHERE " + column + " = $1")
+                        .execute(Tuple.of(id)))
+                .iterator()
+                .next()
+                .getLong(0);
+    }
+
+    private Object archivedAt(UUID id) {
+        return blocking(pool.preparedQuery("SELECT archived_at FROM workflow_instances WHERE id = $1")
+                        .execute(Tuple.of(id)))
+                .iterator()
+                .next()
+                .getValue(0);
+    }
+
+    private String statusOf(UUID id) {
+        return blocking(pool.preparedQuery("SELECT status FROM workflow_instances WHERE id = $1")
+                        .execute(Tuple.of(id)))
+                .iterator()
+                .next()
+                .getString(0);
+    }
+
+    private String stateOfCommand(UUID id, String kind) {
+        return blocking(pool.preparedQuery("SELECT state FROM workflow_commands WHERE workflow_id = $1 AND kind = $2")
+                        .execute(Tuple.of(id, kind)))
+                .iterator()
+                .next()
+                .getString(0);
+    }
+
+    private static <T> T blocking(Future<T> future) {
+        return blocking(future, 30);
+    }
+
+    private static <T> T blocking(Future<T> future, long seconds) {
+        try {
+            return future.toCompletionStage().toCompletableFuture().get(seconds, TimeUnit.SECONDS);
+        } catch (ExecutionException e) {
+            throw new AssertionError("future failed: " + e.getCause(), e.getCause());
+        } catch (TimeoutException e) {
+            throw new AssertionError("future did not complete within " + seconds + " s", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted", e);
+        }
     }
 }

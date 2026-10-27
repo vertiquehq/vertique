@@ -39,7 +39,8 @@ import org.slf4j.LoggerFactory;
  *   <li>any other failure rolls back the whole segment, and the signal stays parked.</li>
  * </ul>
  *
- * <p>When the instance has ended, every parked signal is rejected.
+ * <p>When the instance has ended, its parked and dead-lettered commands are settled together, in one bulk write that
+ * frees the open-signal slot of each parked signal: rejected, or cancelled when the instance was cancelled.
  *
  * <p>Writes that settle a command, and the history entries of its outcome, are made at the level of the segment's
  * transaction, never inside a savepoint, so that they belong to the segment's transaction and survive the rollback of a
@@ -207,7 +208,7 @@ public final class ParkedSignals {
             }
             return host.waits(instance, tx)
                     .compose(waits -> waits.endedStatus() != null
-                            ? rejectAll(instance, parked, waits.endedStatus(), tx)
+                            ? commands.settleEnded(instance, tx).<Void>mapEmpty()
                             : atWaits(instance, waits.open(), 0, tx));
         });
     }
@@ -245,7 +246,7 @@ public final class ParkedSignals {
             return Savepoints.attempt(tx, () -> host.apply(command, tx)).compose(attempt -> switch (attempt) {
                 case Savepoints.Attempt.Applied<Void> applied ->
                     commands.settleParked(signal.commandId(), "COMPLETE", null, tx)
-                            .compose(ParkedSignals::requireRow)
+                            .compose(ClaimLostException::requireRow)
                             .compose(done -> host.applied(command, tx))
                             // the instance moved: look at the waits it holds now
                             .compose(done -> drain(instance, tx));
@@ -256,11 +257,6 @@ public final class ParkedSignals {
                                     .compose(done -> candidates(instance, candidates, index + 1, nextWait, tx));
             });
         });
-    }
-
-    /** A settlement of a parked command that updated no row means it was not parked: the segment rolls back. */
-    private static Future<Void> requireRow(Integer rows) {
-        return rows != null && rows > 0 ? Future.succeededFuture() : Future.failedFuture(new ClaimLostException());
     }
 
     private boolean overBudget(SqlClient tx) {
@@ -289,17 +285,7 @@ public final class ParkedSignals {
 
     private Future<Void> settleRejected(WorkflowInstanceId instance, ParkedSignal signal, String reason, SqlClient tx) {
         return commands.settleParked(signal.commandId(), "REJECTED", reason, tx)
-                .compose(ParkedSignals::requireRow)
+                .compose(ClaimLostException::requireRow)
                 .compose(done -> host.rejected(instance, signal.commandId(), signal.signalName(), reason, tx));
-    }
-
-    private Future<Void> rejectAll(
-            WorkflowInstanceId instance, List<ParkedSignal> parked, String status, SqlClient tx) {
-        Future<Void> chain = Future.succeededFuture();
-        for (ParkedSignal signal : parked) {
-            String reason = CommandErrors.signalInstanceEnded(signal.signalName(), status, false);
-            chain = chain.compose(done -> settleRejected(instance, signal, reason, tx));
-        }
-        return chain;
     }
 }

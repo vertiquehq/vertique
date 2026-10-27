@@ -134,7 +134,9 @@ public interface TransactionalWorkflowOperations<TX> {
     }
 
     /**
-     * Cancels a running or waiting workflow instance within the given transaction.
+     * Cancels a workflow instance that has not ended within the given transaction, as
+     * {@link WorkflowOperations#cancel(WorkflowInstanceId, String)} does: under the instance's execution lock, every
+     * unsettled command, timer and task of the instance is cancelled with it.
      *
      * @param id id of the workflow instance to cancel
      * @param reason human-readable reason for the cancellation

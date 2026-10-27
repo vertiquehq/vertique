@@ -9,12 +9,15 @@ import dev.vertique.db.postgresql.PgSqlRepository;
 import dev.vertique.db.postgresql.PgTableNames;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.Pool;
+import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.RowSet;
 import io.vertx.sqlclient.Tuple;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /**
  * PostgreSQL persistence component for workflow retention. Owns the archive/purge SQL,
@@ -22,9 +25,16 @@ import java.time.OffsetDateTime;
  * batch-size validation, {@link Instant}/{@link OffsetDateTime} conversion, result construction)
  * live in {@link PgWorkflowRetentionService} which delegates to this repository.
  *
- * <p>Both operations use {@code FOR UPDATE SKIP LOCKED} on a correlated subquery so multiple
+ * <p>Both operations pick their candidates with {@code FOR UPDATE SKIP LOCKED} so multiple
  * concurrent batch runs (e.g., rolling cron jobs on different application nodes) progress without
- * blocking one another. Each method opens its own transaction via {@link Pool#withTransaction}.
+ * blocking one another, and try each candidate's execution lock without waiting: an instance whose
+ * lock another transaction holds (a segment running, a command being recorded, a cancellation) is
+ * skipped this run and removed by a later one. Under the lock a second statement reads the
+ * eligibility again, with a snapshot taken after the lock was won, and keeps out every instance that
+ * is no longer eligible or has an active command ({@code PENDING}, {@code DEFERRED} or
+ * {@code CLAIMED}): a retry recorded on an archive-eligible failed instance keeps it. Each method
+ * opens its own transaction via {@link Pool#withTransaction}, so the locks are released when the
+ * batch ends.
  *
  * <p>Cutoff semantics:
  * <ul>
@@ -56,6 +66,9 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
     /** Name of the migration instance whose schema mapping places the workflow tables. */
     private static final String INSTANCE_NAME = "workflow";
 
+    /** The namespace prefix of the execution lock's key, as the executors derive it. */
+    private static final String EXECUTION_LOCK_NAMESPACE = "vertique.workflow.execution-lock:";
+
     // --- SQL statements ---
     //
     // The statements are built once at construction because every table reference is qualified with
@@ -63,19 +76,39 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
     // configured placement rather than being a compile-time constant.
 
     /**
-     * Archive SQL: sets {@code archived_at = NOW()} on up to {@code $4} unarchived rows of the
-     * given status whose {@code completed_at <= $2}, optionally filtered by {@code definition_id}.
+     * Archive candidate SQL: up to {@code $4} unarchived rows of the given status whose {@code completed_at <= $2},
+     * optionally filtered by {@code definition_id}, locked with {@code SKIP LOCKED}, and then only those whose
+     * execution lock this transaction won without waiting.
      *
      * <p>Parameters: $1=status, $2=completed_at cutoff, $3=definition_id (nullable text), $4=limit.
      */
+    private final String sqlArchiveCandidates;
+
+    /**
+     * Archive eligibility SQL, run once the execution locks are held: the candidates ({@code $1}) that are still of
+     * status {@code $2}, past the cutoff {@code $3}, unarchived and without an active command.
+     */
+    private final String sqlArchiveEligible;
+
+    /** Archive write SQL: sets {@code archived_at = NOW()} on the instances in {@code $1}. */
     private final String sqlArchive;
 
     /**
-     * Purge SQL: deletes up to {@code $3} archived rows whose {@code archived_at <= $1},
-     * optionally filtered by {@code definition_id}.
+     * Purge candidate SQL: up to {@code $3} archived rows whose {@code archived_at <= $1}, optionally filtered by
+     * {@code definition_id}, locked with {@code SKIP LOCKED}, and then only those whose execution lock this
+     * transaction won without waiting.
      *
      * <p>Parameters: $1=archived_at cutoff, $2=definition_id (nullable text), $3=limit.
      */
+    private final String sqlPurgeCandidates;
+
+    /**
+     * Purge eligibility SQL, run once the execution locks are held: the candidates ({@code $1}) that are still archived
+     * at or before the cutoff {@code $2} and without an active command.
+     */
+    private final String sqlPurgeEligible;
+
+    /** Purge write SQL: deletes the instances in {@code $1}. */
     private final String sqlPurge;
 
     /**
@@ -109,9 +142,11 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
 
         String instances = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_instances");
 
-        this.sqlArchive = "UPDATE " + instances
-                + " SET archived_at = NOW()"
-                + " WHERE id IN ("
+        String commands = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_commands");
+        String noActiveCommand = " AND NOT EXISTS (SELECT 1 FROM " + commands + " c WHERE c.workflow_id = i.id"
+                + " AND c.state IN ('PENDING','DEFERRED','CLAIMED'))";
+
+        this.sqlArchiveCandidates = "SELECT cand.id FROM ("
                 + "  SELECT id FROM " + instances
                 + "  WHERE status = $1"
                 + "    AND completed_at <= $2"
@@ -120,10 +155,18 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
                 + "  ORDER BY completed_at ASC, id ASC"
                 + "  LIMIT $4"
                 + "  FOR UPDATE SKIP LOCKED"
-                + ")";
+                + ") cand WHERE " + tryExecutionLock("cand.id");
 
-        this.sqlPurge = "DELETE FROM " + instances
-                + " WHERE id IN ("
+        this.sqlArchiveEligible = "SELECT i.id FROM " + instances + " i"
+                + " WHERE i.id = ANY($1::uuid[])"
+                + "   AND i.status = $2"
+                + "   AND i.completed_at <= $3"
+                + "   AND i.archived_at IS NULL"
+                + noActiveCommand;
+
+        this.sqlArchive = "UPDATE " + instances + " SET archived_at = NOW() WHERE id = ANY($1::uuid[])";
+
+        this.sqlPurgeCandidates = "SELECT cand.id FROM ("
                 + "  SELECT id FROM " + instances
                 + "  WHERE archived_at IS NOT NULL"
                 + "    AND archived_at <= $1"
@@ -131,7 +174,30 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
                 + "  ORDER BY archived_at ASC, id ASC"
                 + "  LIMIT $3"
                 + "  FOR UPDATE SKIP LOCKED"
-                + ")";
+                + ") cand WHERE " + tryExecutionLock("cand.id");
+
+        this.sqlPurgeEligible = "SELECT i.id FROM " + instances + " i"
+                + " WHERE i.id = ANY($1::uuid[])"
+                + "   AND i.archived_at IS NOT NULL"
+                + "   AND i.archived_at <= $2"
+                + noActiveCommand;
+
+        this.sqlPurge = "DELETE FROM " + instances + " WHERE id = ANY($1::uuid[])";
+    }
+
+    /**
+     * The SQL that tries an instance's execution lock without waiting. The two integers are the two halves of the first
+     * eight bytes of the SHA-256 of the namespace-prefixed instance id, the derivation the executors and requesters use
+     * for the same lock, so a retention run and a running segment exclude one another.
+     *
+     * @param idColumn the expression of the instance id
+     * @return a boolean SQL expression that is true when the transaction now holds the lock
+     */
+    private static String tryExecutionLock(String idColumn) {
+        String digest = "sha256(convert_to('" + EXECUTION_LOCK_NAMESPACE + "' || " + idColumn + "::text, 'UTF8'))";
+        return "pg_try_advisory_xact_lock("
+                + "('x' || encode(substring(" + digest + " from 1 for 4), 'hex'))::bit(32)::int, "
+                + "('x' || encode(substring(" + digest + " from 5 for 4), 'hex'))::bit(32)::int)";
     }
 
     /**
@@ -151,10 +217,20 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
      */
     public Future<Integer> archiveBefore(
             String status, OffsetDateTime cutoff, @Nullable String definitionId, int limit) {
-        Tuple params = Tuple.of(status, cutoff, definitionId, limit);
-        return transaction().execute("workflow_instances archiveBefore", conn -> conn.preparedQuery(sqlArchive)
-                .execute(params)
-                .map(rs -> rs.rowCount()));
+        Tuple candidates = Tuple.of(status, cutoff, definitionId, limit);
+        return transaction()
+                .execute("workflow_instances archiveBefore", conn -> conn.preparedQuery(sqlArchiveCandidates)
+                        .execute(candidates)
+                        .compose(locked -> conn.preparedQuery(sqlArchiveEligible)
+                                .execute(Tuple.of(idsOf(locked), status, cutoff))
+                                .compose(eligible -> {
+                                    UUID[] ids = idsOf(eligible);
+                                    return ids.length == 0
+                                            ? Future.succeededFuture(0)
+                                            : conn.preparedQuery(sqlArchive)
+                                                    .execute(Tuple.of(ids))
+                                                    .map(rs -> rs.rowCount());
+                                })));
     }
 
     /**
@@ -171,9 +247,27 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
      * @return a {@link Future} resolving to the number of rows actually deleted
      */
     public Future<Integer> purgeArchivedBefore(OffsetDateTime cutoff, @Nullable String definitionId, int limit) {
-        Tuple params = Tuple.of(cutoff, definitionId, limit);
-        return transaction().execute("workflow_instances purgeArchived", conn -> conn.preparedQuery(sqlPurge)
-                .execute(params)
-                .map(rs -> rs.rowCount()));
+        Tuple candidates = Tuple.of(cutoff, definitionId, limit);
+        return transaction().execute("workflow_instances purgeArchived", conn -> conn.preparedQuery(sqlPurgeCandidates)
+                .execute(candidates)
+                .compose(locked -> conn.preparedQuery(sqlPurgeEligible)
+                        .execute(Tuple.of(idsOf(locked), cutoff))
+                        .compose(eligible -> {
+                            UUID[] ids = idsOf(eligible);
+                            return ids.length == 0
+                                    ? Future.succeededFuture(0)
+                                    : conn.preparedQuery(sqlPurge)
+                                            .execute(Tuple.of(ids))
+                                            .map(rs -> rs.rowCount());
+                        })));
+    }
+
+    private static UUID[] idsOf(RowSet<Row> rows) {
+        UUID[] ids = new UUID[rows.size()];
+        int index = 0;
+        for (Row row : rows) {
+            ids[index++] = row.getUUID("id");
+        }
+        return ids;
     }
 }

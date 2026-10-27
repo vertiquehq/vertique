@@ -11,6 +11,7 @@ import dev.vertique.workflow.engine.spi.ParkedSignal;
 import dev.vertique.workflow.engine.spi.QueueCounts;
 import dev.vertique.workflow.engine.spi.RecordedTimer;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.SettledCommand;
 import dev.vertique.workflow.engine.spi.TimerCommandSpec;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.history.PendingCommand;
@@ -61,6 +62,7 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
 
     private final List<WorkflowInstanceId> recordedRetries = new CopyOnWriteArrayList<>();
     private final List<RecordedMigration> recordedMigrations = new CopyOnWriteArrayList<>();
+    private final List<WorkflowInstanceId> cancelledInstances = new CopyOnWriteArrayList<>();
     private volatile boolean deadLetters;
 
     /**
@@ -79,6 +81,15 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
      */
     public List<RecordedMigration> recordedMigrations() {
         return List.copyOf(recordedMigrations);
+    }
+
+    /**
+     * The instances whose commands were cancelled through this repository, oldest first.
+     *
+     * @return a snapshot of the cancellations
+     */
+    public List<WorkflowInstanceId> cancelledInstances() {
+        return List.copyOf(cancelledInstances);
     }
 
     /**
@@ -124,8 +135,19 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
     }
 
     @Override
-    public Future<Integer> rejectDeadLetters(WorkflowInstanceId instance, SqlClient tx) {
+    public Future<Integer> settleEnded(WorkflowInstanceId instance, SqlClient tx) {
         return Future.succeededFuture(0);
+    }
+
+    @Override
+    public Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, SqlClient tx) {
+        cancelledInstances.add(instance);
+        return Future.succeededFuture(List.of());
+    }
+
+    @Override
+    public Future<Integer> cancel(long commandId, UUID token, String lastError, SqlClient tx) {
+        return Future.succeededFuture(1);
     }
 
     @Override

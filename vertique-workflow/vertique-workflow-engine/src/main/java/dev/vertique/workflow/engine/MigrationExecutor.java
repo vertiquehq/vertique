@@ -4,6 +4,7 @@
 package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.Savepoints;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandHead;
@@ -270,7 +271,7 @@ final class MigrationExecutor {
                         return Future.<Void>failedFuture(new WorkflowInstanceNotFoundException(id));
                     }
                     WorkflowInstance inst = optInst.get();
-                    if (isEnded(inst.status())) {
+                    if (EndedInstanceOutcomes.isEnded(inst.status())) {
                         return Future.<Void>failedFuture(
                                 new dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException(
                                         id, "source instance is in terminal status: " + inst.status()));
@@ -703,20 +704,6 @@ final class MigrationExecutor {
                             inst.definitionVersion());
             throw e;
         }
-    }
-
-    /**
-     * Returns {@code true} if the given status is a terminal state (no further transitions
-     * possible).
-     *
-     * @param status the status to check
-     * @return {@code true} for terminal statuses
-     */
-    private static boolean isEnded(WorkflowStatus status) {
-        return switch (status) {
-            case COMPLETED, COMPENSATED, CANCELLED, EXPIRED -> true;
-            default -> false;
-        };
     }
 
     private static boolean isTerminal(WorkflowStatus status) {

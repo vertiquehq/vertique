@@ -24,6 +24,9 @@ final class ReasonCodes {
     /** A command whose instance had ended when it was claimed. */
     static final String INSTANCE_ENDED = "INSTANCE_ENDED";
 
+    /** A command settled because its instance was cancelled. */
+    static final String INSTANCE_CANCELLED = "INSTANCE_CANCELLED";
+
     private ReasonCodes() {
         // constants
     }

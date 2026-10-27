@@ -37,6 +37,8 @@ public final class CommandErrors {
         ATTEMPTS_EXHAUSTED,
         /** The command's instance had ended when the command was claimed. */
         INSTANCE_ENDED,
+        /** The command's instance was cancelled, so the command was cancelled with it. */
+        INSTANCE_CANCELLED,
         /** This node holds no plan for the instance's pin, so the command was deferred. */
         NOT_RUNNABLE,
         /** A signal names no wait of the definition version its instance is pinned to. */
@@ -148,6 +150,18 @@ public final class CommandErrors {
                 Reason.INSTANCE_ENDED,
                 token(kind) + " command was settled because its instance had already ended with status "
                         + token(status));
+    }
+
+    /**
+     * The value for a command that was cancelled because its instance was cancelled, whether the cancellation settled
+     * it or its instance was found cancelled when the command ran.
+     *
+     * @param kind the command kind
+     * @return the stored value
+     */
+    public static String instanceCancelled(String kind) {
+        return format(
+                Reason.INSTANCE_CANCELLED, token(kind) + " command was cancelled because its instance was cancelled");
     }
 
     /**

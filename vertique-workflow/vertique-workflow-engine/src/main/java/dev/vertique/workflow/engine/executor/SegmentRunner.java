@@ -70,6 +70,7 @@ final class SegmentRunner {
         COMPLETED,
         REJECTED,
         STALE,
+        CANCELLED,
         PARKED,
         BUSY,
         RELEASE,
@@ -117,6 +118,7 @@ final class SegmentRunner {
                         case COMPLETED -> emitSettled(claim, "COMPLETE", claimStartNanos);
                         case REJECTED -> emitSettled(claim, "REJECTED", claimStartNanos);
                         case STALE -> emitSettled(claim, "STALE", claimStartNanos);
+                        case CANCELLED -> emitSettled(claim, "CANCELLED", claimStartNanos);
                         case PARKED -> emitSettled(claim, "PARKED", claimStartNanos);
                         default -> {
                             // released or abandoned: nothing was settled
@@ -171,6 +173,7 @@ final class SegmentRunner {
                             case PARKED -> Future.succeededFuture(Step.PARKED);
                             case SETTLED_REJECTED -> Future.succeededFuture(Step.REJECTED);
                             case SETTLED_STALE -> Future.succeededFuture(Step.STALE);
+                            case SETTLED_CANCELLED -> Future.succeededFuture(Step.CANCELLED);
                         });
             });
         });

@@ -9,6 +9,7 @@ import dev.vertique.workflow.actor.WorkflowActorMaps;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.executor.ClaimLostException;
 import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.Savepoints;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
@@ -730,8 +731,17 @@ final class TaskLifecycleService {
                         new dev.vertique.workflow.exception.WorkflowInstanceNotFoundException(command.workflowId()));
             }
             WorkflowInstance inst = found.get();
-            if (isEnded(inst.status())) {
-                return rejectEnded(claim, command, recorded, inst, tx);
+            if (EndedInstanceOutcomes.isEnded(inst.status())) {
+                return settleEnded(
+                        claim,
+                        command,
+                        recorded,
+                        EndedInstanceOutcomes.of(
+                                        command.kind(),
+                                        inst.status().name(),
+                                        EndedInstanceOutcomes.Target.completion(recorded.decisionName()))
+                                .orElseThrow(),
+                        tx);
             }
             if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
                     || !inst.definitionId().equals(head.definitionId())
@@ -766,7 +776,12 @@ final class TaskLifecycleService {
                             claim,
                             command,
                             recorded,
-                            CommandErrors.completionInstanceFailed(recorded.decisionName()),
+                            EndedInstanceOutcomes.of(
+                                            command.kind(),
+                                            inst.status().name(),
+                                            EndedInstanceOutcomes.Target.completion(recorded.decisionName()))
+                                    .orElseThrow()
+                                    .reason(),
                             tx);
                 }
                 if (task.branchTokenId() == null && !waitsForTask(inst, recorded.taskId())) {
@@ -782,13 +797,6 @@ final class TaskLifecycleService {
         return inst.status() == WorkflowStatus.WAITING
                 && inst.waitType() == WaitType.TASK
                 && taskId.toString().equals(inst.waitKey());
-    }
-
-    private static boolean isEnded(WorkflowStatus status) {
-        return status == WorkflowStatus.COMPLETED
-                || status == WorkflowStatus.COMPENSATED
-                || status == WorkflowStatus.CANCELLED
-                || status == WorkflowStatus.EXPIRED;
     }
 
     private Future<WorkflowSegments.Outcome> applyCompletion(
@@ -856,7 +864,7 @@ final class TaskLifecycleService {
     private Future<WorkflowSegments.Outcome> settleRejected(
             ClaimedCommand claim, SegmentCommand command, CompletionTarget target, String reason, SqlClient tx) {
         return commands.reject(command.commandId(), claim.token(), reason, tx)
-                .compose(TaskLifecycleService::requireRow)
+                .compose(ClaimLostException::requireRow)
                 .compose(done -> reservations.reopen(target.taskId().toString(), command.commandId(), tx))
                 .compose(reopened -> {
                     if (!reopened) {
@@ -892,7 +900,7 @@ final class TaskLifecycleService {
                 ? reservations.reopen(target.taskId().toString(), command.commandId(), tx)
                 : Future.succeededFuture(false);
         return released.compose(ignored -> commands.stale(command.commandId(), claim.token(), reason, tx))
-                .compose(TaskLifecycleService::requireRow)
+                .compose(ClaimLostException::requireRow)
                 .compose(done -> historyRecorder.appendCompletionCommandHistory(
                         command.workflowId(),
                         WorkflowEntryType.COMMAND_STALE,
@@ -904,15 +912,17 @@ final class TaskLifecycleService {
                 .map(done -> WorkflowSegments.Outcome.SETTLED_STALE);
     }
 
-    /** Rejects the command of an ended instance and cancels the task it reserved. */
-    private Future<WorkflowSegments.Outcome> rejectEnded(
+    /**
+     * Settles the command of an ended instance as the outcome table states, rejected or cancelled, and cancels the task
+     * it reserved.
+     */
+    private Future<WorkflowSegments.Outcome> settleEnded(
             ClaimedCommand claim,
             SegmentCommand command,
             CompletionTarget target,
-            WorkflowInstance inst,
+            EndedInstanceOutcomes.Outcome outcome,
             SqlClient tx) {
-        String reason = CommandErrors.completionInstanceEnded(
-                target.decisionName(), inst.status().name());
+        boolean cancelled = outcome.settlement() == EndedInstanceOutcomes.Settlement.CANCELLED;
         Instant now = clock.instant();
         return reservations
                 .reopen(target.taskId().toString(), command.commandId(), tx)
@@ -926,22 +936,21 @@ final class TaskLifecycleService {
                                         tx)
                                 .<Void>mapEmpty()
                         : Future.<Void>succeededFuture())
-                .compose(done -> commands.reject(command.commandId(), claim.token(), reason, tx))
-                .compose(TaskLifecycleService::requireRow)
+                .compose(done -> cancelled
+                        ? commands.cancel(command.commandId(), claim.token(), outcome.reason(), tx)
+                        : commands.reject(command.commandId(), claim.token(), outcome.reason(), tx))
+                .compose(ClaimLostException::requireRow)
                 .compose(done -> historyRecorder.appendCompletionCommandHistory(
                         command.workflowId(),
-                        WorkflowEntryType.COMMAND_REJECTED,
+                        cancelled ? WorkflowEntryType.COMMAND_CANCELLED : WorkflowEntryType.COMMAND_REJECTED,
                         command.commandId(),
                         target.taskId(),
                         target.decisionName(),
-                        reason,
+                        outcome.reason(),
                         tx))
-                .map(done -> WorkflowSegments.Outcome.SETTLED_REJECTED);
-    }
-
-    /** A settlement that updated no row means the claim no longer stands: the segment rolls back. */
-    private static Future<Void> requireRow(Integer rows) {
-        return rows != null && rows > 0 ? Future.succeededFuture() : Future.failedFuture(new ClaimLostException());
+                .map(done -> cancelled
+                        ? WorkflowSegments.Outcome.SETTLED_CANCELLED
+                        : WorkflowSegments.Outcome.SETTLED_REJECTED);
     }
 
     /**

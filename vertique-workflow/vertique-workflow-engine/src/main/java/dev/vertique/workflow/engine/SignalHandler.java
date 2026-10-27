@@ -7,6 +7,7 @@ import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.workflow.engine.executor.ClaimLostException;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.DeadlineGuard;
+import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.ParkedSignals;
 import dev.vertique.workflow.engine.executor.Savepoints;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
@@ -500,12 +501,8 @@ final class SignalHandler {
                         new WorkflowInstanceNotFoundException(command.workflowId()));
             }
             WorkflowInstance inst = found.get();
-            if (isEnded(inst.status())) {
-                String reason = CommandErrors.signalInstanceEnded(
-                        signal.name(), inst.status().name(), signal.branchAddressed());
-                return signal.branchAddressed()
-                        ? stale(claim, command, signal, reason, tx)
-                        : reject(claim, command, signal, reason, tx);
+            if (EndedInstanceOutcomes.isEnded(inst.status())) {
+                return metInstance(claim, command, signal, inst, false, tx);
             }
             if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
                     || !inst.definitionId().equals(head.definitionId())
@@ -543,6 +540,9 @@ final class SignalHandler {
             WorkflowInstance inst,
             RuntimeWorkflow rw,
             SqlClient tx) {
+        if (inst.status() == WorkflowStatus.FAILED) {
+            return metInstance(claim, command, signal, inst, false, tx);
+        }
         boolean awaited = inst.status() == WorkflowStatus.WAITING
                 && inst.waitType() == WaitType.SIGNAL
                 && signal.name().equals(inst.waitKey());
@@ -568,11 +568,15 @@ final class SignalHandler {
                     Optional<BranchToken> branch = tokens.stream()
                             .filter(token -> signal.branchId().equals(token.branchId()))
                             .findFirst();
-                    if (branch.isPresent() && isFinished(branch.get().status())) {
+                    boolean branchEnded =
+                            branch.isPresent() && isFinished(branch.get().status());
+                    if (inst.status() == WorkflowStatus.FAILED) {
+                        return metInstance(claim, command, signal, inst, branchEnded, tx);
+                    }
+                    if (branchEnded) {
                         return stale(claim, command, signal, CommandErrors.signalBranchEnded(signal.name()), tx);
                     }
-                    boolean awaited = inst.status() != WorkflowStatus.FAILED
-                            && branch.isPresent()
+                    boolean awaited = branch.isPresent()
                             && branch.get().status() == BranchStatus.WAITING
                             && branch.get().waitType() == WaitType.SIGNAL
                             && signal.name().equals(branch.get().waitKey());
@@ -699,10 +703,35 @@ final class SignalHandler {
         return applyBranchSignal(inst, waiting, rw, signal.name(), raw, tx, effectiveBase, command.commandId());
     }
 
+    /**
+     * Settles the command as the outcome table states for a signal that meets an instance that has ended or failed.
+     *
+     * @param branchEnded whether the branch a branch-addressed signal addresses has ended or was superseded
+     */
+    private Future<WorkflowSegments.Outcome> metInstance(
+            ClaimedCommand claim,
+            SegmentCommand command,
+            SignalTarget signal,
+            WorkflowInstance inst,
+            boolean branchEnded,
+            SqlClient tx) {
+        EndedInstanceOutcomes.Outcome outcome = EndedInstanceOutcomes.of(
+                        command.kind(),
+                        inst.status().name(),
+                        EndedInstanceOutcomes.Target.signal(signal.name(), signal.branchAddressed(), branchEnded))
+                .orElseThrow();
+        return switch (outcome.settlement()) {
+            case REJECTED -> reject(claim, command, signal, outcome.reason(), tx);
+            case STALE -> stale(claim, command, signal, outcome.reason(), tx);
+            case CANCELLED -> cancel(claim, command, signal, outcome.reason(), tx);
+            case PARKED, EXECUTES -> park(claim, command, signal, tx);
+        };
+    }
+
     private Future<WorkflowSegments.Outcome> park(
             ClaimedCommand claim, SegmentCommand command, SignalTarget signal, SqlClient tx) {
         return commands.park(command.commandId(), claim.token(), tx)
-                .compose(rows -> requireRow(rows))
+                .compose(ClaimLostException::requireRow)
                 .compose(done -> historyRecorder.appendSignalCommandHistory(
                         command.workflowId(),
                         WorkflowEntryType.SIGNAL_PARKED,
@@ -716,7 +745,7 @@ final class SignalHandler {
     private Future<WorkflowSegments.Outcome> reject(
             ClaimedCommand claim, SegmentCommand command, SignalTarget signal, String reason, SqlClient tx) {
         return commands.reject(command.commandId(), claim.token(), reason, tx)
-                .compose(rows -> requireRow(rows))
+                .compose(ClaimLostException::requireRow)
                 .compose(done -> historyRecorder.appendSignalCommandHistory(
                         command.workflowId(),
                         WorkflowEntryType.COMMAND_REJECTED,
@@ -730,7 +759,7 @@ final class SignalHandler {
     private Future<WorkflowSegments.Outcome> stale(
             ClaimedCommand claim, SegmentCommand command, SignalTarget signal, String reason, SqlClient tx) {
         return commands.stale(command.commandId(), claim.token(), reason, tx)
-                .compose(rows -> requireRow(rows))
+                .compose(ClaimLostException::requireRow)
                 .compose(done -> historyRecorder.appendSignalCommandHistory(
                         command.workflowId(),
                         WorkflowEntryType.COMMAND_STALE,
@@ -741,16 +770,18 @@ final class SignalHandler {
                 .map(done -> WorkflowSegments.Outcome.SETTLED_STALE);
     }
 
-    /** A settlement that updated no row means the claim no longer stands: the segment rolls back. */
-    private static Future<Void> requireRow(Integer rows) {
-        return rows != null && rows > 0 ? Future.succeededFuture() : Future.failedFuture(new ClaimLostException());
-    }
-
-    private static boolean isEnded(WorkflowStatus status) {
-        return status == WorkflowStatus.COMPLETED
-                || status == WorkflowStatus.COMPENSATED
-                || status == WorkflowStatus.CANCELLED
-                || status == WorkflowStatus.EXPIRED;
+    private Future<WorkflowSegments.Outcome> cancel(
+            ClaimedCommand claim, SegmentCommand command, SignalTarget signal, String reason, SqlClient tx) {
+        return commands.cancel(command.commandId(), claim.token(), reason, tx)
+                .compose(ClaimLostException::requireRow)
+                .compose(done -> historyRecorder.appendSignalCommandHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_CANCELLED,
+                        command.commandId(),
+                        signal.name(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_CANCELLED);
     }
 
     /**
@@ -772,7 +803,7 @@ final class SignalHandler {
                 String reason = CommandErrors.signalUndeclared(
                         signal.signalName(), target.plan().definitionVersion());
                 chain = chain.compose(done -> commands.settleParked(signal.commandId(), "REJECTED", reason, tx))
-                        .compose(SignalHandler::requireRow)
+                        .compose(ClaimLostException::requireRow)
                         .compose(done -> historyRecorder.appendSignalCommandHistory(
                                 instance,
                                 WorkflowEntryType.COMMAND_REJECTED,
@@ -795,7 +826,7 @@ final class SignalHandler {
                     return Future.failedFuture(new WorkflowInstanceNotFoundException(instance));
                 }
                 WorkflowInstance inst = found.get();
-                if (isEnded(inst.status())) {
+                if (EndedInstanceOutcomes.isEnded(inst.status())) {
                     return Future.succeededFuture(
                             new ParkedSignals.Waits(inst.status().name(), List.of()));
                 }

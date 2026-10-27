@@ -5,6 +5,7 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.engine.executor.ClaimLostException;
 import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
@@ -46,6 +47,7 @@ import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -199,15 +201,12 @@ final class TimerLifecycleService {
                         new WorkflowInstanceNotFoundException(command.workflowId()));
             }
             WorkflowInstance inst = found.get();
-            if (isEnded(inst.status())) {
-                return settleStale(
-                        claim,
-                        command,
-                        CommandErrors.instanceEnded("TIMER", inst.status().name()),
-                        tx);
-            }
-            if (inst.status() == WorkflowStatus.FAILED) {
-                return settleStale(claim, command, CommandErrors.timerInstanceFailed(timerKind), tx);
+            Optional<EndedInstanceOutcomes.Outcome> met = EndedInstanceOutcomes.of(
+                    command.kind(), inst.status().name(), EndedInstanceOutcomes.Target.timer(timerKind));
+            if (met.isPresent()) {
+                return met.get().settlement() == EndedInstanceOutcomes.Settlement.CANCELLED
+                        ? settleCancelled(claim, command, met.get().reason(), tx)
+                        : settleStale(claim, command, met.get().reason(), tx);
             }
             if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
                     || !inst.definitionId().equals(head.definitionId())
@@ -282,9 +281,7 @@ final class TimerLifecycleService {
     private Future<WorkflowSegments.Outcome> settleStale(
             ClaimedCommand claim, SegmentCommand command, String reason, SqlClient tx) {
         return commands.stale(command.commandId(), claim.token(), reason, tx)
-                .compose(rows -> rows != null && rows > 0
-                        ? Future.<Void>succeededFuture()
-                        : Future.<Void>failedFuture(new ClaimLostException()))
+                .compose(ClaimLostException::requireRow)
                 .compose(done -> timerStore.markCancelled(command.timerId(), clock.instant(), tx))
                 .compose(done -> historyRecorder.appendTimerCommandHistory(
                         command.workflowId(),
@@ -297,11 +294,24 @@ final class TimerLifecycleService {
                 .map(done -> WorkflowSegments.Outcome.SETTLED_STALE);
     }
 
-    private static boolean isEnded(WorkflowStatus status) {
-        return status == WorkflowStatus.COMPLETED
-                || status == WorkflowStatus.COMPENSATED
-                || status == WorkflowStatus.CANCELLED
-                || status == WorkflowStatus.EXPIRED;
+    /**
+     * Settles the command as cancelled, in the segment's transaction, because its instance was cancelled, and cancels
+     * the timer row if it is still scheduled.
+     */
+    private Future<WorkflowSegments.Outcome> settleCancelled(
+            ClaimedCommand claim, SegmentCommand command, String reason, SqlClient tx) {
+        return commands.cancel(command.commandId(), claim.token(), reason, tx)
+                .compose(ClaimLostException::requireRow)
+                .compose(done -> timerStore.markCancelled(command.timerId(), clock.instant(), tx))
+                .compose(done -> historyRecorder.appendTimerCommandHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_CANCELLED,
+                        command.commandId(),
+                        command.timerKind(),
+                        command.timerId(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_CANCELLED);
     }
 
     // --- Timer fire ---
