@@ -21,6 +21,7 @@ import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 /** Records the result shape of definition-body SQL without changing the application-facing graph. */
 final class WorkflowDefinitionSqlObserver {
@@ -40,6 +41,7 @@ final class WorkflowDefinitionSqlObserver {
     private volatile CompletionFailureGate completionFailureGate;
     private volatile CompletionLockGate completionLockGate;
     private volatile CompletionResponseLossGate completionResponseLossGate;
+    private volatile StatementGate statementGate;
     private final AtomicBoolean failNextActivationWrite = new AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicInteger injectedActivationFailures =
             new java.util.concurrent.atomic.AtomicInteger();
@@ -173,6 +175,16 @@ final class WorkflowDefinitionSqlObserver {
         return gate;
     }
 
+    /**
+     * Holds the result of the next execution of a statement the matcher accepts: the statement runs on the database,
+     * and its caller receives the result only after the gate is released. Other statements are not affected.
+     */
+    StatementGate holdNextResultOf(Predicate<String> matcher) {
+        StatementGate gate = new StatementGate(matcher);
+        statementGate = gate;
+        return gate;
+    }
+
     private Object wrapClient(Object delegate, Class<?> clientType) {
         InvocationHandler handler = (proxy, method, args) -> invokeClient(delegate, method, args);
         return Proxy.newProxyInstance(clientType.getClassLoader(), new Class<?>[] {clientType}, handler);
@@ -270,6 +282,15 @@ final class WorkflowDefinitionSqlObserver {
                 if (gate != null && gate.capture()) {
                     return gate.released().compose(ignored -> executeAndObserveFuture(delegate, method, args, sql));
                 }
+            }
+            StatementGate held = statementGate;
+            if (held != null && method.getName().equals("execute") && held.capture(sql)) {
+                @SuppressWarnings("unchecked")
+                Future<Object> executed = (Future<Object>) executeAndObserveFuture(delegate, method, args, sql);
+                return executed.compose(rows -> {
+                    held.markReached();
+                    return held.released().map(ignored -> rows);
+                });
             }
             if (sql.toLowerCase(Locale.ROOT).contains("server_encoding")
                     && method.getName().equals("execute")
@@ -448,6 +469,40 @@ final class WorkflowDefinitionSqlObserver {
                 }
             }
             return false;
+        }
+    }
+
+    /** Holds the result of one statement execution until released. */
+    static final class StatementGate {
+
+        private final Predicate<String> matcher;
+        private final io.vertx.core.Promise<Void> reached = io.vertx.core.Promise.promise();
+        private final io.vertx.core.Promise<Void> release = io.vertx.core.Promise.promise();
+        private final AtomicBoolean captured = new AtomicBoolean();
+
+        private StatementGate(Predicate<String> matcher) {
+            this.matcher = matcher;
+        }
+
+        /** Completes once the statement has run on the database and its result is being held. */
+        Future<Void> reached() {
+            return reached.future();
+        }
+
+        void release() {
+            release.tryComplete();
+        }
+
+        private Future<Void> released() {
+            return release.future();
+        }
+
+        private boolean capture(String sql) {
+            return matcher.test(sql) && captured.compareAndSet(false, true);
+        }
+
+        private void markReached() {
+            reached.tryComplete();
         }
     }
 

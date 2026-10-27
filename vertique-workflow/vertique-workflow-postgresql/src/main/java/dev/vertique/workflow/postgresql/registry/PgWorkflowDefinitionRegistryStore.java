@@ -103,6 +103,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private final String sqlRemoveActivation;
     private final String sqlListActivations;
     private final String sqlDefaultCurrent;
+    private final StartSelectionRead startSelection;
     private final String sqlActivateDefault;
     private final WorkflowDefinitionsConfig config;
     private final WorkflowExceptionMapper workflowMapper = new WorkflowExceptionMapper();
@@ -252,6 +253,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " definition_version=EXCLUDED.definition_version, activated_at=EXCLUDED.activated_at"
                 + " WHERE existing.definition_version < EXCLUDED.definition_version";
 
+        this.startSelection = new StartSelectionRead(definitions, activations);
+
         this.sqlDefaultCurrent = "SELECT 1 FROM " + activations + " WHERE scope_key='" + WorkflowScopes.DEFAULT
                 + "' AND definition_id=$1 AND target_scope_key='" + WorkflowScopes.DEFAULT
                 + "' AND definition_version=$2";
@@ -318,6 +321,23 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         return Optional.of(new StoredDocument(metadata(r), documentOf(key, r)));
                     })
                     .recover(failure -> Future.failedFuture(translated(failure, key.definitionId())));
+        });
+    }
+
+    /**
+     * Reads the versions of the id in the start scope and the default scope, and the activation records of both
+     * scopes, in one statement on the caller's transaction. It takes no connection, lock or timeout of its own, and a
+     * failure is translated like the failure of any other read of this store.
+     */
+    @Override
+    public Future<StartSelection> selectionRead(String startScope, String definitionId, SqlClient tx) {
+        return attempt(() -> {
+            Objects.requireNonNull(startScope, "startScope");
+            Objects.requireNonNull(definitionId, "definitionId");
+            Objects.requireNonNull(tx, "tx");
+            return startSelection
+                    .read(tx, startScope, definitionId)
+                    .recover(failure -> Future.failedFuture(translated(failure, definitionId)));
         });
     }
 
@@ -983,7 +1003,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     /** Reads a stored JSON object column; a value that is not an object reads as absent and is never echoed. */
-    private static @Nullable JsonObject storedObject(Row r, String column) {
+    static @Nullable JsonObject storedObject(Row r, String column) {
         try {
             return r.getJsonObject(column);
         } catch (ClassCastException notAnObject) {
@@ -992,7 +1012,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     /** The failure the row is marked with; a reason this release does not know reads as no failure. */
-    private static @Nullable DefinitionFailure storedFailure(Row r) {
+    static @Nullable DefinitionFailure storedFailure(Row r) {
         String reason = r.getString("failure_reason");
         if (reason == null) return null;
         try {
@@ -1002,7 +1022,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         }
     }
 
-    private static DefinitionActivation activation(Row r) {
+    static DefinitionActivation activation(Row r) {
         return new DefinitionActivation(
                 r.getString("scope_key"),
                 r.getString("definition_id"),

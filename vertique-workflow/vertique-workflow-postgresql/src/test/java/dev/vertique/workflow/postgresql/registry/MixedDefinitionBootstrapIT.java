@@ -994,9 +994,9 @@ public class MixedDefinitionBootstrapIT {
                     .isEqualTo(newHashV2);
             Stored committed = scenario.stored(id, 2);
 
-            // When the old-code node starts a new instance
+            // When the old-code node starts a new instance of version 2
             OpenTransaction startTx = OpenTransaction.begin(scenario);
-            Throwable startRefusal = failureOf(oldNode.app()
+            Future<WorkflowInstanceId> recording = oldNode.app()
                     .transactionalOperations()
                     .start(
                             new StartCommand(
@@ -1009,17 +1009,22 @@ public class MixedDefinitionBootstrapIT {
                                     2L,
                                     null,
                                     null),
-                            startTx.connection()));
+                            startTx.connection());
+            Throwable startRefusal = failureOf(recording);
+            String pinnedHash = startRefusal == null
+                    ? await(startTx.connection()
+                                    .preparedQuery("SELECT plan_hash FROM workflow_instances WHERE id = $1")
+                                    .execute(Tuple.of(recording.result().value())))
+                            .iterator()
+                            .next()
+                            .getString("plan_hash")
+                    : null;
             startTx.rollback();
 
-            // Then the start is refused as drift naming version 2, and no instance or dedup row remains
-            assertThat(startRefusal)
-                    .as("start on the old-code node")
-                    .isNotNull()
-                    .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                        assertThat(failure.reason()).isEqualTo(Reason.DRIFT);
-                        assertThat(failure.key()).isEqualTo(v2Key);
-                    });
+            // Then the start is recorded against the committed row, so the instance carries the new hash that the
+            // executor of a node with that code runs, and nothing remains after the rollback
+            assertThat(startRefusal).as("start on the old-code node").isNull();
+            assertThat(pinnedHash).isEqualTo(newHashV2);
             assertThat(scenario.instanceCount(id)).isEqualTo(instancesBefore);
             assertThat(scenario.dedupCount(id)).isZero();
 

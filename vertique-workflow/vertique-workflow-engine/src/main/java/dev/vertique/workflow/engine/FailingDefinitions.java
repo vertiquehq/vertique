@@ -12,9 +12,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * This node's own evaluation of the scope rows that newly deployed code conflicts with. The startup step fills it
- * from the code this node runs, and a new start reads it to refuse a failing version, so a node never refuses
- * a start because of what another node with other code wrote to the table. The stored mark only feeds the listing.
+ * This node's own evaluation of the scope rows that newly deployed code conflicts with, kept by the propagation pass
+ * and cleared when a version retires. A start reads none of it: a failing version's start is recorded and fails at the
+ * executor. The stored mark only feeds the listing.
  */
 @Singleton
 final class FailingDefinitions {
@@ -39,19 +39,5 @@ final class FailingDefinitions {
     Optional<DefinitionFailure> find(DefinitionKey key) {
         Entry entry = failing.get(key);
         return entry == null ? Optional.empty() : Optional.of(entry.failure());
-    }
-
-    /** Whether this node holds a failing version of the id in the scope that implements the contract. */
-    boolean holds(String scopeKey, String definitionId, String contractName) {
-        return !failing.isEmpty()
-                && failing.entrySet().stream()
-                        .anyMatch(entry -> entry.getKey().scopeKey().equals(scopeKey)
-                                && entry.getKey().definitionId().equals(definitionId)
-                                && entry.getValue().contractName().equals(contractName));
-    }
-
-    /** Whether this node holds no failing version at all. */
-    boolean isEmpty() {
-        return failing.isEmpty();
     }
 }

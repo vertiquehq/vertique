@@ -19,7 +19,6 @@ import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
-import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
@@ -90,10 +89,9 @@ public class MixedCodeNodesIT {
             OtherContract.class.getAnnotation(WorkflowContract.class).value();
 
     @Test
-    @DisplayName("a start on a node without the current version's code fails typed and creates no instance")
-    void startOnNodeWithoutCurrentVersionCodeFailsTypedAndCreatesNoInstance(Vertx vertx) {
+    @DisplayName("a start on a node without the current version's code is recorded and run by a capable node")
+    void startOnNodeWithoutCurrentVersionCodeIsRecordedAndRunByACapableNode(Vertx vertx) {
         String id = "mixed-code-start";
-        DefinitionKey current = new DefinitionKey(DEFAULT, id, 2);
 
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, id);
@@ -104,24 +102,20 @@ public class MixedCodeNodesIT {
             await(b.app().definitionPropagationPoller().pollNow());
 
             // When a client on B starts the definition with an idempotency key
-            Throwable refused = ActivationFixtures.failureOf(
-                    () -> b.app().workflowOperations().start(start(id, "k1")));
+            WorkflowInstanceId started = await(b.app().workflowOperations().start(start(id, "k1")));
 
-            // Then the start fails typed, naming the scope, the id and the version and nothing else
-            assertThat(refused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
-                assertThat(failure.definitionKey()).isEqualTo(current);
-                assertThat(failure.scopeKey()).isEqualTo(DEFAULT);
-                assertThat(failure.getMessage()).contains(DEFAULT, id, "2").doesNotContain("OrderDocState");
-            });
+            // Then the start is recorded, pinned to version 2, with its deduplication row
+            assertThat(versionOf(database, started)).isEqualTo(2);
+            assertThat(database.instanceCount(id)).isEqualTo(1);
+            assertThat(database.dedupCount(id)).isEqualTo(1);
 
-            // And neither an instance nor a start deduplication row exists for the key
-            assertThat(database.instanceCount(id)).isZero();
-            assertThat(database.dedupCount(id)).isZero();
-
-            // And the same start on A creates an instance pinned to version 2
-            WorkflowInstanceId started = await(a.app().workflowOperations().start(start(id, "k1")));
+            // And a node with the code runs it, since no node fails an instance because it cannot run its pin
             awaitInitialExecution(database, started, 0);
             assertThat(versionOf(database, started)).isEqualTo(2);
+
+            // And the same start repeated on A returns the same instance
+            assertThat(await(a.app().workflowOperations().start(start(id, "k1"))))
+                    .isEqualTo(started);
         }
     }
 

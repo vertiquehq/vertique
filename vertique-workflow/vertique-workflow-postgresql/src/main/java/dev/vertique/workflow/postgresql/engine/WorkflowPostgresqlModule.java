@@ -19,6 +19,7 @@ import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.TaskReservations;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
@@ -492,4 +493,14 @@ public abstract class WorkflowPostgresqlModule {
     @Binds
     @Singleton
     abstract WorkflowDefinitionRegistryStore definitionRegistryStore(PgWorkflowDefinitionRegistryStore store);
+
+    /**
+     * Binds {@link PgWorkflowDefinitionRegistryStore} as the engine's reads of definition rows on a caller's
+     * transaction, so that recording a start selects its version from the database on the caller's connection.
+     *
+     * @param store the definition registry store singleton
+     * @return the store as the engine-internal read interface
+     */
+    @Binds
+    abstract TransactionalDefinitionReads<SqlClient> definitionReads(PgWorkflowDefinitionRegistryStore store);
 }

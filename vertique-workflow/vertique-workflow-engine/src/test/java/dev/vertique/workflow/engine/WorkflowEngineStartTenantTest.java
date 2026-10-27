@@ -190,7 +190,6 @@ class WorkflowEngineStartTenantTest {
                 WorkflowEngineFactory.registryTypeNames(registry),
                 activations,
                 Optional.empty(),
-                new FailingDefinitions(),
                 mock(WorkflowExecutionProbe.class),
                 commands,
                 new AcceptingTaskReservations(),

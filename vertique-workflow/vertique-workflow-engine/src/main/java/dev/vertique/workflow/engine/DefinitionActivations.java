@@ -18,7 +18,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -27,8 +26,9 @@ import java.util.stream.Collectors;
 
 /**
  * This node's view of the activation records: the current version of a definition id in each scope that has a
- * record, keyed by scope and id. The lifecycle updates it after the records are committed, and a start without a
- * version reads it to choose the version to run. The startup step restores every durable record into it.
+ * record, keyed by scope and id. The lifecycle updates it after the records are committed, and the startup step
+ * restores every durable record into it. A start of an id the database holds a row of selects from the database; only a
+ * start of an id with no row reads this view to choose the version to run.
  *
  * <p>The propagation pass also refreshes the view from the committed records, so that a record written, replaced or
  * removed on another node reaches this one within the propagation bound. A refresh never writes the table and never
@@ -59,11 +59,6 @@ final class DefinitionActivations {
     @Inject
     DefinitionActivations(WorkflowDefinitionRegistryStore store) {
         Objects.requireNonNull(store, "store");
-    }
-
-    /** The scope's own record of the id, if the view holds one. */
-    Optional<DefinitionActivation> recordOf(String scopeKey, String definitionId) {
-        return Optional.ofNullable(records.get(new Slot(scopeKey, definitionId)));
     }
 
     /** Stores the record, replacing the scope's earlier record of the id. */

@@ -554,11 +554,11 @@ public interface AppComponent {
 
 ### Instance Scopes
 
-`WorkflowEngine.start` resolves a null `StartCommand.startScope` to the default scope (`WorkflowScopes.DEFAULT`) and `doCreateInstance` stamps that start scope and the scope of the resolved definition version on the new instance; the engine takes no scope source of its own. The order of a start is: look up the start dedup row of `(start scope, definition id, idempotency key)` (`WorkflowDedupRepository.findStart`), then resolve the definition, then compare the command contract with the definition contract, then claim the dedup row and create the instance. A replay that names a version or target scope other than the existing pin fails with `WorkflowIdempotencyConflictException`; the stored fingerprint stays `definitionVersion=N` and is not used for the comparison. `MigrationExecutor` carries both scopes of the instance into the re-pinned snapshot, and resurrection keeps them, so a scope written by another writer stays with the instance. The scopes are information and a filter, not an isolation boundary.
+`WorkflowEngine.start` resolves a null `StartCommand.startScope` to the default scope (`WorkflowScopes.DEFAULT`) and `doCreateInstance` stamps that start scope and the scope of the resolved definition version on the new instance; the engine takes no scope source of its own. The order of a start is: look up the start dedup row of `(start scope, definition id, idempotency key)` (`WorkflowDedupRepository.findStart`); on a first start, one selection read of the database on the caller's transaction (see Activation Records And The Current Version), then the choice of the version, the compare of the command contract with the definition contract and the refusal of a deprecated version from that read, then the subject, payload size, payload depth and start-schema checks, then the execution lock on the new instance, the dedup claim, pin admission and the `PENDING` insert with its `START` command. Everything before the lock runs without a lock. A subject whose type is longer than 64 characters, whose id is longer than 255 or whose version is longer than 64 (the widths of the instance's columns) is refused with `WorkflowInvalidPayloadException` before the lock. A replay that names a version or target scope other than the existing pin fails with `WorkflowIdempotencyConflictException`; the stored fingerprint stays `definitionVersion=N` and is not used for the comparison. `MigrationExecutor` carries both scopes of the instance into the re-pinned snapshot, and resurrection keeps them, so a scope written by another writer stays with the instance. The scopes are information and a filter, not an isolation boundary.
 
 `migrate(id, targetScope, targetVersion)` (and the transactional form with a trailing transaction) resolves the target in `targetScope`, which must be the instance's start scope or the default scope. The executor, before it looks up the handler, rejects the migration for a target of another contract, a target whose state class differs from the source's and does not extend it (or any differing state class when no `WorkflowStateCompatibility` is bound), and a target version that this node evaluated as failing (see Failing scope rows), before any write; the reason is fixed text and never names a state class; it then finds the handler by both scopes and re-pins the instance's definition scope to the target. `migrate(id, targetVersion)` keeps meaning the instance's definition scope.
 
-Work this node cannot run. A key that the node's registry holds no plan for is not runnable on that node, whether or not another node can run it (a rolling deploy publishes a version that reaches the other nodes as a committed record before they have its code; a failing scope row has no registered plan at all). The plan lookup then fails with `WorkflowVersionNotRunnableException`: a start that resolves to such a key (explicit version or activation record) creates no instance and no start dedup row, and a task completion, a typed-client query, and the join advance leave the instance, its history and its dedup rows as they were, because the caller's transaction rolls back (inside a timer transaction a join advance that resolves the plan again would commit, but it cannot fail there today: it uses the pin the caller already resolved, and migration refuses an instance with active branches). A signal (including the branch-aware forms), a retry and a migration need no plan to be recorded, so a node without the pinned code records them like any other node; an executor of a node that cannot run the plan, or, for a migration, the target plan, defers the recorded command (a deferral spends no attempt) and a node that can run it applies it. A timer (a standalone or signal-timeout timer, a task due date or a task reminder, on an instance or on a branch) is a `TIMER` command, so the executor of a node that cannot run its plan defers it like any other command and a node that can run it fires it; a deferral spends no attempt and never fails the instance, however long it lasts. A direct call of a timer callback leaves the same rows and the task's reminder counter as they were for a different reason: it resolves the pinned plan before its first write, and the delayed-job timer executor of an earlier release's timer row queues its job again in the same transaction, which commits only that job bookkeeping while the timer row stays `SCHEDULED`. Branch recovery leaves the token scheduled for a node that has the code. No node marks an instance failed because it cannot run its pin, while `query(id)` still reads the stored instance and history without the plan, and only the contract-checked `query(id, contractName)` fails the same way, because it needs the pinned plan to compare contracts. A node whose deployed code lacks a non-retired version still fails startup with `CODE_UNAVAILABLE`, so deployments are roll-forward only: the not-runnable failures occur on nodes that are already running when another node publishes or activates.
+Work this node cannot run. A key that the node's registry holds no plan for is not runnable on that node, whether or not another node can run it (a rolling deploy publishes a version that reaches the other nodes as a committed record before they have its code; a failing scope row has no registered plan at all). A start needs no plan: it selects its version from the database and records a `PENDING` instance and a `START` command on any node, and the executor of a node that cannot run the plan defers the command until a node that can runs it. The plan lookup then fails with `WorkflowVersionNotRunnableException`: a task completion, a typed-client query, and the join advance leave the instance, its history and its dedup rows as they were, because the caller's transaction rolls back (inside a timer transaction a join advance that resolves the plan again would commit, but it cannot fail there today: it uses the pin the caller already resolved, and migration refuses an instance with active branches). A signal (including the branch-aware forms), a retry and a migration need no plan to be recorded, so a node without the pinned code records them like any other node; an executor of a node that cannot run the plan, or, for a migration, the target plan, defers the recorded command (a deferral spends no attempt) and a node that can run it applies it. A timer (a standalone or signal-timeout timer, a task due date or a task reminder, on an instance or on a branch) is a `TIMER` command, so the executor of a node that cannot run its plan defers it like any other command and a node that can run it fires it; a deferral spends no attempt and never fails the instance, however long it lasts. A direct call of a timer callback leaves the same rows and the task's reminder counter as they were for a different reason: it resolves the pinned plan before its first write, and the delayed-job timer executor of an earlier release's timer row queues its job again in the same transaction, which commits only that job bookkeeping while the timer row stays `SCHEDULED`. Branch recovery leaves the token scheduled for a node that has the code. No node marks an instance failed because it cannot run its pin, while `query(id)` still reads the stored instance and history without the plan, and only the contract-checked `query(id, contractName)` fails the same way, because it needs the pinned plan to compare contracts. A node whose deployed code lacks a non-retired version still fails startup with `CODE_UNAVAILABLE`, so deployments are roll-forward only: the not-runnable failures occur on nodes that are already running when another node publishes or activates.
 
 Every lookup of an instance's plan (signals, tasks, timers, retries, branch and join continuations, queries and migration) resolves the instance's full pin: its definition scope, definition id and definition version. An instance pinned to a definition scope never runs the plan that another scope holds under the same id and version, and migration resolves its target version in the instance's definition scope. The lifecycle, the startup restoration and the propagation pass register, mark and remove a runtime under the scope of the stored row they apply.
 
@@ -566,23 +566,52 @@ Every event and side-effect correlation the engine records, single-path and bran
 
 ### Activation Records And The Current Version
 
-A start without a version runs the version that activation records select. `WorkflowEngine.start` consults, in this order: the
+A start without a version runs the version that activation records select. A first start (one with no start dedup row) makes one selection
+read on the caller's transaction connection: `TransactionalDefinitionReads.selectionRead(startScope, definitionId, tx)` returns, in
+one statement, the stored versions of the id in the start scope and the default scope (version, status, kind, contract, state type,
+failure mark, plan hash, signal names and start-payload schema, no document text) and the activation records of both scopes.
+The version, the contract ownership and the refusal of a deprecated version are decided from that result; no plan is loaded, no
+registry is consulted and no payload class is read. A replay returns before the read. The engine consults, in this order: the
 start scope's record of the definition id and the default scope's record. No record means the start fails
 with `WorkflowNoCurrentVersionException(scopeKey, definitionId)` at once, including after `deactivateDefault`; no current
 version is ever computed from the registry. Only the start scope, the default scope and the default scope's
 versions are ever consulted: the versions of another scope are never borrowed, and nothing in the start path weights, samples or
-splits traffic between versions. The choice also follows the client's contract: a scope's own record applies only to clients of the contract that the scope's own versions implement, and without a record such a client follows the default scope's current version only when that version implements the same contract, or fails with `WorkflowNoCurrentVersionException` otherwise. Any other client uses the default scope's record when the default scope's versions implement its contract, and fails with `WorkflowNoCurrentVersionException` when they do not. `activate` of a scope to a default-scope version of another contract than the scope's own versions fails with `WorkflowDefinitionContractMismatchException`. The choice costs a fixed number of registry lookups, whatever the number of scopes and versions. A record resolves its version like an explicit start of it, so a record whose target is
-deprecated fails with the `DEPRECATED` lifecycle reason and one whose target this node has no code for fails as an unavailable
-pin; a deprecated version is refused whether it was named or selected by a record.
+splits traffic between versions. The choice also follows the client's contract: a scope's own record applies only to clients of the contract that the scope's own versions implement, and without a record such a client follows the default scope's current version only when that version implements the same contract, or fails with `WorkflowNoCurrentVersionException` otherwise. Any other client uses the default scope's record when the default scope's versions implement its contract, and fails with `WorkflowNoCurrentVersionException` when they do not. `activate` of a scope to a default-scope version of another contract than the scope's own versions fails with `WorkflowDefinitionContractMismatchException`. The choice reads at most two activation records and the stored versions of one id, whatever the number of scopes. A record resolves its version like an explicit start of it, so a record whose target is
+deprecated fails with the `DEPRECATED` lifecycle reason and one whose target has no published row (a candidate, or no row) fails as an unavailable
+pin (`WorkflowVersionNotRunnableException`) and a retired one is refused by pin admission as a lifecycle failure; a deprecated version is refused whether it was named or selected by a record. A
+version this node holds no code for is not refused: the start is recorded and a node that can run the plan runs it.
 
-The records live in a package-private, node-local `DefinitionActivations` view, one per engine, keyed by scope and id. The
+**Freshness and isolation.** The selection read is the linearization point for activation changes, and it runs on the caller's
+connection, so what it sees follows the caller's transaction isolation level. At READ COMMITTED (PostgreSQL's and the framework's
+default) the next start on every node sees an activation, deprecation or retirement committed before its read. At REPEATABLE READ or
+SERIALIZABLE the read sees the caller's snapshot, so an activation change committed after that snapshot can be missed and the start can pin
+the earlier version. The engine neither checks nor changes the caller's isolation level, and no level is refused. Pin admission stays the fence for status: a
+version deprecated or retired between the read and the insert is refused at every level with the lifecycle exception whose reason is
+`INVALID_TRANSITION` and whose message names the status.
+
+**Start payload.** The payload of a start is checked against the JSON Schema stored with the selected row, through the bounded
+record-time validator, before the execution lock: a payload larger than `workflow.recording.maxPayloadBytes` or nested deeper than 64
+levels is refused with `WorkflowInvalidPayloadException`, a stored schema with a non-local `$ref` is refused naming the definition
+version (the stored row is not changed), and a payload that violates the schema is refused naming the definition version and the path
+of the first violation, never the payload. A row stored without a schema (written before the schema was stored) leaves validation to the
+executor, which deserializes the payload into the plan's start type and applies its constraints; the size and depth bounds still apply.
+
+**Failing versions.** The failure mark column is read and refuses nothing: a start of a failing version is recorded, and the executor
+fails it (see Failing scope rows).
+
+**Ids with no row.** An id for which the database holds no row in the start scope or the default scope is unmanaged by the registry store
+(a definition registered only in this node's registry, or an engine whose store cannot read on the caller's transaction): its start
+selects from this node's registry and activation view, checks the payload against its declared start type and constraints, and is
+admitted as unmanaged under READ COMMITTED, as before.
+
+The records live in a package-private, node-local `DefinitionActivations` view, one per engine, keyed by scope and id; only a start of an id with no stored row (see Ids with no row) selects from it. The
 lifecycle updates it after the durable write commits (`activate`, `deactivateDefault`, `follow`), and a refused or failed write
 leaves it as it was. `activations` reads the store. The startup step restores the default scope's stored records into the view,
 including records that name a version this node has no code for, and the records it writes itself on first publication; it reads
 no record of another scope, however many there are. The propagation pass refreshes the view from the committed records of every
 scope (see Peer Propagation), so a record of another scope, and an activation, `follow` or `deactivateDefault` committed on
-another node, reach this node within the propagation bound after it starts. A start never reads the activation
-table; it reads the view. An engine assembled by `WorkflowEngineFactory.create` runs no startup step, so its view holds
+another node, reach this node within the propagation bound after it starts. A start of a stored id does not read the view: it reads the
+database. An engine assembled by `WorkflowEngineFactory.create` runs no startup step, so its view holds
 only the records the store held when it was created, plus what its own lifecycle writes.
 
 On first publication the startup step passes `activateDefault` to the store for every code version and packaged document
@@ -674,10 +703,9 @@ when it is published, with `WorkflowUnknownTypeNameException`, and the row stays
   default scope's state class, so the instances pinned to the row keep resuming, receiving signals and completing tasks.
 - **Binding rule.** Nothing is compiled or registered, and no class is loaded by a name that no longer resolves; the row's
   plan is absent from the registry, so its instances are not resumed on this node until the class is back.
-- **Refusal.** A new start that selects the row, by an activation record or by an explicit version, fails with
-  `WorkflowDefinitionFailingException` naming the scope, the definition key and the rule. The check runs after the replay
-  check, so a repeat of an earlier start still returns its instance, and before the version is resolved from the
-  registry. Other scopes, and the default scope's versions, are not affected.
+- **No record-time refusal.** A new start that selects the row, by an activation record or by an explicit version, is recorded
+  like any other start: the stored mark and this node's evaluation refuse nothing in the caller's transaction. The executor fails
+  the recorded `START` (see Evaluation on the executor). Other scopes, and the default scope's versions, are not affected.
 - **Evaluation on the executor.** The executor decides for itself, from the plan it builds for a command, whether the
   scope row the command runs is failing. A name binding that no class resolves builds no plan: the command is deferred as
   not runnable (no attempt is spent) and the row is marked `NAME_BINDING_UNRESOLVED` once the deferral has committed. A
@@ -688,9 +716,8 @@ when it is published, with `WorkflowUnknownTypeNameException`, and the row stays
   completions, timers, retries and migrations out of it, runs unchanged, so running instances keep resuming. A migration
   into a flagged version is rejected like one into a marked version. A flag is kept with the plan in the plan cache and is
   evaluated again, in place, when the default scope's state type name that the operation reads differs from the name it
-  was evaluated against. A version of the default scope is never flagged or marked. The record-time refusal above reads
-  only the reconciliation pass's evaluation, so a start recorded before this node has evaluated the version fails when the
-  executor runs it.
+  was evaluated against. A version of the default scope is never flagged or marked. A start recorded before any node has evaluated
+  the version fails the same way when the executor runs it.
 - **Mark writes.** When the executor's outcome differs from the mark the row stored when the plan was built, it writes or
   clears the mark with `recordFailure` in a statement of its own, after the command's segment or deferral has ended and
   never inside its transaction. The write is best effort: a failure is logged at warning level with the key only and
@@ -702,10 +729,9 @@ when it is published, with `WorkflowUnknownTypeNameException`, and the row stays
   in that comparison.
 - **Evaluation per node.** Startup evaluates no scope row. Every reconciliation pass evaluates the live scope rows it applies
   against the code that node ships and writes the result with `recordFailure`, which clears the mark when no conflict
-  remains; the node refuses starts from its own evaluation, not from the stored mark, so a scope row is refused as failing
-  only after the node has reconciled. The stored mark feeds the definition listing (`WorkflowDefinitionRecord.failure()`).
-  During a rolling deploy, nodes that ship different code may rewrite the mark in turn, so the listing shows the most
-  recent node's evaluation while each node keeps refusing by its own.
+  remains; each node's executor judges a command by its own plan, not by the stored mark. The stored mark feeds the definition listing
+  (`WorkflowDefinitionRecord.failure()`). During a rolling deploy, nodes that ship different code may rewrite the mark in turn,
+  so the listing shows the most recent node's evaluation while each executor keeps judging by its own.
 - **Peer propagation.** The reconciliation pass evaluates a scope row the same way: a live scope DOCUMENT row published by
   another node that this node's code conflicts with is registered as failing (state rule) or left unregistered (binding
   rule), kept in this node's evaluation, written with `recordFailure` when the stored mark differs, and counted as settled,
@@ -1174,7 +1200,10 @@ parameterized over `<TX>` (typically `SqlClient`):
 
 An adapter that reads definition rows on an operation's transaction handle also implements the engine-internal
 `TransactionalDefinitionReads<TX>` (`findDocument(key, tx)` answers a `StoredDocument` of the row's record and text without a
-connection of its own); the PostgreSQL store does. The public `WorkflowDefinitionRegistryStore` is unchanged.
+connection of its own; `selectionRead(startScope, definitionId, tx)` answers a `StartSelection`, the stored versions of the id in the start scope
+and the default scope and the activation records of both, in one lock-free statement on the caller's handle, which a first start selects its
+version from); the PostgreSQL store does. The engine declares the reads as an optional binding, and a store that does not implement them leaves
+every start to select from the node's registry. The public `WorkflowDefinitionRegistryStore` is unchanged.
 
 Register the SPI bindings in the adapter's Dagger module, then `include = {WorkflowEngineModule.class}`:
 

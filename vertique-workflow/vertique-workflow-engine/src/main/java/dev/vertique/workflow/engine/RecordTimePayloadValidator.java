@@ -48,8 +48,11 @@ import org.slf4j.LoggerFactory;
  * Compiled schemas are kept in a cache bounded by {@code workflow.recording.schemaCacheMaxEntries} and keyed by the
  * SHA-256 of the schema's canonical (key-sorted) JSON, so equal schemas share an entry whatever their key order; the
  * oldest-used entry is evicted first. The validator is safe for concurrent use.
+ *
+ * <p>INTERNAL: framework wiring between the recording paths of the engine and the executor package. It is not
+ * application API.
  */
-final class RecordTimePayloadValidator {
+public final class RecordTimePayloadValidator {
 
     private static final Logger log = LoggerFactory.getLogger(RecordTimePayloadValidator.class);
 
@@ -67,7 +70,7 @@ final class RecordTimePayloadValidator {
 
     /** Compiles a JSON Schema into something that can be asked for the violations of a payload. */
     @FunctionalInterface
-    interface SchemaCompiler {
+    public interface SchemaCompiler {
 
         /**
          * Compiles a schema.
@@ -80,7 +83,7 @@ final class RecordTimePayloadValidator {
 
     /** A compiled schema. */
     @FunctionalInterface
-    interface CompiledSchema {
+    public interface CompiledSchema {
 
         /**
          * Validates a payload.
@@ -101,7 +104,7 @@ final class RecordTimePayloadValidator {
      *
      * @param config validated recording configuration
      */
-    RecordTimePayloadValidator(WorkflowRecordingConfig config) {
+    public RecordTimePayloadValidator(WorkflowRecordingConfig config) {
         this(config, RecordTimePayloadValidator::compileGuarded);
     }
 
@@ -111,7 +114,7 @@ final class RecordTimePayloadValidator {
      * @param config   validated recording configuration
      * @param compiler compiles a schema that has passed the reference check
      */
-    RecordTimePayloadValidator(WorkflowRecordingConfig config, SchemaCompiler compiler) {
+    public RecordTimePayloadValidator(WorkflowRecordingConfig config, SchemaCompiler compiler) {
         this.maxPayloadBytes = config.maxPayloadBytes();
         this.compiler = compiler;
         int maxEntries = config.schemaCacheMaxEntries();
@@ -144,7 +147,7 @@ final class RecordTimePayloadValidator {
      * @throws WorkflowInvalidPayloadException if a bound is exceeded, the schema has a non-local {@code $ref}, or the
      *     payload violates the schema
      */
-    void validate(@Nullable Object payload, JsonObject schema, String subject) {
+    public void validate(@Nullable Object payload, JsonObject schema, String subject) {
         validate(payload);
         if (hasNonLocalReference(schema)) {
             throw invalid(subject + " is refused: its schema has a non-local $ref");
@@ -287,7 +290,7 @@ final class RecordTimePayloadValidator {
      * @throws WorkflowInvalidPayloadException if the encoded value exceeds the configured byte limit,
      *     exceeds 64 container levels or cannot be encoded as JSON
      */
-    void validate(@Nullable Object payload) {
+    public void validate(@Nullable Object payload) {
         validateDepth(payload);
         BoundedSink sink = new BoundedSink(maxPayloadBytes);
         try {

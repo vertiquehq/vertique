@@ -10,6 +10,7 @@ import dev.vertique.workflow.engine.executor.WorkflowExecutor;
 import dev.vertique.workflow.engine.registry.PlanCache;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -17,6 +18,7 @@ import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.tasks.TaskStore;
@@ -24,6 +26,7 @@ import dev.vertique.workflow.timer.TimerStore;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import java.time.Clock;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -199,14 +202,14 @@ public final class WorkflowEngineFactory {
                 parts.typeNames(),
                 activations,
                 parts.stateCompatibility(),
-                new FailingDefinitions(),
                 executionProbe,
                 parts.commands(),
                 () -> executorHolder[0],
                 parts.recordingConfig(),
                 parts.taskReservations(),
                 parts.schemaProducer(),
-                planCache.marks()::find);
+                planCache.marks()::find,
+                transactionalReads(parts.definitionStore()));
         executorHolder[0] = new WorkflowExecutor(
                 parts.vertx(),
                 parts.executorConfig(),
@@ -217,6 +220,18 @@ public final class WorkflowEngineFactory {
                 parts.executorObservers(),
                 parts.commandWakeups());
         return engine;
+    }
+
+    /**
+     * The store's reads of definition rows on a caller's transaction, when it offers them; {@code null} leaves a start
+     * to select from the registry. The SQL-client handle is the only handle type the engine records on.
+     */
+    @SuppressWarnings("unchecked")
+    private static @Nullable TransactionalDefinitionReads<SqlClient> transactionalReads(
+            WorkflowDefinitionRegistryStore store) {
+        return store instanceof TransactionalDefinitionReads<?> reads
+                ? (TransactionalDefinitionReads<SqlClient>) reads
+                : null;
     }
 
     /**

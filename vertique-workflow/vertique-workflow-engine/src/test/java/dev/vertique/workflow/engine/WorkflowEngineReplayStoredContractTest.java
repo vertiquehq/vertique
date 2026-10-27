@@ -143,7 +143,6 @@ class WorkflowEngineReplayStoredContractTest {
                 WorkflowEngineFactory.registryTypeNames(registry),
                 new DefinitionActivations(store),
                 Optional.<WorkflowStateCompatibility>empty(),
-                new FailingDefinitions(),
                 mock(WorkflowExecutionProbe.class),
                 new EmptyCommandRepository(),
                 new AcceptingTaskReservations(),

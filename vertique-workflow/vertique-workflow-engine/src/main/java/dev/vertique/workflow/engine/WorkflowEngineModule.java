@@ -23,6 +23,7 @@ import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.registry.FailingMarks;
 import dev.vertique.workflow.engine.registry.PlanCache;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
@@ -289,6 +290,16 @@ public abstract class WorkflowEngineModule {
      */
     @BindsOptionalOf
     abstract CommandWakeups optionalCommandWakeups();
+
+    /**
+     * Declares the transactional reads of definition rows as an optional binding; the PostgreSQL module binds them.
+     * Without them a start selects its version from this node's registry, as a node with a store that cannot read on
+     * the caller's transaction must.
+     *
+     * @return the optional reads declaration
+     */
+    @BindsOptionalOf
+    abstract TransactionalDefinitionReads<SqlClient> optionalDefinitionReads();
 
     /**
      * Declares the Vert.x instance as an optional binding, so a graph that binds none still provides the probe.

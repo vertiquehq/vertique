@@ -77,15 +77,14 @@ public class ActivationPropagationIT {
             // When A activates version 2 in qa
             await(a.service().activate(QA, id, DEFAULT, 2));
 
-            // Then before B reconciles, a start in qa on B still runs version 1
-            assertThat(b.start(QA, id)).isEqualTo(new Pin(QA, DEFAULT, id, 1));
-
-            // When B reconciles
-            await(b.app().definitionPropagationPoller().pollNow());
-
-            // Then a start in qa on B runs version 2, and a start in the default scope still runs version 1
+            // Then the next start in qa on B runs version 2 at once, because a start reads the database, and a start in
+            // the default scope still runs version 1
             assertThat(b.start(QA, id)).isEqualTo(new Pin(QA, DEFAULT, id, 2));
             assertThat(b.start(DEFAULT, id)).isEqualTo(new Pin(DEFAULT, DEFAULT, id, 1));
+
+            // And a reconciliation of B changes nothing about what a start selects
+            await(b.app().definitionPropagationPoller().pollNow());
+            assertThat(b.start(QA, id)).isEqualTo(new Pin(QA, DEFAULT, id, 2));
         }
     }
 
@@ -213,17 +212,13 @@ public class ActivationPropagationIT {
             // When A deactivates the default
             await(a.service().deactivateDefault(id));
 
-            // Then before B reconciles, a start in qa on B still runs version 1
+            // Then B ran version 1 before, and its next starts in qa and in the default scope fail at once as having
+            // no current version, because a start reads the database, creating no instance
             assertThat(beforeDeactivation).isEqualTo(new Pin(QA, DEFAULT, id, 1));
-            assertThat(b.start(QA, id)).isEqualTo(new Pin(QA, DEFAULT, id, 1));
             long instances = database.instanceCount(id);
-
-            // When B reconciles
-            await(b.app().definitionPropagationPoller().pollNow());
             Throwable qaStart = b.startFailure(QA, id);
             Throwable defaultStart = b.startFailure(DEFAULT, id);
 
-            // Then starts in qa and in the default scope on B fail as having no current version, creating no instance
             assertNoCurrentVersion(qaStart, QA, id);
             assertNoCurrentVersion(defaultStart, DEFAULT, id);
             assertThat(database.instanceCount(id)).isEqualTo(instances);
