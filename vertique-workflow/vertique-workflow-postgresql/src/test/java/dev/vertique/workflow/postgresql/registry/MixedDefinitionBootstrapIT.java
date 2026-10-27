@@ -722,7 +722,10 @@ public class MixedDefinitionBootstrapIT {
             assertThat(scenario.stored(docId, 3).status()).isEqualTo("CANDIDATE");
             assertThat(scenario.stored(docId, 2).status()).isEqualTo("AVAILABLE");
 
-            // And the caches hold the persisted statuses, including the rows that were just reset
+            // And, once the node has reconciled, which applies the live documents that startup leaves to their first
+            // use,
+            // the caches hold the persisted statuses, including the rows that were just reset
+            await(second.app().definitionPropagationPoller().pollNow());
             assertThat(second.app().workflowDefinitionStore().currentStatus(claimedId, 1))
                     .isEqualTo(ActivationStatus.CANDIDATE);
             assertThat(second.app().workflowDefinitionStore().currentStatus(docId, 3))
@@ -910,6 +913,8 @@ public class MixedDefinitionBootstrapIT {
             assertThat(scenario.stored(scope, activeId, 1).status()).isEqualTo("AVAILABLE");
             assertThat(scenario.stored(scope, deprecatedId, 1).status()).isEqualTo("DEPRECATED");
             Boot node = scenario.node(none(), unobserved());
+            // And one reconciliation, which applies the rows of the scope that startup does not read
+            await(node.app().definitionPropagationPoller().pollNow());
             long coolingSeconds = node.app().workflowDefinitionsConfig().maxStalenessSeconds();
 
             // When the candidate is activated
@@ -1167,7 +1172,8 @@ public class MixedDefinitionBootstrapIT {
 
     @ParameterizedTest(name = "{0}")
     @EnumSource(SharedIdOrder.class)
-    @DisplayName("every live tenant document is restored before traffic, whichever order the owners are read in")
+    @DisplayName(
+            "every live tenant document is applied by the first reconciliation, whichever order the owners are read in")
     void restoresTenantDocumentBeforeTraffic(SharedIdOrder order, Vertx vertx) {
         String activeId = "tenant-active:mixed-bootstrap-tenant-active";
         String supersededId = "tenant-superseded:mixed-bootstrap-tenant-superseded";
@@ -1235,16 +1241,14 @@ public class MixedDefinitionBootstrapIT {
             assertThat(scenario.stored("tenant-candidate", candidateId, 1).status())
                     .isEqualTo("CANDIDATE");
 
-            // When a fresh component, which has published none of them, starts and the first document is checked
-            // before deployment
-            BootObservation observation = observed(activeId, 1, active.planHash());
-            Boot second = scenario.attempt(none(), observation);
-
-            // Then startup completes, with the restoration finished before the bootstrap deployment
+            // When a fresh component, which has published none of them, starts and reconciles once
+            Boot second = scenario.attempt(none(), unobserved());
             assertThat(second.failure())
-                    .as("startup must restore every live tenant document before traffic")
+                    .as("startup reads only the default scope and the rows being published")
                     .isNull();
-            assertThat(observation.events()).containsExactly("bootstrap-complete", "bootstrap-verticle-deployed");
+            await(second.app().definitionPropagationPoller().pollNow());
+
+            // Then the first reconciliation has applied every live tenant document
             WorkflowRegistry registry = second.app().workflowRegistry();
 
             // And every live version resolves pinned with its own hash and registered definition

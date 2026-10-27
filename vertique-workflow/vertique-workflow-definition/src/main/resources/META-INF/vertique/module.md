@@ -292,8 +292,8 @@ catalog. Source URIs are never fetched.
 local registry and reports DEPRECATED in service metadata and lists. New starts of that version and
 migrations to it are refused with reason `DEPRECATED`, including a retry of an explicit start under an
 idempotency key used before the deprecation; instances already pinned to it keep running on the node that
-marked it, and on every peer that marks the version when its own reconciliation applies the deprecation. A restart restores the deprecated version (including a packaged document deprecated in the
-database), registers it, marks it and lets pinned instances resume, while new starts of it stay refused.
+marked it, and on every peer that marks the version when its own reconciliation applies the deprecation. A restart marks a deprecated packaged document (one deprecated in the database) again, and the
+next reconciliation registers and marks the other deprecated versions, so pinned instances resume while new starts of them stay refused.
 Other running nodes learn of the deprecation from their next periodic reconciliation, which takes the configured
 staleness cadence plus the time to apply, or when they restart. Deprecating a version leaves every other
 version available. The default scope's current version, which an activation record selects, cannot be deprecated until another
@@ -331,7 +331,11 @@ even when id, version and hash are equal. A scope's activation record can still 
 only the default scope's current version is protected; a start without a version in that scope then fails until the
 record is moved to an available version or removed with `follow`.
 
-Startup restores the live documents of every scope. An id that deployed code registers is a
+Startup reads the default scope, so it does not grow with the documents of other scopes: it registers the code definitions and
+the packaged documents, which register while the registry is constructed, and it builds no other document (a document published
+at run time is built from its row on first use; `workflow.definitions.buildDefaultScopeDocumentsAtStartup` makes startup build
+every live default scope document and fail on one that does not build). Documents of other scopes reach a node when the
+propagation pass first reconciles it, or when their plan is first needed. An id that deployed code registers is a
 default-scope CODE row, and a document of another scope may publish the same id and version beside it.
 A load into a scope writes only that scope's rows; it never touches the default scope's or another scope's rows. Documents
 packaged with the application are loaded into the default scope. The service does not check identity: the application decides who may load

@@ -10,6 +10,7 @@ import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reas
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -67,10 +68,18 @@ public final class DefinitionPublication {
                 + "; keep the class under that name, or retire the version before moving the class");
     }
 
-    /** The runtime the registry holds for the exact key, or {@code null} when it holds none. */
+    /**
+     * The runtime the registry holds for the exact key, or {@code null} when it holds none. A plan that only the plan
+     * cache holds is not a registration, so it is not held: it was built from the row and no lifecycle operation
+     * published it.
+     */
     static @Nullable RuntimeWorkflow held(WorkflowRegistry local, DefinitionKey key) {
         try {
-            return local.resolve(key);
+            RuntimeWorkflow runtime = local.resolve(key);
+            // The framework registry also answers from the plan cache; it registered the plan if it kept its source
+            boolean cacheOnly = local instanceof DefaultWorkflowRegistry
+                    && local.registeredDefinition(key).isEmpty();
+            return cacheOnly ? null : runtime;
         } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException absent) {
             return null;
         }

@@ -577,10 +577,11 @@ pin; a deprecated version is refused whether it was named or selected by a recor
 
 The records live in a package-private, node-local `DefinitionActivations` view, one per engine, keyed by scope and id. The
 lifecycle updates it after the durable write commits (`activate`, `deactivateDefault`, `follow`), and a refused or failed write
-leaves it as it was. `activations` reads the store. The startup step restores every stored record into the view, including
-records that name a version this node has no code for, and the records it writes itself on first publication. While the node
-runs, the propagation pass refreshes the view from the committed records (see Peer Propagation), so an activation, `follow` or
-`deactivateDefault` committed on another node reaches this one within the propagation bound. A start never reads the activation
+leaves it as it was. `activations` reads the store. The startup step restores the default scope's stored records into the view,
+including records that name a version this node has no code for, and the records it writes itself on first publication; it reads
+no record of another scope, however many there are. The propagation pass refreshes the view from the committed records of every
+scope (see Peer Propagation), so a record of another scope, and an activation, `follow` or `deactivateDefault` committed on
+another node, reach this node within the propagation bound after it starts. A start never reads the activation
 table; it reads the view. An engine assembled by `WorkflowEngineFactory.create` runs no startup step, so its view holds
 only the records the store held when it was created, plus what its own lifecycle writes.
 
@@ -615,8 +616,12 @@ compensation; a matching available row preserves the local publication. Loader c
 without undoing a committed publication.
 
 `WorkflowDefinitionRegistryBootstrapStep` runs in `BOOTSTRAP` with priority `Integer.MIN_VALUE / 2`,
-after schema migration and before any `BOOTSTRAP` verticle deploys. It works in this order, all
-through the shared per-definition queue, and fails startup (nothing deploys) on any violation:
+after schema migration and before any `BOOTSTRAP` verticle deploys. Its reads are bounded: it reads the rows of the default
+scope (which hold every code row and every packaged document), the rows of any scope that are being published (`PUBLISHING`),
+and the default scope's activation records, and nothing else, so no startup statement grows with the rows of other scopes. It
+builds a plan only for what the node deploys: the code definitions and the packaged documents, which the registry holds from
+its construction. It works in this order, all through the shared per-definition queue, and fails startup (nothing deploys) on
+any violation:
 1. It attributes the registrations that already exist (packaged documents and application-contributed
    definitions) to the default scope and snapshots the code definitions available in the deployed code.
 2. It records every definition as `AVAILABLE`: packaged document origins are DOCUMENT rows (an equal plan hash AND an equal
@@ -632,27 +637,38 @@ through the shared per-definition queue, and fails startup (nothing deploys) on 
    from the store, at startup and on a peer, is compiled and hashed with the row's binding. A kind conflict fails naming both rows; a CODE row
    in AVAILABLE or DEPRECATED state whose code is no longer deployed fails with `CODE_UNAVAILABLE`. Rows of other
    scopes for the same id and version never conflict.
-3. It restores every live DOCUMENT row of every scope (AVAILABLE and DEPRECATED)
-   through its loader, verifying the compiled hash and the stored text digest, before traffic. A row of a scope
-   other than the default one that newly deployed code conflicts with does not fail startup: it is marked failing
-   (see Failing scope rows below). A default scope row, and every CODE row, that conflicts still fails startup.
+3. It verifies every live DOCUMENT row of the default scope (AVAILABLE and DEPRECATED) that the registry holds, the
+   packaged documents, through its loader: the compiled hash and the stored text digest must match. A live default scope
+   document the registry does not hold, one that was published at run time, is not built at startup; its plan is built from
+   its row on first use (see Plan Cache), and a document that does not build is then not runnable, so its first command is
+   deferred and a warning names it once. With `workflow.definitions.buildDefaultScopeDocumentsAtStartup` set to `true`,
+   startup instead builds each such document into the plan cache, by the build a first use runs, and a document that does
+   not build fails startup with its failure (`WorkflowUnknownTypeNameException` for a recorded name that no class resolves,
+   a `WorkflowDefinitionLifecycleException` for drift or a missing loader). No row of another scope is restored at startup:
+   the rows of other scopes are evaluated against the code this node ships when the propagation pass first reconciles them
+   or when their plan is built on use (see Failing scope rows below). A CODE row that conflicts still fails startup.
 4. It marks DEPRECATED rows (CODE and DOCUMENT, including packaged documents deprecated in the database) and
    removes RETIRED runtimes only when the runtime is attributed to that row's own key; another scope's runtime, or
    a replacement, is never removed because id, version and hash match, and an unattributed runtime fails startup.
-5. It resets stale PUBLISHING claims (older than twice the staleness bound) to CANDIDATE, then re-reads
-   committed metadata and sends it through the loaders' `onRestored` and `onMetadata` callbacks so caches reflect
-   persisted state.
-Required rows with no unique loader fail startup with the key and diagnostic. Callback failures remain fatal.
+5. It resets stale PUBLISHING claims (older than twice the staleness bound, in any scope) to CANDIDATE, then re-reads
+   the default scope's rows and the rows it just reset and sends them through the loaders' `onRestored` and `onMetadata`
+   callbacks so caches reflect persisted state.
+6. It seals the registry: `DefaultWorkflowRegistry.register(WorkflowDefinition)` throws `IllegalStateException` naming the
+   definition from then on. Registration is a startup operation (code definitions and packaged documents register while
+   the registry is constructed); `DefaultWorkflowRegistry.seal()` is internal to this step and applications never call it.
+   A graph without this step, such as one assembled by `WorkflowEngineFactory.create`, is never sealed.
+Required rows with no unique loader fail startup with the key and diagnostic when the step restores them. Callback failures remain fatal.
 Compose validators ran in VALIDATE and do not re-run for restored definitions.
 
-**Failing scope rows.** Restoring a live DOCUMENT row of a scope other than the default one can find that the
-code this node ships conflicts with the stored row. Two conflicts mark the row failing instead of failing startup:
+**Failing scope rows.** Evaluating a live DOCUMENT row of a scope other than the default one, which the propagation pass
+does when it first reconciles the node, can find that the
+code this node ships conflicts with the stored row. Two conflicts mark the row failing instead of failing the pass:
 the row's state class no longer extends the default scope's definition of the same id and contract
 (`STATE_TYPE_NOT_EXTENDED`), and a type name in the row's recorded name binding no longer resolves
 (`NAME_BINDING_UNRESOLVED`). A default scope row that conflicts fails startup with `WorkflowDefinitionException` for the state
 rule or `WorkflowUnknownTypeNameException` for an unresolved binding, each naming the scope `default` and the
 definition id. A RETIRED row is not registered and is never evaluated, and a contract overlap between a scope row and
-default scope code is not a conflict. A CANDIDATE row is not evaluated at startup either: an unresolved binding is refused
+default scope code is not a conflict. A CANDIDATE row is not evaluated either: an unresolved binding is refused
 when it is published, with `WorkflowUnknownTypeNameException`, and the row stays a candidate.
 - **State rule.** The plan is registered through `WorkflowRegistry.registerFailing`, which skips only the comparison with the
   default scope's state class, so the instances pinned to the row keep resuming, receiving signals and completing tasks.
@@ -665,9 +681,10 @@ when it is published, with `WorkflowUnknownTypeNameException`, and the row stays
 - **Default scope unaffected.** A failing scope row never blocks the registration of a default scope version of the same
   id, at startup or when a default version is published later; only the scope-owned rows that registered plainly take part
   in that comparison.
-- **Evaluation per node.** Every startup evaluates every live scope row against the code that node ships and writes the
-  result with `recordFailure`, which clears the mark when no conflict remains; the node refuses starts from its own
-  evaluation, not from the stored mark. The stored mark feeds the definition listing (`WorkflowDefinitionRecord.failure()`).
+- **Evaluation per node.** Startup evaluates no scope row. Every reconciliation pass evaluates the live scope rows it applies
+  against the code that node ships and writes the result with `recordFailure`, which clears the mark when no conflict
+  remains; the node refuses starts from its own evaluation, not from the stored mark, so a scope row is refused as failing
+  only after the node has reconciled. The stored mark feeds the definition listing (`WorkflowDefinitionRecord.failure()`).
   During a rolling deploy, nodes that ship different code may rewrite the mark in turn, so the listing shows the most
   recent node's evaluation while each node keeps refusing by its own.
 - **Peer propagation.** The reconciliation pass evaluates a scope row the same way: a live scope DOCUMENT row published by
@@ -949,6 +966,13 @@ command it peeks on a live instance through `load`, so a node runs a document ve
   timeout and every `Error` are never remembered, so the next request reads again.
 - **Size.** At most `workflow.definitions.planCache.maxEntries` plans (default 500) stay resident; remembered failures count as entries. The cache reports each miss, each successful and each failed
   load and each size eviction to the `Set<CacheObserver>` under the name `workflow-plans`, and nothing for a hit.
+- **Startup builds nothing into it by default.** Startup builds the code definitions and the packaged documents, which the
+  registry holds, and no plan for a document published at run time, whatever its scope. With
+  `workflow.definitions.buildDefaultScopeDocumentsAtStartup` set to `true`, startup builds every live default scope document
+  the registry does not hold into this cache, so one that does not build fails startup; the setting does not touch documents of
+  other scopes, which are built on first use. A plan that only this cache holds is not a registration: the lifecycle's
+  deprecate, retire and reinstate see no registered runtime for it, and a start or a command on it loads it through `load`.
+  A document that does not build is logged once at warn level, with its key only, when the cache first remembers the failure.
 - **Held for the segment.** A plan can be evicted at any moment, and a lookup inside a segment's transaction must never
   build. The executor therefore holds the plans it warmed from the peek until its segment ends (or until it decides not to
   claim the command); `find` and `resolve` answer a held plan whatever the cache did. Holds are counted, so two segments

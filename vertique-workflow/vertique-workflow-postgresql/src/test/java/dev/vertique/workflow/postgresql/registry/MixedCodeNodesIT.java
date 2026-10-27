@@ -254,7 +254,9 @@ public class MixedCodeNodesIT {
                     .isInstanceOf(WorkflowIdempotencyConflictException.class);
 
             // and: a later version registered under another contract does not replace the stored one
-            b.app().workflowRegistry().register(MixedCodeFixtures.code(id, 3, Shape.COMPLETES, OtherContract.class));
+            b.app()
+                    .workflowRegistry()
+                    .register(DEFAULT, MixedCodeFixtures.code(id, 3, Shape.COMPLETES, OtherContract.class));
             assertThat(await(b.app().workflowOperations().start(start(id, "k1"))))
                     .isEqualTo(instance);
             Throwable storedContractConflict = ActivationFixtures.failureOf(() -> b.app()
@@ -386,8 +388,9 @@ public class MixedCodeNodesIT {
             first.close();
 
             // And a restart whose catalog no longer lists a class named by the row's binding, so the row is failing
-            // and has no registered plan
+            // and has no registered plan once the node has reconciled
             Boot second = FailingScopeRowIT.boot(database, vertx, Deployment.sameStateWithoutDecision(id));
+            await(second.app().definitionPropagationPoller().pollNow());
             assertThat(FailingScopeRowIT.listed(second, key).failure().rule()).isEqualTo(Rule.NAME_BINDING_UNRESOLVED);
             assertThat(second.app().workflowRegistry().find(key)).isEmpty();
             Rows before = Rows.of(database, waitingForSignal);

@@ -8,13 +8,13 @@ import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition;
 import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.VersionKey;
+import dev.vertique.workflow.engine.registry.PlanCache;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DeclaredSignalNames;
@@ -31,6 +31,7 @@ import dev.vertique.workflow.registry.store.ReconcileOutcome;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
@@ -43,7 +44,9 @@ import jakarta.inject.Singleton;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -72,16 +75,23 @@ import org.slf4j.LoggerFactory;
  *       under the stored name binding when that gives the stored hash, so a class that gained a logical name since
  *       does not change the hash. A recorded name that no longer resolves fails startup, except for a retired
  *       version.
- *   <li>It restores every durable activation record into the node's view, including the records just written and
- *       those that name a version this node has no code for.
- *   <li>It restores every live document of every scope, deprecated ones included, and attributes each to its
- *       key.
+ *   <li>It restores the default scope's durable activation records into the node's view, including the records
+ *       just written and those that name a version this node has no code for.
+ *   <li>It verifies every live default-scope document that the registry already holds, the packaged ones. A live
+ *       default-scope document that the registry does not hold is not built; its plan is built into the plan cache
+ *       on first use. When {@code workflow.definitions.buildDefaultScopeDocumentsAtStartup} is set, each such
+ *       document is built into the cache now, by the build a first use runs, and one that does not build fails
+ *       startup. No row of another scope is restored.
  *   <li>It applies the deprecation marks, and removes the registrations of retired rows when they are still
  *       attributed to the row's own key.
  *   <li>It records in the node's view every live row whose runtime this node holds for the row's own key.
- *   <li>It resets publication attempts that went stale, for every definition id of the table.
+ *   <li>It resets publication attempts that went stale, for every definition id that holds a publication attempt.
  *   <li>It hands the committed metadata, the rows just reset included, to the loaders.
+ *   <li>It seals the registry: registering a definition is refused from then on.
  * </ol>
+ *
+ * <p>The step reads the rows of the default scope, the rows being published and the default scope's activation
+ * records, so none of its reads grows with the rows of other scopes.
  */
 @Singleton
 final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartupStep {
@@ -103,6 +113,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     private final WorkflowTypeNames typeNames;
     private final FailingDefinitions failing;
     private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
+    private final Provider<PlanCache> planCache;
+    private final boolean buildDefaultScopeDocuments;
 
     @Inject
     WorkflowDefinitionRegistryBootstrapStep(
@@ -116,8 +128,13 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             DefinitionActivations activations,
             WorkflowTypeNames typeNames,
             FailingDefinitions failing,
-            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+            Optional<WorkflowPlanSchemaProducer> schemaProducer,
+            Provider<PlanCache> planCache,
+            Optional<WorkflowDefinitionsConfig> config) {
         this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
+        this.planCache = planCache;
+        this.buildDefaultScopeDocuments = config.map(WorkflowDefinitionsConfig::buildDefaultScopeDocumentsAtStartup)
+                .orElse(false);
         this.failing = failing;
         this.typeNames = typeNames;
         this.activations = activations;
@@ -148,14 +165,15 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             return reconcileOrigins(prepared.origins(), prepared.optedOut())
                     .compose(ignored -> reconcileCode(prepared.code()))
                     .compose(ignored -> restoreActivations())
-                    .compose(ignored -> listAll())
+                    .compose(ignored -> listBounded())
                     .compose(reconciled -> requireCode(reconciled)
                             .compose(ignored -> restoreAll(local, reconciled))
-                            .compose(verified -> listAll()
+                            .compose(verified -> listBounded()
                                     .compose(committed -> applyMembership(local, committed)
                                             .compose(ignored -> recordView(local, committed))
                                             .compose(ignored -> resetStale(committed)))
-                                    .compose(ignored -> handOffMetadata(verified))));
+                                    .compose(ignored -> handOffMetadata(verified, publishing(reconciled)))))
+                    .map(ignored -> seal(local));
         });
     }
 
@@ -187,9 +205,37 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         return new Prepared(local, origins, catalog.capture(local, originKeys), optedOut);
     }
 
-    private Future<List<WorkflowDefinitionRecord>> listAll() {
-        return store.list(new DefinitionFilter(null, null, null))
-                .map(records -> records.stream().sorted(LISTING_ORDER).toList());
+    /**
+     * The rows this step reads: those of the default scope, which include every code row and every packaged document,
+     * and the rows of any scope that are being published, which only the reset of stale attempts concerns. Both reads
+     * are bounded by the default scope or by a status, not by the number of scopes.
+     */
+    private Future<List<WorkflowDefinitionRecord>> listBounded() {
+        return store.list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
+                .compose(defaults -> store.list(new DefinitionFilter(null, null, Set.of(DefinitionStatus.PUBLISHING)))
+                        .map(publishing -> mergedByKey(defaults, publishing)));
+    }
+
+    /** The rows of both lists in listing order, one per key; a row of {@code later} replaces one of {@code first}. */
+    private static List<WorkflowDefinitionRecord> mergedByKey(
+            List<WorkflowDefinitionRecord> first, List<WorkflowDefinitionRecord> later) {
+        Map<DefinitionKey, WorkflowDefinitionRecord> merged = new LinkedHashMap<>();
+        first.forEach(row -> merged.put(row.key(), row));
+        later.forEach(row -> merged.put(row.key(), row));
+        return merged.values().stream().sorted(LISTING_ORDER).toList();
+    }
+
+    private static List<DefinitionKey> publishing(List<WorkflowDefinitionRecord> rows) {
+        return rows.stream()
+                .filter(row -> row.status() == DefinitionStatus.PUBLISHING)
+                .map(WorkflowDefinitionRecord::key)
+                .toList();
+    }
+
+    /** Ends the registration window; the registry of another kind has none. */
+    private static Void seal(WorkflowRegistry local) {
+        if (local instanceof DefaultWorkflowRegistry sealable) sealable.seal();
+        return null;
     }
 
     /**
@@ -365,9 +411,12 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         DefinitionPublication.requireBoundNamesResolve(typeNames, row);
     }
 
-    /** Records every durable activation record in the node's view, whether or not this node has the code it names. */
+    /**
+     * Records every durable activation record of the default scope in the node's view, whether or not this node has
+     * the code it names. The records of other scopes arrive with the first reconciliation.
+     */
     private Future<Void> restoreActivations() {
-        return store.listActivations(null).map(records -> {
+        return store.listActivations(WorkflowScopes.DEFAULT).map(records -> {
             records.forEach(activations::put);
             return (Void) null;
         });
@@ -462,12 +511,17 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         return Future.succeededFuture();
     }
 
-    /** Restores every live document of every scope that the registry does not hold yet. */
+    /**
+     * Verifies the live default-scope documents that the registry holds, and builds into the plan cache those it
+     * does not hold when the configuration asks for it. A row of another scope is not restored; such a row is here
+     * only because it is being published.
+     */
     private Future<List<VerifiedDocument>> restoreAll(WorkflowRegistry local, List<WorkflowDefinitionRecord> rows) {
         List<VerifiedDocument> verified = new ArrayList<>();
         Future<Void> chain = Future.succeededFuture();
         for (WorkflowDefinitionRecord row : rows) {
-            if (row.kind() != DefinitionKind.DOCUMENT) continue;
+            if (row.kind() != DefinitionKind.DOCUMENT
+                    || !WorkflowScopes.DEFAULT.equals(row.key().scopeKey())) continue;
             if (!LIVE.contains(row.status())) {
                 // A row that is not evaluated any more keeps no mark of an earlier startup.
                 if (row.failure() != null)
@@ -544,11 +598,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     }
 
     private static @Nullable RuntimeWorkflow held(WorkflowRegistry local, DefinitionKey key) {
-        try {
-            return local.resolve(key);
-        } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException absent) {
-            return null;
-        }
+        return DefinitionPublication.held(local, key);
     }
 
     /**
@@ -569,7 +619,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
      * Gives the loaders the committed metadata. The restored documents are read again, and candidate and retired
      * documents, the rows just reset included, are read after the reset.
      */
-    private Future<Void> handOffMetadata(List<VerifiedDocument> verified) {
+    private Future<Void> handOffMetadata(List<VerifiedDocument> verified, List<DefinitionKey> published) {
         Future<Void> chain = Future.succeededFuture();
         for (VerifiedDocument restored : verified) {
             DefinitionKey key = restored.record().key();
@@ -588,7 +638,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         }
         Set<DefinitionKey> restoredKeys =
                 verified.stream().map(restored -> restored.record().key()).collect(Collectors.toSet());
-        return chain.compose(ignored -> listAll()).map(rows -> {
+        return chain.compose(ignored -> listAfterReset(published)).map(rows -> {
             for (WorkflowDefinitionRecord row : rows) {
                 // A failing row whose plan could not be compiled has no restored definition and is handed over as
                 // metadata.
@@ -603,6 +653,23 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         });
     }
 
+    /**
+     * The rows to hand over as metadata: the default scope's, and the rows that were being published, read one by one
+     * because the reset took them out of the publishing status.
+     */
+    private Future<List<WorkflowDefinitionRecord>> listAfterReset(List<DefinitionKey> published) {
+        return listBounded().compose(rows -> {
+            List<WorkflowDefinitionRecord> reset = new ArrayList<>();
+            Future<Void> chain = Future.succeededFuture();
+            for (DefinitionKey key : published)
+                chain = chain.compose(ignored -> store.find(key).map(found -> {
+                    found.ifPresent(reset::add);
+                    return (Void) null;
+                }));
+            return chain.map(ignored -> mergedByKey(rows, reset));
+        });
+    }
+
     private Future<Optional<VerifiedDocument>> restore(WorkflowRegistry local, DefinitionKey key) {
         return store.find(key).compose(found -> {
             WorkflowDefinitionRecord record =
@@ -611,6 +678,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 throw failure(Reason.INVALID_TRANSITION, key, "DOCUMENT kind changed before restoration");
             // A row that left the live statuses meanwhile is metadata only and is handed over with the others.
             if (!LIVE.contains(record.status())) return Future.succeededFuture(Optional.empty());
+            boolean held = held(local, key) != null;
+            if (!held && !buildDefaultScopeDocuments) return Future.succeededFuture(Optional.empty());
             List<PersistedDefinitionLoader> matches = loaders.stream()
                     .filter(loader -> loader.supports(record.documentFormat()))
                     .toList();
@@ -620,6 +689,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         key,
                         "DOCUMENT format " + record.documentFormat() + " requires exactly one loader; found "
                                 + matches.size());
+            if (!held) return buildIntoCache(key);
             PersistedDefinitionLoader loader = matches.getFirst();
             return store.findDocument(key)
                     .compose(document -> work(() -> restored(local, loader, record, document)))
@@ -627,6 +697,14 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                             .compose(ignored -> fillRestored(local, record, restored))
                             .map(ignored -> Optional.ofNullable(restored.verified())));
         });
+    }
+
+    /**
+     * Builds a live default-scope document the registry does not hold into the plan cache, for the start that asked
+     * for it; a build that fails fails the start. Without the option such a document is built on first use.
+     */
+    private Future<Optional<VerifiedDocument>> buildIntoCache(DefinitionKey key) {
+        return planCache.get().load(key).map(plan -> Optional.<VerifiedDocument>empty());
     }
 
     /** Fills the columns of a restored row that was written before they were stored, from the plan this node holds. */

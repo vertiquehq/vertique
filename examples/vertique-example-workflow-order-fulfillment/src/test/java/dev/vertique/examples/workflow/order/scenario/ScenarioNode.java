@@ -235,6 +235,14 @@ final class ScenarioNode implements AutoCloseable {
 
     // --- Waiting ---
 
+    /**
+     * Blocks until one reconciliation pass has run, which brings in the activation records and the documents of the
+     * scopes other than the default one; startup reads only the default scope.
+     */
+    void reconcile() {
+        await(graph.definitionPropagationPoller().pollNow());
+    }
+
     /** Blocks until the engine has run the work recorded for the instance. */
     void awaitIdle(WorkflowInstanceId instance) {
         await(graph.executionProbe().awaitIdle(instance, IDLE_TIMEOUT));

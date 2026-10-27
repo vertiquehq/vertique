@@ -10,6 +10,7 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.SqlConnection;
+import io.vertx.sqlclient.Tuple;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -26,6 +27,7 @@ final class WorkflowDefinitionSqlObserver {
 
     private final List<ObservedQuery> queries = new CopyOnWriteArrayList<>();
     private final List<String> statements = new CopyOnWriteArrayList<>();
+    private final List<Execution> executions = new CopyOnWriteArrayList<>();
     private final AtomicBoolean shortenDefinitionLockTimeout = new AtomicBoolean();
     private volatile long shortenedLockTimeoutMillis = 500;
     private volatile long stickyShortenedLockTimeoutMillis;
@@ -56,6 +58,11 @@ final class WorkflowDefinitionSqlObserver {
 
     List<String> statements() {
         return List.copyOf(statements);
+    }
+
+    /** Every statement execution seen, in order, with the values bound to its parameters. */
+    List<Execution> executions() {
+        return List.copyOf(executions);
     }
 
     void shortenNextDefinitionLockTimeout() {
@@ -209,6 +216,7 @@ final class WorkflowDefinitionSqlObserver {
     @SuppressWarnings({"rawtypes", "unchecked"})
     private Object wrapStatement(Object delegate, Class<?> statementType, String sql) {
         InvocationHandler handler = (proxy, method, args) -> {
+            recordExecution(sql, method, args);
             if (method.getName().equals("execute")
                     && isActivationWrite(sql)
                     && failNextActivationWrite.compareAndSet(true, false)) {
@@ -232,6 +240,24 @@ final class WorkflowDefinitionSqlObserver {
             return executeAndObserve(delegate, method, args, sql);
         };
         return Proxy.newProxyInstance(statementType.getClassLoader(), new Class<?>[] {statementType}, handler);
+    }
+
+    private void recordExecution(String sql, Method method, Object[] args) {
+        if (method.getName().equals("execute")) {
+            executions.add(new Execution(
+                    sql, args != null && args.length > 0 && args[0] instanceof Tuple t ? values(t) : List.of()));
+        } else if (method.getName().equals("executeBatch") && args != null && args[0] instanceof List<?> batch) {
+            for (Object tuple : batch) if (tuple instanceof Tuple t) executions.add(new Execution(sql, values(t)));
+        }
+    }
+
+    private static List<Object> values(Tuple tuple) {
+        List<Object> values = new ArrayList<>();
+        for (int i = 0; i < tuple.size(); i++) {
+            Object value = tuple.getValue(i);
+            values.add(value instanceof Object[] array ? java.util.Arrays.asList(array) : value);
+        }
+        return values;
     }
 
     private Object executeAndObserve(Object delegate, Method method, Object[] args, String sql) throws Throwable {
@@ -337,6 +363,9 @@ final class WorkflowDefinitionSqlObserver {
             throw failure.getCause();
         }
     }
+
+    /** One execution of a statement with the values bound to its parameters, arrays as lists. */
+    record Execution(String sql, List<Object> parameters) {}
 
     record ObservedQuery(String sql, List<ObservedRow> rows) {}
 

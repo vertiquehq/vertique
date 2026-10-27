@@ -131,6 +131,42 @@ class DefinitionsConfigTest {
         assertThat(graph.definitionsConfig()).isEmpty();
     }
 
+    @Test
+    @DisplayName("builds the default scope documents at startup only when asked to")
+    void buildDefaultScopeDocumentsAtStartupDefaultsToFalse() {
+        // Given configurations without the key, with it true and with it false
+        JsonObject absent = new JsonObject();
+        JsonObject enabled = new JsonObject()
+                .put(
+                        "workflow",
+                        new JsonObject()
+                                .put("definitions", new JsonObject().put("buildDefaultScopeDocumentsAtStartup", true)));
+        JsonObject disabled = new JsonObject()
+                .put(
+                        "workflow",
+                        new JsonObject()
+                                .put(
+                                        "definitions",
+                                        new JsonObject().put("buildDefaultScopeDocumentsAtStartup", false)));
+
+        // When each is parsed, and the defaults are read
+        WorkflowDefinitionsConfig withoutKey = configured(absent);
+        WorkflowDefinitionsConfig withTrue = configured(enabled);
+        WorkflowDefinitionsConfig withFalse = configured(disabled);
+
+        // Then only the explicit true builds them, and the defaults do not
+        assertThat(withoutKey.buildDefaultScopeDocumentsAtStartup()).isFalse();
+        assertThat(withTrue.buildDefaultScopeDocumentsAtStartup()).isTrue();
+        assertThat(withFalse.buildDefaultScopeDocumentsAtStartup()).isFalse();
+        assertThat(WorkflowDefinitionsConfig.defaults().buildDefaultScopeDocumentsAtStartup())
+                .isFalse();
+
+        // And the other settings keep their defaults when only this one is given
+        assertThat(withTrue.maxStalenessSeconds()).isEqualTo(30);
+        assertThat(withTrue.maxDocumentSizeBytes()).isEqualTo(262_144);
+        assertThat(withTrue.planCacheMaxEntries()).isEqualTo(WorkflowDefinitionsConfig.DEFAULT_PLAN_CACHE_MAX_ENTRIES);
+    }
+
     private static WorkflowDefinitionsConfig configured(JsonObject config) {
         return DaggerDefinitionsConfigTest_ConfiguredGraph.builder()
                 .configInputModule(new ConfigInputModule(config))

@@ -41,6 +41,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
 import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
@@ -109,8 +110,10 @@ public class FailingScopeRowIT {
             assertThat(database.instanceStatus(waiting.value())).isEqualTo("WAITING");
             first.close();
 
-            // When the second deployment, whose state class acme's state no longer extends, starts on the database
+            // When the second deployment, whose state class acme's state no longer extends, starts on the database and
+            // reconciles once, which evaluates the rows of the scopes that startup does not read
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            reconcile(second);
 
             // Then startup succeeded and the listing shows the row failing with the state rule
             WorkflowDefinitionRecord listed = listed(second, key);
@@ -158,8 +161,9 @@ public class FailingScopeRowIT {
             first.close();
 
             // When the second deployment, whose catalog omits the decision class although the class stays on the class
-            // path, starts on the database
+            // path, starts on the database and reconciles once
             Boot second = boot(database, vertx, Deployment.sameStateWithoutDecision(PURCHASE));
+            reconcile(second);
 
             // Then startup succeeded and the listing shows the row failing with the binding rule
             WorkflowDefinitionRecord listed = listed(second, key);
@@ -204,6 +208,7 @@ public class FailingScopeRowIT {
             // When the second deployment marks the row failing, a start names acme's version 1 explicitly and the
             // earlier start is repeated with its key
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            reconcile(second);
             Throwable explicit = failureOf(second.app()
                     .workflowOperations()
                     .start(command(ACME, PURCHASE, "explicit-order", "start-" + UUID.randomUUID(), 1L, ACME)));
@@ -224,7 +229,7 @@ public class FailingScopeRowIT {
     }
 
     @Test
-    @DisplayName("a row whose conflict is gone is no longer failing after the next startup")
+    @DisplayName("a row whose conflict is gone is no longer failing after the next reconciliation")
     void rowIsClearedWhenTheConflictIsGone(Vertx vertx) {
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, PURCHASE);
@@ -234,11 +239,13 @@ public class FailingScopeRowIT {
             DefinitionKey key = publishAndActivateAcme(first, PURCHASE, false);
             first.close();
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            reconcile(second);
             assertThat(listed(second, key).failure()).isNotNull();
             second.close();
 
-            // When a node that ships the first deployment's state again starts
+            // When a node that ships the first deployment's state again starts and reconciles
             Boot third = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
+            reconcile(third);
 
             // Then the listing and the stored column show no failure and a start in acme runs acme's own row
             assertThat(listed(third, key).failure()).isNull();
@@ -269,7 +276,7 @@ public class FailingScopeRowIT {
             first.close();
 
             // When a node ships code of the id whose state class differs from the document's
-            Boot refused = attempt(database, vertx, Deployment.laterWith(id));
+            Boot refused = attempt(database, vertx, Deployment.laterWith(id), buildingDefaultScopeDocuments());
 
             // Then startup fails with the state refusal naming the default scope key, and not with a failing mark
             assertThat(refused.failure()).isNotNull();
@@ -296,6 +303,7 @@ public class FailingScopeRowIT {
             // When the later deployment ships the default's code of the id under contract C with a state acme's does
             // not extend
             Boot second = boot(database, vertx, Deployment.laterWith(id));
+            reconcile(second);
 
             // Then startup succeeded, acme's row is not failing and a D client in acme starts acme's own row
             assertThat(listed(second, key).failure()).isNull();
@@ -343,7 +351,8 @@ public class FailingScopeRowIT {
             first.close();
 
             // When a node whose catalog omits the decision class starts
-            Boot refused = attempt(database, vertx, Deployment.sameStateWithoutDecision(null));
+            Boot refused = attempt(
+                    database, vertx, Deployment.sameStateWithoutDecision(null), buildingDefaultScopeDocuments());
 
             // Then startup fails with the unknown type name naming the default scope and the id
             assertThat(refused.failure()).isNotNull();
@@ -406,6 +415,7 @@ public class FailingScopeRowIT {
             // When the second deployment, whose default code of the id has a state acme's state does not extend,
             // starts: acme's key sorts before the default scope's, so its row restores first
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            reconcile(second);
 
             // Then startup succeeded, acme's row is failing and the default scope's version 2 is registered
             assertThat(listed(second, acme).failure()).isNotNull();
@@ -433,11 +443,12 @@ public class FailingScopeRowIT {
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, PURCHASE);
 
-            // Given a row marked failing at startup because its recorded type name no longer resolves
+            // Given a row marked failing by a first reconciliation because its recorded type name no longer resolves
             Boot first = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
             DefinitionKey key = publishAndActivateAcme(first, PURCHASE, true);
             first.close();
             Boot second = boot(database, vertx, Deployment.sameStateWithoutDecision(PURCHASE));
+            reconcile(second);
             assertThat(listed(second, key).failure().rule()).isEqualTo(Rule.NAME_BINDING_UNRESOLVED);
 
             // When the periodic reconciliation runs twice
@@ -496,6 +507,7 @@ public class FailingScopeRowIT {
             DefinitionKey key = publishAndActivateAcme(first, PURCHASE, false);
             first.close();
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            reconcile(second);
             assertThat(listed(second, key).failure()).isNotNull();
             assertThat(failureOfExplicitStart(second, key)).isInstanceOf(WorkflowDefinitionFailingException.class);
 
@@ -522,6 +534,7 @@ public class FailingScopeRowIT {
             Boot a = boot(database, vertx, Deployment.firstWith(PURCHASE, true));
             DefinitionKey key = publishAndActivateAcme(a, PURCHASE, false);
             Boot b = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            reconcile(b);
             assertThat(failureOfExplicitStart(b, key)).isInstanceOf(WorkflowDefinitionFailingException.class);
 
             // When A deprecates and retires the row and B reconciles
@@ -562,6 +575,7 @@ public class FailingScopeRowIT {
             // When the second deployment marks both versions failing and the instance migrates to version 2, which
             // is recorded and then run by the executor
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            reconcile(second);
             assertThat(listed(second, v1).failure()).isNotNull();
             assertThat(listed(second, v2).failure()).isNotNull();
             await(second.app().workflowOperations().migrate(waiting, ACME, 2L));
@@ -593,6 +607,7 @@ public class FailingScopeRowIT {
             DefinitionKey key = publishAndActivateAcme(first, PURCHASE, false);
             first.close();
             Boot second = boot(database, vertx, Deployment.laterWith(PURCHASE));
+            reconcile(second);
             assertThat(listed(second, key).failure()).isNotNull();
 
             // When a client in globex names acme's version 1 and acme as the target scope
@@ -612,7 +627,7 @@ public class FailingScopeRowIT {
     }
 
     @Test
-    @DisplayName("the startup warning repeats a long definition id only in bounded form")
+    @DisplayName("the warning of a failing row repeats a long definition id only in bounded form")
     void startupWarningBoundsALongDefinitionId(Vertx vertx) {
         String longId = "purchase-" + "x".repeat(200);
         try (DefinitionScenario database = new DefinitionScenario(vertx, db);
@@ -624,11 +639,12 @@ public class FailingScopeRowIT {
             DefinitionKey key = publishAndActivateAcme(first, longId, false);
             first.close();
 
-            // When the second deployment starts
+            // When the second deployment starts and reconciles
             Boot second = boot(database, vertx, Deployment.laterWith(longId));
+            reconcile(second);
             assertThat(listed(second, key).failure()).isNotNull();
 
-            // Then the warning names the row and repeats neither the whole id nor a long run of it
+            // Then the log line names the row and repeats neither the whole id nor a long run of it
             assertThat(log.warnings()).isNotEmpty();
             assertThat(log.warnings()).allSatisfy(line -> assertThat(line)
                     .doesNotContain(longId, "x".repeat(100))
@@ -765,14 +781,28 @@ public class FailingScopeRowIT {
                 purchaseMapper(deployment)));
     }
 
-    private static Boot attempt(DefinitionScenario database, Vertx vertx, Deployment deployment) {
+    private static Boot attempt(DefinitionScenario database, Vertx vertx, Deployment deployment, JsonObject config) {
         return database.attemptOf(pool -> SchemaDefinitionGraph.build(
                 vertx,
                 pool,
+                config,
                 FailingScopeRowIT.class,
                 deployment.code(),
                 deployment.catalog(),
                 purchaseMapper(deployment)));
+    }
+
+    /** The config that makes startup build the default scope's documents, so that one that does not build fails it. */
+    private static JsonObject buildingDefaultScopeDocuments() {
+        return ManagedDefinitionDatabase.buildingDefaultScopeDocuments();
+    }
+
+    /**
+     * Runs one reconciliation pass, which evaluates the rows of the scopes other than the default one against the
+     * code the node ships; startup reads only the default scope.
+     */
+    private static void reconcile(Boot node) {
+        await(node.app().definitionPropagationPoller().pollNow());
     }
 
     /** Loads, publishes and activates acme's document of the id and returns its key. */
@@ -985,11 +1015,10 @@ public class FailingScopeRowIT {
                 row.getLong("definition_version"));
     }
 
-    /** Collects what the startup step logs while it is open. */
+    /** Collects what the reconciliation pass logs while it is open. */
     private static final class BootstrapLog implements AutoCloseable {
-        private final ch.qos.logback.classic.Logger logger =
-                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(
-                        "dev.vertique.workflow.engine.WorkflowDefinitionRegistryBootstrapStep");
+        private final ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger("dev.vertique.workflow.engine.WorkflowDefinitionPropagationPoller");
         private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
         private final Level previousLevel = logger.getLevel();
 
@@ -1002,7 +1031,7 @@ public class FailingScopeRowIT {
         List<String> warnings() {
             return new java.util.ArrayList<>(appender.list)
                     .stream()
-                            .filter(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
+                            .filter(event -> event.getLevel().isGreaterOrEqual(Level.INFO))
                             .map(ILoggingEvent::getFormattedMessage)
                             .toList();
         }

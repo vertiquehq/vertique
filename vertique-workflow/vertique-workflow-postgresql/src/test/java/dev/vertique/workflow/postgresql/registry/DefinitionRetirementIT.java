@@ -734,11 +734,12 @@ public class DefinitionRetirementIT {
                     await(first.app().definitionService().publish(key));
                     first.close();
 
-                    // And a fresh graph on the same database restores it at startup
+                    // And a fresh graph on the same database, which builds the plan of the document when it is first
+                    // needed
                     AppComponent app = fixture.node().app();
                     long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
-                    RuntimeWorkflow restored =
-                            app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
+                    assertThat(app.workflowRegistry().find(key)).isEmpty();
+                    RuntimeWorkflow restored = await(app.workflowRegistry().load(key));
                     assertThat(restored.plan().planHash()).isEqualTo(loaded.planHash());
                     assertThat(fixture.stored(id, version).status()).isEqualTo("AVAILABLE");
 
@@ -757,10 +758,7 @@ public class DefinitionRetirementIT {
                             .ignoringFields("status", "changedAt")
                             .isEqualTo(cooledBefore);
 
-                    // And the restored runtime and its registered definition are removed
-                    assertThatThrownBy(() -> app.workflowRegistry()
-                                    .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isInstanceOf(WorkflowVersionPinUnavailableException.class);
+                    // And the registry holds no registered definition for it, the built plan being the cache's
                     assertThat(app.workflowRegistry()
                                     .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
                             .isEmpty();
@@ -786,9 +784,12 @@ public class DefinitionRetirementIT {
                     // And a completed direct replacement: public unregister, then register of the same id and version
                     app.workflowRegistry().unregister(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
                     app.workflowRegistry()
-                            .register(app.definitionPipeline()
-                                    .load(new DefinitionResource(bytes, DocumentFormat.YAML, source("replaced")))
-                                    .definition());
+                            .register(
+                                    WorkflowScopes.DEFAULT,
+                                    app.definitionPipeline()
+                                            .load(new DefinitionResource(
+                                                    bytes, DocumentFormat.YAML, source("replaced")))
+                                            .definition());
                     RuntimeWorkflow replacement =
                             app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
                     assertThat(replacement).isNotSameAs(managedRuntime);
@@ -829,9 +830,11 @@ public class DefinitionRetirementIT {
 
                     // And a runtime with the same id, version and hash registered directly through the public registry
                     app.workflowRegistry()
-                            .register(app.definitionPipeline()
-                                    .load(new DefinitionResource(bytes, DocumentFormat.YAML, source("unknown")))
-                                    .definition());
+                            .register(
+                                    WorkflowScopes.DEFAULT,
+                                    app.definitionPipeline()
+                                            .load(new DefinitionResource(bytes, DocumentFormat.YAML, source("unknown")))
+                                            .definition());
                     RuntimeWorkflow unknown =
                             app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
                     assertThat(unknown.plan().planHash()).isEqualTo(loaded.planHash());
@@ -936,9 +939,9 @@ public class DefinitionRetirementIT {
             // nothing since it started, as when its propagation is paused
             AppComponent nodeB = fixture.node().app();
             TransactionalWorkflowOperations<SqlClient> staleOps = nodeB.transactionalOperations();
-            assertThat(nodeB.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, pinId, 1)))
+            assertThat(await(nodeB.workflowRegistry().load(new DefinitionKey(WorkflowScopes.DEFAULT, pinId, 1))))
                     .isNotNull();
-            assertThat(nodeB.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, goneId, 1)))
+            assertThat(await(nodeB.workflowRegistry().load(new DefinitionKey(WorkflowScopes.DEFAULT, goneId, 1))))
                     .isNotNull();
 
             // When B admits a start while the version is AVAILABLE and leaves its transaction uncommitted
@@ -1285,7 +1288,7 @@ public class DefinitionRetirementIT {
             await(nodeA.definitionService().publish(migrateKey));
             AppComponent nodeB = fixture.node().app();
             TransactionalWorkflowOperations<SqlClient> staleOps = nodeB.transactionalOperations();
-            assertThat(nodeB.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, startId, 1)))
+            assertThat(await(nodeB.workflowRegistry().load(new DefinitionKey(WorkflowScopes.DEFAULT, startId, 1))))
                     .isNotNull();
 
             // And both ids are deprecated, cooled and retired, while node B still resolves the start version

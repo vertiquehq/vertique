@@ -161,6 +161,15 @@ public final class ManagedDefinitionDatabase {
         return copy;
     }
 
+    /** The config that makes startup build every live default-scope document, so that one that does not build fails it. */
+    static JsonObject buildingDefaultScopeDocuments() {
+        return new JsonObject()
+                .put(
+                        "workflow",
+                        new JsonObject()
+                                .put("definitions", new JsonObject().put("buildDefaultScopeDocumentsAtStartup", true)));
+    }
+
     public static byte[] yamlFixture() {
         try (InputStream input = Thread.currentThread()
                 .getContextClassLoader()
@@ -282,8 +291,13 @@ public final class ManagedDefinitionDatabase {
     }
 
     static NoLoaderAppComponent appWithoutLoader(Vertx vertx, Pool pool, BootObservation observation) {
+        return appWithoutLoader(vertx, pool, new JsonObject(), observation);
+    }
+
+    static NoLoaderAppComponent appWithoutLoader(
+            Vertx vertx, Pool pool, JsonObject config, BootObservation observation) {
         return DaggerManagedDefinitionDatabase_NoLoaderAppComponent.builder()
-                .vertxModule(new VertxModule(vertx, withFastExecutor(new JsonObject())))
+                .vertxModule(new VertxModule(vertx, withFastExecutor(config)))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
                 .noLoaderBootObservationModule(new NoLoaderBootObservationModule(observation))
                 .build();
@@ -843,10 +857,15 @@ public final class ManagedDefinitionDatabase {
             if (!enabled || !verifyPinnedDefinition) {
                 return;
             }
-            // The version is published under the scope of its owner, which the observation does not name
-            String actualHash = registry.keysFor(definitionId).stream()
+            // The version is published under the scope of its owner, which the observation does not name: the registry
+            // lists what it holds, and a default scope document that startup built is in the plan cache instead
+            String actualHash = java.util.stream.Stream.concat(
+                            registry.keysFor(definitionId).stream(),
+                            java.util.stream.Stream.of(
+                                    new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, definitionVersion)))
                     .filter(key -> key.definitionVersion() == definitionVersion)
-                    .map(key -> registry.resolve(key).plan().planHash())
+                    .flatMap(key -> registry.find(key).stream())
+                    .map(plan -> plan.plan().planHash())
                     .findFirst()
                     .orElseThrow(
                             () -> new WorkflowVersionPinUnavailableException(definitionId, definitionVersion, null));

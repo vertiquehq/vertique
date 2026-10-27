@@ -102,7 +102,11 @@ public class DefinitionDocumentPolicyIT {
                 .put(
                         "workflow",
                         new JsonObject()
-                                .put("definitions", new JsonObject().put("maxDocumentSizeBytes", DOCUMENT_LIMIT)));
+                                .put(
+                                        "definitions",
+                                        new JsonObject()
+                                                .put("maxDocumentSizeBytes", DOCUMENT_LIMIT)
+                                                .put("buildDefaultScopeDocumentsAtStartup", true)));
         var staticSource = (dev.vertique.workflow.definition.source.WorkflowDefinitionSource)
                 () -> List.of(new DefinitionResource(yamlBytes, DocumentFormat.YAML, yamlMetadata));
         BootObservation initialObservation = new BootObservation("order-fulfillment-doc", 1, "unused", false);
@@ -650,7 +654,12 @@ public class DefinitionDocumentPolicyIT {
         JsonObject loweredConfig = new JsonObject()
                 .put(
                         "workflow",
-                        new JsonObject().put("definitions", new JsonObject().put("maxDocumentSizeBytes", lowerLimit)));
+                        new JsonObject()
+                                .put(
+                                        "definitions",
+                                        new JsonObject()
+                                                .put("maxDocumentSizeBytes", lowerLimit)
+                                                .put("buildDefaultScopeDocumentsAtStartup", true)));
 
         Pool initialPool = ManagedDefinitionDatabase.openPool(vertx, postgres);
         pools.add(initialPool);

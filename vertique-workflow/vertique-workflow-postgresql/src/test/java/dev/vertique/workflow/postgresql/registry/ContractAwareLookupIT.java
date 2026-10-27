@@ -91,6 +91,7 @@ public class ContractAwareLookupIT {
 
             // When a second boot adds the default's code X version 1 under C
             Boot second = database.node(none(), observation(), code(X, ContractC.class, 1));
+            await(second.app().definitionPropagationPoller().pollNow());
 
             // Then startup succeeded, acme starts its own X for a D client and the default's X for a C client
             assertThat(startAs(database, second, ContractD.class, ACME, X)).isEqualTo(new Pin(ACME, ACME, X, 1));
@@ -319,7 +320,8 @@ public class ContractAwareLookupIT {
 
     /**
      * Boots without a default X, publishes and activates acme's own X versions under D, restarts with the default's
-     * code X versions under C and returns the second node.
+     * code X versions under C, lets the second node reconcile once, which brings in the records and versions of the
+     * scope that startup does not read, and returns it.
      */
     private static Boot shipDefaultAfterScopeOwn(DefinitionScenario database, long acmeVersions, long defaultVersions) {
         Boot first = database.node(none(), observation());
@@ -327,7 +329,9 @@ public class ContractAwareLookupIT {
         asD.publish(ACME, X, LongStream.rangeClosed(1, acmeVersions).toArray());
         await(first.app().definitionService().activate(ACME, X, ACME, acmeVersions));
         first.close();
-        return database.node(none(), observation(), code(X, ContractC.class, defaultVersions));
+        Boot second = database.node(none(), observation(), code(X, ContractC.class, defaultVersions));
+        await(second.app().definitionPropagationPoller().pollNow());
+        return second;
     }
 
     private static Pin startAs(DefinitionScenario database, Boot node, Class<?> contract, String scope, String id) {

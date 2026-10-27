@@ -172,9 +172,15 @@ public class DefinitionDigestIT {
                     WHERE scope_key = 'default' AND definition_id = $2 AND definition_version = 1
                     """, Tuple.of(activeEdited, activeId));
 
-            // When the application restarts
+            // When the application restarts, building the default scope's documents as it starts
             BootObservation restartObservation = new BootObservation(activeId, 1, activeLoaded.planHash(), true);
-            Boot restart = scenario.attempt(List::of, restartObservation);
+            Boot restart = scenario.attempt(
+                    List::of,
+                    restartObservation,
+                    List.of(),
+                    null,
+                    ManagedDefinitionDatabase.buildingDefaultScopeDocuments(),
+                    List.of());
 
             // Then startup fails as drift naming the edited active row, and nothing is deployed
             assertThat(restart.failure())

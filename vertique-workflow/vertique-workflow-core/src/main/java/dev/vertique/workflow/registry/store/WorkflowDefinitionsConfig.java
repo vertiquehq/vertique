@@ -18,8 +18,15 @@ import jakarta.annotation.Nullable;
  *     envelope
  * @param planCacheMaxEntries the most document plans the plan cache keeps resident ({@code
  *     workflow.definitions.planCache.maxEntries}); at least 1, default {@value #DEFAULT_PLAN_CACHE_MAX_ENTRIES}
+ * @param buildDefaultScopeDocumentsAtStartup whether startup builds the plan of every live default-scope document
+ *     into the plan cache ({@code workflow.definitions.buildDefaultScopeDocumentsAtStartup}), so that a document that
+ *     does not build fails startup; default {@code false}, when such a document is built on first use instead
  */
-public record WorkflowDefinitionsConfig(long maxStalenessSeconds, int maxDocumentSizeBytes, int planCacheMaxEntries) {
+public record WorkflowDefinitionsConfig(
+        long maxStalenessSeconds,
+        int maxDocumentSizeBytes,
+        int planCacheMaxEntries,
+        boolean buildDefaultScopeDocumentsAtStartup) {
 
     /** The default size of the plan cache. */
     public static final int DEFAULT_PLAN_CACHE_MAX_ENTRIES = 500;
@@ -35,22 +42,37 @@ public record WorkflowDefinitionsConfig(long maxStalenessSeconds, int maxDocumen
     }
 
     /**
+     * Creates a configuration that builds no default-scope document at startup.
+     *
+     * @param maxStalenessSeconds how long a node may go without reconciling its registry, in seconds
+     * @param maxDocumentSizeBytes the largest accepted document
+     * @param planCacheMaxEntries the most document plans the plan cache keeps resident
+     */
+    public WorkflowDefinitionsConfig(long maxStalenessSeconds, int maxDocumentSizeBytes, int planCacheMaxEntries) {
+        this(maxStalenessSeconds, maxDocumentSizeBytes, planCacheMaxEntries, false);
+    }
+
+    /**
      * Creates a configuration with the default plan cache size.
      *
      * @param maxStalenessSeconds how long a node may go without reconciling its registry, in seconds
      * @param maxDocumentSizeBytes the largest accepted document
      */
     public WorkflowDefinitionsConfig(long maxStalenessSeconds, int maxDocumentSizeBytes) {
-        this(maxStalenessSeconds, maxDocumentSizeBytes, DEFAULT_PLAN_CACHE_MAX_ENTRIES);
+        this(maxStalenessSeconds, maxDocumentSizeBytes, DEFAULT_PLAN_CACHE_MAX_ENTRIES, false);
     }
 
     @JsonCreator
     static WorkflowDefinitionsConfig fromJson(
             @JsonProperty("maxStalenessSeconds") @Nullable Long seconds,
             @JsonProperty("maxDocumentSizeBytes") @Nullable Integer bytes,
-            @JsonProperty("planCache") @Nullable JsonNode planCache) {
+            @JsonProperty("planCache") @Nullable JsonNode planCache,
+            @JsonProperty("buildDefaultScopeDocumentsAtStartup") @Nullable Boolean buildDefaultScopeDocuments) {
         return new WorkflowDefinitionsConfig(
-                seconds == null ? 30 : seconds, bytes == null ? 262144 : bytes, planCacheMaxEntries(planCache));
+                seconds == null ? 30 : seconds,
+                bytes == null ? 262144 : bytes,
+                planCacheMaxEntries(planCache),
+                buildDefaultScopeDocuments != null && buildDefaultScopeDocuments);
     }
 
     private static int planCacheMaxEntries(@Nullable JsonNode planCache) {
@@ -64,7 +86,7 @@ public record WorkflowDefinitionsConfig(long maxStalenessSeconds, int maxDocumen
     }
 
     public static WorkflowDefinitionsConfig defaults() {
-        return new WorkflowDefinitionsConfig(30, 262144, DEFAULT_PLAN_CACHE_MAX_ENTRIES);
+        return new WorkflowDefinitionsConfig(30, 262144, DEFAULT_PLAN_CACHE_MAX_ENTRIES, false);
     }
 
     public int maxStoredDocumentSizeBytes() {

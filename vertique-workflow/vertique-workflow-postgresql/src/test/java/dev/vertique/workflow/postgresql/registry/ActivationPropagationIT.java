@@ -155,9 +155,11 @@ public class ActivationPropagationIT {
             await(a.service().activate(QA, id, DEFAULT, 2));
             await(a.service().activate(ACME, id, ACME, 1));
 
-            // When A closes and a new node starts on the same database, and no reconciliation has run
+            // When A closes and a new node starts on the same database, and one reconciliation has run, which restores
+            // the records of the scopes other than the default one
             first.close();
             Scenario restarted = scenario(database, boot(database, code(id, 1), optedOut(id, 2)));
+            await(restarted.app().definitionPropagationPoller().pollNow());
 
             // Then starts in qa and acme run the activated versions
             assertThat(restarted.start(QA, id)).isEqualTo(new Pin(QA, DEFAULT, id, 2));

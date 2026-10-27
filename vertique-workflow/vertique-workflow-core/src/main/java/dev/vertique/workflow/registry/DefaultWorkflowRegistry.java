@@ -185,6 +185,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /** Where the plans of document keys that this registry does not hold come from; null until the engine binds one. */
     private volatile DocumentPlanSource documentPlanSource;
 
+    /** Set once the engine's startup has ended; {@link #register(WorkflowDefinition)} is refused from then on. */
+    private volatile boolean sealed;
+
     /**
      * Creates a new empty {@code DefaultWorkflowRegistry} with no fork/join validator.
      *
@@ -328,12 +331,32 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /**
      * Registers a workflow definition in the default scope; see {@link #register(String, WorkflowDefinition)}.
      *
+     * <p>Registration is a startup operation: it is accepted while the registry is constructed and the engine starts,
+     * and refused with {@link IllegalStateException} once the engine has {@linkplain #seal() sealed} the registry.
+     *
      * @param def the workflow definition to register
      * @throws WorkflowDefinitionException if the plan is invalid or a duplicate
+     * @throws IllegalStateException if the registry is sealed; the message names the definition
      */
     @Override
     public void register(WorkflowDefinition<?, ?> def) {
+        if (sealed) {
+            throw new IllegalStateException("Definition '" + def.definitionId() + "' version "
+                    + def.definitionVersion()
+                    + " cannot be registered after startup; code definitions are registered while the application"
+                    + " starts");
+        }
         register(WorkflowScopes.DEFAULT, def, true);
+    }
+
+    /**
+     * Ends the registration window: {@link #register(WorkflowDefinition)} throws {@link IllegalStateException} from
+     * now on. Calling it again has no effect.
+     *
+     * <p>INTERNAL: called only by the engine's bootstrap when startup ends; applications never call it.
+     */
+    public void seal() {
+        sealed = true;
     }
 
     /**

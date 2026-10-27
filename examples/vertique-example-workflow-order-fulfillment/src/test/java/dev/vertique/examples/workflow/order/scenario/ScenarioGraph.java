@@ -8,6 +8,7 @@ import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.inboxoutbox.postgresql.PgInboxOutboxRepository;
 import dev.vertique.workflow.client.WorkflowClientFactory;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
+import dev.vertique.workflow.engine.WorkflowDefinitionPropagationPoller;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -28,6 +29,9 @@ interface ScenarioGraph extends VertiqueApplicationComponent {
 
     /** Returns the service that loads documents and drives publication and activation. */
     WorkflowDefinitionService definitionService();
+
+    /** Returns the poller whose pass brings in the rows and records of the scopes that startup does not read. */
+    WorkflowDefinitionPropagationPoller definitionPropagationPoller();
 
     /** Returns the registry of the node. */
     WorkflowRegistry workflowRegistry();

@@ -253,7 +253,7 @@ public class DefinitionActivationIT {
                                                 ManagedDefinitionDatabase.yamlFixture(),
                                                 DocumentFormat.YAML,
                                                 metadata));
-                                app.workflowRegistry().register(compiled.definition());
+                                app.workflowRegistry().register(WorkflowScopes.DEFAULT, compiled.definition());
                                 return app.definitionRegistryStore()
                                         .complete(pair.newClaim())
                                         .map(pair);
@@ -552,7 +552,7 @@ public class DefinitionActivationIT {
                                         replacementJson.getBytes(StandardCharsets.UTF_8),
                                         DocumentFormat.JSON,
                                         oldMetadata));
-                        app.workflowRegistry().register(replacement.definition());
+                        app.workflowRegistry().register(WorkflowScopes.DEFAULT, replacement.definition());
                         RuntimeWorkflow replacementPublication = app.workflowRegistry()
                                 .resolve(new DefinitionKey(
                                         WorkflowScopes.DEFAULT, oldKey.definitionId(), oldKey.definitionVersion()));

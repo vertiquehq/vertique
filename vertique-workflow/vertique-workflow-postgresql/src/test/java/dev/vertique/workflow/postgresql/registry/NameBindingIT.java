@@ -303,12 +303,12 @@ public class NameBindingIT {
             StoredRow published = row(database, ACME, DOCUMENT_ID, 1);
             first.close();
 
-            // When boot 2 with the annotated variant restores the row at startup
+            // When boot 2 with the annotated variant builds the row's plan on load
             IsolatedFixtureCode annotated = fixture(database, ORIGINAL, Naming.ANNOTATED, false);
             Boot second = boot(database, annotated);
 
-            // Then the restored runtime's plan hash equals the row's, and the row is unchanged
-            assertThat(second.app().workflowRegistry().resolve(key).plan().planHash())
+            // Then the built plan's hash equals the row's, and the row is unchanged
+            assertThat(await(second.app().workflowRegistry().load(key)).plan().planHash())
                     .isEqualTo(published.hash());
             assertThat(row(database, ACME, DOCUMENT_ID, 1)).isEqualTo(published);
 

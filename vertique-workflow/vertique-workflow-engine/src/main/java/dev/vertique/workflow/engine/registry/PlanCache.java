@@ -14,6 +14,7 @@ import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
@@ -22,6 +23,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * INTERNAL: the size-bounded cache of document plans, bound as the {@link DocumentPlanSource} of the registry.
@@ -36,6 +39,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * hit.
  */
 public final class PlanCache implements DocumentPlanSource {
+
+    private static final Logger log = LoggerFactory.getLogger(PlanCache.class);
 
     /** The cache name its events carry. */
     public static final String NAME = "workflow-plans";
@@ -97,7 +102,23 @@ public final class PlanCache implements DocumentPlanSource {
     @Override
     public Future<RuntimeWorkflow> load(DefinitionKey key) {
         Objects.requireNonNull(key, "key");
-        return cache.getOrLoad(key, () -> loader.load(key));
+        return cache.getOrLoad(key, () -> loader.load(key).onFailure(failure -> warnOnce(key, failure)));
+    }
+
+    /**
+     * Logs a deterministic failure when it is first remembered. The cache keeps the failure, so a key that does not
+     * build is reported once for as long as the cache holds it, not on every request.
+     */
+    private static void warnOnce(DefinitionKey key, Throwable failure) {
+        if (!PlanFailures.isDeterministic(failure)) {
+            return;
+        }
+        log.warn(
+                "Definition scope '{}' id '{}' version {} does not build and is not runnable: {}",
+                EchoedNames.bounded(key.scopeKey()),
+                EchoedNames.bounded(key.definitionId()),
+                key.definitionVersion(),
+                failure.getClass().getName());
     }
 
     /** {@inheritDoc} */

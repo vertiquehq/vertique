@@ -124,7 +124,7 @@ public class DefinitionPropagationIT {
 
             // And a valid runtime on B for version 2 of the first document's id under another contract, which
             // the registry refuses to mix with the contract the document names
-            bRegistry.register(code(id, 2, ForeignContractCode.class, "done"));
+            bRegistry.register(WorkflowScopes.DEFAULT, code(id, 2, ForeignContractCode.class, "done"));
 
             // And a document that A loaded and activated
             String hash = await(aService.load(
@@ -519,7 +519,7 @@ public class DefinitionPropagationIT {
 
             // And, for the matching case, a valid runtime on B for version 2 of the id under another contract
             if (peerCase == PeerCase.AVAILABLE_ALONE) {
-                bRegistry.register(code(id, 2, ForeignContractCode.class, "done"));
+                bRegistry.register(WorkflowScopes.DEFAULT, code(id, 2, ForeignContractCode.class, "done"));
             }
 
             // When A reinstates the version through the common lifecycle

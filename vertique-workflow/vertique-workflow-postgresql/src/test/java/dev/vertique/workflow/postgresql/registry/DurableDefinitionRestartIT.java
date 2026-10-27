@@ -106,7 +106,12 @@ public class DurableDefinitionRestartIT {
                     pools.add(secondPool);
                     BootObservation secondObservation =
                             new BootObservation(definitionId, version, compiled.planHash(), true);
-                    AppComponent second = ManagedDefinitionDatabase.app(vertx, secondPool, secondObservation);
+                    AppComponent second = ManagedDefinitionDatabase.app(
+                            vertx,
+                            secondPool,
+                            ManagedDefinitionDatabase.buildingDefaultScopeDocuments(),
+                            secondObservation,
+                            List::of);
                     return VertiqueApplicationBootstrap.start(
                                     VertiqueRuntime.of(vertx, new JsonObject()), ignored -> second)
                             .compose(secondHandle -> {
@@ -219,7 +224,11 @@ public class DurableDefinitionRestartIT {
                                                 BootObservation driftObservation = new BootObservation(
                                                         definitionId, version, loaded.planHash(), true);
                                                 AppComponent drift = ManagedDefinitionDatabase.app(
-                                                        vertx, driftPool, driftObservation);
+                                                        vertx,
+                                                        driftPool,
+                                                        ManagedDefinitionDatabase.buildingDefaultScopeDocuments(),
+                                                        driftObservation,
+                                                        List::of);
                                                 return VertiqueApplicationBootstrap.start(
                                                                 VertiqueRuntime.of(vertx, new JsonObject()),
                                                                 ignoredRuntime -> drift)
@@ -257,7 +266,10 @@ public class DurableDefinitionRestartIT {
                                             new BootObservation(definitionId, version, "unused", true);
                                     ManagedDefinitionDatabase.NoLoaderAppComponent noLoader =
                                             ManagedDefinitionDatabase.appWithoutLoader(
-                                                    vertx, loaderPool, loaderObservation);
+                                                    vertx,
+                                                    loaderPool,
+                                                    ManagedDefinitionDatabase.buildingDefaultScopeDocuments(),
+                                                    loaderObservation);
                                     return VertiqueApplicationBootstrap.start(
                                                     VertiqueRuntime.of(vertx, new JsonObject()),
                                                     ignoredRuntime -> noLoader)
