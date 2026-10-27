@@ -107,9 +107,9 @@ describe('detect-docs-only-scope', () => {
     assert.equal(detectPr(head).stdout.trim(), 'docs_only=false\nmarkdown_only=false');
   });
 
-  it('does not run Markdown checks for allowlisted Markdown alone', () => {
+  it('runs Markdown checks for allowlisted Markdown alone', () => {
     const head = branchWith({ 'CONTRIBUTING.md': 'guide\n' }, 'allowlisted-markdown');
-    assert.equal(detectPr(head).stdout.trim(), 'docs_only=true\nmarkdown_only=false');
+    assert.equal(detectPr(head).stdout.trim(), 'docs_only=false\nmarkdown_only=true');
   });
 
   it('runs Markdown checks for contract-gated Markdown the reactor tests assert on', () => {
@@ -173,6 +173,28 @@ describe('detect-docs-only-scope', () => {
     const result = detectPr(head);
     assert.equal(result.status, 0);
     assert.equal(result.stdout.trim(), 'docs_only=false\nmarkdown_only=false');
+  });
+
+  it('classifies deletion, mixed allowlist paths, and quoted paths', () => {
+    git(repo, 'checkout', '--quiet', '-b', 'delete-markdown', baseSha);
+    git(repo, 'rm', '--quiet', 'README.md');
+    git(repo, 'commit', '--quiet', '-m', 'delete');
+    assert.equal(detectPr(git(repo, 'rev-parse', 'HEAD')).stdout.trim(), 'docs_only=false\nmarkdown_only=true');
+    for (const [files, name, expected] of [
+      [{ 'CONTRIBUTING.md': 'guide', 'README.md': 'changed' }, 'mixed-markdown', true],
+      [{ 'LICENSES/test.txt': 'license', 'README.md': 'changed' }, 'license-markdown', false],
+      [{ 'é.md': 'quoted' }, 'quoted-markdown', false],
+    ]) {
+      assert.equal(detectPr(branchWith(files, name)).stdout.trim(), `docs_only=false\nmarkdown_only=${expected}`);
+    }
+  });
+
+  it('detects the Java side of a rename to Markdown', () => {
+    git(repo, 'checkout', '--quiet', '-b', 'java-base', baseSha);
+    const javaBase = commit(repo, { 'Example.java': 'class Example {}' });
+    git(repo, 'mv', 'Example.java', 'Example.md');
+    const head = commit(repo, {}, 'rename-to-markdown');
+    assert.equal(detect(repo, ['--event-name', 'pull_request', '--base-sha', javaBase, '--head-sha', head]).stdout.trim(), 'docs_only=false\nmarkdown_only=false');
   });
 
   it('never skips the build for non-pull-request events', () => {
