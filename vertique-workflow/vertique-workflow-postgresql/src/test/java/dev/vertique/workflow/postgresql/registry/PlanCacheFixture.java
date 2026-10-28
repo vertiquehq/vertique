@@ -235,13 +235,26 @@ final class PlanCacheFixture implements AutoCloseable {
         rootLogger.addAppender(logs);
         JsonObject config = new JsonObject()
                 .put(
-                        "workflow",
+                        "cache",
                         new JsonObject()
+                                .put("enabled", true)
+                                .put("defaultMode", "LOCAL")
+                                .put("defaultTtlSeconds", 60)
+                                .put("maxTtlSeconds", 86_400)
+                                .put("jsonProfile", "system")
+                                .put("maxKeyBytes", 1_024)
+                                .put("maxValueBytes", 1_048_576)
+                                .put("maximumEntries", 10_000)
+                                .put("backendTimeoutMs", 100)
                                 .put(
-                                        "definitions",
+                                        "caches",
                                         new JsonObject()
-                                                .put("planCache", new JsonObject().put("maxEntries", maxEntries)))
-                                .put("executor", new JsonObject().put("pollIntervalMs", 100)));
+                                                .put(
+                                                        PlanCache.NAME,
+                                                        new JsonObject()
+                                                                .put("mode", "LOCAL")
+                                                                .put("maximumEntries", maxEntries))))
+                .put("workflow", new JsonObject().put("executor", new JsonObject().put("pollIntervalMs", 100)));
         WorkflowDefinitionSource none = List::of;
         PlanCacheGraph built = DaggerPlanCacheFixture_PlanCacheApp.builder()
                 .vertxModule(new VertxModule(vertx, config))

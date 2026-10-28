@@ -173,7 +173,6 @@ class DefinitionsConfigTest {
         // And the other settings keep their defaults when only this one is given
         assertThat(withTrue.publicationClaimTimeoutSeconds()).isEqualTo(60);
         assertThat(withTrue.maxDocumentSizeBytes()).isEqualTo(262_144);
-        assertThat(withTrue.planCacheMaxEntries()).isEqualTo(WorkflowDefinitionsConfig.DEFAULT_PLAN_CACHE_MAX_ENTRIES);
     }
 
     @Test

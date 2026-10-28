@@ -608,8 +608,12 @@ the defaults and introduces no parser dependency into the graph.
 |---|---|---|
 | `workflow.definitions.publicationClaimTimeoutSeconds` | `60` | At least 1: the age, in seconds on the database clock, at which a `PUBLISHING` claim is stale. Another `publish` call may then take the claim over, and startup resets it to `CANDIDATE`. A value below 1 fails startup with a `ConfigurationException` naming the key. It replaces the former staleness-seconds key of the same group, which is no longer read: an application that still sets that key gets the default for this one, so rename it |
 | `workflow.definitions.maxDocumentSizeBytes` | `262144` | Positive runtime input-byte limit L; L + floor(L/2) must fit an integer |
-| `workflow.definitions.planCache.maxEntries` | `500` | At least 1: the most document plans the engine's plan cache keeps resident (see Loading plans). Size it from the resident size of your largest plan; a resident plan is held by reference, so the cache bounds the plan count, not bytes. A value below 1, or one that is not an integer, fails startup with a `ConfigurationException` naming the key |
 | `workflow.definitions.buildDefaultScopeDocumentsAtStartup` | `false` | Boolean. When `true`, startup builds the plan of every live default scope document that is not packaged with the application into the plan cache, so a document that does not build (drift, a recorded type name no class resolves, a missing loader, a document over the size limit) fails startup naming it. When `false`, startup builds only the code definitions and the packaged documents, and such a document is built on first use: if it does not build, its first command is deferred as not runnable and a warning names it once. Documents of other scopes are never built at startup |
+
+The engine's plan cache is not sized here: `cache.caches.workflow-plans.maximumEntries` (default 500, at least 1) and
+`cache.caches.workflow-plans.ttlSeconds` (default and `-1` or `0`: no expiry) configure it through the cache module; see the
+engine module reference. Size it from the resident size of your largest plan; a resident plan is held by reference, so the cache
+bounds the plan count, not bytes. The record no longer has a plan cache component and `workflow.definitions.planCache` is not read.
 
 `maxStoredDocumentSizeBytes()` derives floor(3L/2). Durable source text must fit both that UTF-8 byte
 bound and L Unicode code points. These bounds describe normalized text, not its original encoding.

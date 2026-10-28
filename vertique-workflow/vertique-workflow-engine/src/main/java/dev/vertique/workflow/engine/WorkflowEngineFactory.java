@@ -22,7 +22,6 @@ import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
-import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerStore;
@@ -167,7 +166,8 @@ public final class WorkflowEngineFactory {
                 registry,
                 parts.vertx(),
                 parts.schemaProducer(),
-                WorkflowDefinitionsConfig.DEFAULT_PLAN_CACHE_MAX_ENTRIES,
+                PlanCache.DEFAULT_MAX_ENTRIES,
+                java.time.Duration.ZERO,
                 Set.of());
         WorkflowEngine engine = new WorkflowEngine(
                 txRunner,

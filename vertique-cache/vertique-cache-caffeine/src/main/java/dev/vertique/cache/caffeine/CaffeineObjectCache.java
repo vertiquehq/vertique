@@ -6,6 +6,7 @@ package dev.vertique.cache.caffeine;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.RemovalCause;
+import com.github.benmanes.caffeine.cache.Ticker;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.event.CacheOperation;
 import dev.vertique.cache.spi.event.CacheOperationCompleted;
@@ -23,6 +24,8 @@ import java.util.function.Supplier;
 /**
  * Caffeine-backed {@link ObjectCache}. Entries are shared in-flight futures; the first caller for a missing
  * key runs the loader outside the map's atomic section and every caller receives its own bridged future.
+ * An optional expiry removes an entry a fixed time after it was created, the meaning {@code ttlSeconds} has for
+ * the {@code CacheStore} providers; only a size removal is reported as an eviction.
  */
 final class CaffeineObjectCache<K, V> implements ObjectCache<K, V> {
     static final String PROVIDER = "caffeine-object";
@@ -32,12 +35,30 @@ final class CaffeineObjectCache<K, V> implements ObjectCache<K, V> {
     private final Set<CacheObserver> observers;
     private final Cache<K, CompletableFuture<V>> entries;
 
-    CaffeineObjectCache(String name, long maxEntries, Predicate<Throwable> cacheFailure, Set<CacheObserver> observers) {
+    CaffeineObjectCache(
+            String name,
+            long maxEntries,
+            Duration expireAfterWrite,
+            Predicate<Throwable> cacheFailure,
+            Set<CacheObserver> observers) {
+        this(name, maxEntries, expireAfterWrite, cacheFailure, observers, Ticker.systemTicker());
+    }
+
+    CaffeineObjectCache(
+            String name,
+            long maxEntries,
+            Duration expireAfterWrite,
+            Predicate<Throwable> cacheFailure,
+            Set<CacheObserver> observers,
+            Ticker ticker) {
         this.name = name;
         this.cacheFailure = cacheFailure;
         this.observers = observers;
-        this.entries = Caffeine.newBuilder()
-                .maximumSize(maxEntries)
+        Caffeine<Object, Object> builder = Caffeine.newBuilder().maximumSize(maxEntries);
+        if (!expireAfterWrite.isZero()) {
+            builder.expireAfterWrite(expireAfterWrite);
+        }
+        this.entries = builder.ticker(ticker)
                 .<K, CompletableFuture<V>>removalListener((key, value, cause) -> {
                     if (cause == RemovalCause.SIZE) {
                         emit(CacheOperation.EVICT, CacheOutcome.SIZE_EVICTED, Duration.ZERO);

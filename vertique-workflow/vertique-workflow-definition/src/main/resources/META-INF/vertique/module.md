@@ -357,7 +357,7 @@ arguments are failed Futures. Previously started instances keep their pinned ver
 
 `WorkflowDefinitionsConfig` supplies runtime input limit L (default 262144 bytes). Install the opt-in
 `WorkflowDefinitionsConfigModule` with the canonical `ConfigParsingModule` to parse
-`workflow.definitions.maxDocumentSizeBytes`, `buildDefaultScopeDocumentsAtStartup`, `planCache.maxEntries` and `publicationClaimTimeoutSeconds`, or bind the typed config directly.
+`workflow.definitions.maxDocumentSizeBytes`, `buildDefaultScopeDocumentsAtStartup` and `publicationClaimTimeoutSeconds`, or bind the typed config directly.
 The default applies without a parser binding. The YAML scanner's code-point limit is L; nesting,
 expression limits, and collection-alias settings remain independent.
 

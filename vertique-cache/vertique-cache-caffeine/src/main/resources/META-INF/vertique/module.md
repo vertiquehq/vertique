@@ -61,10 +61,16 @@ Install it in the application component for local caching. Annotation apps also 
 
 ### ObjectCache and ObjectCaches
 
-`ObjectCaches.create(name, maxEntries, cacheFailure, observers)` returns an `ObjectCache<K, V>`: a
-by-reference, size-bounded, single-flight cache for runtime objects that cannot or should not be
-serialized. It is independent of `cache.enabled` and reads no `CacheConfig`; there is no TTL, no
-identity dimension and no serialization, so `getOrLoad` returns the identical instance on every hit.
+`ObjectCaches.create(name, maxEntries, cacheFailure, observers)` and
+`ObjectCaches.create(name, maxEntries, expireAfterWrite, cacheFailure, observers)` return an
+`ObjectCache<K, V>`: a by-reference, size-bounded, single-flight cache for runtime objects that cannot or
+should not be serialized. It is independent of `cache.enabled` and reads no `CacheConfig` itself: the
+owner of a cache passes it the settings of its `cache.caches.<name>` entry (`maximumEntries` and a positive
+`ttlSeconds` as `expireAfterWrite`; `-1` and `0` mean `Duration.ZERO`, no time expiry, and the global
+`cache.defaultTtlSeconds` does not apply). As for the `CacheStore` providers, an entry expires a fixed time
+after it was created, not after its last read, and the expiry counts from the start of a load, so a load
+that outlasts it leaves no entry to share. There is no identity dimension and no serialization, so
+`getOrLoad` returns the identical instance on every hit.
 
 - `getOrLoad(key, loader)` runs the loader once per key across concurrent callers. Each caller gets
   its own future over the shared in-flight load, completed on that caller's current Vert.x context,
@@ -72,11 +78,11 @@ identity dimension and no serialization, so `getOrLoad` returns the identical in
 - A failed load is dropped so the next call loads again, unless `cacheFailure` accepts the error;
   accepted failures stay cached as failed futures until evicted or invalidated.
 - `getIfPresent`, `invalidate`, `size` and `name` complete the API. `maxEntries` below 1, a blank
-  name or a null argument is refused at creation.
+  name, a negative `expireAfterWrite` or a null argument is refused at creation.
 
 Events go to the supplied observers under provider id `"caffeine-object"`: a miss emits
 `GET`/`MISS`, a finished load emits `LOAD`/`SUCCESS` or `LOAD`/`ERROR` with the load duration, and a
-size eviction emits `EVICT`/`SIZE_EVICTED` with zero elapsed time. Hits and `invalidate` emit nothing,
+size eviction emits `EVICT`/`SIZE_EVICTED` with zero elapsed time. A time expiry emits nothing (it is not a size eviction), and neither do hits and `invalidate`,
 and observer failures are swallowed.
 
 ## Module Dagger Bindings

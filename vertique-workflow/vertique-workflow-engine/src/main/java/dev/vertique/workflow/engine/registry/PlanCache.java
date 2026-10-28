@@ -22,6 +22,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -44,6 +45,9 @@ import org.slf4j.LoggerFactory;
  * {@link FailingMarks}. The evaluation is made against the default scope's state type name at the time of the build and
  * is made again, in place, when {@link #evaluation} finds that name changed.
  *
+ * <p>The cache is sized and expired by its entry under {@code cache.caches.}{@value #NAME} when the application
+ * configures one, see {@code WorkflowEngineModule}; a plan that expires is built again on its next request.
+ *
  * <p>The cache reports every miss, successful and failed load and size eviction to its observers and nothing for a
  * hit.
  */
@@ -51,8 +55,14 @@ public final class PlanCache implements DocumentPlanSource {
 
     private static final Logger log = LoggerFactory.getLogger(PlanCache.class);
 
-    /** The cache name its events carry. */
+    /**
+     * The cache name its events carry and the key of its settings: {@code cache.caches.workflow-plans} sizes it
+     * through {@code maximumEntries} and expires its plans through {@code ttlSeconds}.
+     */
     public static final String NAME = "workflow-plans";
+
+    /** The most plans kept resident when the cache's settings do not say. */
+    public static final long DEFAULT_MAX_ENTRIES = 500;
 
     /** The longest a load may take before it fails, in milliseconds; a timeout is never remembered. */
     static final long LOAD_TIMEOUT_MS = 30_000;
@@ -71,17 +81,25 @@ public final class PlanCache implements DocumentPlanSource {
      *
      * @param loader     reads and builds the plan of a key the cache does not hold
      * @param maxEntries the most plans kept resident; at least 1
+     * @param expireAfterWrite how long a plan stays resident after it was built, or {@link Duration#ZERO} for no
+     *     time expiration
      * @param observers  the observers of the cache's events; may be empty
-     * @throws IllegalArgumentException if {@code maxEntries} is below 1
+     * @throws IllegalArgumentException if {@code maxEntries} is below 1 or {@code expireAfterWrite} is negative
      */
-    public PlanCache(DefinitionPlanLoader loader, long maxEntries, Set<CacheObserver> observers) {
-        this(loader, maxEntries, observers, LOAD_TIMEOUT_MS);
+    public PlanCache(
+            DefinitionPlanLoader loader, long maxEntries, Duration expireAfterWrite, Set<CacheObserver> observers) {
+        this(loader, maxEntries, expireAfterWrite, observers, LOAD_TIMEOUT_MS);
     }
 
-    PlanCache(DefinitionPlanLoader loader, long maxEntries, Set<CacheObserver> observers, long loadTimeoutMs) {
+    PlanCache(
+            DefinitionPlanLoader loader,
+            long maxEntries,
+            Duration expireAfterWrite,
+            Set<CacheObserver> observers,
+            long loadTimeoutMs) {
         this.loadTimeoutMs = loadTimeoutMs;
         this.loader = Objects.requireNonNull(loader, "loader");
-        this.cache = ObjectCaches.create(NAME, maxEntries, PlanFailures::isDeterministic, observers);
+        this.cache = ObjectCaches.create(NAME, maxEntries, expireAfterWrite, PlanFailures::isDeterministic, observers);
         this.marks = new FailingMarks(loader.store(), this);
     }
 
@@ -106,6 +124,8 @@ public final class PlanCache implements DocumentPlanSource {
      *     calling thread
      * @param schemaProducer when present, fills a legacy row after its first build
      * @param maxEntries     the most plans kept resident; at least 1
+     * @param expireAfterWrite how long a plan stays resident after it was built, or {@link Duration#ZERO} for no
+     *     time expiration
      * @param observers      the observers of the cache's events
      * @return the cache
      */
@@ -116,11 +136,15 @@ public final class PlanCache implements DocumentPlanSource {
             @Nullable Vertx vertx,
             Optional<WorkflowPlanSchemaProducer> schemaProducer,
             long maxEntries,
+            Duration expireAfterWrite,
             Set<CacheObserver> observers) {
         DefaultWorkflowRegistry builder =
                 registry instanceof DefaultWorkflowRegistry framework ? framework : new DefaultWorkflowRegistry();
         PlanCache cache = new PlanCache(
-                new DefinitionPlanLoader(store, loaders, builder, vertx, schemaProducer), maxEntries, observers);
+                new DefinitionPlanLoader(store, loaders, builder, vertx, schemaProducer),
+                maxEntries,
+                expireAfterWrite,
+                observers);
         if (registry instanceof DefaultWorkflowRegistry framework) {
             framework.bindDocumentPlanSource(cache);
         }

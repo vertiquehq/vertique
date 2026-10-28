@@ -67,7 +67,7 @@ class CacheCoreApiTest {
                         .map(RecordComponent::getName)
                         .toList());
         assertEquals(
-                List.of("mode", "ttlSeconds", "jsonProfile"),
+                List.of("mode", "ttlSeconds", "jsonProfile", "maximumEntries"),
                 Arrays.stream(CacheEntryConfig.class.getRecordComponents())
                         .map(RecordComponent::getName)
                         .toList());

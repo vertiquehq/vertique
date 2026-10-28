@@ -152,6 +152,10 @@ bound as a whole record and omitted keys are **not** defaulted: supply every glo
 | `cache.caches.<name>.mode` | `LOCAL` \| `CLUSTERED` \| `DEFAULT` | required | | Overrides the definition's mode unless `DEFAULT`, which defers to the definition and then `cache.defaultMode`. |
 | `cache.caches.<name>.ttlSeconds` | long (s) | `0` when omitted | `-1`, `0`, or `1..maxTtlSeconds` | `-1` inherits the definition's TTL (then `defaultTtlSeconds`); `0` disables time expiration; a positive value overrides the definition. An omitted value binds as `0`, not as inherit. A value above `cache.maxTtlSeconds` fails configuration. |
 | `cache.caches.<name>.jsonProfile` | string | inherits `cache.jsonProfile` | not blank when present | Per-cache JSON profile. |
+| `cache.caches.<name>.maximumEntries` | int | none (absent) | `>= 1` when present | Entry bound for a cache that sizes itself from its entry, such as a by-reference object cache (`ObjectCaches` in the Caffeine provider; the workflow engine's plan cache is `cache.caches.workflow-plans`). `CacheStore` providers keep sizing from `cache.maximumEntries` and ignore it. An omitted value is `null` and binds without error. A value below 1 fails configuration. |
+
+`CacheEntryConfig` is `(mode, ttlSeconds, jsonProfile, maximumEntries)`; the `maximumEntries` component is a nullable `Integer`, and the
+three-argument constructor remains and leaves it `null`.
 
 ## Provider composition
 

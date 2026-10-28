@@ -215,7 +215,7 @@ final class PlanStubs {
             Vertx vertx,
             long maxEntries) {
         DefinitionPlanLoader loader = new DefinitionPlanLoader(store, Set.of(probe), registry, vertx, Optional.empty());
-        return new PlanCache(loader, maxEntries, Set.of());
+        return new PlanCache(loader, maxEntries, java.time.Duration.ZERO, Set.of());
     }
 
     /** Like {@link #planCache} with a load that may take {@code loadTimeoutMs} at most. */
@@ -227,7 +227,7 @@ final class PlanStubs {
             long maxEntries,
             long loadTimeoutMs) {
         DefinitionPlanLoader loader = new DefinitionPlanLoader(store, Set.of(probe), registry, vertx, Optional.empty());
-        return new PlanCache(loader, maxEntries, Set.of(), loadTimeoutMs);
+        return new PlanCache(loader, maxEntries, java.time.Duration.ZERO, Set.of(), loadTimeoutMs);
     }
 
     /** Waits for the future on the calling thread and returns its value. */

@@ -125,6 +125,48 @@ class CacheCoreModuleTest {
     }
 
     @Test
+    @DisplayName("a per-cache maximumEntries binds when present and is null when omitted")
+    void perCacheMaximumEntriesBindsOrIsAbsent() {
+        JsonObject root = new JsonObject()
+                .put(
+                        "cache",
+                        fullSection()
+                                .put(
+                                        "caches",
+                                        new JsonObject()
+                                                .put(
+                                                        "sized",
+                                                        new JsonObject()
+                                                                .put("mode", "LOCAL")
+                                                                .put("maximumEntries", 7))
+                                                .put("plain", new JsonObject().put("mode", "LOCAL"))));
+
+        CacheConfig config = component(root).cacheConfig();
+
+        assertEquals(7, config.caches().get("sized").maximumEntries());
+        assertNull(config.caches().get("plain").maximumEntries());
+    }
+
+    @Test
+    @DisplayName("a per-cache maximumEntries below 1 fails binding")
+    void perCacheMaximumEntriesBelowOneFailsBinding() {
+        JsonObject root = new JsonObject()
+                .put(
+                        "cache",
+                        fullSection()
+                                .put(
+                                        "caches",
+                                        new JsonObject()
+                                                .put(
+                                                        "sized",
+                                                        new JsonObject()
+                                                                .put("mode", "LOCAL")
+                                                                .put("maximumEntries", 0))));
+
+        assertThrows(ConfigurationException.class, () -> component(root).cacheConfig());
+    }
+
+    @Test
     @DisplayName("a non-empty section is bound as a whole record; omitted global keys are not defaulted")
     void partialSectionIsNotDefaulted() {
         JsonObject root = new JsonObject().put("cache", new JsonObject().put("enabled", false));

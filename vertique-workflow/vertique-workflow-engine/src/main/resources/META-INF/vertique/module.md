@@ -632,7 +632,9 @@ Dagger module owning the engine-internal bindings:
 - Provides the `PlanCache` (see Plan Cache) and binds it as the `DocumentPlanSource` of the framework registry when it is built
   (a `BOOTSTRAP` startup step builds it right after the registry is restored, and the executor builds it on its first warm-up
   otherwise, so a graph that never starts or runs an executor does not build the registry for it); it takes its
-  size from the optional `WorkflowDefinitionsConfig` (`workflow.definitions.planCache.maxEntries`, default 500) and reports
+  size and expiry from the cache entry `cache.caches.workflow-plans` of the optional `CacheConfig` (`maximumEntries`, default 500;
+  a positive `ttlSeconds` expires a plan that long after it was built, default and `-1` or `0`: no expiry; the global cache keys
+  do not apply and `cache.enabled` does not disable it) and reports
   its events to the `Set<CacheObserver>` multibinding. The module declares that multibinding itself with `@Multibinds`, so an
   application without a cache provider still builds its graph; it does not include `CacheCoreModule`, and a graph that does
   install it (any application with a cache provider) declares the same multibinding, which Dagger merges. An application
@@ -1044,7 +1046,7 @@ command it peeks on a live instance through `load`, so a node runs a document ve
 - **Failing flag.** An entry of a scope other than the default one carries the evaluation of its plan (see Failing scope
   rows): the flag, the default scope's state type name it was evaluated against and the mark the row stored when the plan was
   built. A name binding that no class resolves is remembered as a failure like any other that does not build.
-- **Size.** At most `workflow.definitions.planCache.maxEntries` plans (default 500) stay resident; remembered failures count as entries. The cache reports each miss, each successful and each failed
+- **Size and expiry.** At most `cache.caches.workflow-plans.maximumEntries` plans (default 500) stay resident, and with a positive `cache.caches.workflow-plans.ttlSeconds` a plan is dropped that long after it was built (default: never); remembered failures count as entries. The entry is read from the optional `CacheConfig` (bound by `CacheCoreModule`; without it the defaults apply). The cache reports each miss, each successful and each failed
   load and each size eviction to the `Set<CacheObserver>` under the name `workflow-plans`, and nothing for a hit.
 - **Startup builds nothing into it by default.** Startup builds the code definitions, which the registry holds, and checks the packaged documents, but it keeps
   no plan of a document, whatever its scope. With

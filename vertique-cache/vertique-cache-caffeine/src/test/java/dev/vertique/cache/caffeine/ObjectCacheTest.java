@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dagger.Component;
@@ -171,6 +172,59 @@ class ObjectCacheTest {
         awaitTrue(() -> cache.getIfPresent(resident).isEmpty());
         Thread.sleep(300); // eviction notifications may be delivered asynchronously; give them time to surface
         assertEquals(evictionsBefore, observer.count("plans", CacheOperation.EVICT, CacheOutcome.SIZE_EVICTED));
+    }
+
+    @Test
+    void expiredEntriesLoadAgainAndAreNotReportedAsSizeEvictions() throws Exception {
+        // Given: a cache whose entries live 10 seconds on a ticker the test controls
+        RecordingObserver observer = new RecordingObserver();
+        long[] nanos = {0};
+        ObjectCache<String, Plan> cache = ObjectCaches.create(
+                "plans", 10, Duration.ofSeconds(10), error -> false, Set.of(observer), () -> nanos[0]);
+        CountingLoader loader = countingLoader();
+
+        // When: a key is loaded, read within its lifetime, and read again after it
+        settled(cache.getOrLoad("k", loader));
+        nanos[0] = Duration.ofSeconds(9).toNanos();
+        settled(cache.getOrLoad("k", loader));
+        int withinLifetime = loader.calls();
+        nanos[0] = Duration.ofSeconds(11).toNanos();
+        boolean presentAfterExpiry = cache.getIfPresent("k").isPresent();
+        settled(cache.getOrLoad("k", loader));
+
+        // Then: the entry was shared while alive, gone after expiry, loaded again, and no size eviction was reported
+        assertEquals(1, withinLifetime);
+        assertFalse(presentAfterExpiry);
+        assertEquals(2, loader.calls());
+        Thread.sleep(300); // removal notifications may be delivered asynchronously; give them time to surface
+        assertEquals(0, observer.count("plans", CacheOperation.EVICT, CacheOutcome.SIZE_EVICTED));
+    }
+
+    @Test
+    void zeroExpiryNeverExpiresEntries() throws Exception {
+        // Given: a cache without time expiration, on a ticker far in the future
+        long[] nanos = {0};
+        ObjectCache<String, Plan> cache =
+                ObjectCaches.create("plans", 10, Duration.ZERO, error -> false, Set.of(), () -> nanos[0]);
+        CountingLoader loader = countingLoader();
+
+        // When: a key is loaded and read a century later
+        settled(cache.getOrLoad("k", loader));
+        nanos[0] = Duration.ofDays(36_500).toNanos();
+
+        // Then: it is still resident and not loaded again
+        assertTrue(cache.getIfPresent("k").isPresent());
+        settled(cache.getOrLoad("k", loader));
+        assertEquals(1, loader.calls());
+    }
+
+    @Test
+    void refusesInvalidSettingsAtCreation() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ObjectCaches.create("plans", 10, Duration.ofSeconds(-1), error -> false, Set.of()));
+        assertThrows(
+                NullPointerException.class, () -> ObjectCaches.create("plans", 10, null, error -> false, Set.of()));
     }
 
     @Test

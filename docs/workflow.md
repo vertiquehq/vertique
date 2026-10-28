@@ -501,10 +501,28 @@ Every recorded command carries who asked for it (`actor_kind`, `actor_id`, `acto
 ### Plan cache
 
 Any plan that the registry does not hold, which means every document version, is built by the engine's plan cache from its
-stored row the first time a command needs it. The cache is bounded by `workflow.definitions.planCache.maxEntries` (default 500): it
+stored row the first time a command needs it. The cache is bounded by `cache.caches.workflow-plans.maximumEntries` (default 500; see the table below): it
 bounds the number of plans, not bytes, and a remembered failure counts as an entry. A resident plan is held by reference; the largest plan
 of the order-fulfillment example (15 nodes) retains about 2.4 KB, so the default budgets about 1.2 MB for plans of that size. A plan grows with its node count and
 with the callbacks and schemas it holds, so measure your largest document before you raise the limit. The cache builds one plan per key however many commands ask for it, and the executor holds the plans of a segment until the segment ends so that a plan cannot be evicted under it.
+The cache is sized and expired through the cache module's per-cache entry `cache.caches.workflow-plans`, not through a
+`workflow.*` key: `maximumEntries` (default 500, at least 1) bounds it, and a positive `ttlSeconds` drops a plan that long after it was
+built, so that the next request builds it again (default and `-1` or `0`: no expiry). The cache's global keys do not apply to it: neither
+`cache.maximumEntries` nor `cache.defaultTtlSeconds` changes the plan cache, and `cache.enabled` does not disable it. The entry
+is read only when the application installs the cache core module, which binds `CacheConfig`; the engine does not require it, and without it
+the defaults apply. A non-empty `cache` object is bound as a whole, so supply every global `cache` key and the entry's `mode`:
+
+```json
+{
+  "cache": {
+    "enabled": true, "defaultMode": "LOCAL", "defaultTtlSeconds": 60, "maxTtlSeconds": 86400,
+    "jsonProfile": "system", "maxKeyBytes": 1024, "maxValueBytes": 1048576,
+    "maximumEntries": 10000, "backendTimeoutMs": 100,
+    "caches": { "workflow-plans": { "mode": "LOCAL", "maximumEntries": 2000 } }
+  }
+}
+```
+
 Startup builds the code definitions and checks the packaged documents but keeps no document plan. Set
 `workflow.definitions.buildDefaultScopeDocumentsAtStartup` to `true` to build every live default scope document into the cache at startup, so that one that does not build fails startup.
 
@@ -802,7 +820,6 @@ A node keeps no copy of the definition table, so there is nothing to refresh.
 |---|---|---|
 | `workflow.definitions.publicationClaimTimeoutSeconds` | `60` | At least 1: the age in seconds at which a `PUBLISHING` claim is stale, so another `publish` takes it over and startup resets it. Replaces the former staleness-seconds key of the same group, which is no longer read |
 | `workflow.definitions.maxDocumentSizeBytes` | `262144` | Largest runtime `load` input, in bytes (L); the stored form is capped at floor(3L/2) UTF-8 bytes and L code points |
-| `workflow.definitions.planCache.maxEntries` | `500` | At least 1: the most plans the plan cache keeps resident (see [Plan cache](#plan-cache)) |
 | `workflow.definitions.buildDefaultScopeDocumentsAtStartup` | `false` | When `true`, startup builds every live default scope document into the plan cache, so one that does not build fails startup |
 
 All keys are optional. To read them from configuration, install `WorkflowDefinitionsConfigModule` together with
@@ -1017,8 +1034,8 @@ is registered, and a static source failing a limit fails startup naming the reso
 - `workflow.definitions.publicationClaimTimeoutSeconds` (60) replaces the former staleness-seconds key of the same group,
   which is no longer read. An application that still sets the old key gets the default for the new one, so rename it.
 - `workflow.definitions.maxDocumentSizeBytes` (262144) is unchanged.
-- New: `workflow.definitions.planCache.maxEntries` (500) and `workflow.definitions.buildDefaultScopeDocumentsAtStartup`
-  (`false`); see [Plan cache](#plan-cache).
+- New: `cache.caches.workflow-plans.maximumEntries` (500) and `cache.caches.workflow-plans.ttlSeconds` (no expiry) size and expire
+  the plan cache, and `workflow.definitions.buildDefaultScopeDocumentsAtStartup` (`false`); see [Plan cache](#plan-cache).
 - New: `workflow.executor.*` (see [Node roles and the executor](#node-roles-and-the-executor)) and `workflow.recording.*`,
   including `workflow.recording.maxOpenSignalsPerInstance` (100).
 

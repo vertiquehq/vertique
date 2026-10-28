@@ -183,6 +183,15 @@ class CacheConfigTest {
         assertThrows(IllegalArgumentException.class, () -> new CacheEntryConfig(CacheMode.LOCAL, 1, " "));
     }
 
+    @Test
+    @DisplayName("CacheEntryConfig maximumEntries is optional and must be at least 1 when present")
+    void entryMaximumEntries() {
+        assertNull(new CacheEntryConfig(CacheMode.LOCAL, 1, null).maximumEntries());
+        assertEquals(1, new CacheEntryConfig(CacheMode.LOCAL, 1, null, 1).maximumEntries());
+        assertThrows(IllegalArgumentException.class, () -> new CacheEntryConfig(CacheMode.LOCAL, 1, null, 0));
+        assertThrows(IllegalArgumentException.class, () -> new CacheEntryConfig(CacheMode.LOCAL, 1, null, -5));
+    }
+
     private static CacheConfig copy(CacheConfig base, Map<String, CacheEntryConfig> caches) {
         return new CacheConfig(
                 base.enabled(),
