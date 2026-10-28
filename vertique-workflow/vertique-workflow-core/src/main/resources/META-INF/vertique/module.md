@@ -613,7 +613,7 @@ the defaults and introduces no parser dependency into the graph.
 The engine's plan cache is not sized by this record. The engine reads `workflow.definitions.cache.maximumEntries` (default 500, at
 least 1) and `workflow.definitions.cache.ttlSeconds` (default `0`: no expiry) itself; see the engine module reference. A key left out
 keeps its default. Size it from the resident size of your largest plan; a resident plan is held by reference, so the cache
-bounds the plan count, not bytes. `workflow.definitions.planCache` is not read.
+bounds the plan count, not bytes.
 
 `maxStoredDocumentSizeBytes()` derives floor(3L/2). Durable source text must fit both that UTF-8 byte
 bound and L Unicode code points. These bounds describe normalized text, not its original encoding.
