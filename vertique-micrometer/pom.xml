@@ -30,5 +30,6 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-micrometer-services</module>
         <module>vertique-micrometer-resilience</module>
         <module>vertique-micrometer-rate-limit</module>
+        <module>vertique-micrometer-workflow</module>
     </modules>
 </project>

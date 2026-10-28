@@ -43,6 +43,9 @@ The optional `vertique-micrometer-resilience` adapter consumes only the resilien
 the shared Micrometer registry. It stays outside the runtime so resilience execution remains free of
 telemetry-library dependencies.
 
+The optional `vertique-micrometer-workflow` adapter consumes only the workflow executor observer SPI
+from `vertique-workflow-core` and the shared Micrometer registry, and no workflow module depends on it.
+
 `vertique-json-schema` owns transport-neutral Java `Type` -> JSON Schema 2020-12
 generation, built on Victools. It depends only on `vertique-core` plus Jackson,
 Victools, Jakarta Validation, and Swagger annotations — it has no dependency on

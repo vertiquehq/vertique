@@ -35,7 +35,7 @@
       "packaging": "pom"
     }
   ],
-  "expectedPublishableGavCount": 121,
+  "expectedPublishableGavCount": 122,
   "expectedPublishableGavs": [
     "dev.vertique:vertique-aop",
     "dev.vertique:vertique-app-parent",
@@ -114,6 +114,7 @@
     "dev.vertique:vertique-micrometer-resilience",
     "dev.vertique:vertique-micrometer-rest",
     "dev.vertique:vertique-micrometer-services",
+    "dev.vertique:vertique-micrometer-workflow",
     "dev.vertique:vertique-opentelemetry-cache",
     "dev.vertique:vertique-opentelemetry-core",
     "dev.vertique:vertique-opentelemetry-mcp",

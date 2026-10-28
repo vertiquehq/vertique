@@ -247,6 +247,21 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
 
+        <!--
+          Test scope only: ExecutorMetricsIT proves the Micrometer bridge against the executor on managed PostgreSQL.
+          No production code in this module depends on the bridge.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-micrometer-workflow</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Annotation processing of the Dagger components that the integration tests declare. -->
         <dependency>
             <groupId>com.google.dagger</groupId>
