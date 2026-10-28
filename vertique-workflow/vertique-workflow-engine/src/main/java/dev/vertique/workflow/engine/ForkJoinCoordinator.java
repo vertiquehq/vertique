@@ -221,6 +221,20 @@ final class ForkJoinCoordinator {
     }
 
     /**
+     * Tells whether the join of a fork has not decided yet.
+     *
+     * @param workflowId the owning instance
+     * @param forkStepId the fork step whose join is asked about
+     * @param tx the active transaction
+     * @return a {@link Future} of {@code true} when the join is open
+     */
+    Future<Boolean> isJoinOpen(
+            dev.vertique.workflow.ops.WorkflowInstanceId workflowId, String forkStepId, SqlClient tx) {
+        return joinStates.findOpenForWorkflow(workflowId, tx).map(open -> open.stream()
+                .anyMatch(j -> j.forkStepId().equals(forkStepId)));
+    }
+
+    /**
      * Returns {@code true} if the given branch status is terminal. Static so siblings in the same
      * package (e.g. a dialect recovery service) reuse the same predicate instead of
      * duplicating the enum list.

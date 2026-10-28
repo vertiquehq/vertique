@@ -190,6 +190,16 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
 
+        <!--
+          Test scope only: the upgrade proofs create the delayed-job tables with the job module's own
+          migration. No production code in this module depends on the job tables.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-job-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-workflow-definition</artifactId>

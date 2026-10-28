@@ -252,6 +252,9 @@ segment of its own, so a caller that needs the effect awaits the probe (`executi
   instance neither `FAILED` nor holding a dead-lettered command is `STALE` (`COMMAND_STALE`, reason `NOTHING_TO_RECOVER`). A `retry`
   that is called while another retry of the instance is still pending, deferred or claimed succeeds and records nothing. A deterministic failure or a step-limit overrun of the drive fails the command and
   leaves the instance `FAILED`, like a start.
+  A `RETRY` command that names a fork step and a branch (recorded by the 0.4.0 upgrade for a branch whose retry was scheduled) is not a
+  recovery of the instance: it drives that branch once from its current step, and is `STALE` (reason `BRANCH_ENDED`) when the branch is no
+  longer running or its join has already decided.
 - `migrate` records a `MIGRATION` command holding the target version and, when named, the target scope. It is refused when the
   instance has ended (`WorkflowMigrationIllegalStateException` naming the status), when the named target scope is none of the
   instance's definition scope, its start scope and the default scope (`WorkflowMigrationIllegalStateException`, "target scope not

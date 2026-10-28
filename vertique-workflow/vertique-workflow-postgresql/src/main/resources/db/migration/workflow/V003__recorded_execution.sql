@@ -139,3 +139,85 @@ ALTER TABLE workflow_tasks
 -- Timers: fired through commands, no longer through delayed jobs.
 ALTER TABLE workflow_timers ALTER COLUMN delayed_job_execution_id DROP NOT NULL;
 ALTER TABLE workflow_timers ADD COLUMN IF NOT EXISTS command_id BIGINT NULL;
+
+-- ---------------------------------------------------------------------------------------------------------------
+-- One-time conversion of the running work of the previous release. Every node of the previous release is stopped
+-- before this script runs, so nothing else writes these rows while it converts them.
+-- ---------------------------------------------------------------------------------------------------------------
+
+-- Every existing instance logs its full-state baseline when it is next executed.
+UPDATE workflow_instances SET baseline_logged = FALSE;
+
+-- Each scheduled timer becomes one timer command at the timer's fire time, linked from the timer. The timers of an
+-- instance get ascending sequences by fire time, then timer id. A converted timer keeps its context except the
+-- identity snapshot, which no command may carry to an executor.
+WITH due AS (
+    SELECT t.timer_id,
+           t.workflow_id,
+           t.fire_at,
+           t.task_id,
+           CASE t.purpose
+               WHEN 'STANDALONE' THEN 'FIRE'
+               WHEN 'SIGNAL_TIMEOUT' THEN 'TIMEOUT'
+               WHEN 'TASK_DUE' THEN 'DUE'
+               ELSE 'REMINDER'
+           END AS timer_kind,
+           row_number() OVER (PARTITION BY t.workflow_id ORDER BY t.fire_at, t.timer_id) AS seq
+    FROM workflow_timers t
+    WHERE t.status = 'SCHEDULED' AND t.command_id IS NULL
+), converted AS (
+    INSERT INTO workflow_commands (workflow_id, seq, kind, timer_kind, timer_id, task_id, state, recorded_at,
+                                   available_at, fire_at)
+    SELECT workflow_id, seq, 'TIMER', timer_kind, timer_id, task_id, 'PENDING', now(), fire_at, fire_at
+    FROM due
+    RETURNING id, timer_id
+)
+UPDATE workflow_timers t
+SET command_id = converted.id,
+    metadata = t.metadata #- '{context,identity-snapshot}'
+FROM converted
+WHERE t.timer_id = converted.timer_id;
+
+-- Each branch whose retry was scheduled becomes one branch-addressed retry command, available at the retry time (at
+-- once when it has none), and the branch runs again. Its sequences follow the instance's timer commands.
+WITH waiting AS (
+    SELECT b.id,
+           b.workflow_id,
+           b.fork_step_id,
+           b.branch_id,
+           COALESCE(b.next_retry_at, now()) AS available_at,
+           (SELECT count(*) FROM workflow_commands c WHERE c.workflow_id = b.workflow_id)
+               + row_number() OVER (PARTITION BY b.workflow_id
+                                    ORDER BY COALESCE(b.next_retry_at, now()), b.fork_step_id, b.branch_id) AS seq
+    FROM workflow_branch_tokens b
+    WHERE b.status = 'RETRY_SCHEDULED'
+), converted AS (
+    INSERT INTO workflow_commands (workflow_id, seq, kind, target_json, state, recorded_at, available_at)
+    SELECT workflow_id, seq, 'RETRY',
+           jsonb_build_object('forkStepId', fork_step_id, 'branchId', branch_id),
+           'PENDING', now(), available_at
+    FROM waiting
+    RETURNING workflow_id
+)
+UPDATE workflow_branch_tokens b
+SET status = 'RUNNING', next_retry_at = NULL, version = b.version + 1, updated_at = now()
+WHERE b.status = 'RETRY_SCHEDULED';
+
+-- Each instance that received a command gets its queue row, counting those commands.
+INSERT INTO workflow_command_queues (workflow_id, next_seq, open_signals)
+SELECT workflow_id, max(seq) + 1, 0
+FROM workflow_commands
+GROUP BY workflow_id
+ON CONFLICT (workflow_id) DO NOTHING;
+
+-- The delayed jobs of the previous release that fired timers are not run by this release. Remove the live ones from
+-- the delayed-job table under its default name when it exists; finished job history stays. A deployment whose job
+-- tables are elsewhere runs the equivalent statement by hand before the first node of this release starts.
+DO $$
+BEGIN
+    IF to_regclass('job_executions') IS NOT NULL THEN
+        EXECUTE 'DELETE FROM job_executions WHERE handler = ''jobs/delayed/vertique.workflow.timer.fire/execute'' '
+                || 'AND state IN (''ENQUEUED'', ''PROCESSING'', ''FAILED'', ''ABANDONED'')';
+    END IF;
+END
+$$;

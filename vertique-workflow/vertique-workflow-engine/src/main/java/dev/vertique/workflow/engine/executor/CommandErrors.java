@@ -46,7 +46,7 @@ public final class CommandErrors {
         DEFINITION_FAILING,
         /** A signal names no wait of the definition version its instance is pinned to. */
         UNDECLARED_SIGNAL,
-        /** A branch-addressed signal arrived after its branch was superseded or ended. */
+        /** A branch-addressed signal or retry arrived after its branch was superseded or ended. */
         BRANCH_ENDED,
         /** A completion's task is no longer reserved by that completion. */
         TASK_NOT_RESERVED,
@@ -263,6 +263,17 @@ public final class CommandErrors {
                 Reason.BRANCH_ENDED,
                 "SIGNAL command for signal '" + EchoedNames.bounded(signalName)
                         + "' is stale: its branch was superseded or ended");
+    }
+
+    /**
+     * The value for a branch-addressed retry whose branch is no longer running or whose join has decided.
+     *
+     * @return the stored value
+     */
+    public static String retryBranchEnded() {
+        return format(
+                Reason.BRANCH_ENDED,
+                "RETRY command is stale: its branch was superseded or ended, or its join has decided");
     }
 
     /**

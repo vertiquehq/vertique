@@ -79,11 +79,12 @@ public class V003MigrationIT {
         assertThat(latest.info().pending()).isEmpty();
 
         try (Connection connection = connection()) {
-            // And the four existing rows read unchanged, with the new defaults on the instance and the history row
+            // And the four existing rows read unchanged, the instance marked as not yet baselined and the history row
+            // at its default entry version
             assertThat(rows(connection, """
                             SELECT status || '|' || current_step_id || '|' || state_json::text || '|' || baseline_logged
                             FROM workflow_instances WHERE id = '%s'
-                            """.formatted(INSTANCE_ID))).containsExactly("RUNNING|start|{\"k\": 1}|true");
+                            """.formatted(INSTANCE_ID))).containsExactly("RUNNING|start|{\"k\": 1}|false");
             assertThat(rows(connection, """
                             SELECT status || '|' || step_id FROM workflow_tasks WHERE task_id = '%s'
                             """.formatted(TASK_ID))).containsExactly("OPEN|approve");
@@ -96,6 +97,12 @@ public class V003MigrationIT {
                             FROM workflow_history WHERE workflow_id = '%s' AND sequence = 1
                             """.formatted(INSTANCE_ID))).containsExactly("STARTED|{\"h\": 1}|1");
 
+            // And the scheduled timer was converted: it links to one timer command and its instance has a queue row
+            assertThat(rows(connection, """
+                            SELECT c.kind || '|' || c.state FROM workflow_timers t
+                            JOIN workflow_commands c ON c.id = t.command_id WHERE t.timer_id = '%s'
+                            """.formatted(TIMER_ID))).containsExactly("TIMER|PENDING");
+
             // And an instance without state and without a current step inserts as PENDING
             insertPendingInstance(connection);
 
@@ -105,7 +112,7 @@ public class V003MigrationIT {
                         .formatted(PENDING_INSTANCE_ID));
             }
             assertThat(rows(connection, "SELECT open_signals::text FROM workflow_command_queues"))
-                    .containsExactly("0");
+                    .containsExactly("0", "0");
             long startCommandId = insertCommand(connection, PENDING_INSTANCE_ID, 1, "START", "PENDING", null);
 
             // And a second command with the same workflow and sequence is a unique violation
@@ -189,10 +196,17 @@ public class V003MigrationIT {
                 statement.executeUpdate(
                         "DELETE FROM workflow_instances WHERE id = '%s'".formatted(PENDING_INSTANCE_ID));
             }
+            assertThat(rows(connection, """
+                            SELECT count(*)::text FROM workflow_commands WHERE workflow_id = '%s'
+                            """.formatted(PENDING_INSTANCE_ID))).containsExactly("0");
+            assertThat(rows(connection, """
+                            SELECT count(*)::text FROM workflow_command_queues WHERE workflow_id = '%s'
+                            """.formatted(PENDING_INSTANCE_ID))).containsExactly("0");
+            // while the running instance keeps the converted timer command and its queue row
             assertThat(rows(connection, "SELECT count(*)::text FROM workflow_commands"))
-                    .containsExactly("0");
+                    .containsExactly("1");
             assertThat(rows(connection, "SELECT count(*)::text FROM workflow_command_queues"))
-                    .containsExactly("0");
+                    .containsExactly("1");
         }
     }
 

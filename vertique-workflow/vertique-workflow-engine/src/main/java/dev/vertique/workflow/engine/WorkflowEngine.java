@@ -1129,6 +1129,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** The durable-context namespace of the identity snapshot, which no instance carrier keeps. */
     static final String IDENTITY_SNAPSHOT_NAMESPACE = "identity-snapshot";
 
+    /** The fork step and branch a branch-addressed retry names, as recorded on its command. */
+    record BranchRetryTarget(String forkStepId, String branchId) {}
+
     /** The caller-supplied subject of a start, as recorded on its command. */
     record SubjectTarget(WorkflowSubjectRef subject) {
         static SubjectTarget of(WorkflowSubjectRef subject) {
@@ -1400,6 +1403,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * <ul>
      *   <li>an instance that has ended rejects it;</li>
+     *   <li>a retry that names a fork step and branch re-drives that branch once, and is stale when the branch is no
+     *       longer running or its join has decided;</li>
      *   <li>an instance that is not {@code FAILED} and holds no dead-lettered command has nothing to recover: the command
      *       is stale;</li>
      *   <li>a {@code FAILED} instance without state is initialized from the stored start payload, and a dead-lettered
@@ -1440,10 +1445,18 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             } catch (Exception e) {
                 return Future.failedFuture(e);
             }
-            return historyRecorder
-                    .appendCommandHistory(
-                            inst.id(), WorkflowEntryType.COMMAND_RECEIVED, command.commandId(), command.kind(), tx)
-                    .compose(v -> commands.hasDeadLetters(inst.id(), tx))
+            Future<Void> received = historyRecorder.appendCommandHistory(
+                    inst.id(), WorkflowEntryType.COMMAND_RECEIVED, command.commandId(), command.kind(), tx);
+            if (command.targetJson() != null) {
+                BranchRetryTarget target = Json.decodeValue(command.targetJson(), BranchRetryTarget.class);
+                return received.compose(v -> contextBinder.withRecordedBase(
+                        inst,
+                        command.commandId(),
+                        null,
+                        recorded,
+                        () -> redriveBranch(inst, rw, target, claim, command, tx)));
+            }
+            return received.compose(v -> commands.hasDeadLetters(inst.id(), tx))
                     .compose(dead -> inst.status() != WorkflowStatus.FAILED && !dead
                             ? staleCommand(claim, command, CommandErrors.nothingToRecover(), tx)
                             : contextBinder.withRecordedBase(
@@ -1453,6 +1466,43 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                     recorded,
                                     () -> recover(inst, rw, claim, command, tx)));
         });
+    }
+
+    /**
+     * Drives a branch once for a branch-addressed {@code RETRY}: the branch the command names runs from its current
+     * step. The command is stale when that branch is no longer running or its join has already decided.
+     */
+    private Future<WorkflowSegments.Outcome> redriveBranch(
+            WorkflowInstance inst,
+            RuntimeWorkflow rw,
+            BranchRetryTarget target,
+            ClaimedCommand claim,
+            SegmentCommand command,
+            SqlClient tx) {
+        return branchTokens
+                .findByWorkflowAndFork(inst.id(), target.forkStepId(), tx)
+                .compose(tokens -> {
+                    Optional<BranchToken> named = tokens.stream()
+                            .filter(t -> t.branchId().equals(target.branchId()))
+                            .findFirst();
+                    return named.isPresent()
+                            ? branchTokens.findByIdForUpdate(named.get().id(), tx)
+                            : Future.succeededFuture(Optional.<BranchToken>empty());
+                })
+                .compose(locked -> locked.isPresent() && locked.get().status() == BranchStatus.RUNNING
+                        ? forkJoin.isJoinOpen(inst.id(), target.forkStepId(), tx)
+                                .map(open -> open ? locked : Optional.<BranchToken>empty())
+                        : Future.succeededFuture(Optional.<BranchToken>empty()))
+                .compose(live -> live.isEmpty()
+                        ? staleCommand(claim, command, CommandErrors.retryBranchEnded(), tx)
+                        : forkJoin.driveAndMaybeJoin(inst, live.get(), rw, command.commandId(), tx)
+                                .compose(done -> historyRecorder.appendCommandHistory(
+                                        inst.id(),
+                                        WorkflowEntryType.COMMAND_COMPLETED,
+                                        command.commandId(),
+                                        command.kind(),
+                                        tx))
+                                .map(done -> WorkflowSegments.Outcome.APPLIED));
     }
 
     private Future<WorkflowSegments.Outcome> recover(
