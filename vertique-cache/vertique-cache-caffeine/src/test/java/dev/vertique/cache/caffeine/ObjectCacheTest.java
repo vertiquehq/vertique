@@ -16,6 +16,7 @@ import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.cache.aop.T011CacheCompositionFixtures;
 import dev.vertique.cache.config.CacheConfig;
+import dev.vertique.cache.config.ObjectCacheConfig;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.event.CacheEvent;
 import dev.vertique.cache.spi.event.CacheOperation;
@@ -63,7 +64,8 @@ class ObjectCacheTest {
                 .build();
         assertFalse(graph.config().enabled(), "the graph must really run with caching disabled");
         RecordingObserver observer = graph.observer();
-        ObjectCache<String, Plan> cache = ObjectCaches.create("plans", 10, error -> false, graph.observers());
+        ObjectCache<String, Plan> cache =
+                new CaffeineObjectCache<>("plans", config(10, 0), error -> false, graph.observers());
         CountingLoader loader = countingLoader();
 
         // When: the same key is loaded twice
@@ -85,7 +87,7 @@ class ObjectCacheTest {
     @Timeout(10)
     void concurrentCallersForOneKeyShareOneLoad() throws Exception {
         // Given: a cache and a loader that stays in flight until its promise completes
-        ObjectCache<String, Plan> cache = ObjectCaches.create("plans", 10, error -> false, Set.of());
+        ObjectCache<String, Plan> cache = new CaffeineObjectCache<>("plans", config(10, 0), error -> false, Set.of());
         Promise<Plan> inFlight = Promise.promise();
         AtomicInteger loads = new AtomicInteger();
         Supplier<Future<Plan>> loader = () -> {
@@ -110,8 +112,8 @@ class ObjectCacheTest {
     void cachesOnlyFailuresThePredicateAccepts() throws Exception {
         // Given: a cache that keeps only IllegalStateException failures, and a loader failing per key
         RecordingObserver observer = new RecordingObserver();
-        ObjectCache<String, Plan> cache =
-                ObjectCaches.create("plans", 10, error -> error instanceof IllegalStateException, Set.of(observer));
+        ObjectCache<String, Plan> cache = new CaffeineObjectCache<>(
+                "plans", config(10, 0), error -> error instanceof IllegalStateException, Set.of(observer));
         IllegalStateException deterministic = new IllegalStateException("deterministic");
         UncheckedIOException transientFailure = new UncheckedIOException(new IOException("transient"));
         FailingLoader loader = failingLoader(Map.of("det", deterministic, "transient", transientFailure));
@@ -139,7 +141,8 @@ class ObjectCacheTest {
     void reportsSizeEvictionsAndNoHitEvents() throws Exception {
         // Given: a cache bounded to two entries and a recording observer
         RecordingObserver observer = new RecordingObserver();
-        ObjectCache<String, Plan> cache = ObjectCaches.create("plans", 2, error -> false, Set.of(observer));
+        ObjectCache<String, Plan> cache =
+                new CaffeineObjectCache<>("plans", config(2, 0), error -> false, Set.of(observer));
         CountingLoader loader = countingLoader();
 
         // When: three keys are loaded, then read again through getOrLoad
@@ -179,8 +182,8 @@ class ObjectCacheTest {
         // Given: a cache whose entries live 10 seconds on a ticker the test controls
         RecordingObserver observer = new RecordingObserver();
         long[] nanos = {0};
-        ObjectCache<String, Plan> cache = ObjectCaches.create(
-                "plans", 10, Duration.ofSeconds(10), error -> false, Set.of(observer), () -> nanos[0]);
+        ObjectCache<String, Plan> cache =
+                new CaffeineObjectCache<>("plans", config(10, 10), error -> false, Set.of(observer), () -> nanos[0]);
         CountingLoader loader = countingLoader();
 
         // When: a key is loaded, read within its lifetime, and read again after it
@@ -205,7 +208,7 @@ class ObjectCacheTest {
         // Given: a cache without time expiration, on a ticker far in the future
         long[] nanos = {0};
         ObjectCache<String, Plan> cache =
-                ObjectCaches.create("plans", 10, Duration.ZERO, error -> false, Set.of(), () -> nanos[0]);
+                new CaffeineObjectCache<>("plans", config(10, 0), error -> false, Set.of(), () -> nanos[0]);
         CountingLoader loader = countingLoader();
 
         // When: a key is loaded and read a century later
@@ -219,12 +222,18 @@ class ObjectCacheTest {
     }
 
     @Test
-    void refusesInvalidSettingsAtCreation() {
+    void refusesInvalidSettings() {
+        assertThrows(IllegalArgumentException.class, () -> new ObjectCacheConfig(0, 0));
+        assertThrows(IllegalArgumentException.class, () -> new ObjectCacheConfig(1, -1));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> ObjectCaches.create("plans", 10, Duration.ofSeconds(-1), error -> false, Set.of()));
+                () -> new CaffeineObjectCache<>(" ", config(10, 0), error -> false, Set.of()));
         assertThrows(
-                NullPointerException.class, () -> ObjectCaches.create("plans", 10, null, error -> false, Set.of()));
+                NullPointerException.class, () -> new CaffeineObjectCache<>("plans", null, error -> false, Set.of()));
+    }
+
+    private static ObjectCacheConfig config(int maximumEntries, long ttlSeconds) {
+        return new ObjectCacheConfig(maximumEntries, ttlSeconds);
     }
 
     @Test
@@ -237,7 +246,8 @@ class ObjectCacheTest {
             Context contextA = vertx.getOrCreateContext();
             Context contextB = vertx.getOrCreateContext();
             assertNotSame(contextA, contextB);
-            ObjectCache<String, Plan> cache = ObjectCaches.create("plans", 10, error -> false, Set.of());
+            ObjectCache<String, Plan> cache =
+                    new CaffeineObjectCache<>("plans", config(10, 0), error -> false, Set.of());
             Promise<Plan> inFlight = Promise.promise();
             AtomicInteger loads = new AtomicInteger();
             Supplier<Future<Plan>> loader = () -> {

@@ -7,6 +7,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.RemovalCause;
 import com.github.benmanes.caffeine.cache.Ticker;
+import dev.vertique.cache.config.ObjectCacheConfig;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.cache.spi.event.CacheOperation;
 import dev.vertique.cache.spi.event.CacheOperationCompleted;
@@ -15,6 +16,7 @@ import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -24,10 +26,18 @@ import java.util.function.Supplier;
 /**
  * Caffeine-backed {@link ObjectCache}. Entries are shared in-flight futures; the first caller for a missing
  * key runs the loader outside the map's atomic section and every caller receives its own bridged future.
- * An optional expiry removes an entry a fixed time after it was created, the meaning {@code ttlSeconds} has for
- * the {@code CacheStore} providers; only a size removal is reported as an eviction.
+ * The cache is bounded by {@link ObjectCacheConfig#maximumEntries()} and, when {@link ObjectCacheConfig#ttlSeconds()}
+ * is positive, removes an entry that long after it was created, the meaning {@code ttlSeconds} has for the
+ * {@code CacheStore} providers; only a size removal is reported as an eviction. It is independent of
+ * {@code cache.enabled} and reads no {@code CacheConfig}. Misses, loads and size evictions are reported to the
+ * observers as cache operation events under provider id {@code caffeine-object}; a time expiry, a hit and an
+ * {@code invalidate} emit nothing. An entry expires from its creation, so a load that outlasts the expiry leaves no
+ * entry for later callers to share.
+ *
+ * @param <K> the key type
+ * @param <V> the value type
  */
-final class CaffeineObjectCache<K, V> implements ObjectCache<K, V> {
+public final class CaffeineObjectCache<K, V> implements ObjectCache<K, V> {
     static final String PROVIDER = "caffeine-object";
 
     private final String name;
@@ -35,28 +45,38 @@ final class CaffeineObjectCache<K, V> implements ObjectCache<K, V> {
     private final Set<CacheObserver> observers;
     private final Cache<K, CompletableFuture<V>> entries;
 
-    CaffeineObjectCache(
-            String name,
-            long maxEntries,
-            Duration expireAfterWrite,
-            Predicate<Throwable> cacheFailure,
-            Set<CacheObserver> observers) {
-        this(name, maxEntries, expireAfterWrite, cacheFailure, observers, Ticker.systemTicker());
+    /**
+     * Creates a by-reference object cache.
+     *
+     * @param name the cache name its events carry; not blank
+     * @param config the entry bound and expiry
+     * @param cacheFailure whether a failed load with the given error is cached as a failed future
+     * @param observers the observers that receive cache events
+     * @throws IllegalArgumentException if the name is blank
+     * @throws NullPointerException if an argument is null
+     */
+    public CaffeineObjectCache(
+            String name, ObjectCacheConfig config, Predicate<Throwable> cacheFailure, Set<CacheObserver> observers) {
+        this(name, config, cacheFailure, observers, Ticker.systemTicker());
     }
 
     CaffeineObjectCache(
             String name,
-            long maxEntries,
-            Duration expireAfterWrite,
+            ObjectCacheConfig config,
             Predicate<Throwable> cacheFailure,
             Set<CacheObserver> observers,
             Ticker ticker) {
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(config, "config");
+        this.cacheFailure = Objects.requireNonNull(cacheFailure, "cacheFailure");
+        this.observers = Set.copyOf(Objects.requireNonNull(observers, "observers"));
+        if (name.isBlank()) {
+            throw new IllegalArgumentException("name must not be blank");
+        }
         this.name = name;
-        this.cacheFailure = cacheFailure;
-        this.observers = observers;
-        Caffeine<Object, Object> builder = Caffeine.newBuilder().maximumSize(maxEntries);
-        if (!expireAfterWrite.isZero()) {
-            builder.expireAfterWrite(expireAfterWrite);
+        Caffeine<Object, Object> builder = Caffeine.newBuilder().maximumSize(config.maximumEntries());
+        if (config.ttlSeconds() > 0) {
+            builder.expireAfterWrite(Duration.ofSeconds(config.ttlSeconds()));
         }
         this.entries = builder.ticker(ticker)
                 .<K, CompletableFuture<V>>removalListener((key, value, cause) -> {

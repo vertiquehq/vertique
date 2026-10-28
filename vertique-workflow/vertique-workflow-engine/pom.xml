@@ -186,5 +186,11 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-correlation</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test-scope only: the plan cache settings test binds through the real typed configuration binding. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-config-core</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

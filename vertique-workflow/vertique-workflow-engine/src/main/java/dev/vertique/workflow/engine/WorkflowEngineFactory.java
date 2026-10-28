@@ -166,8 +166,7 @@ public final class WorkflowEngineFactory {
                 registry,
                 parts.vertx(),
                 parts.schemaProducer(),
-                PlanCache.DEFAULT_MAX_ENTRIES,
-                java.time.Duration.ZERO,
+                PlanCache.DEFAULT_CONFIG,
                 Set.of());
         WorkflowEngine engine = new WorkflowEngine(
                 txRunner,

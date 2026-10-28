@@ -12,13 +12,13 @@ import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
-import dev.vertique.cache.config.CacheConfig;
-import dev.vertique.cache.config.CacheEntryConfig;
+import dev.vertique.cache.config.ObjectCacheConfig;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
@@ -52,9 +52,9 @@ import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
-import java.time.Duration;
 import java.util.Optional;
 import java.util.Set;
 
@@ -134,19 +134,17 @@ public abstract class WorkflowEngineModule {
 
     /**
      * Provides the plan cache: document plans this node does not hold are read from their rows and built into it on
-     * demand, and the registry answers document keys through it. The cache is sized and expired by the cache entry
-     * {@code cache.caches.workflow-plans} when the application binds the cache configuration: {@code maximumEntries}
-     * (default 500) bounds it and a positive {@code ttlSeconds} expires a plan that long after it was built (default
-     * and {@code -1} or {@code 0}: no expiry). The global {@code cache.maximumEntries} and {@code cache.defaultTtlSeconds}
-     * do not apply to it. The cache is bound as the registry's document plan source when it is built, so every graph
-     * that builds the segments seam, and so every executor, has it bound.
+     * demand, and the registry answers document keys through it. The cache is sized and expired by
+     * {@code workflow.definitions.cache}, see {@link #planCacheConfig}. The cache is bound as the registry's document
+     * plan source when it is built, so every graph that builds the segments seam, and so every executor, has it bound.
      *
      * @param store          the durable definition rows
      * @param loaders        the document loaders
      * @param registry       the registry whose type names and validators the build uses and which the cache serves
      * @param vertx          the optional Vert.x instance whose worker threads run the builds
      * @param schemaProducer the optional producer of the schemas that fill a legacy row
-     * @param cacheConfig    the optional cache configuration, or empty for the defaults
+     * @param config         the optional application configuration, or empty for the defaults
+     * @param parser         the optional typed configuration binding
      * @param observers      the observers of the cache's events; empty unless the application contributes some
      * @return the plan cache
      */
@@ -158,42 +156,45 @@ public abstract class WorkflowEngineModule {
             WorkflowRegistry registry,
             Optional<Vertx> vertx,
             Optional<WorkflowPlanSchemaProducer> schemaProducer,
-            Optional<CacheConfig> cacheConfig,
+            @VertxConfig Optional<JsonObject> config,
+            Optional<ConfigParser> parser,
             Set<CacheObserver> observers) {
-        Optional<CacheEntryConfig> entry =
-                cacheConfig.map(config -> config.caches().get(PlanCache.NAME));
-        return PlanCache.bound(
-                store,
-                loaders,
-                registry,
-                vertx.orElse(null),
-                schemaProducer,
-                planCacheMaxEntries(entry),
-                planCacheExpiry(entry),
-                observers);
+        ObjectCacheConfig cacheConfig = config.isPresent() && parser.isPresent()
+                ? planCacheConfig(config.get(), parser.get())
+                : PlanCache.DEFAULT_CONFIG;
+        return PlanCache.bound(store, loaders, registry, vertx.orElse(null), schemaProducer, cacheConfig, observers);
     }
 
-    /** The entry bound of the plan cache: the entry's {@code maximumEntries}, else the default. */
-    static long planCacheMaxEntries(Optional<CacheEntryConfig> entry) {
-        return entry.map(CacheEntryConfig::maximumEntries)
-                .map(Integer::longValue)
-                .orElse(PlanCache.DEFAULT_MAX_ENTRIES);
-    }
-
-    /** The expiry of the plan cache: the entry's positive {@code ttlSeconds}, else none. */
-    static Duration planCacheExpiry(Optional<CacheEntryConfig> entry) {
-        return entry.map(CacheEntryConfig::ttlSeconds)
-                .filter(seconds -> seconds > 0)
-                .map(Duration::ofSeconds)
-                .orElse(Duration.ZERO);
-    }
+    /** The members of {@code workflow.definitions.cache} as the application wrote them; an unset member is null. */
+    private record PlanCacheSettings(
+            @Nullable Integer maximumEntries, @Nullable Long ttlSeconds) {}
 
     /**
-     * Declares the optional cache configuration; the cache core module binds it. Without it the plan cache has its
-     * default size and no expiry, and an application that does not use the cache module need not install it.
+     * Binds {@code workflow.definitions.cache} as the plan cache's settings. Members the application leaves unset
+     * take the plan cache's defaults ({@code maximumEntries} 500, {@code ttlSeconds} 0, no expiry), whether the
+     * block is absent or only partly set.
+     *
+     * @param config the application configuration
+     * @param parser the typed configuration binding
+     * @return the settings of the plan cache
+     * @throws ConfigurationException if a member is out of range
      */
-    @BindsOptionalOf
-    abstract CacheConfig cacheConfig();
+    public static ObjectCacheConfig planCacheConfig(JsonObject config, ConfigParser parser) {
+        JsonObject block = JsonConfigPaths.navigateObject(config, "workflow", "definitions", "cache");
+        if (block.isEmpty()) {
+            return PlanCache.DEFAULT_CONFIG;
+        }
+        PlanCacheSettings settings = parser.parse(block, PlanCacheSettings.class);
+        try {
+            return new ObjectCacheConfig(
+                    settings.maximumEntries() == null
+                            ? PlanCache.DEFAULT_CONFIG.maximumEntries()
+                            : settings.maximumEntries(),
+                    settings.ttlSeconds() == null ? PlanCache.DEFAULT_CONFIG.ttlSeconds() : settings.ttlSeconds());
+        } catch (IllegalArgumentException invalid) {
+            throw new ConfigurationException("workflow.definitions.cache is invalid: " + invalid.getMessage());
+        }
+    }
 
     /**
      * Provides the failing marks of the plan cache, which a migration reads when it runs.

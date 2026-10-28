@@ -9,7 +9,7 @@ import java.util.function.Supplier;
 
 /**
  * By-reference, size-bounded, single-flight cache of runtime objects. Values are never serialized, entries
- * have no time to live, and the cache is independent of {@code cache.enabled}.
+ * live until evicted or, when configured, a fixed time after creation, and the cache is independent of {@code cache.enabled}.
  *
  * @param <K> the key type
  * @param <V> the value type

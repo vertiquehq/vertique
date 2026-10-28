@@ -584,7 +584,7 @@ with a different index a decision payload name resolves as a binary class name o
 payload constraints off, an empty `stateCompatibility` makes the engine refuse a migration between differing state
 classes, and an empty `migrationRegistry` makes `migrate` fail with `UnsupportedOperationException`.
 
-A factory-built engine builds its plan cache (see Plan Cache) with the default size, 500 plans, and an empty observer set,
+A factory-built engine builds its plan cache (see Plan Cache) with the default size, 500 plans, no expiry and an empty observer set,
 so it emits no cache events; `WorkflowEngineParts` has no part for it. The cache of a factory-built engine reads rows
 through the `definitionStore` part but has no document loaders, so a document the registry does not hold fails to load
 as not runnable there; an application that needs on-demand documents composes the engine with `WorkflowEngineModule`.
@@ -632,9 +632,10 @@ Dagger module owning the engine-internal bindings:
 - Provides the `PlanCache` (see Plan Cache) and binds it as the `DocumentPlanSource` of the framework registry when it is built
   (a `BOOTSTRAP` startup step builds it right after the registry is restored, and the executor builds it on its first warm-up
   otherwise, so a graph that never starts or runs an executor does not build the registry for it); it takes its
-  size and expiry from the cache entry `cache.caches.workflow-plans` of the optional `CacheConfig` (`maximumEntries`, default 500;
-  a positive `ttlSeconds` expires a plan that long after it was built, default and `-1` or `0`: no expiry; the global cache keys
-  do not apply and `cache.enabled` does not disable it) and reports
+  size and expiry from `workflow.definitions.cache` (`maximumEntries`, default 500; a positive `ttlSeconds` expires a plan
+  that long after it was built, default `0`: no expiry; a key left out keeps its default, and the cache module's keys do not apply, nor does
+  `cache.enabled` disable it), read from the optional `@VertxConfig` configuration through the optional `ConfigParser`
+  (without them the defaults apply) and reports
   its events to the `Set<CacheObserver>` multibinding. The module declares that multibinding itself with `@Multibinds`, so an
   application without a cache provider still builds its graph; it does not include `CacheCoreModule`, and a graph that does
   install it (any application with a cache provider) declares the same multibinding, which Dagger merges. An application
@@ -1046,7 +1047,7 @@ command it peeks on a live instance through `load`, so a node runs a document ve
 - **Failing flag.** An entry of a scope other than the default one carries the evaluation of its plan (see Failing scope
   rows): the flag, the default scope's state type name it was evaluated against and the mark the row stored when the plan was
   built. A name binding that no class resolves is remembered as a failure like any other that does not build.
-- **Size and expiry.** At most `cache.caches.workflow-plans.maximumEntries` plans (default 500) stay resident, and with a positive `cache.caches.workflow-plans.ttlSeconds` a plan is dropped that long after it was built (default: never); remembered failures count as entries. The entry is read from the optional `CacheConfig` (bound by `CacheCoreModule`; without it the defaults apply). The cache reports each miss, each successful and each failed
+- **Size and expiry.** At most `workflow.definitions.cache.maximumEntries` plans (default 500) stay resident, and with a positive `workflow.definitions.cache.ttlSeconds` a plan is dropped that long after it was built (default `0`: never); remembered failures count as entries. A key left out keeps its default. The block is read from the optional application configuration and `ConfigParser` (without them the defaults apply); the cache is a `CaffeineObjectCache` built from it directly. The cache reports each miss, each successful and each failed
   load and each size eviction to the `Set<CacheObserver>` under the name `workflow-plans`, and nothing for a hit.
 - **Startup builds nothing into it by default.** Startup builds the code definitions, which the registry holds, and checks the packaged documents, but it keeps
   no plan of a document, whatever its scope. With
