@@ -464,9 +464,16 @@ public class DefinitionOwnershipIT {
                 listedByService.put(filter, await(node.service().list(filter)));
             }
             int queriesBeforeEnd = node.observer().queries().size();
-            List<String> listStatements = node.observer()
-                    .statements()
-                    .subList(statementsBefore, node.observer().statements().size());
+            List<String> listStatements =
+                    node
+                            .observer()
+                            .statements()
+                            .subList(
+                                    statementsBefore,
+                                    node.observer().statements().size())
+                            .stream()
+                            .filter(sql -> sql.contains("workflow_definitions"))
+                            .toList();
 
             // Then each result is exactly the expected scope and status selection, with keys and statuses intact
             for (Map.Entry<DefinitionFilter, Set<DefinitionKey>> expectation : expectations.entrySet()) {
