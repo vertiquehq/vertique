@@ -624,15 +624,17 @@ describe('PublicCiContractTest', () => {
     }
     assert.match(yaml, /^permissions:\s*$/m, 'ci.yml must declare a top-level permissions block');
 
-    // No secret may be referenced at all: nothing in required CI needs one.
-    const secretRefs = [...yaml.matchAll(/\$\{\{\s*secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]);
-    assert.deepEqual(secretRefs, [], `required CI must reference no secrets, found ${secretRefs}`);
+    // The analysis token is available only on main pushes, never on pull requests.
+    const secretRefs = [...yaml.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]);
+    assert.deepEqual(secretRefs, ['SONAR_TOKEN']);
+    assert.match(yaml, /SONAR_TOKEN: \$\{\{ github\.event_name == 'push' && secrets\.SONAR_TOKEN \|\| '' \}\}/);
+    assert.match(yaml, /EVENT_NAME: \$\{\{ github\.event_name \}\}\n        run: bash scripts\/ci-build\.sh/);
 
     // It must run on both PR and main push, and must actually verify.
     assert.match(yaml, /pull_request:/, 'ci.yml must run on pull_request');
     assert.match(yaml, /push:/, 'ci.yml must run on push');
     const bodies = runStepBodies(yaml).join('\n');
-    assert.match(bodies, /mvnw[^\n]*\bverify\b/, 'ci.yml must run a clean Maven verification');
+    assert.match(bodies, /bash scripts\/ci-build\.sh/, 'ci.yml must run the Maven verification entry point');
     assert.match(bodies, /spotless:check/, 'ci.yml must run the formatting check');
     // A glob, never an enumeration: a hand-maintained list silently drops
     // every release-contract test nobody remembers to add.
