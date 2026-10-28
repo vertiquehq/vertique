@@ -7,10 +7,12 @@ import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
 import dev.vertique.db.postgresql.PgTableNames;
+import dev.vertique.workflow.engine.spi.DecisionEntry;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import io.vertx.core.Future;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
@@ -45,6 +47,7 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
     // configured placement rather than being a compile-time constant.
 
     private final String sqlAppend;
+    private final String sqlAppendDecision;
     private final String sqlNextSequence;
     private final String sqlListByInstance;
     private final String sqlListRecentByInstance;
@@ -82,6 +85,23 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
         this.sqlAppend = "INSERT INTO " + history + " (workflow_id, sequence, entry_type, payload_json, recorded_at)"
                 + " VALUES ($1, $2, $3, $4, $5)";
 
+        // A decision-log entry takes its sequence in the statement, under the execution lock the segment holds. Its
+        // executor is the one that claimed the command it belongs to or, for an entry about a command that is not
+        // claimed (a parked signal applied by another command's segment), the one that claimed the instance's running
+        // command. Its actor columns stay null: the segment attributes every entry it wrote when it ends.
+        String commands = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_commands");
+        this.sqlAppendDecision = "INSERT INTO " + history + " (workflow_id, sequence, entry_type, payload_json,"
+                + " recorded_at, executor_id, command_id, step_id, outcome, definition_scope_key, definition_id,"
+                + " definition_version, plan_hash, state_version_before, state_version_after, patch_json, entry_version)"
+                + " SELECT $1::uuid, COALESCE(MAX(sequence), 0) + 1, $2::varchar, $3::jsonb,"
+                + " $4::timestamptz, COALESCE($5::varchar, (SELECT c.claimed_by FROM " + commands
+                + " c WHERE c.id = $6::bigint),"
+                + " (SELECT c.claimed_by FROM " + commands
+                + " c WHERE c.workflow_id = $1::uuid AND c.state = 'CLAIMED' LIMIT 1)),"
+                + " $6::bigint, $7::varchar, $8::varchar, $9::varchar, $10::varchar, $11::bigint, $12::varchar,"
+                + " $13::bigint, $14::bigint, $15::jsonb, 2"
+                + " FROM " + history + " WHERE workflow_id = $1::uuid";
+
         this.sqlNextSequence =
                 "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_seq FROM " + history + " WHERE workflow_id = $1";
 
@@ -117,6 +137,42 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
                 .execute(params)
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history append")));
+    }
+
+    /**
+     * Appends an entry of the decision log: its patch or full state, the command, step, outcome, definition, plan hash
+     * and state versions it carries, and {@code entry_version = 2}. The sequence is assigned in the statement.
+     *
+     * @param entry the entry
+     * @param tx    the active transaction to use for the insert
+     * @return a {@link Future} that completes when the row is inserted
+     */
+    @Override
+    public Future<Void> appendDecision(DecisionEntry entry, SqlClient tx) {
+        JsonObject payload = new JsonObject();
+        if (entry.stateJson() != null) {
+            payload.put("state", new JsonObject(entry.stateJson()));
+        }
+        Tuple params = Tuple.tuple()
+                .addValue(entry.instanceId().value())
+                .addValue(entry.entryType().name())
+                .addValue(payload)
+                .addValue(entry.recordedAt().atOffset(ZoneOffset.UTC))
+                .addValue(entry.executorId())
+                .addValue(entry.commandId())
+                .addValue(entry.stepId())
+                .addValue(entry.outcome())
+                .addValue(entry.scopeKey())
+                .addValue(entry.definitionId())
+                .addValue(entry.definitionVersion())
+                .addValue(entry.planHash())
+                .addValue(entry.stateVersionBefore())
+                .addValue(entry.stateVersionAfter())
+                .addValue(entry.patchJson() == null ? null : new JsonArray(entry.patchJson()));
+        return tx.preparedQuery(sqlAppendDecision)
+                .execute(params)
+                .<Void>mapEmpty()
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history appendDecision")));
     }
 
     // --- Sequence operations ---

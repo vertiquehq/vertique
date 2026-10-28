@@ -181,6 +181,7 @@ class WorkflowLiveSignalContextTest {
 
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
 
         WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
                 .txRunner(txRunner)

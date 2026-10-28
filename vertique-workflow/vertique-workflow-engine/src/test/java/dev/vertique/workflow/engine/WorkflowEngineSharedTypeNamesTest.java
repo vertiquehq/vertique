@@ -222,6 +222,7 @@ class WorkflowEngineSharedTypeNamesTest {
         TaskRecord reserved = RecordedCompletionSegments.reserved(task);
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
         when(taskStore.findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(reserved)));
         when(instances.findById(instance.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(instance)));
         when(timerStore.findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));

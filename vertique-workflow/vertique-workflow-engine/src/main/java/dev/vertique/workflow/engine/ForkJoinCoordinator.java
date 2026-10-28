@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
@@ -96,6 +97,7 @@ final class ForkJoinCoordinator {
     private final dev.vertique.context.DurableContextPropagator propagator;
 
     private final Clock clock;
+    private final DecisionLog decisions;
 
     /**
      * Constructs a new fork/join coordinator.
@@ -116,6 +118,7 @@ final class ForkJoinCoordinator {
      * @param propagator the durable context propagator used to capture branch metadata; may be
      *     {@code null} for legacy test constructors
      * @param clock the clock used to timestamp entries and state updates
+     * @param decisions the decision log that records the dispatch and the decision of a join
      */
     @Inject
     ForkJoinCoordinator(
@@ -129,7 +132,9 @@ final class ForkJoinCoordinator {
             BranchTransitionEngine branchEngine,
             @Nullable BranchCompensationOrchestrator branchCompensation,
             @Nullable dev.vertique.context.DurableContextPropagator propagator,
-            Clock clock) {
+            Clock clock,
+            DecisionLog decisions) {
+        this.decisions = decisions;
         this.driverPvd = driverPvd;
         this.enginePvd = enginePvd;
         this.registry = registry;
@@ -353,7 +358,7 @@ final class ForkJoinCoordinator {
                                     new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                             + inst.id().value() + "' at fork '" + fork.stepId() + "'"));
                         }
-                        return Future.<Void>succeededFuture();
+                        return decisions.record(inst, parked, fork.stepId(), "fork-dispatched", tx);
                     });
                 })
                 .compose(v -> driveAllBranchesAndEvaluate(inst, fork, joinNode, tokens, rw, tx));
@@ -906,7 +911,7 @@ final class ForkJoinCoordinator {
                                 "Optimistic concurrency conflict failing instance after join '" + joinNode.stepId()
                                         + "'"));
                     }
-                    return Future.<Void>succeededFuture();
+                    return decisions.record(current, failed, joinNode.stepId(), "join-failed", tx);
                 });
             }
             WorkflowInstance advanced = current.withVersion(prevVersion + 1)
@@ -928,7 +933,9 @@ final class ForkJoinCoordinator {
                             "Optimistic concurrency conflict advancing instance after join '" + joinNode.stepId()
                                     + "'"));
                 }
-                return driverPvd.get().driveTransitionsStep(advanced, advancedPlan, tx);
+                return decisions
+                        .record(current, advanced, joinNode.stepId(), "joined", tx)
+                        .compose(logged -> driverPvd.get().driveTransitionsStep(advanced, advancedPlan, tx));
             });
         });
     }

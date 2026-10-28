@@ -223,6 +223,7 @@ class WorkflowEngineBinderWiringTest {
         // defaults once here (instead of per-test) avoids repeating them across ~20 test methods.
         org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         org.mockito.Mockito.lenient().when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
 
         WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
                 .txRunner(txRunner)
@@ -285,6 +286,7 @@ class WorkflowEngineBinderWiringTest {
 
         org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         org.mockito.Mockito.lenient().when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
 
         WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
                 .txRunner(txRunner)
@@ -587,6 +589,7 @@ class WorkflowEngineBinderWiringTest {
 
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
         when(history.listRecentByInstance(any(), anyInt(), any())).thenReturn(Future.succeededFuture(List.of()));
 
         RuntimeWorkflow sourceRw = buildRuntimeWorkflow(stubCallbacks());
@@ -1436,6 +1439,7 @@ class WorkflowEngineBinderWiringTest {
         // history write is reached.
         org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         org.mockito.Mockito.lenient().when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
 
         dev.vertique.workflow.migration.WorkflowMigrationRegistry migrationRegistry = mock();
 

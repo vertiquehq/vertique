@@ -8,6 +8,8 @@ import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
 import dev.vertique.workflow.engine.executor.HoldingSegments;
 import dev.vertique.workflow.engine.executor.WorkflowExecutor;
+import dev.vertique.workflow.engine.history.DecisionLog;
+import dev.vertique.workflow.engine.history.JsonPatchDiff;
 import dev.vertique.workflow.engine.registry.PlanCache;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -109,10 +111,12 @@ public final class WorkflowEngineFactory {
         RecorderRouter recorderRouter = new RecorderRouter(parts.recorders(), parts.optionalIntentKinds());
         FingerprintCanonicalizer fingerprintCanonicalizer = new FingerprintCanonicalizer();
         WorkflowEventEmitter eventEmitter = new WorkflowEventEmitter(recorderRouter, clock);
-        WorkflowHistoryRecorder historyRecorder = new WorkflowHistoryRecorder(history, eventEmitter, clock);
+        DecisionLog decisionLog = new DecisionLog(new JsonPatchDiff(), history, parts.historyRedactor(), clock);
+        WorkflowHistoryRecorder historyRecorder =
+                new WorkflowHistoryRecorder(history, eventEmitter, clock, decisionLog);
         ReminderScheduler reminderScheduler = new ReminderScheduler(history, parts.commands(), timerStore, clock);
         CompensationService compensationService =
-                new CompensationService(instances, history, recorderRouter, eventEmitter, clock);
+                new CompensationService(instances, history, recorderRouter, eventEmitter, clock, decisionLog);
         // Build the substrate lifecycle helper ONCE from the (possibly-null) propagator and the
         // supplied initializer set, and thread the same instance into BranchTransitionEngine so
         // binder-row drives (WorkflowContextBinder, wired inside the WorkflowEngine constructor

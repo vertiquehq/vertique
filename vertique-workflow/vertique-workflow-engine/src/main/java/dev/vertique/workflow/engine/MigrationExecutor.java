@@ -7,6 +7,7 @@ import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.Savepoints;
+import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.registry.FailingMarks;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandHead;
@@ -120,6 +121,9 @@ final class MigrationExecutor {
     /** Takes the actor a recorded migration is logged with from the identity of the caller. */
     private final CommandActors actors;
 
+    /** Logs the migration: its own patch and the full state after it. */
+    private final DecisionLog decisions;
+
     /**
      * Constructs a new migration executor.
      *
@@ -148,6 +152,7 @@ final class MigrationExecutor {
      * @param definitionReads the reads of definition rows on the migration's transaction, by which a deprecated target
      *     is refused; may be {@code null}
      * @param actors takes the actor a recorded migration is logged with from the caller's identity
+     * @param decisions the decision log that records the migration's patch and baseline
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -162,7 +167,9 @@ final class MigrationExecutor {
             Function<DefinitionKey, Optional<DefinitionFailure>> failing,
             WorkflowCommandRepository<SqlClient> commands,
             @jakarta.annotation.Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
-            CommandActors actors) {
+            CommandActors actors,
+            DecisionLog decisions) {
+        this.decisions = decisions;
         this.actors = actors;
         // migrationRegistryOpt is null only from test-only constructors that delegate with null;
         // Dagger always provides a non-null Optional via @BindsOptionalOf.
@@ -196,6 +203,7 @@ final class MigrationExecutor {
      * @param commands the command repository whose execution lock a migration takes
      * @param definitionReads the reads of definition rows on a transaction, when the store offers them
      * @param actors takes the actor a recorded migration is logged with from the caller's identity
+     * @param decisions the decision log that records the migration's patch and baseline
      */
     @Inject
     MigrationExecutor(
@@ -211,7 +219,8 @@ final class MigrationExecutor {
             Provider<FailingMarks> marks,
             WorkflowCommandRepository<SqlClient> commands,
             Optional<TransactionalDefinitionReads<SqlClient>> definitionReads,
-            CommandActors actors) {
+            CommandActors actors,
+            DecisionLog decisions) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -225,7 +234,8 @@ final class MigrationExecutor {
                 key -> marks.get().find(key),
                 commands,
                 definitionReads.orElse(null),
-                actors);
+                actors,
+                decisions);
     }
 
     /**
@@ -241,6 +251,7 @@ final class MigrationExecutor {
      * @param contextBinder the binder-row seam
      * @param stateCompatibility the state comparison; empty refuses a migration between differing state classes
      * @param commands the command repository whose execution lock a migration takes
+     * @param decisions the decision log that records the migration's patch and baseline
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -252,7 +263,8 @@ final class MigrationExecutor {
             Clock clock,
             WorkflowContextBinder contextBinder,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
-            WorkflowCommandRepository<SqlClient> commands) {
+            WorkflowCommandRepository<SqlClient> commands,
+            DecisionLog decisions) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -266,7 +278,8 @@ final class MigrationExecutor {
                 key -> Optional.empty(),
                 commands,
                 null,
-                CommandActors.ambient());
+                CommandActors.ambient(),
+                decisions);
     }
 
     /**
@@ -282,6 +295,7 @@ final class MigrationExecutor {
      * @param clock the clock
      * @param contextBinder the binder-row seam
      * @param commands the command repository whose execution lock a migration takes
+     * @param decisions the decision log that records the migration's patch and baseline
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -292,7 +306,8 @@ final class MigrationExecutor {
             WorkflowTransitionDriver driver,
             Clock clock,
             WorkflowContextBinder contextBinder,
-            WorkflowCommandRepository<SqlClient> commands) {
+            WorkflowCommandRepository<SqlClient> commands,
+            DecisionLog decisions) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -303,7 +318,8 @@ final class MigrationExecutor {
                 clock,
                 contextBinder,
                 Optional.empty(),
-                commands);
+                commands,
+                decisions);
     }
 
     // --- Recording ---
@@ -801,6 +817,8 @@ final class MigrationExecutor {
                     .migratePinAndState(migrated, prevVersion, tx)
                     .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                             rowCount, "instance '" + id.value() + "' during migrate"))
+                    // --- Log the migration: its patch under both versions' redaction, then the full state ---
+                    .compose(v -> logMigration(inst, migrated, sourceStepId, tx))
                     // --- Append WORKFLOW_MIGRATED history ---
                     .compose(v -> history.nextSequence(id, tx))
                     .compose(seq -> history.append(
@@ -814,6 +832,35 @@ final class MigrationExecutor {
                     // --- Drive transitions in the target plan ---
                     .compose(v -> driver.driveTransitions(migrated, targetRw, tx));
         });
+    }
+
+    /** Logs a migration to the decision log: the patch of its state change, then the full state after it. */
+    private Future<Void> logMigration(
+            WorkflowInstance source,
+            WorkflowInstance migrated,
+            @jakarta.annotation.Nullable String stepId,
+            SqlClient tx) {
+        DefinitionKey sourceKey =
+                new DefinitionKey(source.definitionScopeKey(), source.definitionId(), source.definitionVersion());
+        DefinitionKey targetKey =
+                new DefinitionKey(migrated.definitionScopeKey(), migrated.definitionId(), migrated.definitionVersion());
+        SegmentCommand command = decisions.commandOf(tx);
+        DecisionLog.Decision decision = new DecisionLog.Decision(
+                migrated.id(),
+                command == null ? null : command.commandId(),
+                stepId == null ? "start" : stepId,
+                "migrated",
+                targetKey,
+                migrated.planHash(),
+                source.version(),
+                migrated.version(),
+                null);
+        return decisions.logMigration(
+                decision,
+                sourceKey,
+                new io.vertx.core.json.JsonObject(source.stateJson()),
+                new io.vertx.core.json.JsonObject(migrated.stateJson()),
+                tx);
     }
 
     // --- Internal helpers ---

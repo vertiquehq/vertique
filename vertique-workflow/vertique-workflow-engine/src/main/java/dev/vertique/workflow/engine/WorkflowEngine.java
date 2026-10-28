@@ -18,6 +18,7 @@ import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.StartPayloadValidation;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
+import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandActor;
@@ -158,6 +159,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private final WorkflowEventEmitter eventEmitter;
     /** Leaf collaborator for appending generic workflow lifecycle history entries. */
     private final WorkflowHistoryRecorder historyRecorder;
+    /** The decision log whose first-claim baseline, start baseline and segment scope the engine writes. */
+    private final DecisionLog decisions;
     /** Leaf collaborator for scheduling and cancelling {@link dev.vertique.workflow.timer.TimerPurpose#TASK_REMINDER} timers. */
     private final ReminderScheduler reminderScheduler;
     /**
@@ -324,6 +327,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.branchEngine = branchEngine;
         this.eventEmitter = eventEmitter;
         this.historyRecorder = historyRecorder;
+        this.decisions = historyRecorder.decisions();
         this.reminderScheduler = reminderScheduler;
         this.forkJoin = forkJoin;
         this.driver = driver;
@@ -512,6 +516,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.branchEngine = branchEngine;
         this.eventEmitter = eventEmitter;
         this.historyRecorder = historyRecorder;
+        this.decisions = historyRecorder.decisions();
         this.reminderScheduler = reminderScheduler;
         this.propagator = propagator;
         // Hand-build the binder from the (possibly-null) propagator. WorkflowContextBinder requires
@@ -547,7 +552,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 branchEngine,
                 branchCompensation,
                 propagator,
-                clock);
+                clock,
+                decisions);
         this.driver = new WorkflowTransitionDriver(
                 instances,
                 history,
@@ -559,6 +565,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 compensationService,
                 this.forkJoin,
                 clock,
+                decisions,
                 () -> timerLifecycleHolder[0],
                 () -> taskLifecycleHolder[0]);
         driverHolder[0] = this.driver;
@@ -638,7 +645,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 failingMarks,
                 commands,
                 definitionReads,
-                actors);
+                actors,
+                decisions);
     }
 
     // --- WorkflowEngineHandle ---
@@ -1235,15 +1243,45 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         // Every history entry the segment writes is logged with the actor that recorded the command it is about, and
         // with the actor of the executed command when it names none. The executor never reads the ambient identity.
         CommandActor recorded = command.actor() == null ? CommandActor.none() : command.actor();
-        return recorderRouter.executing(command, tx, () -> history.nextSequence(command.workflowId(), tx)
-                .compose(from -> runCommand(head, claim, command, tx, maxSteps)
-                        .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
-                                // A command the segment applied may have ended the instance: its dead-lettered
-                                // commands are settled
-                                ? commands.settleEnded(command.workflowId(), tx).map(settled -> outcome)
-                                : Future.succeededFuture(outcome))
-                        .compose(outcome -> commands.attributeSegmentHistory(command.workflowId(), from, recorded, tx)
-                                .map(attributed -> outcome))));
+        DefinitionKey pinned =
+                new DefinitionKey(head.definitionScopeKey(), head.definitionId(), head.definitionVersion());
+        return decisions.segment(
+                tx,
+                command,
+                pinned,
+                () -> recorderRouter.executing(command, tx, () -> history.nextSequence(command.workflowId(), tx)
+                        .compose(from -> legacyBaseline(command, tx)
+                                .compose(logged -> runCommand(head, claim, command, tx, maxSteps))
+                                .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
+                                        // A command the segment applied may have ended the instance: its dead-lettered
+                                        // commands are settled
+                                        ? commands.settleEnded(command.workflowId(), tx)
+                                                .map(settled -> outcome)
+                                        : Future.succeededFuture(outcome))
+                                .compose(outcome -> commands.attributeSegmentHistory(
+                                                command.workflowId(), from, recorded, tx)
+                                        .map(attributed -> outcome)))));
+    }
+
+    /**
+     * Logs the full state of an instance that existed before the decision log when its first segment claims it: the
+     * mark is consumed in the segment's transaction, so the baseline is written once, before the segment's decisions.
+     */
+    private Future<Void> legacyBaseline(SegmentCommand command, SqlClient tx) {
+        if ("START".equals(command.kind())) {
+            // an instance that has not started has no state to log: its first segment writes the baseline itself
+            return Future.succeededFuture();
+        }
+        return commands.consumeLegacyBaseline(command.workflowId(), tx).compose(owed -> {
+            if (!owed) {
+                return Future.<Void>succeededFuture();
+            }
+            return instances
+                    .findById(command.workflowId(), tx)
+                    .compose(found -> found.isPresent() && found.get().stateJson() != null
+                            ? decisions.baseline(found.get(), tx)
+                            : Future.<Void>succeededFuture());
+        });
     }
 
     private Future<WorkflowSegments.Outcome> runCommand(
@@ -1408,14 +1446,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 inst.scopeKey(),
                 inst.definitionScopeKey());
 
-        Future<Void> received = ownCommand
-                ? historyRecorder.appendCommandHistory(
-                        inst.id(), WorkflowEntryType.COMMAND_RECEIVED, claim.commandId(), command.kind(), tx)
-                : Future.succeededFuture();
+        Future<Void> received =
+                ownCommand ? historyRecorder.appendCommandReceived(inst, command, tx) : Future.succeededFuture();
         return received.compose(v -> instances.updateOptimistic(running, inst.version(), tx))
                 .compose(rows ->
                         requireRowUpdated(rows, "workflow instance " + inst.id().value() + " start"))
                 .compose(v -> historyRecorder.appendStartHistory(running, command.dedupKey(), tx))
+                .compose(v -> decisions.baseline(running, tx))
                 .compose(v -> driver.driveTransitions(running, rw, tx))
                 .compose(v -> ownCommand
                         ? historyRecorder.appendCommandHistory(
@@ -1600,6 +1637,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 .updateOptimistic(reopened, failed.version(), tx)
                 .compose(rowCount ->
                         requireRowUpdated(rowCount, "instance '" + failed.id().value() + "' during retry"))
+                .compose(v -> decisions.record(
+                        failed,
+                        reopened,
+                        failed.currentStepId() == null ? "start" : failed.currentStepId(),
+                        "retried",
+                        tx))
                 .compose(v -> history.nextSequence(failed.id(), tx))
                 .compose(seq -> {
                     String histPayload =
@@ -1639,8 +1682,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
             }
             return historyRecorder
-                    .appendCommandHistory(
-                            inst.id(), WorkflowEntryType.COMMAND_RECEIVED, command.commandId(), command.kind(), tx)
+                    .appendCommandReceived(inst, command, tx)
                     .compose(v -> migrationExecutor.execute(prepared.get(), tx))
                     .compose(result -> switch (result) {
                         case MigrationExecutor.Result.Applied applied ->
@@ -2335,8 +2377,17 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     .compose(rowCount -> requireRowUpdated(rowCount, "instance '" + id.value() + "' during cancel"))
                     .compose(v2 -> history.nextSequence(id, tx))
                     .compose(seq -> {
-                        String histPayload = Json.encode(
-                                new CancelledHistoryPayload(reason, WorkflowPayloads.commandCorrelationId()));
+                        String histPayload = Json.encode(new CancelledHistoryPayload(
+                                decisions.redactReason(
+                                        new DefinitionKey(
+                                                inst.definitionScopeKey(),
+                                                inst.definitionId(),
+                                                inst.definitionVersion()),
+                                        reason,
+                                        null,
+                                        inst.stateJson(),
+                                        tx),
+                                WorkflowPayloads.commandCorrelationId()));
                         return history.append(
                                         new WorkflowHistoryEntry(
                                                 id, seq, WorkflowEntryType.CANCELLED, histPayload, clock.instant()),

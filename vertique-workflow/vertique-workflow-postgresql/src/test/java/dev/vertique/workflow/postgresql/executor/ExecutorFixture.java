@@ -46,6 +46,7 @@ import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.events.WorkflowEventIntent;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.history.WorkflowHistoryRedactor;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -362,6 +363,7 @@ final class ExecutorFixture implements AutoCloseable {
         private WorkflowDefinitionRegistryStore definitionStore;
         private WorkflowPlanSchemaProducer schemaProducer;
         private WorkflowMigrationRegistry migrations;
+        private WorkflowHistoryRedactor historyRedactor;
         private Set<WorkflowSideEffectRecorder<SqlClient>> additionalRecorders = Set.of();
         private final SegmentControl segmentControl = new SegmentControl();
         private boolean listening;
@@ -540,6 +542,12 @@ final class ExecutorFixture implements AutoCloseable {
             return this;
         }
 
+        /** Binds the history redactor of the application; none by default, so nothing is redacted. */
+        NodeSpec historyRedactor(WorkflowHistoryRedactor historyRedactor) {
+            this.historyRedactor = historyRedactor;
+            return this;
+        }
+
         /** Adds recorders of kinds the ordinary fixture does not own. */
         NodeSpec recorders(WorkflowSideEffectRecorder<SqlClient>... recorders) {
             this.additionalRecorders = Set.of(recorders);
@@ -589,6 +597,9 @@ final class ExecutorFixture implements AutoCloseable {
             }
             if (migrations != null) {
                 engine.migrationRegistry(migrations);
+            }
+            if (historyRedactor != null) {
+                engine.historyRedactor(historyRedactor);
             }
             CommandNotificationListener listener = null;
             if (listening) {

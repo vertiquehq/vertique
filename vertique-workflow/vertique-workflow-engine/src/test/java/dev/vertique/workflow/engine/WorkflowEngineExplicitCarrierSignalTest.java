@@ -298,6 +298,7 @@ class WorkflowEngineExplicitCarrierSignalTest {
         // reaching doApplySignal — proof that the dedup claim runs before the bind (FR-WF-CTX-042).
         org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         org.mockito.Mockito.lenient().when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
 
         WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
                 .txRunner(txRunner)

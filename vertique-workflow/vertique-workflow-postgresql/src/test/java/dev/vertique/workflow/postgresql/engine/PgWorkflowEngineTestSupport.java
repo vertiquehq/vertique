@@ -23,6 +23,7 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.history.WorkflowHistoryRedactor;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
@@ -609,6 +610,7 @@ public final class PgWorkflowEngineTestSupport {
         private WorkflowDefinitionRegistryStore definitionStore;
         private WorkflowPlanSchemaProducer schemaProducer;
         private WorkflowMigrationRegistry migrationRegistry;
+        private WorkflowHistoryRedactor historyRedactor;
         private DurableContextPropagator propagator;
         private Set<InboundContextInitializer> inboundContextInitializers = Set.of();
         private Set<WorkflowExecutorObserver> executorObservers = Set.of();
@@ -649,6 +651,12 @@ public final class PgWorkflowEngineTestSupport {
         /** The migration handlers the engine runs; none by default. */
         public ExecutorEngine migrationRegistry(WorkflowMigrationRegistry migrationRegistry) {
             this.migrationRegistry = migrationRegistry;
+            return this;
+        }
+
+        /** The history redactor the application binds; none by default, so nothing is redacted. */
+        public ExecutorEngine historyRedactor(WorkflowHistoryRedactor historyRedactor) {
+            this.historyRedactor = historyRedactor;
             return this;
         }
 
@@ -737,6 +745,9 @@ public final class PgWorkflowEngineTestSupport {
             }
             if (migrationRegistry != null) {
                 parts.migrationRegistry(Optional.of(migrationRegistry));
+            }
+            if (historyRedactor != null) {
+                parts.historyRedactor(Optional.of(historyRedactor));
             }
             return WorkflowEngineFactory.create(parts.build());
         }

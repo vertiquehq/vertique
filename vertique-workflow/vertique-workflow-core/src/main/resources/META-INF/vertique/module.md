@@ -384,6 +384,7 @@ Add the type catalog module that `vertique-codegen-workflow` generates (`Generat
 | `TimerStore<TX>` | Timer persistence; the timer row links to the command that fires it |
 | `WorkflowMigrationHandler` | Move an in-flight instance to a newer definition version, or to the same version in another scope |
 | `WorkflowStateCompatibility` | Decide whether one state class extends another; bound by `vertique-workflow-schema` |
+| `WorkflowHistoryRedactor` | Name the state and payload values that an instance's history must never hold |
 
 Application code should normally depend on the high-level services first and implement these SPIs only when replacing a storage or delivery backend.
 
@@ -445,6 +446,38 @@ WorkflowActorMapper customActorMapper() {
     };
 }
 ```
+
+### WorkflowHistoryRedactor
+
+SPI (`dev.vertique.workflow.history`) that names the values the instance history must never hold. The engine logs every command's
+payload, a patch of every state change and the full state of an instance at a few points (see the engine module); a bound redactor
+replaces the values it names with the string `"[redacted]"` in all of those forms before they are written.
+
+```java
+@FunctionalInterface
+public interface WorkflowHistoryRedactor {
+    Set<String> redactedPointers(DefinitionKey key);
+}
+```
+
+- **Binding.** Provide it with a Dagger binding (`@Provides WorkflowHistoryRedactor`; the engine module declares the binding optional), or pass it to
+  `WorkflowEngineParts.Builder.historyRedactor(Optional.of(redactor))` for a factory-built engine. Without one nothing is redacted.
+- **Pointers.** Each pointer is an RFC 6901 JSON Pointer such as `/card/number`; a key that holds `/` or `~` is escaped `~1` or `~0`.
+  A pointer resolves into an array by index (`/cards/1/number`). The root pointer and a string that does not start with `/` are invalid.
+- **One set per definition version.** The redactor returns one set for the definition version (scope, id, version) the instance is
+  pinned to. The same set is applied to the instance state and to every logged command payload. A pointer that does not resolve in a
+  document, or resolves to a JSON `null`, is ignored for that document; a pointer that names a subtree redacts the subtree.
+- **Where it applies.** The logged copy of a command's payload (the `payload` of its `COMMAND_RECEIVED` and `SIGNAL_RECEIVED` entries),
+  the patch of each decision, every full-state entry and the reasons written to history. The instance's own state, the command rows and the
+  events keep their values, because the engine needs them to run; `workflow_commands.payload_json` is not redacted.
+- **Across a migration.** The pointers of the source version cover the migration command and every entry before it; the pointers of the
+  target version cover the migrated full state and every later entry; both cover the migration's own patch.
+- **Failure.** The engine asks at most once per definition version in a segment. A redactor that throws, or a pointer that is invalid,
+  fails the segment as a transient failure: nothing is logged unredacted, the command is retried with backoff, and the instance shows as
+  stuck until the redactor is fixed.
+- **Not recoverable.** A redacted value cannot be recovered from the log. Replaying an instance's patches from its latest full-state
+  entry reproduces its stored state except at the redacted pointers.
+- **Threading.** The method runs on an event loop; it must not block.
 
 ---
 

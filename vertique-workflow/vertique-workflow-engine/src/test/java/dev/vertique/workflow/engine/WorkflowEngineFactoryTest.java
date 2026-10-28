@@ -130,6 +130,7 @@ class WorkflowEngineFactoryTest {
         when(instances.updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
         return new Fixture(registry, instances, history, dedup);
     }
 

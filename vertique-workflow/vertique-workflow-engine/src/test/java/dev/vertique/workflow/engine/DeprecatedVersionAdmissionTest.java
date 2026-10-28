@@ -247,6 +247,7 @@ class DeprecatedVersionAdmissionTest {
         when(instances.migratePinAndState(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
         when(history.listRecentByInstance(any(), anyInt(), any())).thenReturn(Future.succeededFuture(List.of()));
         when(branchTokens.findActiveByWorkflow(any(), any())).thenReturn(Future.succeededFuture(List.of()));
 

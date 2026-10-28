@@ -48,6 +48,8 @@ finer-grained attribution is required.
 | `com.github.victools:jsonschema-generator` (+ `-module-jackson`, `-module-jakarta-validation`, `-module-swagger-2`) | 4.38.0 | Apache-2.0 | |
 | `com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer` | 20260313.1 | Apache-2.0 | Date-stamped version scheme |
 | `dev.cel:cel` | 0.14.0 | Apache-2.0 | Isolated to `vertique-workflow-definition` |
+| `io.github.vishwakarma:zjsonpatch` | 0.6.4 | Apache-2.0 | RFC 6902 JSON Patch diff, isolated to `vertique-workflow-engine` |
+| `org.apache.commons:commons-collections4` | 4.4 | Apache-2.0 | Compile dependency of zjsonpatch; attribution in `NOTICE` |
 | `io.github.jopenlibs:vault-java-driver` | 6.2.3 | MIT | Isolated to `vertique-config-vault` |
 | `software.amazon.awssdk:bom` | 2.55.11 | Apache-2.0 | Isolated to `vertique-config-aws-*` |
 | `com.azure:azure-security-keyvault-secrets` | 4.11.2 | MIT | Isolated to `vertique-config-azure-keyvault` |

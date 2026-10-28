@@ -22,6 +22,7 @@ import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.history.WorkflowHistoryRedactor;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
@@ -80,6 +81,7 @@ public final class WorkflowEngineParts {
     private final @Nullable Vertx vertx;
     private final ContextHolder contextHolder;
     private final WorkflowActorMapper actorMapper;
+    private final Optional<WorkflowHistoryRedactor> historyRedactor;
 
     private WorkflowEngineParts(Builder b) {
         this.txRunner = Objects.requireNonNull(b.txRunner, "txRunner");
@@ -111,6 +113,7 @@ public final class WorkflowEngineParts {
         this.vertx = b.vertx;
         this.contextHolder = Objects.requireNonNull(b.contextHolder, "contextHolder");
         this.actorMapper = Objects.requireNonNull(b.actorMapper, "actorMapper");
+        this.historyRedactor = Objects.requireNonNull(b.historyRedactor, "historyRedactor");
     }
 
     /**
@@ -276,6 +279,14 @@ public final class WorkflowEngineParts {
     }
 
     /**
+     * The redactor that names the values of an instance's state and command payloads that its history never holds;
+     * empty by default, in which case nothing is redacted.
+     */
+    public Optional<WorkflowHistoryRedactor> historyRedactor() {
+        return historyRedactor;
+    }
+
+    /**
      * The producer of the payload schemas a new task's decision snapshot stores; empty by default, in which case the
      * tasks it creates carry no schemas and the executor alone validates their completions.
      */
@@ -322,6 +333,7 @@ public final class WorkflowEngineParts {
         private @Nullable Vertx vertx;
         private ContextHolder contextHolder = new DefaultContextHolder();
         private WorkflowActorMapper actorMapper = new DefaultWorkflowActorMapper();
+        private Optional<WorkflowHistoryRedactor> historyRedactor = Optional.empty();
 
         private Builder() {}
 
@@ -491,6 +503,12 @@ public final class WorkflowEngineParts {
         /** Sets the mapper from the current security identity to the actor a recorded command is logged with. */
         public Builder actorMapper(WorkflowActorMapper actorMapper) {
             this.actorMapper = Objects.requireNonNull(actorMapper, "actorMapper");
+            return this;
+        }
+
+        /** Sets the redactor of the values the instance history must not hold; empty for none. */
+        public Builder historyRedactor(Optional<WorkflowHistoryRedactor> historyRedactor) {
+            this.historyRedactor = Objects.requireNonNull(historyRedactor, "historyRedactor");
             return this;
         }
 

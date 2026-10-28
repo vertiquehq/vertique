@@ -159,6 +159,8 @@ SPDX-License-Identifier: EUPL-1.2
         <expressly.version>6.0.0</expressly.version>
         <owasp-html-sanitizer.version>20260313.1</owasp-html-sanitizer.version>
         <cel.version>0.14.0</cel.version>
+        <zjsonpatch.version>0.6.4</zjsonpatch.version>
+        <commons-collections4.version>4.4</commons-collections4.version>
         <vault-java-driver.version>6.2.3</vault-java-driver.version>
         <aws.sdk.version>2.55.11</aws.sdk.version>
         <azure-keyvault-secrets.version>4.11.2</azure-keyvault-secrets.version>
@@ -946,6 +948,18 @@ SPDX-License-Identifier: EUPL-1.2
                 <groupId>dev.cel</groupId>
                 <artifactId>cel</artifactId>
                 <version>${cel.version}</version>
+            </dependency>
+
+            <!-- RFC 6902 JSON Patch diff (workflow-engine decision log) and its compile dependency -->
+            <dependency>
+                <groupId>io.github.vishwakarma</groupId>
+                <artifactId>zjsonpatch</artifactId>
+                <version>${zjsonpatch.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-collections4</artifactId>
+                <version>${commons-collections4.version}</version>
             </dependency>
 
             <!-- Dagger -->

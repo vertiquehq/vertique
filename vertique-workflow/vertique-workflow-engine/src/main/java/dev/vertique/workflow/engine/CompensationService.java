@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.events.WorkflowEventType;
@@ -70,6 +71,7 @@ final class CompensationService {
     private final RecorderRouter recorders;
     private final WorkflowEventEmitter eventEmitter;
     private final Clock clock;
+    private final DecisionLog decisions;
 
     /**
      * Constructs a new compensation service.
@@ -79,6 +81,7 @@ final class CompensationService {
      * @param recorders the recorder router used to route compensating side-effect intents
      * @param eventEmitter the event emitter used to emit lifecycle events on state transitions
      * @param clock the clock used to timestamp entries and state updates
+     * @param decisions the decision log that records each compensation transition
      */
     @Inject
     CompensationService(
@@ -86,7 +89,9 @@ final class CompensationService {
             WorkflowHistoryRepository<SqlClient> history,
             RecorderRouter recorders,
             WorkflowEventEmitter eventEmitter,
-            Clock clock) {
+            Clock clock,
+            DecisionLog decisions) {
+        this.decisions = decisions;
         this.instances = instances;
         this.history = history;
         this.recorders = recorders;
@@ -129,6 +134,7 @@ final class CompensationService {
                     .updateOptimistic(compensating, prevVersion, tx)
                     .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                             rowCount, "instance '" + failedInst.id().value() + "' transitioning to COMPENSATING"))
+                    .compose(v -> decisions.record(failedInst, compensating, stepOf(failedInst), "compensating", tx))
                     .compose(v -> history.nextSequence(failedInst.id(), tx))
                     .compose(seq -> {
                         String histPayload =
@@ -185,6 +191,7 @@ final class CompensationService {
                     .updateOptimistic(compensated, prevVersion, tx)
                     .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                             rowCount, "instance '" + currentInst.id().value() + "' transitioning to COMPENSATED"))
+                    .compose(v -> decisions.record(currentInst, compensated, stepOf(currentInst), "compensated", tx))
                     .compose(v -> history.nextSequence(currentInst.id(), tx))
                     .compose(seq -> {
                         String histPayload = Json.encode(new CompensatedHistoryPayload(lifoStepIds.size()));
@@ -280,9 +287,17 @@ final class CompensationService {
                                                         + forwardStepId + "'");
                                     }
                                     return updated;
-                                });
+                                })
+                                .compose(logged -> decisions
+                                        .record(inst, logged, compNode.stepId(), "compensation-step", tx)
+                                        .map(done -> logged));
                     });
         });
+    }
+
+    /** The step an instance is at, or the start when it has none. */
+    private static String stepOf(WorkflowInstance inst) {
+        return inst.currentStepId() == null ? "start" : inst.currentStepId();
     }
 
     // --- Compensation matching ---

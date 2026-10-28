@@ -14,6 +14,7 @@ import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.Savepoints;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
+import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandActor;
@@ -194,6 +195,8 @@ final class TaskLifecycleService {
     /** Writes the history of what became of a recorded completion. */
     private final WorkflowHistoryRecorder historyRecorder;
 
+    private final DecisionLog decisions;
+
     /** Takes the actor of a recorded completion and of a reassignment from the identity of the caller. */
     private final CommandActors actors;
 
@@ -269,6 +272,7 @@ final class TaskLifecycleService {
         this.commands = commands;
         this.reservations = reservations;
         this.historyRecorder = historyRecorder;
+        this.decisions = historyRecorder == null ? null : historyRecorder.decisions();
         this.recordValidator = new RecordTimePayloadValidator(recording.orElseGet(WorkflowRecordingConfig::defaults));
         this.schemaProducer = schemaProducer;
         this.registry = registry;
@@ -1126,8 +1130,10 @@ final class TaskLifecycleService {
                                                         "Optimistic concurrency conflict completing task '"
                                                                 + cmd.taskId() + "'"));
                                             }
-                                            // Append TASK_COMPLETED history + emit event.
-                                            return history.nextSequence(inst.id(), tx)
+                                            // Log the decision, then append TASK_COMPLETED history + emit event.
+                                            return decisions
+                                                    .record(inst, advanced, htn.stepId(), "task-decided", tx)
+                                                    .compose(logged -> history.nextSequence(inst.id(), tx))
                                                     .compose(seq -> {
                                                         String hp = Json.encode(new TaskCompletedHistoryPayload(
                                                                 htn.stepId(),
@@ -1353,28 +1359,49 @@ final class TaskLifecycleService {
                                                                                             + " branch task completion for task '"
                                                                                             + taskId + "'"));
                                                                 }
-
-                                                                // Step 14: Append BRANCH_TASK_COMPLETED history.
-                                                                return appendBranchTaskCompletedHistory(
-                                                                                workflowId,
-                                                                                task.stepId(),
-                                                                                taskId,
-                                                                                cmd,
-                                                                                now,
+                                                                return decisions
+                                                                        .record(
                                                                                 inst,
-                                                                                tx)
-                                                                        // Step 15-16: Drive transitions from the
-                                                                        // cleared token (already RUNNING) and, if it
-                                                                        // reaches a terminal status, evaluate the
-                                                                        // owning join. updatedInst carries newStateJson
-                                                                        // and the post-applicator subject ref.
-                                                                        .compose(v2 -> forkJoin.driveAndMaybeJoin(
                                                                                 updatedInst,
-                                                                                cleared,
-                                                                                rw,
-                                                                                commandId,
-                                                                                tx))
-                                                                        .map(v2 -> TaskMutationResult.APPLIED);
+                                                                                task.stepId(),
+                                                                                "task-decided",
+                                                                                tx)
+                                                                        .compose(logged -> {
+
+                                                                            // Step 14: Append BRANCH_TASK_COMPLETED
+                                                                            // history.
+                                                                            return appendBranchTaskCompletedHistory(
+                                                                                            workflowId,
+                                                                                            task.stepId(),
+                                                                                            taskId,
+                                                                                            cmd,
+                                                                                            now,
+                                                                                            inst,
+                                                                                            tx)
+                                                                                    // Step 15-16: Drive transitions
+                                                                                    // from the
+                                                                                    // cleared token (already RUNNING)
+                                                                                    // and, if it
+                                                                                    // reaches a terminal status,
+                                                                                    // evaluate the
+                                                                                    // owning join. updatedInst carries
+                                                                                    // newStateJson
+                                                                                    // and the post-applicator subject
+                                                                                    // ref.
+                                                                                    .compose(
+                                                                                            v2 ->
+                                                                                                    forkJoin
+                                                                                                            .driveAndMaybeJoin(
+                                                                                                                    updatedInst,
+                                                                                                                    cleared,
+                                                                                                                    rw,
+                                                                                                                    commandId,
+                                                                                                                    tx))
+                                                                                    .map(
+                                                                                            v2 ->
+                                                                                                    TaskMutationResult
+                                                                                                            .APPLIED);
+                                                                        });
                                                             });
                                                 });
                                     });
@@ -1585,12 +1612,21 @@ final class TaskLifecycleService {
                                                                     // updatedInstForDue carries the
                                                                     // post-onDueMutator
                                                                     // state and the current subject ref.
-                                                                    return forkJoin.driveAndMaybeJoin(
-                                                                            updatedInstForDue,
-                                                                            cleared,
-                                                                            rw,
-                                                                            commandId,
-                                                                            tx);
+                                                                    return decisions
+                                                                            .record(
+                                                                                    inst,
+                                                                                    updatedInstForDue,
+                                                                                    task.stepId(),
+                                                                                    "task-expired",
+                                                                                    tx)
+                                                                            .compose(
+                                                                                    logged ->
+                                                                                            forkJoin.driveAndMaybeJoin(
+                                                                                                    updatedInstForDue,
+                                                                                                    cleared,
+                                                                                                    rw,
+                                                                                                    commandId,
+                                                                                                    tx));
                                                                 });
                                                     });
                                         })
@@ -1935,21 +1971,25 @@ final class TaskLifecycleService {
                                 "Optimistic concurrency conflict during dueFired for task '" + taskId + "'"));
                     }
                     WorkflowActor expiredBy = new WorkflowActor.System("due-date-expired");
-                    return history.nextSequence(inst.id(), tx).compose(seq -> {
-                        String hp = Json.encode(new TaskExpiredHistoryPayload(htn.stepId(), taskId, now, expiredBy));
-                        return history.append(
-                                        new WorkflowHistoryEntry(
-                                                inst.id(), seq, WorkflowEntryType.TASK_EXPIRED, hp, now),
-                                        tx)
-                                .compose(v2 -> eventEmitter.emitEvent(
-                                        inst,
-                                        WorkflowEventType.TASK_EXPIRED,
-                                        seq,
-                                        taskId,
-                                        htn.stepId(),
-                                        Map.of("expiredBy", WorkflowActorMaps.toMap(expiredBy)),
-                                        tx));
-                    });
+                    return decisions
+                            .record(inst, advanced, htn.stepId(), "task-expired", tx)
+                            .compose(logged -> history.nextSequence(inst.id(), tx))
+                            .compose(seq -> {
+                                String hp = Json.encode(
+                                        new TaskExpiredHistoryPayload(htn.stepId(), taskId, now, expiredBy));
+                                return history.append(
+                                                new WorkflowHistoryEntry(
+                                                        inst.id(), seq, WorkflowEntryType.TASK_EXPIRED, hp, now),
+                                                tx)
+                                        .compose(v2 -> eventEmitter.emitEvent(
+                                                inst,
+                                                WorkflowEventType.TASK_EXPIRED,
+                                                seq,
+                                                taskId,
+                                                htn.stepId(),
+                                                Map.of("expiredBy", WorkflowActorMaps.toMap(expiredBy)),
+                                                tx));
+                            });
                 })
                 .compose(v -> driver.driveTransitions(advanced, rw, tx))
                 .map(v -> TaskMutationResult.APPLIED);

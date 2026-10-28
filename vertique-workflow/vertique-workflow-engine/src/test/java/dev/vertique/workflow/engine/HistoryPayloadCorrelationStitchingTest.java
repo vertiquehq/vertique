@@ -269,6 +269,7 @@ class HistoryPayloadCorrelationStitchingTest {
     private static AtomicReference<String> captureAppendedPayload(WorkflowHistoryRepository<SqlClient> history) {
         AtomicReference<String> captured = new AtomicReference<>();
         org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
         doAnswer(inv -> {
                     WorkflowHistoryEntry entry = inv.getArgument(0);
                     captured.compareAndSet(null, entry.payloadJson());
@@ -287,6 +288,7 @@ class HistoryPayloadCorrelationStitchingTest {
             WorkflowHistoryRepository<SqlClient> history, WorkflowEntryType type) {
         AtomicReference<String> captured = new AtomicReference<>();
         org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
         doAnswer(inv -> {
                     WorkflowHistoryEntry entry = inv.getArgument(0);
                     if (entry.entryType() == type) {
@@ -306,6 +308,7 @@ class HistoryPayloadCorrelationStitchingTest {
     private static AtomicReference<String> captureCompletedPayload(WorkflowHistoryRepository<SqlClient> history) {
         AtomicReference<String> captured = new AtomicReference<>();
         org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
         doAnswer(inv -> {
                     WorkflowHistoryEntry entry = inv.getArgument(0);
                     if (entry.entryType() == WorkflowEntryType.TASK_COMPLETED

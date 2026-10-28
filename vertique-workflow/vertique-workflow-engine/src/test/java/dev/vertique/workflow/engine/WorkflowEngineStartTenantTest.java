@@ -16,6 +16,8 @@ import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.context.InboundDispatchScope;
 import dev.vertique.context.InboundExecutionContextScope;
+import dev.vertique.workflow.engine.history.DecisionLog;
+import dev.vertique.workflow.engine.history.JsonPatchDiff;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
@@ -130,16 +132,19 @@ class WorkflowEngineStartTenantTest {
         when(instances.updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
 
         Set<WorkflowSideEffectRecorder<SqlClient>> recorders = Set.of();
         RecorderRouter recorderRouter =
                 new RecorderRouter(recorders, WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS);
         WorkflowEventEmitter eventEmitter = new WorkflowEventEmitter(recorderRouter, FIXED_CLOCK);
-        WorkflowHistoryRecorder historyRecorder = new WorkflowHistoryRecorder(history, eventEmitter, FIXED_CLOCK);
+        DecisionLog decisionLog = new DecisionLog(new JsonPatchDiff(), history, Optional.empty(), FIXED_CLOCK);
+        WorkflowHistoryRecorder historyRecorder =
+                new WorkflowHistoryRecorder(history, eventEmitter, FIXED_CLOCK, decisionLog);
         EmptyCommandRepository commands = new EmptyCommandRepository();
         ReminderScheduler reminderScheduler = new ReminderScheduler(history, commands, timerStore, FIXED_CLOCK);
         CompensationService compensationService =
-                new CompensationService(instances, history, recorderRouter, eventEmitter, FIXED_CLOCK);
+                new CompensationService(instances, history, recorderRouter, eventEmitter, FIXED_CLOCK, decisionLog);
         InboundExecutionContextScope inboundExecScope = propagator == null
                 ? null
                 : new InboundExecutionContextScope(new InboundDispatchScope(), propagator, Set.of());

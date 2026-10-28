@@ -869,4 +869,17 @@ public interface WorkflowCommandRepository<TX> {
             WorkflowInstanceId instance, long fromSequence, CommandActor fallback, TX tx) {
         return Future.succeededFuture();
     }
+
+    /**
+     * Consumes the mark of an instance that existed before the decision log and has not logged its full state: answers
+     * whether the instance still owed its baseline and clears the mark, so that a later call answers {@code false}. The
+     * caller logs the baseline in the same transaction. A repository that keeps no mark inherits {@code false}.
+     *
+     * @param instance the instance, whose execution lock the transaction holds
+     * @param tx       the segment's transaction handle
+     * @return a {@link Future} of whether the instance owed its baseline
+     */
+    default Future<Boolean> consumeLegacyBaseline(WorkflowInstanceId instance, TX tx) {
+        return Future.succeededFuture(false);
+    }
 }

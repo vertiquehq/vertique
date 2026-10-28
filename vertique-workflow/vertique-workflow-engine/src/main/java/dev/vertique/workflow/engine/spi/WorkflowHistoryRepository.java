@@ -33,6 +33,33 @@ public interface WorkflowHistoryRepository<TX> {
      */
     Future<Void> append(WorkflowHistoryEntry e, TX tx);
 
+    /**
+     * Appends an entry of the decision log within the given transaction, assigning it the next sequence of its
+     * instance. The entry's decision columns are stored with it and its {@code entry_version} is {@code 2}.
+     *
+     * <p>The default stores the entry through {@link #append} with its patch or state as the payload only, for a
+     * repository that keeps no decision columns.
+     *
+     * @param entry the decision-log entry to append
+     * @param tx    the active transaction to use for the insert
+     * @return a {@link Future} that completes when the row is inserted
+     */
+    default Future<Void> appendDecision(DecisionEntry entry, TX tx) {
+        return nextSequence(entry.instanceId(), tx).compose(seq -> {
+            io.vertx.core.json.JsonObject payload = new io.vertx.core.json.JsonObject();
+            if (entry.stateJson() != null) {
+                payload.put("state", new io.vertx.core.json.JsonObject(entry.stateJson()));
+            }
+            if (entry.patchJson() != null) {
+                payload.put("patch", new io.vertx.core.json.JsonArray(entry.patchJson()));
+            }
+            return append(
+                    new WorkflowHistoryEntry(
+                            entry.instanceId(), seq, entry.entryType(), payload.encode(), entry.recordedAt()),
+                    tx);
+        });
+    }
+
     // --- Sequence operations ---
 
     /**

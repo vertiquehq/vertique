@@ -11,6 +11,7 @@ import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.ParkedSignals;
 import dev.vertique.workflow.engine.executor.Savepoints;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
+import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
@@ -31,6 +32,7 @@ import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -111,6 +113,7 @@ final class SignalHandler {
     private final WorkflowHistoryRecorder historyRecorder;
     private final DeadlineGuard deadlineGuard;
     private final ParkedSignals parkedSignals;
+    private final DecisionLog decisions;
 
     /**
      * Constructs a new signal handler.
@@ -161,6 +164,7 @@ final class SignalHandler {
         this.commands = commands;
         this.contextBinder = contextBinder;
         this.historyRecorder = historyRecorder;
+        this.decisions = historyRecorder == null ? null : historyRecorder.decisions();
         this.deadlineGuard = new DeadlineGuard(commands);
         this.parkedSignals = new ParkedSignals(commands, deadlineGuard, new ParkedHost());
         if (driver != null) {
@@ -288,39 +292,47 @@ final class SignalHandler {
                                 String parentSubjectVersionForBranch = updatedInst.subjectRef() == null
                                         ? null
                                         : updatedInst.subjectRef().version();
-                                return branchEngine
-                                        .driveExecutorBranchTransitions(
-                                                cleared,
-                                                updatedInst.stateJson(),
-                                                parentSubjectVersionForBranch,
-                                                rw,
-                                                BranchTransitionEngine.InstanceScope.of(updatedInst),
-                                                tx,
-                                                effectiveBaseOverride,
-                                                commandId)
-                                        .compose(advanced -> {
-                                            if (ForkJoinCoordinator.isBranchTerminal(advanced.status())) {
-                                                WorkflowNode forkPlanNode =
-                                                        rw.nodeById().get(advanced.forkStepId());
-                                                if (!(forkPlanNode
-                                                        instanceof dev.vertique.workflow.plan.ForkNode fork)) {
-                                                    return Future.<Void>failedFuture(new WorkflowDefinitionException(
-                                                            "Branch references fork '" + advanced.forkStepId()
-                                                                    + "' which is not a ForkNode"));
-                                                }
-                                                WorkflowNode joinPlanNode =
-                                                        rw.nodeById().get(fork.joinStepId());
-                                                if (!(joinPlanNode
-                                                        instanceof dev.vertique.workflow.plan.JoinNode joinNode)) {
-                                                    return Future.<Void>failedFuture(new WorkflowDefinitionException(
-                                                            "ForkNode '" + fork.stepId() + "' references joinStepId '"
-                                                                    + fork.joinStepId() + "' which is not a JoinNode"));
-                                                }
-                                                return forkJoin.evaluateJoin(
-                                                        updatedInst, fork, joinNode, advanced, rw, tx);
-                                            }
-                                            return Future.<Void>succeededFuture();
-                                        });
+                                return decisions
+                                        .record(inst, updatedInst, waiting.currentStepId(), "signal-applied", tx)
+                                        .compose(logged -> branchEngine
+                                                .driveExecutorBranchTransitions(
+                                                        cleared,
+                                                        updatedInst.stateJson(),
+                                                        parentSubjectVersionForBranch,
+                                                        rw,
+                                                        BranchTransitionEngine.InstanceScope.of(updatedInst),
+                                                        tx,
+                                                        effectiveBaseOverride,
+                                                        commandId)
+                                                .compose(advanced -> {
+                                                    if (ForkJoinCoordinator.isBranchTerminal(advanced.status())) {
+                                                        WorkflowNode forkPlanNode =
+                                                                rw.nodeById().get(advanced.forkStepId());
+                                                        if (!(forkPlanNode
+                                                                instanceof dev.vertique.workflow.plan.ForkNode fork)) {
+                                                            return Future.<Void>failedFuture(
+                                                                    new WorkflowDefinitionException(
+                                                                            "Branch references fork '"
+                                                                                    + advanced.forkStepId()
+                                                                                    + "' which is not a ForkNode"));
+                                                        }
+                                                        WorkflowNode joinPlanNode =
+                                                                rw.nodeById().get(fork.joinStepId());
+                                                        if (!(joinPlanNode
+                                                                instanceof
+                                                                dev.vertique.workflow.plan.JoinNode joinNode)) {
+                                                            return Future.<Void>failedFuture(
+                                                                    new WorkflowDefinitionException(
+                                                                            "ForkNode '" + fork.stepId()
+                                                                                    + "' references joinStepId '"
+                                                                                    + fork.joinStepId()
+                                                                                    + "' which is not a JoinNode"));
+                                                        }
+                                                        return forkJoin.evaluateJoin(
+                                                                updatedInst, fork, joinNode, advanced, rw, tx);
+                                                    }
+                                                    return Future.<Void>succeededFuture();
+                                                }));
                             });
                 });
     }
@@ -441,12 +453,17 @@ final class SignalHandler {
                     }
                     // Dedup row was already inserted by claimOrResolveSignal at the top of signal();
                     // no follow-up insertSignal call needed.
-                    return Future.<Void>succeededFuture();
+                    return decisions.record(inst, updated, inst.currentStepId(), "signal-applied", tx);
                 })
                 .compose(v -> history.nextSequence(inst.id(), tx))
                 .compose(seq -> {
+                    DefinitionKey definition =
+                            new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion());
                     String histPayload = Json.encode(new SignalReceivedHistoryPayload(
-                            ctx.signalName(), ctx.dedupKey(), coercedPayload, ctx.commandId()));
+                            ctx.signalName(),
+                            ctx.dedupKey(),
+                            decisions.redactedCopy(definition, coercedPayload, tx),
+                            ctx.commandId()));
                     return history.append(
                             new WorkflowHistoryEntry(
                                     inst.id(), seq, WorkflowEntryType.SIGNAL_RECEIVED, histPayload, clock.instant()),
@@ -609,8 +626,7 @@ final class SignalHandler {
             RuntimeWorkflow rw,
             SqlClient tx) {
         return commands.wasParked(inst.id(), command.commandId(), tx).compose(parkedBefore -> historyRecorder
-                .appendCommandHistory(
-                        inst.id(), WorkflowEntryType.COMMAND_RECEIVED, command.commandId(), command.kind(), tx)
+                .appendCommandReceived(inst, command, tx)
                 .compose(
                         received -> Savepoints.attempt(tx, () -> applyRecorded(inst, waiting, command, signal, rw, tx)))
                 .compose(attempt -> switch (attempt) {
@@ -849,32 +865,35 @@ final class SignalHandler {
         @Override
         public Future<Void> apply(SegmentCommand command, SqlClient tx) {
             SignalTarget signal = SignalTarget.of(command);
-            return instances.findById(command.workflowId(), tx).compose(found -> {
-                if (found.isEmpty()) {
-                    return Future.failedFuture(new WorkflowInstanceNotFoundException(command.workflowId()));
-                }
-                WorkflowInstance inst = found.get();
-                RuntimeWorkflow rw;
-                try {
-                    rw = PinnedPlans.resolve(registry, inst);
-                    WorkflowPayloads.requirePlanHashMatches(inst, rw);
-                } catch (Exception e) {
-                    // This node cannot run the pinned plan: the whole segment fails rather than rejecting a signal.
-                    return Future.failedFuture(e);
-                }
-                if (!signal.branchAddressed()) {
-                    return applyRecorded(inst, null, command, signal, rw, tx);
-                }
-                return branchTokens
-                        .findByWaitForBranch(
-                                inst.id(),
-                                signal.forkStepId(),
-                                signal.branchId(),
-                                WaitType.SIGNAL.name(),
-                                signal.name(),
-                                tx)
-                        .compose(waiting -> applyRecorded(inst, waiting.orElse(null), command, signal, rw, tx));
-            });
+            return decisions.forCommand(tx, command, () -> instances
+                    .findById(command.workflowId(), tx)
+                    .compose(found -> {
+                        if (found.isEmpty()) {
+                            return Future.failedFuture(new WorkflowInstanceNotFoundException(command.workflowId()));
+                        }
+                        WorkflowInstance inst = found.get();
+                        RuntimeWorkflow rw;
+                        try {
+                            rw = PinnedPlans.resolve(registry, inst);
+                            WorkflowPayloads.requirePlanHashMatches(inst, rw);
+                        } catch (Exception e) {
+                            // This node cannot run the pinned plan: the whole segment fails rather than rejecting a
+                            // signal.
+                            return Future.failedFuture(e);
+                        }
+                        if (!signal.branchAddressed()) {
+                            return applyRecorded(inst, null, command, signal, rw, tx);
+                        }
+                        return branchTokens
+                                .findByWaitForBranch(
+                                        inst.id(),
+                                        signal.forkStepId(),
+                                        signal.branchId(),
+                                        WaitType.SIGNAL.name(),
+                                        signal.name(),
+                                        tx)
+                                .compose(waiting -> applyRecorded(inst, waiting.orElse(null), command, signal, rw, tx));
+                    }));
         }
 
         @Override

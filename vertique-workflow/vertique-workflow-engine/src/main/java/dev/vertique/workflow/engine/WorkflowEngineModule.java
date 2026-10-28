@@ -33,6 +33,7 @@ import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.history.WorkflowHistoryRedactor;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
@@ -370,6 +371,14 @@ public abstract class WorkflowEngineModule {
      */
     @BindsOptionalOf
     abstract TransactionalDefinitionReads<SqlClient> optionalDefinitionReads();
+
+    /**
+     * Declares the history redactor as an optional binding; without one nothing is redacted from the history.
+     *
+     * @return the optional redactor declaration
+     */
+    @BindsOptionalOf
+    abstract WorkflowHistoryRedactor optionalHistoryRedactor();
 
     /**
      * Declares the Vert.x instance as an optional binding, so a graph that binds none still provides the probe.

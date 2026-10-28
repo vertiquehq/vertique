@@ -5,6 +5,7 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.engine.executor.ParkedSignals;
 import dev.vertique.workflow.engine.executor.StepLimitExceededException;
+import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.TimerCommandSpec;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
@@ -24,6 +25,7 @@ import dev.vertique.workflow.plan.TimerNode;
 import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.state.WaitType;
@@ -109,6 +111,7 @@ final class WorkflowTransitionDriver {
     private final CompensationService compensationService;
     private final ForkJoinCoordinator forkJoin;
     private final Clock clock;
+    private final DecisionLog decisions;
 
     /**
      * Lazy back-edge to {@link TimerLifecycleService} for the {@code resolveFireAt} helper used by
@@ -166,6 +169,7 @@ final class WorkflowTransitionDriver {
      * @param forkJoin the fork/join coordinator dispatched to for {@code ForkNode}; injected eagerly
      *     (the coordinator holds the lazy {@code Provider<WorkflowTransitionDriver>} back-edge)
      * @param clock the clock used to timestamp entries and state updates
+     * @param decisions the decision log that records each step the driver takes
      * @param timerPvd lazy provider of the timer-lifecycle service, used for the {@code resolveFireAt}
      *     helper when handling a timer node, a wait-signal node with a timeout, or a human-task node
      *     with a due date; lazy to break the driver↔timer constructor cycle, dereferenced only at
@@ -186,6 +190,7 @@ final class WorkflowTransitionDriver {
             CompensationService compensationService,
             ForkJoinCoordinator forkJoin,
             Clock clock,
+            DecisionLog decisions,
             Provider<TimerLifecycleService> timerPvd,
             Provider<TaskLifecycleService> taskPvd) {
         this.instances = instances;
@@ -198,6 +203,7 @@ final class WorkflowTransitionDriver {
         this.compensationService = compensationService;
         this.forkJoin = forkJoin;
         this.clock = clock;
+        this.decisions = decisions;
         this.timerPvd = timerPvd;
         this.taskPvd = taskPvd;
     }
@@ -400,7 +406,9 @@ final class WorkflowTransitionDriver {
                                                 "Optimistic concurrency conflict for instance '"
                                                         + inst.id().value() + "' at step '" + sdn.stepId() + "'"));
                                     }
-                                    return driveTransitionsStep(advanced, rw, tx);
+                                    return decisions
+                                            .record(inst, advanced, sdn.stepId(), "intent", tx)
+                                            .compose(logged -> driveTransitionsStep(advanced, rw, tx));
                                 });
                     });
         });
@@ -438,7 +446,7 @@ final class WorkflowTransitionDriver {
                         new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                 + inst.id().value() + "' at WaitSignalNode '" + wsn.stepId() + "'"));
             }
-            return Future.<Void>succeededFuture();
+            return decisions.record(inst, waiting, wsn.stepId(), "wait-signal", tx);
         });
     }
 
@@ -502,7 +510,7 @@ final class WorkflowTransitionDriver {
                                                         + "' at WaitSignalNode '"
                                                         + wsn.stepId() + "' (timeout branch)"));
                                     }
-                                    return Future.<Void>succeededFuture();
+                                    return decisions.record(inst, waiting, wsn.stepId(), "wait-signal", tx);
                                 });
                     });
         });
@@ -544,7 +552,9 @@ final class WorkflowTransitionDriver {
                         new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                 + inst.id().value() + "' at DecisionNode '" + dn.stepId() + "'"));
             }
-            return driveTransitionsStep(advanced, rw, tx);
+            return decisions
+                    .record(inst, advanced, dn.stepId(), nextStepId, tx)
+                    .compose(logged -> driveTransitionsStep(advanced, rw, tx));
         });
     }
 
@@ -569,6 +579,7 @@ final class WorkflowTransitionDriver {
                 .updateOptimistic(completed, prevVersion, tx)
                 .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                         rowCount, "instance '" + inst.id().value() + "' at CompleteNode '" + cn.stepId() + "'"))
+                .compose(v -> decisions.record(inst, completed, cn.stepId(), "completed", tx))
                 .compose(v -> history.nextSequence(inst.id(), tx))
                 .compose(seq -> {
                     String histPayload = Json.encode(new CompletedHistoryPayload(cn.stepId()));
@@ -616,10 +627,19 @@ final class WorkflowTransitionDriver {
                 .updateOptimistic(failed, prevVersion, tx)
                 .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                         rowCount, "instance '" + inst.id().value() + "' at FailNode '" + fn.stepId() + "'"))
+                .compose(v -> decisions.record(inst, failed, fn.stepId(), "failed", tx))
                 .compose(v -> history.nextSequence(inst.id(), tx))
                 .compose(seq -> {
-                    String histPayload =
-                            Json.encode(new FailedHistoryPayload(fn.stepId(), fn.errorType(), finalErrorMessage));
+                    String histPayload = Json.encode(new FailedHistoryPayload(
+                            fn.stepId(),
+                            fn.errorType(),
+                            decisions.redactReason(
+                                    new DefinitionKey(
+                                            inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()),
+                                    finalErrorMessage,
+                                    null,
+                                    inst.stateJson(),
+                                    tx)));
                     return history.append(
                                     new WorkflowHistoryEntry(
                                             inst.id(), seq, WorkflowEntryType.FAILED, histPayload, clock.instant()),
@@ -697,7 +717,7 @@ final class WorkflowTransitionDriver {
                                                         + "' at TimerNode '"
                                                         + tn.stepId() + "'"));
                                     }
-                                    return Future.<Void>succeededFuture();
+                                    return decisions.record(inst, waiting, tn.stepId(), "wait-timer", tx);
                                 });
                     });
         });
@@ -764,8 +784,10 @@ final class WorkflowTransitionDriver {
                             new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                     + inst.id().value() + "' at HumanTaskNode '" + htn.stepId() + "'"));
                 }
-                return taskPvd.get()
-                        .appendTaskCreatedHistory(inst, htn.stepId(), taskId, assignment, null, tx)
+                return decisions
+                        .record(inst, waiting, htn.stepId(), "wait-task", tx)
+                        .compose(logged -> taskPvd.get()
+                                .appendTaskCreatedHistory(inst, htn.stepId(), taskId, assignment, null, tx))
                         // Anchor initial reminders to the same `now` Instant captured at task-row
                         // construction (the row's created_at and updated_at also use this instant),
                         // so OneShotOffsets fire at exactly `created_at + offset` and the first
@@ -856,9 +878,11 @@ final class WorkflowTransitionDriver {
                                                         + "' at HumanTaskNode '"
                                                         + htn.stepId() + "' (due-date branch)"));
                                     }
-                                    return taskPvd.get()
-                                            .appendTaskCreatedHistory(
-                                                    inst, htn.stepId(), taskId, assignment, fireAt, tx)
+                                    return decisions
+                                            .record(inst, waiting, htn.stepId(), "wait-task", tx)
+                                            .compose(logged -> taskPvd.get()
+                                                    .appendTaskCreatedHistory(
+                                                            inst, htn.stepId(), taskId, assignment, fireAt, tx))
                                             // Anchor initial reminders to the same `now` Instant captured at task-row
                                             // construction time (used as both created_at and updated_at on the task
                                             // row).

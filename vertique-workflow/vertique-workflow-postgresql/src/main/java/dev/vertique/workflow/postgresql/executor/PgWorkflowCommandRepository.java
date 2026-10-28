@@ -91,6 +91,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final PgCommandProbeQueries queries;
     private final PgCommandWakeupQueries wakeupQueries;
     private final ExecutionLock executionLock;
+    private final LegacyBaseline legacyBaseline;
     private final String insertQueue;
     private final String advanceQueue;
     private final CommandEligibilitySql eligibility;
@@ -212,6 +213,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         this.queries = new PgCommandProbeQueries(new CommandEligibilitySql(schemas));
         this.wakeupQueries = new PgCommandWakeupQueries(new CommandEligibilitySql(schemas));
         this.executionLock = new ExecutionLock(recording.lockTimeoutMs());
+        this.legacyBaseline = new LegacyBaseline(schemas);
         String queues = PgTableNames.qualify(schemas, "workflow", "workflow_command_queues");
         this.insertQueue = "INSERT INTO " + queues
                 + " (workflow_id, next_seq) VALUES ($1, 1) ON CONFLICT (workflow_id) DO NOTHING";
@@ -1201,6 +1203,13 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 .execute(withActor(Tuple.of(instance.value(), fromSequence), actor))
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history attribute")));
+    }
+
+    @Override
+    public Future<Boolean> consumeLegacyBaseline(WorkflowInstanceId instance, SqlClient tx) {
+        return legacyBaseline
+                .consume(instance, tx)
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances legacy baseline")));
     }
 
     @Override

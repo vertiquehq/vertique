@@ -7,6 +7,7 @@ import dev.vertique.workflow.engine.executor.ClaimLostException;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
+import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
@@ -104,6 +105,7 @@ final class TimerLifecycleService {
     private final Clock clock;
     private final WorkflowCommandRepository<SqlClient> commands;
     private final WorkflowHistoryRecorder historyRecorder;
+    private final DecisionLog decisions;
 
     /**
      * Binder-row seam for the instance-owned (non-branch) timer drives (Contract Appendix C2): the
@@ -163,6 +165,7 @@ final class TimerLifecycleService {
         this.contextBinder = contextBinder;
         this.commands = commands;
         this.historyRecorder = historyRecorder;
+        this.decisions = historyRecorder == null ? null : historyRecorder.decisions();
     }
 
     // --- Recorded timers in a segment ---
@@ -446,14 +449,17 @@ final class TimerLifecycleService {
                                 new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                         + inst.id().value() + "' during timerFired"));
                     }
-                    return history.nextSequence(inst.id(), tx).compose(seq -> {
-                        String histPayload =
-                                Json.encode(new TimerFiredHistoryPayload(tn.stepId(), timerId, now, tn.nextStepId()));
-                        return history.append(
-                                new WorkflowHistoryEntry(
-                                        inst.id(), seq, WorkflowEntryType.TIMER_FIRED, histPayload, now),
-                                tx);
-                    });
+                    return decisions
+                            .record(inst, advanced, tn.stepId(), "timer-fired", tx)
+                            .compose(logged -> history.nextSequence(inst.id(), tx))
+                            .compose(seq -> {
+                                String histPayload = Json.encode(
+                                        new TimerFiredHistoryPayload(tn.stepId(), timerId, now, tn.nextStepId()));
+                                return history.append(
+                                        new WorkflowHistoryEntry(
+                                                inst.id(), seq, WorkflowEntryType.TIMER_FIRED, histPayload, now),
+                                        tx);
+                            });
                 })
                 .compose(v -> driver.driveTransitions(advanced, rw, tx))
                 .map(v -> TimerFiringResult.APPLIED);
@@ -522,13 +528,17 @@ final class TimerLifecycleService {
                                 new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                         + inst.id().value() + "' during timerFired (timeout branch)"));
                     }
-                    return history.nextSequence(inst.id(), tx).compose(seq -> {
-                        String histPayload = Json.encode(
-                                new TimeoutHistoryPayload(wsn.stepId(), timerId, now, branch.timeoutNextStepId()));
-                        return history.append(
-                                new WorkflowHistoryEntry(inst.id(), seq, WorkflowEntryType.TIMEOUT, histPayload, now),
-                                tx);
-                    });
+                    return decisions
+                            .record(inst, advanced, wsn.stepId(), "timeout", tx)
+                            .compose(logged -> history.nextSequence(inst.id(), tx))
+                            .compose(seq -> {
+                                String histPayload = Json.encode(new TimeoutHistoryPayload(
+                                        wsn.stepId(), timerId, now, branch.timeoutNextStepId()));
+                                return history.append(
+                                        new WorkflowHistoryEntry(
+                                                inst.id(), seq, WorkflowEntryType.TIMEOUT, histPayload, now),
+                                        tx);
+                            });
                 })
                 .compose(v -> driver.driveTransitions(advanced, rw, tx))
                 .map(v -> TimerFiringResult.APPLIED);
@@ -710,7 +720,9 @@ final class TimerLifecycleService {
                                         "Optimistic concurrency conflict applying" + " onTimeoutMutator to instance '"
                                                 + inst.id().value() + "'"));
                             }
-                            return Future.succeededFuture(updatedInst);
+                            return decisions
+                                    .record(inst, updatedInst, wsn.stepId(), "timeout", tx)
+                                    .map(logged -> updatedInst);
                         });
             } else {
                 instUpdate = Future.succeededFuture(inst);

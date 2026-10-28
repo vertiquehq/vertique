@@ -12,6 +12,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import dev.vertique.workflow.engine.history.DecisionLog;
+import dev.vertique.workflow.engine.history.JsonPatchDiff;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
@@ -161,6 +163,7 @@ class WorkflowMigratedInstanceTenantTest {
                 .thenReturn(Future.succeededFuture(List.of()));
         when(history.nextSequence(eq(source.id()), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
         BranchTokenRepository<SqlClient> branchTokens = mock();
         when(branchTokens.findActiveByWorkflow(eq(source.id()), any())).thenReturn(Future.succeededFuture(List.of()));
         WorkflowTransitionDriver driver = mock();
@@ -176,7 +179,8 @@ class WorkflowMigratedInstanceTenantTest {
                 FIXED_CLOCK,
                 WorkflowContextBinder.noop(),
                 Optional.of((from, to) -> Optional.empty()),
-                new EmptyCommandRepository());
+                new EmptyCommandRepository(),
+                new DecisionLog(new JsonPatchDiff(), history, Optional.empty(), FIXED_CLOCK));
 
         SqlClient tx = ActiveTransactionClient.create();
         CommandHead head = new CommandHead(
