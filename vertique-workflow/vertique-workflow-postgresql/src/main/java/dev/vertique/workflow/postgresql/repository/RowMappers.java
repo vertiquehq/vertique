@@ -6,8 +6,10 @@ package dev.vertique.workflow.postgresql.repository;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.RowMapper;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
+import dev.vertique.workflow.state.HistoryActor;
 import dev.vertique.workflow.state.JoinPolicyType;
 import dev.vertique.workflow.state.JoinState;
 import dev.vertique.workflow.state.JoinStateStatus;
@@ -132,8 +134,71 @@ class RowMappers {
             long sequence = row.getLong("sequence");
             WorkflowEntryType entryType = WorkflowEntryType.valueOf(row.getString("entry_type"));
             String payloadJson = extractJsonb(row, "payload_json");
+            // Only the stored entry version is added to the five original components: the history that reaches
+            // clients through the instance view carries nothing else.
             return new WorkflowHistoryEntry(
-                    instanceId, sequence, entryType, payloadJson, toInstant(row.getOffsetDateTime("recorded_at")));
+                    instanceId,
+                    sequence,
+                    entryType,
+                    payloadJson,
+                    toInstant(row.getOffsetDateTime("recorded_at")),
+                    row.getInteger("entry_version"),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null);
+        };
+    }
+
+    /**
+     * Returns a {@link RowMapper} that maps a full row from {@code workflow_history} to a
+     * {@link WorkflowHistoryEntry} with every component set that the row holds.
+     *
+     * <p>The actor is {@code null} when {@code actor_kind} is {@code null}; the definition key is {@code null} when
+     * {@code definition_scope_key} is {@code null}. Used only by the history service.
+     *
+     * @return a row mapper for the enriched {@link WorkflowHistoryEntry}
+     */
+    static RowMapper<WorkflowHistoryEntry> enrichedWorkflowHistoryEntry() {
+        return row -> {
+            String actorKind = row.getString("actor_kind");
+            HistoryActor actor = actorKind == null
+                    ? null
+                    : new HistoryActor(
+                            HistoryActor.Kind.valueOf(actorKind),
+                            row.getString("actor_id"),
+                            row.getString("actor_reason"));
+            String scopeKey = row.getString("definition_scope_key");
+            DefinitionKey definitionKey = scopeKey == null
+                    ? null
+                    : new DefinitionKey(scopeKey, row.getString("definition_id"), row.getLong("definition_version"));
+            return new WorkflowHistoryEntry(
+                    new WorkflowInstanceId(row.getUUID("workflow_id")),
+                    row.getLong("sequence"),
+                    WorkflowEntryType.valueOf(row.getString("entry_type")),
+                    extractJsonb(row, "payload_json"),
+                    toInstant(row.getOffsetDateTime("recorded_at")),
+                    row.getInteger("entry_version"),
+                    actor,
+                    row.getString("on_behalf_of"),
+                    row.getString("attribution_status"),
+                    row.getString("executor_id"),
+                    row.getLong("command_id"),
+                    row.getString("step_id"),
+                    row.getString("outcome"),
+                    definitionKey,
+                    row.getString("plan_hash"),
+                    row.getLong("state_version_before"),
+                    row.getLong("state_version_after"),
+                    extractJsonb(row, "patch_json"));
         };
     }
 

@@ -26,8 +26,10 @@ import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.history.WorkflowInstanceHistoryService;
 import dev.vertique.workflow.postgresql.executor.CommandNotificationListener;
 import dev.vertique.workflow.postgresql.executor.PgWorkflowCommandRepository;
+import dev.vertique.workflow.postgresql.history.PgWorkflowInstanceHistoryService;
 import dev.vertique.workflow.postgresql.query.PgWorkflowInstanceQueryService;
 import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
@@ -63,7 +65,7 @@ import java.util.Set;
  * optional {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} binding, and the
  * engine's {@code core}/{@code context} includes). This module contributes only the dialect-specific
  * bindings: the five repository SPIs, the task/timer/definition-registry stores, the transaction runner, and the
- * query/retention services — all bound to their PostgreSQL implementations.
+ * query, history and retention services — all bound to their PostgreSQL implementations.
  *
  * <p>Consumers install only {@code WorkflowPostgresqlModule}; the engine wiring arrives transitively
  * through the {@code include}, so application wiring is unchanged.
@@ -468,6 +470,23 @@ public abstract class WorkflowPostgresqlModule {
     @Binds
     @Singleton
     abstract WorkflowInstanceQueryService bindQueryService(PgWorkflowInstanceQueryService impl);
+
+    /**
+     * Provides the {@link WorkflowInstanceHistoryService}, reading through the scoped history repository and the
+     * command table of the same schema placement.
+     *
+     * @param history the scoped PostgreSQL history repository
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the history service
+     */
+    @Provides
+    @Singleton
+    static WorkflowInstanceHistoryService historyService(
+            PgWorkflowHistoryRepository history, Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgWorkflowInstanceHistoryService(history, pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
 
     /**
      * Binds {@link PgWorkflowRetentionService} as the {@link WorkflowRetentionService}

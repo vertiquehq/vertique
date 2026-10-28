@@ -124,6 +124,17 @@ public final class ActorScenario implements AutoCloseable {
         return new ActorScenario(db, new DueDateTask(), List.of("note"), true);
     }
 
+    /**
+     * A scenario over a workflow whose first wait has a timeout and accepts the signal {@code approve}, on a node whose
+     * segments can be made to crash until the commands recorded for an instance are dead-lettered.
+     *
+     * @param db the migrated database
+     * @return the scenario
+     */
+    public static ActorScenario deadLetteringWait(DbPoolConfig db) {
+        return new ActorScenario(db, new TimeoutWait(), List.of("approve", "note", "finish"), true);
+    }
+
     // --- Recording, under an identity ---
 
     /**
@@ -223,6 +234,16 @@ public final class ActorScenario implements AutoCloseable {
         await(as(caller, () -> node.pool.withTransaction(tx -> node.engine.taskCompleted(command, tx))));
     }
 
+    /**
+     * Records a retry of the instance in a transaction of its own, under the identity, and commits it.
+     *
+     * @param caller the identity the call runs under, or null for none
+     * @param id     the instance
+     */
+    public void retry(@Nullable SecurityIdentity caller, WorkflowInstanceId id) {
+        await(as(caller, () -> node.pool.withTransaction(tx -> node.engine.retry(id, tx))));
+    }
+
     // --- Running ---
 
     /**
@@ -263,7 +284,21 @@ public final class ActorScenario implements AutoCloseable {
      * @param completionKey the idempotency key of the completion
      */
     public void deadLetter(WorkflowInstanceId id, String signalKey, String completionKey) {
-        faults.crashEverySegmentOf(id);
+        deadLetter(id, signalKey, completionKey, "the test abandoned the segment");
+    }
+
+    /**
+     * Makes every segment of the instance crash with a failure that carries the message, and runs the executor until
+     * the signal and the completion recorded for it are dead-lettered. Only a scenario made by
+     * {@link #deadLetteringTask} can do this.
+     *
+     * @param id            the instance
+     * @param signalKey     the dedup key of the signal
+     * @param completionKey the idempotency key of the completion
+     * @param failureText   the message of the failure that abandons each segment
+     */
+    public void deadLetter(WorkflowInstanceId id, String signalKey, String completionKey, String failureText) {
+        faults.crashEverySegmentOf(id, failureText);
         node.startExecutor();
         try {
             ExecutorFixture.awaitCondition(
@@ -280,6 +315,15 @@ public final class ActorScenario implements AutoCloseable {
     }
 
     // --- Observation ---
+
+    /**
+     * A pool of the scenario's database for reading it.
+     *
+     * @return the pool
+     */
+    public io.vertx.sqlclient.Pool observer() {
+        return f.fixture.observer();
+    }
 
     /**
      * The state of every command of the instance, by command id.

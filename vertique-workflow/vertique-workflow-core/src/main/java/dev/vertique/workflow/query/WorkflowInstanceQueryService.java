@@ -24,12 +24,9 @@ import java.util.Optional;
  *       scope.</li>
  * </ul>
  *
- * <p>History is intentionally <em>not</em> surfaced here. The cycle-4 ADR-0049 drew a deliberate
- * boundary between the internal {@code workflow_history} table (populated at every state mutation)
- * and the external durable event stream (published via the outbox relay). Surfacing history through
- * a public service would blur that boundary and couple downstream consumers to internal engine
- * details. Consumers that need the audit trail should subscribe to the durable workflow event
- * stream instead.
+ * <p>History is not read here. An instance's log, with who acted and what was decided, and its open commands are
+ * read through {@link dev.vertique.workflow.history.WorkflowInstanceHistoryService}; the external durable event stream
+ * published via the outbox relay is a separate surface.
  *
  * <p>REST/management endpoints ({@code FR-WF-180}–{@code FR-WF-185}) remain deferred; cycle 5
  * ships the programmatic API only.

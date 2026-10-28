@@ -189,6 +189,22 @@ An instance is idle when it has no command in flight (claimed under a live lease
 
 The future fails with `TimeoutException` when the wait elapses; the message names the instance (or "all instances") and the number of runnable commands left. A non-positive timeout is refused with `IllegalArgumentException`, and a timeout longer than ten minutes is shortened to ten minutes. Each list of the report holds at most 1000 commands, the first in instance and sequence order. Obtain the probe from `WorkflowEngineHandle.executionProbe()` or from the Dagger graph; both come from `vertique-workflow-engine`. A start recorded while no executor runs keeps the probe waiting until an executor runs it.
 
+### Instance History
+
+`WorkflowInstanceHistoryService` (package `dev.vertique.workflow.history`) reads one instance's log and its open commands; it is bound in the engine graph by the dialect module.
+
+```java
+Future<List<WorkflowHistoryEntry>> entries(WorkflowInstanceId id, long afterSequence, int limit);
+Future<List<PendingCommand>> openCommands(WorkflowInstanceId id);
+```
+
+- **Paging.** `entries` returns entries in ascending sequence order after `afterSequence` (exclusive; `0` for the first page). `limit` must be 1 to 500; anything else throws `IllegalArgumentException` before anything is read. Page by passing the last sequence read.
+- **Open commands.** `openCommands` lists the commands that are `PENDING`, `DEFERRED`, `CLAIMED`, `PARKED` or `DEAD`, in sequence order, as `PendingCommand`. `lastError` is the reason code plus the sanitized message stored when the command failed (never raw exception text); the service returns it as stored.
+- **The entry.** `WorkflowHistoryEntry` keeps its five original components and gains trailing nullable ones: `entryVersion` (boxed `Integer`; the stored format version, 1 before the decision log, 2 after), `actor` (`HistoryActor`), `onBehalfOf`, `attributionStatus` (`VERIFIED`, `ABSENT` or `DEGRADED`), `executorId`, `commandId`, `stepId`, `outcome`, `definitionKey`, `planHash`, `stateVersionBefore`, `stateVersionAfter` and `patchJson` (a JSON array; `[]` for no change). The five-argument constructor stays and reports `entryVersion` 1 with every other new component null. An entry that was never attributed has a null `actor`; work that ran with no identity is recorded as `HistoryActor.Kind.NONE`, a kind that exists only in the history and never on `WorkflowActor`.
+- **`query()` stays narrow.** The history in the `WorkflowView` that `WorkflowOperations.query` returns carries the five original components and the stored `entryVersion`; every other new component is null there. Only this service returns the enriched entry.
+- **Reading is not authorized here.** Entries name actors and carry state patches, and open commands carry stored failure text. The framework performs no authorization on these reads; the application authorizes them before exposing them.
+- **No lock.** The service reads on a pooled connection outside any caller transaction and takes no execution lock.
+
 ### Scope Keys on Instances, Tasks And Filters
 
 `WorkflowScopes.DEFAULT` (`"default"`) is the reserved default scope. It is a value, not a stored record: it always exists, needs no registration, and every row written without a scope belongs to it.

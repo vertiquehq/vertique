@@ -51,6 +51,7 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
     private final String sqlNextSequence;
     private final String sqlListByInstance;
     private final String sqlListRecentByInstance;
+    private final String sqlListPage;
 
     // --- Constructor ---
 
@@ -105,12 +106,18 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
         this.sqlNextSequence =
                 "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_seq FROM " + history + " WHERE workflow_id = $1";
 
-        this.sqlListByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at" + " FROM "
-                + history + " WHERE workflow_id = $1 ORDER BY sequence ASC";
+        this.sqlListByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at,"
+                + " entry_version FROM " + history + " WHERE workflow_id = $1 ORDER BY sequence ASC";
 
-        this.sqlListRecentByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at"
-                + " FROM " + history + " WHERE workflow_id = $1"
+        this.sqlListRecentByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at,"
+                + " entry_version FROM " + history + " WHERE workflow_id = $1"
                 + " ORDER BY sequence DESC LIMIT $2";
+
+        this.sqlListPage = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at, entry_version,"
+                + " actor_kind, actor_id, actor_reason, on_behalf_of, attribution_status, executor_id, command_id,"
+                + " step_id, outcome, definition_scope_key, definition_id, definition_version, plan_hash,"
+                + " state_version_before, state_version_after, patch_json FROM " + history
+                + " WHERE workflow_id = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT $3";
     }
 
     // --- Write operations ---
@@ -261,5 +268,28 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
                     return entries;
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history listByInstance")));
+    }
+
+    /**
+     * Returns one page of the full history entries of an instance, ordered by sequence ascending, read from the pool
+     * with no lock. Unlike {@link #listByInstance(WorkflowInstanceId)}, every component the row holds is set.
+     *
+     * @param id            the workflow instance id whose history to retrieve
+     * @param afterSequence the sequence after which the page starts (exclusive)
+     * @param limit         the largest number of entries to return
+     * @return a {@link Future} containing up to {@code limit} entries
+     */
+    public Future<List<WorkflowHistoryEntry>> listPage(WorkflowInstanceId id, long afterSequence, int limit) {
+        return pool.preparedQuery(sqlListPage)
+                .execute(Tuple.of(id.value(), afterSequence, limit))
+                .map(rs -> {
+                    List<WorkflowHistoryEntry> entries = new ArrayList<>();
+                    var mapper = RowMappers.enrichedWorkflowHistoryEntry();
+                    for (var row : rs) {
+                        entries.add(mapper.map(row));
+                    }
+                    return entries;
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history listPage")));
     }
 }

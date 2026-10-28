@@ -60,19 +60,28 @@ final class CommandFaults {
 
     private record Fault(AtomicInteger remaining, Supplier<? extends Throwable> failure, boolean crash) {}
 
+    /** The message of the failure that abandons a segment, unless a proof names another. */
+    private static final String ABANDONED = "the test abandoned the segment";
+
     /** Abandons every segment of the instance as a crash would. */
     CommandFaults crashEverySegmentOf(WorkflowInstanceId id) {
         return crashSegmentsOf(id, Integer.MAX_VALUE);
     }
 
+    /** Abandons every segment of the instance as a crash would, with a failure that carries the message. */
+    CommandFaults crashEverySegmentOf(WorkflowInstanceId id, String message) {
+        return crashSegmentsOf(id, Integer.MAX_VALUE, message);
+    }
+
     /** Abandons the first {@code times} segments of the instance as a crash would. */
     CommandFaults crashSegmentsOf(WorkflowInstanceId id, int times) {
+        return crashSegmentsOf(id, times, ABANDONED);
+    }
+
+    /** Abandons the first {@code times} segments of the instance as a crash would, with a failure that carries the message. */
+    CommandFaults crashSegmentsOf(WorkflowInstanceId id, int times, String message) {
         faults.put(
-                id,
-                new Fault(
-                        new AtomicInteger(times),
-                        () -> new TransactionDeadlineExceededException("the test abandoned the segment"),
-                        true));
+                id, new Fault(new AtomicInteger(times), () -> new TransactionDeadlineExceededException(message), true));
         return this;
     }
 
