@@ -10,6 +10,7 @@ import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.exception.WorkflowNodeRoleException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -76,5 +77,20 @@ class WorkflowExecutorTest {
         assertThat(new WorkflowExecutorConfig(1, 1, 100, 5).marginMs()).isEqualTo(1000L);
         assertThat(new WorkflowExecutorConfig(1, 1, 100, 60).marginMs()).isEqualTo(6000L);
         assertThat(new WorkflowExecutorConfig(1, 1, 100, 10).marginMs()).isEqualTo(1000L);
+    }
+
+    @Test
+    @DisplayName("starting the executor of a recording-only node fails with the node-role error")
+    void startOnARecordingOnlyNodeFailsWithTheNodeRoleError() {
+        // Given an executor whose configuration turns the executor off
+        WorkflowExecutor executor = executor(new WorkflowExecutorConfig(1, 8, 100, 60, 3, 100, 1000, 1000, 300, false));
+
+        // When it is started
+        var start = executor.start();
+
+        // Then the start fails with the node-role error and deploys nothing
+        assertThat(start.failed()).isTrue();
+        assertThat(start.cause()).isInstanceOf(WorkflowNodeRoleException.class);
+        assertThat(start.cause().getMessage()).contains("workflow.executor.enabled=false");
     }
 }

@@ -10,6 +10,7 @@ import dev.vertique.workflow.engine.WorkflowExecutorControl;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.exception.WorkflowNodeRoleException;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
@@ -167,6 +168,9 @@ public final class WorkflowExecutor implements WorkflowExecutorControl {
 
     @Override
     public synchronized Future<Void> start() {
+        if (!config.enabled()) {
+            return Future.failedFuture(new WorkflowNodeRoleException("executor"));
+        }
         if (vertx == null) {
             return Future.failedFuture(new IllegalStateException(
                     "The engine was assembled without a Vert.x instance, so its executor cannot be deployed"));

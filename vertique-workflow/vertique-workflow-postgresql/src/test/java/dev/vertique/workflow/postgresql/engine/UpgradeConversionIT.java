@@ -6,6 +6,7 @@ package dev.vertique.workflow.postgresql.engine;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.db.DbPoolConfig;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
@@ -21,6 +22,7 @@ import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.plan.RaceSafetyTargetContributor;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
+import dev.vertique.workflow.postgresql.executor.CommandEligibilitySql;
 import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
 import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
@@ -109,11 +111,15 @@ public class UpgradeConversionIT {
 
     static final PostgresContainer timersDb = new PostgresContainer().withDatabaseName("wf_upgrade_timers_it");
 
+    static final PostgresContainer holdBackDb = new PostgresContainer().withDatabaseName("wf_upgrade_holdback_it");
+
     static final PostgresContainer branchesDb = new PostgresContainer().withDatabaseName("wf_upgrade_branches_it");
 
     static final PostgresContainer jobsDefaultDb = new PostgresContainer().withDatabaseName("wf_upgrade_jobs_a_it");
 
     static final PostgresContainer noJobsDb = new PostgresContainer().withDatabaseName("wf_upgrade_jobs_b_it");
+
+    static final PostgresContainer jobsViewDb = new PostgresContainer().withDatabaseName("wf_upgrade_jobs_d_it");
 
     static final PostgresContainer jobsMappedDb = new PostgresContainer().withDatabaseName("wf_upgrade_jobs_c_it");
 
@@ -566,6 +572,58 @@ public class UpgradeConversionIT {
     }
 
     @Test
+    void convertedTimeoutWaitsForAnEarlierPendingSignal(Vertx vertx) throws Exception {
+        // Given an upgraded database holding an instance at a wait whose scheduled timeout was converted, and a
+        // signal for that instance recorded before the timeout's fire time that is still pending
+        Map<String, String> planHashes = currentPlanHashes(vertx);
+        flyway(holdBackDb).target("2").load().migrate();
+        UUID instance = UUID.randomUUID();
+        UUID timer = UUID.randomUUID();
+        Instant due = Instant.now().minus(Duration.ofMinutes(3)).truncatedTo(ChronoUnit.SECONDS);
+        try (Connection connection = connection(holdBackDb)) {
+            ReleasedRows.instanceAtSignal(
+                    connection, TIMERS_ID, instance, "await-ship", "ship", planHashes.get(TIMERS_ID));
+            ReleasedRows.timer(
+                    connection, timer, instance, "await-ship", "SCHEDULED", due, "SIGNAL_TIMEOUT", null, null);
+        }
+        flyway(holdBackDb).load().migrate();
+        CommandEligibilitySql eligibility = new CommandEligibilitySql(DbSchemas.empty());
+        try (Connection connection = connection(holdBackDb)) {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("""
+                        INSERT INTO workflow_commands (workflow_id, seq, kind, target_json, state, recorded_at,
+                                                       available_at)
+                        VALUES ('%s', 2, 'SIGNAL', '{"name":"ship"}'::jsonb, 'PENDING',
+                                '%s'::timestamptz - interval '1 minute', now())
+                        """.formatted(instance, due));
+            }
+
+            // When the timeout's eligibility is evaluated
+            // Then it is held back and not claimable while the earlier signal is pending
+            assertThat(rows(
+                            connection,
+                            "SELECT " + eligibility.heldBack("c")
+                                    + "::text FROM workflow_commands c WHERE c.timer_id = '%s'".formatted(timer)))
+                    .containsExactly("true");
+            assertThat(rows(
+                            connection,
+                            "SELECT " + eligibility.claimable("c")
+                                    + "::text FROM workflow_commands c WHERE c.timer_id = '%s'".formatted(timer)))
+                    .containsExactly("false");
+
+            // And it is released once the signal has applied
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("UPDATE workflow_commands SET state = 'COMPLETE' WHERE kind = 'SIGNAL'");
+            }
+            assertThat(rows(
+                            connection,
+                            "SELECT " + eligibility.claimable("c")
+                                    + "::text FROM workflow_commands c WHERE c.timer_id = '%s'".formatted(timer)))
+                    .containsExactly("true");
+        }
+    }
+
+    @Test
     void migrationDeletesOnlyLiveTimerFireJobsUnderTheDefaultTableName() throws Exception {
         // Given three databases at the previous release's schema: (a) job tables under the default name next to the
         // workflow tables, holding a timer fire job in each state and an enqueued job of another handler; (b) no job
@@ -607,6 +665,28 @@ public class UpgradeConversionIT {
                 statement.execute(documentedManualStatement("jobs"));
             }
             assertThat(jobRows(connection, "jobs.job_executions")).containsExactlyInAnyOrderElementsOf(KEPT_JOB_ROWS);
+        }
+    }
+
+    @Test
+    void migrationLeavesAJobTableNameThatResolvesToAViewAlone() throws Exception {
+        // Given a database at the previous release's schema whose unqualified job_executions is a view over the job
+        // table of another schema
+        flyway(jobsViewDb).target("2").load().migrate();
+        createJobTables(jobsViewDb, "jobs");
+        try (Connection connection = connection(jobsViewDb)) {
+            seedJobRows(connection, "jobs.job_executions");
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE VIEW public.job_executions AS SELECT * FROM jobs.job_executions");
+            }
+        }
+
+        // When the database is migrated to the latest version
+        flyway(jobsViewDb).load().migrate();
+
+        // Then no job row was deleted through the view
+        try (Connection connection = connection(jobsViewDb)) {
+            assertThat(jobRows(connection, "jobs.job_executions")).containsExactlyInAnyOrderElementsOf(allJobRows());
         }
     }
 

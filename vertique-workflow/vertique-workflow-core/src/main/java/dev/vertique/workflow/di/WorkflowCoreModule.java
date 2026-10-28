@@ -94,7 +94,8 @@ public abstract class WorkflowCoreModule {
      *
      * <p>Each {@link WorkflowContributor} is invoked once in an unspecified order. Registration
      * validates each plan immediately; invalid plans throw
-     * {@link dev.vertique.workflow.exception.WorkflowDefinitionException}.
+     * {@link dev.vertique.workflow.exception.WorkflowDefinitionException}. On a node with the executor turned off no
+     * contributor is invoked.
      *
      * @param contributors the set of all contributed workflow definitions
      * @param forkJoinValidator the plan validator consulted on each registered plan
@@ -119,7 +120,10 @@ public abstract class WorkflowCoreModule {
         DefaultWorkflowRegistry reg =
                 new DefaultWorkflowRegistry(forkJoinValidator, definitionValidators, typeNames, stateCompatibility);
         if (!executorConfig.map(WorkflowExecutorConfig::enabled).orElse(true)) {
+            // A recording-only node holds no workflow code and builds no plan: no contributor runs, so no code
+            // definition registers and no packaged document is compiled or its classes resolved.
             reg.markRecordingOnly();
+            return reg;
         }
         contributors.forEach(c -> c.contribute(reg));
         return reg;

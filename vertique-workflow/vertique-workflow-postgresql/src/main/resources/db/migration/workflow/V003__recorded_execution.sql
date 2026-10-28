@@ -211,13 +211,16 @@ GROUP BY workflow_id
 ON CONFLICT (workflow_id) DO NOTHING;
 
 -- The delayed jobs of the previous release that fired timers are not run by this release. Remove the live ones from
--- the delayed-job table under its default name when it exists; finished job history stays. A deployment whose job
--- tables are elsewhere runs the equivalent statement by hand before the first node of this release starts.
+-- the delayed-job table named job_executions in the schema the migration runs in, when that is a plain table; finished
+-- job history stays. A deployment whose job tables are elsewhere runs the equivalent statement by hand before the
+-- first node of this release starts.
 DO $$
+DECLARE
+    jobs regclass := to_regclass(quote_ident(current_schema()) || '.job_executions');
 BEGIN
-    IF to_regclass('job_executions') IS NOT NULL THEN
-        EXECUTE 'DELETE FROM job_executions WHERE handler = ''jobs/delayed/vertique.workflow.timer.fire/execute'' '
-                || 'AND state IN (''ENQUEUED'', ''PROCESSING'', ''FAILED'', ''ABANDONED'')';
+    IF jobs IS NOT NULL AND (SELECT c.relkind FROM pg_class c WHERE c.oid = jobs) = 'r' THEN
+        EXECUTE format('DELETE FROM %s WHERE handler = ''jobs/delayed/vertique.workflow.timer.fire/execute'' '
+                       || 'AND state IN (''ENQUEUED'', ''PROCESSING'', ''FAILED'', ''ABANDONED'')', jobs);
     END IF;
 END
 $$;

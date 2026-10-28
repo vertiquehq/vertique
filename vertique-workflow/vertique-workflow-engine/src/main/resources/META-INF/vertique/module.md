@@ -573,6 +573,10 @@ transaction, and queries, including `query(id, contractName)`, read rows. Operat
 document load, `WorkflowRegistry.load` and `WorkflowPayloadSchemas`. `activate`, `follow`, `deactivateDefault`, `deprecate` and
 `retire` need no build and run on every node.
 
+Starting the executor control (`WorkflowEngineHandle.executor().start()`) of a recording-only node fails with `WorkflowNodeRoleException`, so no code path deploys an executor on it. A retry of a failed instance records an instance-level `RETRY` unless one is already pending; a pending retry addressed to one branch does not count.
+
+**Separation of duties.** The lifecycle operations stay open on a recording-only node by design, and the framework has no authorization of its own: any code that can call them can change which version starts new instances. Put an authorization layer in front of them, and restrict the database role of a recording-only node to the privileges it needs.
+
 A node that runs the executor requires the `WorkflowPlanSchemaProducer` of `vertique-workflow-schema`: without it the startup step
 fails before any write with a `WorkflowConfigurationException` that names the module and `workflow.executor.enabled`.
 

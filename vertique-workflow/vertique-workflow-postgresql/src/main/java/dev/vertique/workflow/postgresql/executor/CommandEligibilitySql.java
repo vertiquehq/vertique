@@ -33,6 +33,10 @@ import dev.vertique.db.postgresql.PgTableNames;
  * branch address) and from its task; a signal targets the wait when its name is among those names and it carries the
  * same branch address, a completion when it reserves the wait's task. A signal recorded before the wait's timeout
  * existed was recorded before the timeout's fire time, which is taken later, so it holds the timeout back too.
+ *
+ * <p>A timeout without a target, which is what the upgrade converts a previous release's wait timer into, does not know
+ * its wait; it is held back while any earlier-recorded signal or completion of its instance is pending, deferred or
+ * claimed.
  */
 public final class CommandEligibilitySql {
 
@@ -77,6 +81,7 @@ public final class CommandEligibilitySql {
         return "(" + c + ".kind = 'TIMER' AND " + c + ".timer_kind = 'TIMEOUT' AND EXISTS (SELECT 1 FROM " + commands
                 + " " + o + " WHERE " + o + ".workflow_id = " + c + ".workflow_id AND " + o
                 + ".state IN ('PENDING','DEFERRED','CLAIMED') AND " + o + ".recorded_at < " + c + ".fire_at AND (("
+                + c + ".target_json IS NULL AND " + o + ".kind IN ('SIGNAL','COMPLETION')) OR ("
                 + o + ".kind = 'SIGNAL' AND jsonb_exists(" + c + ".target_json->'signalNames', " + o
                 + ".target_json->>'name') AND " + o + ".target_json->>'branchId' IS NOT DISTINCT FROM " + c
                 + ".target_json->>'branchId' AND " + o + ".target_json->>'forkStepId' IS NOT DISTINCT FROM " + c

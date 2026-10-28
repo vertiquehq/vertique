@@ -2396,12 +2396,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Records a retry unless one is already on its way for the instance: a repeated call, for instance after an
-     * uncertain response, then succeeds and records nothing, because one retry recovers everything a second would.
+     * Records a retry unless an instance-level one is already on its way: a repeated call, for instance after an
+     * uncertain response, then succeeds and records nothing, because one retry recovers everything a second would. A
+     * retry addressed to one branch recovers only that branch, so it does not count.
      */
     private Future<Void> recordRetryOnce(WorkflowInstanceId id, SqlClient tx) {
         return commands.unsettledTargets(id, "RETRY", tx)
-                .compose(pending -> pending.isEmpty()
+                .compose(pending -> pending.stream().noneMatch(String::isEmpty)
                         ? commands.recordRetry(id, tx).<Void>mapEmpty()
                         : Future.<Void>succeededFuture());
     }

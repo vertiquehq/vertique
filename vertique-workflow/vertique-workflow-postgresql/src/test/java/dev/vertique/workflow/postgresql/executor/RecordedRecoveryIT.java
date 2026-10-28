@@ -153,6 +153,37 @@ public class RecordedRecoveryIT {
     }
 
     @Test
+    @DisplayName("a pending branch retry does not stand for the instance retry that a failed instance needs")
+    void pendingBranchRetryDoesNotCountAsAnInstanceRetry() {
+        try (SignalFixture f =
+                new SignalFixture(db.toPoolConfig(), new OrderSignalFixture(), List.of("paid", "shipped", "note"))) {
+            // Given a failed instance and a pending retry addressed to one of its branches, as the upgrade leaves one
+            BreakableTimeout breakable = new BreakableTimeout();
+            f.seed(breakable, List.of("approve", "finish"), new JsonObject());
+            TimerFixture timers = new TimerFixture(f);
+            Node node = f.node("engine").build();
+            WorkflowInstanceId failed = await(
+                    f.caller(() -> node.pool.withTransaction(tx -> node.engine.start(f.start(breakable, "B"), tx))));
+            f.idle(node, failed);
+            timers.dueNow(timers.only(failed, "TIMEOUT").id());
+            f.idle(node, failed);
+            assertThat(f.fixture.instanceOf(failed).status()).isEqualTo("FAILED");
+            insertBranchRetry(f, failed);
+
+            // When a retry of the instance is recorded
+            retry(f, node, failed);
+
+            // Then an instance-level retry is recorded next to the branch retry
+            assertThat(retryTargets(f, failed))
+                    .containsExactlyInAnyOrder("{\"branchId\": \"b1\", \"forkStepId\": \"fork\"}", "");
+
+            // And a repeated retry records nothing more, because the instance-level one is on its way
+            retry(f, node, failed);
+            assertThat(retryTargets(f, failed)).hasSize(2);
+        }
+    }
+
+    @Test
     @DisplayName("an ended instance rejects its dead letters and refuses recovery; a second retry finds nothing to do")
     void endedInstanceRejectsDeadLettersAndRefusesRecovery() {
         try (SignalFixture f =
@@ -542,6 +573,34 @@ public class RecordedRecoveryIT {
                         .preparedQuery("UPDATE workflow_command_queues SET next_seq = next_seq + 1"
                                 + " WHERE workflow_id = $1")
                         .execute(io.vertx.sqlclient.Tuple.of(id.value())))));
+    }
+
+    /** Queues a pending retry addressed to a branch with a statement of the database, as the upgrade writes one. */
+    private static void insertBranchRetry(SignalFixture f, WorkflowInstanceId id) {
+        await(f.fixture.observer().withTransaction(connection -> connection
+                .preparedQuery("INSERT INTO workflow_commands (workflow_id, seq, kind, target_json, state,"
+                        + " recorded_at, available_at) SELECT $1, COALESCE(MAX(seq), 0) + 1, 'RETRY',"
+                        + " '{\"forkStepId\":\"fork\",\"branchId\":\"b1\"}'::jsonb, 'PENDING',"
+                        + " clock_timestamp(), clock_timestamp() + interval '1 hour'"
+                        + " FROM workflow_commands WHERE workflow_id = $1")
+                .execute(io.vertx.sqlclient.Tuple.of(id.value()))
+                .compose(ignored -> connection
+                        .preparedQuery("UPDATE workflow_command_queues SET next_seq = next_seq + 1"
+                                + " WHERE workflow_id = $1")
+                        .execute(io.vertx.sqlclient.Tuple.of(id.value())))));
+    }
+
+    /** The targets of the instance's retry commands as text, empty for one without a target. */
+    private static List<String> retryTargets(SignalFixture f, WorkflowInstanceId id) {
+        List<String> targets = new java.util.ArrayList<>();
+        for (io.vertx.sqlclient.Row row : await(f.fixture
+                .observer()
+                .preparedQuery("SELECT COALESCE(target_json::text, '') AS target FROM workflow_commands"
+                        + " WHERE workflow_id = $1 AND kind = 'RETRY'")
+                .execute(io.vertx.sqlclient.Tuple.of(id.value())))) {
+            targets.add(row.getString("target"));
+        }
+        return targets;
     }
 
     /** The signals the state of the instance records as applied, in order. */

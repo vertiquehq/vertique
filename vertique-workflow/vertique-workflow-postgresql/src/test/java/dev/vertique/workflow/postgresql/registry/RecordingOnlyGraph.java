@@ -50,6 +50,15 @@ final class RecordingOnlyGraph {
 
     private RecordingOnlyGraph() {}
 
+    /** The packaged document source of a node and the probe that counts the parses made on it. */
+    record Packaged(WorkflowDefinitionSource source, WorkflowDefinitionParserProbe parserProbe) {
+
+        /** A node that ships no packaged document. */
+        static Packaged none() {
+            return new Packaged(List::of, new WorkflowDefinitionParserProbe());
+        }
+    }
+
     /** The shared graph with the entry points the node-role proofs use besides the shared ones. */
     interface Node extends AppComponent {
 
@@ -74,6 +83,7 @@ final class RecordingOnlyGraph {
      * @param codeDefinitions the code definitions the node's application contributes
      * @param catalogEntries more type catalog entries
      * @param cacheObserver reports the plan cache's events
+     * @param packaged the packaged documents the node's application ships and the probe that counts their parses
      */
     static SchemaNode withSchemaModule(
             Vertx vertx,
@@ -82,17 +92,17 @@ final class RecordingOnlyGraph {
             Class<?> testClass,
             List<WorkflowDefinition<?, ?>> codeDefinitions,
             List<WorkflowTypeCatalogEntry> catalogEntries,
-            RecordingCacheObserver cacheObserver) {
-        WorkflowDefinitionSource none = List::of;
+            RecordingCacheObserver cacheObserver,
+            Packaged packaged) {
         return DaggerRecordingOnlyGraph_SchemaApp.builder()
                 .vertxModule(new VertxModule(vertx, ManagedDefinitionDatabase.withFastExecutor(config)))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
                 .bootObservationModule(
                         new BootObservationModule(new BootObservation("node-role-unused", 1, "unused", false)))
-                .definitionSourceModule(new DefinitionSourceModule(none))
+                .definitionSourceModule(new DefinitionSourceModule(packaged.source()))
                 .codeCatalogModule(new CodeCatalogModule(false, codeDefinitions))
                 .largeUnicodeMapperModule(new LargeUnicodeMapperModule(false))
-                .parserModule(new WorkflowDefinitionParserProbe().module())
+                .parserModule(packaged.parserProbe().module())
                 .typeCatalogModule(new TypeCatalogModule(testClass, catalogEntries))
                 .observerModule(new PlanCacheFixture.ObserverModule(cacheObserver))
                 .build();
@@ -106,17 +116,17 @@ final class RecordingOnlyGraph {
             Class<?> testClass,
             List<WorkflowDefinition<?, ?>> codeDefinitions,
             List<WorkflowTypeCatalogEntry> catalogEntries,
-            RecordingCacheObserver cacheObserver) {
-        WorkflowDefinitionSource none = List::of;
+            RecordingCacheObserver cacheObserver,
+            Packaged packaged) {
         return DaggerRecordingOnlyGraph_SchemalessApp.builder()
                 .vertxModule(new VertxModule(vertx, ManagedDefinitionDatabase.withFastExecutor(config)))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
                 .bootObservationModule(
                         new BootObservationModule(new BootObservation("node-role-unused", 1, "unused", false)))
-                .definitionSourceModule(new DefinitionSourceModule(none))
+                .definitionSourceModule(new DefinitionSourceModule(packaged.source()))
                 .codeCatalogModule(new CodeCatalogModule(false, codeDefinitions))
                 .largeUnicodeMapperModule(new LargeUnicodeMapperModule(false))
-                .parserModule(new WorkflowDefinitionParserProbe().module())
+                .parserModule(packaged.parserProbe().module())
                 .typeCatalogModule(new TypeCatalogModule(testClass, catalogEntries))
                 .observerModule(new PlanCacheFixture.ObserverModule(cacheObserver))
                 .build();

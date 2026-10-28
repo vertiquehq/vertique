@@ -640,6 +640,10 @@ contract-aware overload, which compares with the pinned row's stored contract) a
 build: `activate`, `follow`, `deactivateDefault`, `deprecate` and `retire`. An executor node, wherever it runs, executes what a
 recording-only node recorded.
 
+No `WorkflowContributor` runs on a recording-only node: it registers no code definition, and a packaged document is not parsed or compiled and none of its classes is loaded.
+
+**Separation of duties.** The lifecycle operations stay open on a recording-only node by design, and the framework has no authorization of its own: any code that can call them can change which version starts new instances. Put an authorization layer in front of them, and restrict the database role of a recording-only node to the privileges it needs.
+
 A recording-only node refuses the operations that need a build with `WorkflowNodeRoleException`: document `load`,
 `publish` and `reinstate` of the definition service, `WorkflowRegistry.load`, and every `WorkflowPayloadSchemas` method. The
 message names the operation and `workflow.executor.enabled=false`, never document content.

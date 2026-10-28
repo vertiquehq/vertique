@@ -16,6 +16,8 @@ import dev.vertique.workflow.definition.it.fixture.OrderDocState;
 import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
+import dev.vertique.workflow.definition.parser.WorkflowDefinitionParserProbe;
+import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.executor.WorkflowExecutor;
 import dev.vertique.workflow.exception.WorkflowConfigurationException;
@@ -31,6 +33,7 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
+import dev.vertique.workflow.postgresql.registry.RecordingOnlyGraph.Packaged;
 import dev.vertique.workflow.postgresql.registry.WorkflowDefinitionSqlObserver.Execution;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
@@ -141,6 +144,49 @@ public class RecordingOnlyNodeIT {
             assertThat(recording.probe().contextsCreatedDuringCarryTheProbe(vertx))
                     .isTrue();
             assertThat(recording.probe().requestedWithPrefix(FIXTURE_PACKAGE)).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "a recording-only node compiles no packaged document, resolves none of its classes and runs no code contributor")
+    void recordingOnlyNodeRunsNoBootstrapAndNoContributor(Vertx vertx) {
+        String id = "role-no-bootstrap";
+        String packagedId = "role-no-bootstrap-packaged";
+
+        try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
+            own(scenario, id, packagedId);
+            RecordingOnlyFixture code = fixture(scenario);
+
+            // Given a packaged document that names a state class no loader can supply, and a code definition that
+            // the node's application contributes
+            WorkflowDefinitionParserProbe parserProbe = new WorkflowDefinitionParserProbe();
+            String unloadable = "dev.vertique.recordingonly.packaged.Unloadable";
+            byte[] packagedDocument = new String(document(packagedId), StandardCharsets.UTF_8)
+                    .replace(OrderDocState.class.getName(), unloadable)
+                    .getBytes(StandardCharsets.UTF_8);
+            Packaged packaged = new Packaged(
+                    () -> List.of(new DefinitionResource(
+                            packagedDocument, DocumentFormat.YAML, source(packagedId, LOADED_AT))),
+                    parserProbe);
+
+            // When a recording-only node starts with them
+            Nodes nodes = new Nodes(vertx, scenario);
+            Running recording = nodes.recordingNode(packaged, code, code.definition(id, false));
+
+            // Then startup succeeds, although an executor node would refuse the document
+            assertThat(recording.failure()).isNull();
+
+            // And no document was parsed and no class of the document was requested
+            assertThat(parserProbe.calls()).isZero();
+            assertThat(recording.probe().requestedWithPrefix("dev.vertique.recordingonly."))
+                    .isEmpty();
+
+            // And no code definition was registered and nothing was written
+            assertThat(recording.graph().workflowRegistry().codeDefinitions()).isEmpty();
+            assertThat(definitionWrites(recording.sql())).isEmpty();
+            assertThat(scenario.rowCount(id)).isZero();
+            assertThat(scenario.rowCount(packagedId)).isZero();
         }
     }
 
@@ -595,12 +641,12 @@ public class RecordingOnlyNodeIT {
 
         /** An executor node (the default role) with the schema module, which deploys the given definitions. */
         Running executorNode(RecordingOnlyFixture code, WorkflowDefinition<?, ?>... definitions) {
-            return start(new JsonObject(), true, true, code, definitions);
+            return start(new JsonObject(), true, true, Packaged.none(), code, definitions);
         }
 
         /** An executor node without the schema module; it is expected to refuse to start. */
         Running executorNodeWithoutSchemaModule(RecordingOnlyFixture code, WorkflowDefinition<?, ?>... definitions) {
-            return start(new JsonObject(), false, false, code, definitions);
+            return start(new JsonObject(), false, false, Packaged.none(), code, definitions);
         }
 
         /** A recording-only node with the schema module, which deploys no definition. */
@@ -610,18 +656,24 @@ public class RecordingOnlyNodeIT {
 
         /** A recording-only node, with or without the schema module, which deploys no definition. */
         Running recordingNode(NodeOption option) {
-            return start(recordingOnly(null), option == NodeOption.WITH_SCHEMA_MODULE, true, null);
+            return start(recordingOnly(null), option == NodeOption.WITH_SCHEMA_MODULE, true, Packaged.none(), null);
+        }
+
+        /** A recording-only node that ships the packaged documents and contributes the given code definitions. */
+        Running recordingNode(Packaged packaged, RecordingOnlyFixture code, WorkflowDefinition<?, ?>... definitions) {
+            return start(recordingOnly(null), true, true, packaged, code, definitions);
         }
 
         /** A recording-only node with the schema module and the given bound on the size of a payload. */
         Running recordingNode(int maxPayloadBytes) {
-            return start(recordingOnly(maxPayloadBytes), true, true, null);
+            return start(recordingOnly(maxPayloadBytes), true, true, Packaged.none(), null);
         }
 
         private Running start(
                 JsonObject config,
                 boolean schemaModule,
                 boolean mustStart,
+                Packaged packaged,
                 RecordingOnlyFixture code,
                 WorkflowDefinition<?, ?>... definitions) {
             WorkflowDefinitionSqlObserver sql = new WorkflowDefinitionSqlObserver();
@@ -631,9 +683,23 @@ public class RecordingOnlyNodeIT {
             List<WorkflowTypeCatalogEntry> catalog = code == null ? List.of() : code.catalog();
             Function<Pool, AppComponent> graph = pool -> schemaModule
                     ? RecordingOnlyGraph.withSchemaModule(
-                            vertx, sql.observe(pool), config, RecordingOnlyNodeIT.class, deployed, catalog, cache)
+                            vertx,
+                            sql.observe(pool),
+                            config,
+                            RecordingOnlyNodeIT.class,
+                            deployed,
+                            catalog,
+                            cache,
+                            packaged)
                     : RecordingOnlyGraph.withoutSchemaModule(
-                            vertx, sql.observe(pool), config, RecordingOnlyNodeIT.class, deployed, catalog, cache);
+                            vertx,
+                            sql.observe(pool),
+                            config,
+                            RecordingOnlyNodeIT.class,
+                            deployed,
+                            catalog,
+                            cache,
+                            packaged);
             Boot boot = probe.during(() -> mustStart ? scenario.nodeOf(graph) : scenario.attemptOf(graph));
             return new Running(boot, (RecordingOnlyGraph.Node) boot.app(), sql, cache, probe);
         }
