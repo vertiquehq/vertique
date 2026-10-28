@@ -21,7 +21,8 @@ import dev.vertique.core.json.VertiqueJson;
  *
  * <p>The reading mapper is a copy of the process codec's mapper, so the configured profile's read limits, parser
  * leniency and modules apply to what is read. The copy is derived at use time and rebuilt when the process mapper is
- * swapped; it is never captured in a static initializer.
+ * swapped; it is never captured in a static initializer. The process mapper must be fully configured before the
+ * first read: a copy is not refreshed when the same mapper instance is reconfigured afterwards.
  */
 final class ExactJson {
 
