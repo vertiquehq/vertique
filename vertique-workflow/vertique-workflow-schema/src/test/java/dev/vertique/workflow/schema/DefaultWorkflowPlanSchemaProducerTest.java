@@ -72,6 +72,49 @@ class DefaultWorkflowPlanSchemaProducerTest {
                 .containsExactly("reason");
     }
 
+    @Test
+    @DisplayName("a plan with a void start type gets the explicit no-payload schema")
+    void voidStartTypeGetsTheNoPayloadSchema() {
+        // Given: a registered definition whose start type is void
+        PayloadSchemaCache cache = new PayloadSchemaCache();
+        DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
+        registry.register(new WorkflowDefinition<State, Definitions.Primary>() {
+            @Override
+            public Class<Definitions.Primary> contract() {
+                return Definitions.Primary.class;
+            }
+
+            @Override
+            public Class<State> stateType() {
+                return State.class;
+            }
+
+            @Override
+            public String definitionId() {
+                return "void-start";
+            }
+
+            @Override
+            public long definitionVersion() {
+                return 1L;
+            }
+
+            @Override
+            public void define(WorkflowBuilder<State> wf) {
+                wf.init(Void.class, start -> new State("none"))
+                        .initialStep("done")
+                        .complete("done");
+            }
+        });
+        RuntimeWorkflow plan = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "void-start", 1L));
+
+        // When: the start schema is produced
+        JsonObject start = new DefaultWorkflowPlanSchemaProducer(cache).startSchema(plan);
+
+        // Then: it is the schema that admits no payload, not a null that stands for a row without a schema
+        assertThat(start).isEqualTo(new JsonObject().put("type", "null"));
+    }
+
     private static WorkflowDefinition<State, Definitions.Primary> orderReview() {
         return new WorkflowDefinition<>() {
             @Override

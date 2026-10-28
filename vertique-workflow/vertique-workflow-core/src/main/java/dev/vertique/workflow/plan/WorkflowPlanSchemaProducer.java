@@ -24,7 +24,8 @@ public interface WorkflowPlanSchemaProducer {
      * Returns the JSON Schema of the start payload of the plan, as payload validation uses it.
      *
      * @param plan the runtime workflow whose start payload is described
-     * @return the schema document, or {@code null} when the plan declares no start payload
+     * @return the schema document; for a plan whose start type is void, the schema {@code {"type":"null"}}, which
+     *     admits no payload; {@code null} only when the plan has no start payload type to describe
      */
     JsonObject startSchema(RuntimeWorkflow plan);
 

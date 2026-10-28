@@ -59,6 +59,9 @@ final class PublicationNodeGraph {
     interface Node extends AppComponent {
 
         PlanCache planCache();
+
+        /** Deploys and undeploys the verticles of the graph by name, among them the executor. */
+        dev.vertique.deploy.VerticleDeployer verticleDeployer();
     }
 
     @Singleton

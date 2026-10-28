@@ -98,6 +98,7 @@ class DeprecatedVersionAdmissionTest {
     private static final String PLAN_HASH_V1 = "1".repeat(64);
     private static final String PLAN_HASH_V2 = "2".repeat(64);
     private static final String PLAN_HASH_V3 = "3".repeat(64);
+    private static final String PLAN_HASH_V4 = "4".repeat(64);
 
     /** Runs the given task on a duplicated Vert.x context. */
     private static void runOnDuplicated(Vertx vertx, Handler<Void> task) {
@@ -187,7 +188,8 @@ class DeprecatedVersionAdmissionTest {
             WorkflowInstance pinnedToDeprecated,
             WorkflowInstance onVersion1,
             AtomicInteger migrationsToVersion2,
-            AtomicInteger migrationsToVersion3) {}
+            AtomicInteger migrationsToVersion3,
+            AtomicInteger migrationsToVersion4) {}
 
     /**
      * Assembles an engine whose definition rows hold version 1 as current, version 2 as deprecated and
@@ -209,17 +211,22 @@ class DeprecatedVersionAdmissionTest {
         RuntimeWorkflow version1 = runtimeWorkflow(1, PLAN_HASH_V1);
         RuntimeWorkflow version2 = runtimeWorkflow(2, PLAN_HASH_V2);
         RuntimeWorkflow version3 = runtimeWorkflow(3, PLAN_HASH_V3);
+        RuntimeWorkflow version4 = runtimeWorkflow(4, PLAN_HASH_V4);
         when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1)))
                 .thenReturn(version1);
         when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2)))
                 .thenReturn(version2);
         when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 3)))
                 .thenReturn(version3);
+        // Version 4 is retired, although a node may still hold its plan
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 4)))
+                .thenReturn(version4);
         // The rows decide: version 1 is current, version 2 is deprecated and version 3 is available
         InMemoryWorkflowDefinitionRegistryStore definitions = new InMemoryWorkflowDefinitionRegistryStore()
                 .seedCode(version1)
                 .seedCode(version2, DefinitionStatus.DEPRECATED)
-                .seedCode(version3, DefinitionStatus.AVAILABLE);
+                .seedCode(version3, DefinitionStatus.AVAILABLE)
+                .seedCode(version4, DefinitionStatus.RETIRED);
 
         WorkflowInstance pinnedToDeprecated = waitingInstance(2, PLAN_HASH_V2);
         WorkflowInstance onVersion1 = waitingInstance(1, PLAN_HASH_V1);
@@ -245,6 +252,8 @@ class DeprecatedVersionAdmissionTest {
 
         AtomicInteger toVersion2 = new AtomicInteger();
         AtomicInteger toVersion3 = new AtomicInteger();
+        AtomicInteger toVersion4 = new AtomicInteger();
+        WorkflowMigrationHandler<Object, Object> handlerToVersion4 = migrationFromV1(4, toVersion4);
         WorkflowMigrationHandler<Object, Object> handlerToVersion2 = migrationFromV1(2, toVersion2);
         WorkflowMigrationHandler<Object, Object> handlerToVersion3 = migrationFromV1(3, toVersion3);
         WorkflowMigrationRegistry migrations = new WorkflowMigrationRegistry() {
@@ -258,12 +267,13 @@ class DeprecatedVersionAdmissionTest {
                 if (!definitionId.equals(DEFINITION_ID) || sourceVersion != 1) return Optional.empty();
                 if (targetVersion == 2) return Optional.of(handlerToVersion2);
                 if (targetVersion == 3) return Optional.of(handlerToVersion3);
+                if (targetVersion == 4) return Optional.of(handlerToVersion4);
                 return Optional.empty();
             }
 
             @Override
             public Collection<WorkflowMigrationHandler<?, ?>> all() {
-                return List.of(handlerToVersion2, handlerToVersion3);
+                return List.of(handlerToVersion2, handlerToVersion3, handlerToVersion4);
             }
         };
 
@@ -288,7 +298,16 @@ class DeprecatedVersionAdmissionTest {
                 .definitionStore(definitions)
                 .build());
         return new Harness(
-                engine, instances, dedup, history, tx, pinnedToDeprecated, onVersion1, toVersion2, toVersion3);
+                engine,
+                instances,
+                dedup,
+                history,
+                tx,
+                pinnedToDeprecated,
+                onVersion1,
+                toVersion2,
+                toVersion3,
+                toVersion4);
     }
 
     /** Resolves to the failure of the given future, or to {@code null} when it succeeded. */
@@ -401,6 +420,33 @@ class DeprecatedVersionAdmissionTest {
                         ctx.completeNow();
                     }));
         });
+    }
+
+    @Test
+    @DisplayName("a migration onto a retired version whose plan is still held is rejected")
+    void rejectsMigrationOntoARetiredVersion(Vertx vertx, VertxTestContext ctx) {
+        // Given version 4 is retired in the rows, its plan is still resolvable on the node and a handler exists
+        Harness harness = harness();
+
+        runOnDuplicated(
+                vertx,
+                v ->
+                        // When an instance on version 1 is migrated to version 4, which is recorded and then run
+                        harness.engine()
+                                .migrate(harness.onVersion1().id(), 4L, harness.tx())
+                                .compose(recorded -> RecordedRecoverySegments.migrate(
+                                        harness.engine(), harness.onVersion1(), 4L, harness.tx()))
+                                .onComplete(outcome -> ctx.verify(() -> {
+                                    if (outcome.failed()) {
+                                        ctx.failNow(outcome.cause());
+                                        return;
+                                    }
+                                    // Then the migration is rejected, no handler ran and the instance stays pinned
+                                    assertThat(outcome.result()).isEqualTo(WorkflowSegments.Outcome.SETTLED_REJECTED);
+                                    assertThat(harness.migrationsToVersion4()).hasValue(0);
+                                    verify(harness.instances(), never()).migratePinAndState(any(), anyLong(), any());
+                                    ctx.completeNow();
+                                })));
     }
 
     @Test

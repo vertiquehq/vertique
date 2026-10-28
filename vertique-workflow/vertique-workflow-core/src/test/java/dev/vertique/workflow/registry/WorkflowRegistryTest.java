@@ -1215,6 +1215,40 @@ class WorkflowRegistryTest {
     }
 
     @Test
+    @DisplayName("a scope plan is compared with the state type name a default row stores, not with a registration")
+    void scopePlanIsComparedWithTheStoredDefaultStateTypeName() {
+        // Given: a registry with the comparison bound that has indexed StateA and StateAPlus through two built plans
+        // and registered nothing
+        DefaultWorkflowRegistry withComparison = new DefaultWorkflowRegistry(
+                null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
+        withComparison.build("acme", stateA("f-r", 1L), Map.of());
+        RuntimeWorkflow removed = withComparison.build(
+                "acme", stated(StateRemoved.class, ScopeContractC.class, "f-r", 2L, StateRemoved::new), Map.of());
+        RuntimeWorkflow extended = withComparison.build(
+                "acme",
+                stated(StateAPlus.class, ScopeContractC.class, "f-r", 3L, id -> new StateAPlus(id, null)),
+                Map.of());
+        String contract = removed.contractName();
+        String stateA = StateA.class.getName();
+
+        // When: the plans are compared with a stored default state type of StateA, an unknown name and another contract
+        var refused = withComparison.compareWithDefault(removed, contract, stateA);
+        var accepted = withComparison.compareWithDefault(extended, contract, stateA);
+        var unresolved = withComparison.compareWithDefault(removed, contract, "no.such.State");
+        var otherContract = withComparison.compareWithDefault(removed, "other-contract", stateA);
+
+        // Then: only the state type that does not extend StateA is refused
+        assertThat(refused.accepted()).isFalse();
+        assertThat(refused.defaultStateTypeName()).isEqualTo(stateA);
+        assertThat(accepted.accepted()).isTrue();
+
+        // and: a name no class resolves cannot be compared and is refused, and a default of another contract is no
+        // constraint
+        assertThat(unresolved.accepted()).isFalse();
+        assertThat(otherContract.accepted()).isTrue();
+    }
+
+    @Test
     @DisplayName("a plan built for a scope constrains no default registration, and an id the default lacks is accepted")
     void builtScopePlanConstrainsNoDefaultRegistration() {
         // Given: a registry with the comparison bound and the plan of acme's StateRemoved built before any default

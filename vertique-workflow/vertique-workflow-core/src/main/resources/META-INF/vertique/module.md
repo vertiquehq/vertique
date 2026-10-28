@@ -469,14 +469,15 @@ started, pinned and resolved), `DEPRECATED` (new starts and migrations are refus
 `AVAILABLE` at once; no store or lifecycle operation chooses one of them, and `complete(claim)` changes only the claimed row.
 Which version starts by default is decided separately from the status. The transitions are `CANDIDATE` to `PUBLISHING` (claim) to
 `AVAILABLE` (complete), or back to `CANDIDATE` (release, or the reset of a stale claim); `CANDIDATE` to `RETIRED`;
-`AVAILABLE` to `DEPRECATED`; `DEPRECATED` to `RETIRED` after the cooling window and with no live pinned instance; and
+`AVAILABLE` to `DEPRECATED`; `DEPRECATED` to `RETIRED` as soon as no live instance is pinned to it (there is no cooling
+window); and
 `DEPRECATED` or `RETIRED` back to `AVAILABLE` (reinstate). Every other pair is refused with `INVALID_TRANSITION`, and a
 repeat of a completed transition (publishing an available version, deprecating a deprecated one, retiring a retired one) is
 accepted without a change.
 A deprecated version is a status of its row: the engine refuses a new start or a migration into it from the status it reads in the transaction that needs it, pinned resolution still serves it, and an activation record, not the registry, selects the current version. The store SPI adds the
 conditional `transition(key, from, to)` operation and the lifecycle adds `deprecate(DefinitionKey)`.
-The store adds `retire(DefinitionKey)` and the lifecycle adds `retire(DefinitionKey)` (CANDIDATE, or DEPRECATED after the
-cooling window with no live pinned instance); `WorkflowInstanceQueryService.countNonTerminal(DefinitionKey)` (and the default-scope
+The store adds `retire(DefinitionKey)` and the lifecycle adds `retire(DefinitionKey)` (CANDIDATE, or DEPRECATED with no live
+pinned instance); `WorkflowInstanceQueryService.countNonTerminal(DefinitionKey)` (and the default-scope
 `countNonTerminal(definitionId, version)`) is an
 optional informational count whose default fails with `UnsupportedOperationException`. `TransactionalWorkflowOperations`
 implementations backed by the Vert.x SQL engine receive a `SqlConnection` with a pending Vert.x transaction. A lifecycle
@@ -487,8 +488,8 @@ AVAILABLE)` or `transition(key, DEPRECATED, AVAILABLE)`.
 The store also adds `upsertCode` (startup record of deployed code as `AVAILABLE`: rehash only while no live instance is pinned to
 that exact version, decided inside the store transaction) and `upsertDocument`; both take an `activateDefault` flag (the forms
 without it pass `false`) that writes the default scope's activation record in the same transaction as the first insert (see
-Activation records), and `resetStalePublishing` (claims older than twice the
-staleness bound return to CANDIDATE).
+Activation records), and `resetStalePublishing` (claims older than
+`publicationClaimTimeoutSeconds` return to CANDIDATE).
 `ScopeKeyRules` (`dev.vertique.workflow.types`) is an internal validator shared by the workflow modules so every entry point applies one scope key rule; it is not an application contract.
 Rows of different scopes and versions of one id coexist and do not conflict: a claim, completion or static reconciliation
 looks only at its own row.
@@ -531,7 +532,7 @@ roll-forward only: activate the previous version again and retire the newer one 
 **Default-current guard.** While the default scope's record of an id names a version, `deprecate` and `retire` of that
 version fail with `INVALID_TRANSITION` naming the key; the check runs in the same store transaction as the status change.
 Activate another version in the default scope, or call `deactivateDefault(id)`, and the version can be deprecated and
-retired. Decommissioning an id is therefore `deactivateDefault`, `deprecate`, wait out the cooling window, `retire`. A
+retired. Decommissioning an id is therefore `deactivateDefault`, `deprecate`, wait until no instance is pinned to the version, `retire`. A
 version that only a non-default scope's record names can be deprecated, and that scope's starts then fail as deprecated
 until it is activated elsewhere or follows. `reinstate` returns a version to `AVAILABLE` and never makes it current.
 `WorkflowCoreModule` declares optional

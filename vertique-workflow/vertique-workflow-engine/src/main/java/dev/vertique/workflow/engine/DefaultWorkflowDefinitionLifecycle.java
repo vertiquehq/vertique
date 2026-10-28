@@ -4,6 +4,7 @@
 package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -27,6 +28,7 @@ import jakarta.inject.Singleton;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 
@@ -196,13 +198,14 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             return Future.succeededFuture();
         }
         PersistedDefinitionLoader loader = DefinitionPublication.loaderFor(loaders, record);
-        return store.findDocument(key)
-                .compose(source -> work(() -> {
-                    var text =
-                            source.orElseThrow(() -> failure(Reason.LOADER_MISSING, key, "stored source is missing"));
-                    buildStored(loader, record, text);
-                    return (Void) null;
-                }));
+        return DefinitionPublication.defaultCurrentRow(store, key.definitionId())
+                .compose(defaultRow -> store.findDocument(key)
+                        .compose(source -> work(() -> {
+                            var text = source.orElseThrow(
+                                    () -> failure(Reason.LOADER_MISSING, key, "stored source is missing"));
+                            buildStored(loader, record, text, defaultRow);
+                            return (Void) null;
+                        })));
     }
 
     /**
@@ -210,17 +213,27 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
      * names the row was recorded with, which applies every plan rule and validator.
      */
     private WorkflowDefinition<?, ?> buildStored(
-            PersistedDefinitionLoader loader, WorkflowDefinitionRecord record, WorkflowDefinitionDocument text) {
+            PersistedDefinitionLoader loader,
+            WorkflowDefinitionRecord record,
+            WorkflowDefinitionDocument text,
+            Optional<WorkflowDefinitionRecord> defaultRow) {
         DefinitionKey key = record.key();
         requireBoundNamesResolve(record);
-        WorkflowDefinition<?, ?> definition = loader.load(record, text);
+        WorkflowDefinition<?, ?> definition;
+        try {
+            definition = loader.load(record, text);
+        } catch (WorkflowDefinitionException refusal) {
+            throw refusal;
+        } catch (RuntimeException failure) {
+            throw DefinitionPublication.unbuildable(key, failure);
+        }
         String hash = DefinitionPublication.planHash(loader, definition, record);
         if (!definition.definitionId().equals(key.definitionId())
                 || definition.definitionVersion() != key.definitionVersion()
                 || !record.planHash().equals(hash))
             throw failure(
                     Reason.DRIFT, key, "stored hash " + record.planHash() + " differs from compiled hash " + hash);
-        DefinitionPublication.buildPublished(registry.get(), key, definition, record.nameBinding());
+        DefinitionPublication.buildPublished(registry.get(), key, definition, record.nameBinding(), defaultRow);
         return definition;
     }
 
@@ -329,12 +342,13 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                                 attempt.loader = DefinitionPublication.loaderFor(loaders, attempt.record);
                                 return store.findDocument(key);
                             })
-                            .compose(document -> work(() -> {
-                                var source = document.orElseThrow(
-                                        () -> failure(Reason.LOADER_MISSING, key, "stored source is missing"));
-                                buildStored(attempt.loader, attempt.record, source);
-                                return (Void) null;
-                            }))
+                            .compose(document -> DefinitionPublication.defaultCurrentRow(store, key.definitionId())
+                                    .compose(defaultRow -> work(() -> {
+                                        var source = document.orElseThrow(
+                                                () -> failure(Reason.LOADER_MISSING, key, "stored source is missing"));
+                                        buildStored(attempt.loader, attempt.record, source, defaultRow);
+                                        return (Void) null;
+                                    })))
                             .compose(ignored -> complete(attempt));
                 })
                 .recover(original -> recover(attempt, original));

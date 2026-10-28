@@ -66,4 +66,56 @@ class DefinitionPlanLoaderTest {
         assertThat(store.reads()).isEqualTo(readsBefore);
         assertThat(probe.builds()).isEqualTo(1);
     }
+
+    @Test
+    @DisplayName("a load that never ends fails with a timeout that is not cached")
+    void loadThatNeverEndsFailsWithATimeoutThatIsNotCached() throws Exception {
+        // Given a store whose first row read never ends, and a cache that allows a load 200 ms
+        CountingDefinitionStore store = new CountingDefinitionStore().with(KEY).hangOnce();
+        BuildProbe probe = new BuildProbe();
+        PlanCache cache = PlanStubs.planCache(store, probe, new DefaultWorkflowRegistry(), vertx, 10, 200);
+
+        // When the key is loaded twice
+        Throwable first = failureOf(cache.load(KEY));
+        RuntimeWorkflow second = await(cache.load(KEY));
+
+        // Then the first load timed out and the second one built the plan
+        assertThat(first).isInstanceOf(java.util.concurrent.TimeoutException.class);
+        assertThat(second.plan().definitionId()).isEqualTo(KEY.definitionId());
+        assertThat(probe.builds()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a document that does not compile is remembered and a failure of an application validator is not")
+    void compileFailureIsRememberedAndValidatorFailureIsNot() throws Exception {
+        // Given a document whose first compile fails, and, for another key, a validator that fails once
+        DefinitionKey validated = new DefinitionKey("acme", "loader-validated", 1);
+        CountingDefinitionStore store = new CountingDefinitionStore().with(KEY).with(validated);
+        BuildProbe probe = new BuildProbe().failLoadOnce(new IllegalStateException("cannot compile"));
+        java.util.concurrent.atomic.AtomicInteger validations = new java.util.concurrent.atomic.AtomicInteger();
+        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry(null, java.util.Set.of(candidate -> {
+            if (validations.incrementAndGet() == 1) throw new IllegalStateException("validator failed");
+        }));
+        PlanCache cache = PlanStubs.planCache(store, probe, registry, vertx, 10);
+
+        // When the uncompilable document is loaded twice
+        Throwable compile = failureOf(cache.load(KEY));
+        int readsAfterFirst = store.reads();
+        Throwable remembered = failureOf(cache.load(KEY));
+
+        // Then it failed as a definition refusal and the second load answered from the cache
+        assertThat(compile).isInstanceOf(dev.vertique.workflow.exception.WorkflowDefinitionException.class);
+        assertThat(remembered).isInstanceOf(dev.vertique.workflow.exception.WorkflowDefinitionException.class);
+        assertThat(store.reads()).isEqualTo(readsAfterFirst);
+
+        // When the document whose validator fails once is loaded twice
+        Throwable validator = failureOf(cache.load(validated));
+        RuntimeWorkflow built = await(cache.load(validated));
+
+        // Then the validator's failure was not turned into a definition refusal and was not remembered
+        assertThat(validator)
+                .isInstanceOf(IllegalStateException.class)
+                .isNotInstanceOf(dev.vertique.workflow.exception.WorkflowDefinitionException.class);
+        assertThat(built.plan().definitionId()).isEqualTo(validated.definitionId());
+    }
 }

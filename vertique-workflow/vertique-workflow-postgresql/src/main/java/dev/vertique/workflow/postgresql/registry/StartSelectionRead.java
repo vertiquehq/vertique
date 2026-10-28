@@ -22,7 +22,8 @@ import java.util.List;
  * id in the start scope and the default scope, and the activation records of the id in the same two scopes.
  *
  * <p>The statement is a plain read that runs on the caller's transaction handle. It takes no lock, sets no timeout
- * and reads no document text, provenance or name binding. Under {@code READ COMMITTED} it sees every activation
+ * and reads no document text, provenance or name binding. The signal names and the start schema come back for an
+ * available version only, the one kind a start can choose. Under {@code READ COMMITTED} it sees every activation
  * committed before it runs; under {@code REPEATABLE READ} or {@code SERIALIZABLE} it sees the caller's snapshot.
  * Pin admission, not this read, is the fence for the status of the version a start pins.
  */
@@ -43,8 +44,13 @@ final class StartSelectionRead {
         String scopes =
                 " WHERE definition_id = $2::varchar AND scope_key IN ($1::varchar, '" + WorkflowScopes.DEFAULT + "')";
         this.sql = "SELECT '" + VERSION + "' AS row_kind, scope_key, definition_id, definition_version, kind,"
-                + " contract_name, state_type_name, plan_hash, status, failure_reason, signal_names_json,"
-                + " start_schema_json, NULL::varchar AS target_scope_key, NULL::timestamptz AS activated_at FROM "
+                + " contract_name, state_type_name, plan_hash, status, failure_reason,"
+                // only an available version can be chosen, so the others do not ship their schemas on every start
+                + " CASE WHEN status = '" + DefinitionStatus.AVAILABLE.name()
+                + "' THEN signal_names_json END AS signal_names_json,"
+                + " CASE WHEN status = '" + DefinitionStatus.AVAILABLE.name()
+                + "' THEN start_schema_json END AS start_schema_json,"
+                + " NULL::varchar AS target_scope_key, NULL::timestamptz AS activated_at FROM "
                 + definitions + scopes
                 + " UNION ALL SELECT '" + ACTIVATION + "', scope_key, definition_id, definition_version,"
                 + " NULL::varchar, NULL::varchar, NULL::varchar, NULL::varchar, NULL::varchar, NULL::varchar,"

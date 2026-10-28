@@ -339,6 +339,15 @@ final class MigrationExecutor {
                                 new dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException(
                                         id, "source instance is in terminal status: " + inst.status()));
                     }
+                    if (targetScope != null
+                            && !targetScope.equals(inst.definitionScopeKey())
+                            && !targetScope.equals(inst.scopeKey())
+                            && !WorkflowScopes.DEFAULT.equals(targetScope)) {
+                        // a scope the instance can never migrate into: no row is stored and no plan of it is built
+                        return Future.<Void>failedFuture(
+                                new dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException(
+                                        id, "target scope not admitted"));
+                    }
                     return commands.unsettledTargets(id, "MIGRATION", tx).compose(pending -> {
                         if (pending.isEmpty()) {
                             return commands.recordMigration(id, targetVersion, targetScope, tx)
@@ -529,7 +538,7 @@ final class MigrationExecutor {
 
     /**
      * The checks that need the plans and the handler, and the migration itself: the target must be visible to the
-     * instance, admitted, not deprecated, of the source's contract and, when its state class differs, an extension of
+     * instance, admitted, available (not deprecated or retired), of the source's contract and, when its state class differs, an extension of
      * the source's; a handler must exist and name the definitions' state types; the source must be neither ended nor
      * failed and must hold no active branch. Then the handler is invoked, the instance is re-pinned through pin
      * admission and driven from the resume step in the target plan.
@@ -551,22 +560,29 @@ final class MigrationExecutor {
         if (failing.apply(targetKey).isPresent()) {
             return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_NOT_ADMITTED));
         }
-        // A deprecated target admits no new work; refuse before any handler call or write.
-        return deprecated(targetKey, tx)
-                .compose(deprecated -> deprecated
+        // A target that is not available admits no new work, whatever plan this node still holds for it; refuse before
+        // any handler call or write.
+        return targetStatus(targetKey, tx)
+                .compose(status -> status == DefinitionStatus.DEPRECATED
                         ? Future.<Void>failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_DEPRECATED))
-                        : migrateToAdmittedTarget(inst, sourceRw, targetRw, targetKey, tx));
+                        : status != null && status != DefinitionStatus.AVAILABLE
+                                ? Future.<Void>failedFuture(
+                                        new Refused(CommandErrors.MigrationRejection.TARGET_NOT_ADMITTED))
+                                : migrateToAdmittedTarget(inst, sourceRw, targetRw, targetKey, tx));
     }
 
-    /** Whether the stored row of the target is deprecated, read on the migration's transaction. */
-    private Future<Boolean> deprecated(DefinitionKey target, SqlClient tx) {
+    /** The status of the stored row of the target, read on the migration's transaction; {@code null} when none. */
+    private Future<DefinitionStatus> targetStatus(DefinitionKey target, SqlClient tx) {
         if (definitionReads == null) {
-            return Future.succeededFuture(false);
+            return Future.succeededFuture(null);
         }
         return definitionReads
                 .selectionRead(target.scopeKey(), target.definitionId(), tx)
                 .map(read -> read.versions().stream()
-                        .anyMatch(row -> row.key().equals(target) && row.status() == DefinitionStatus.DEPRECATED));
+                        .filter(row -> row.key().equals(target))
+                        .map(row -> row.status())
+                        .findFirst()
+                        .orElse(null));
     }
 
     private Future<Void> migrateToAdmittedTarget(

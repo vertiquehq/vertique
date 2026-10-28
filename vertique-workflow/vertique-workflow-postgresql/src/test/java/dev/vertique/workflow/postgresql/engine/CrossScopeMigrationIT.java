@@ -368,6 +368,16 @@ public class CrossScopeMigrationIT {
                 .next();
     }
 
+    private static long migrationCommands(Harness harness, WorkflowInstanceId id) throws Exception {
+        return await(harness.pool()
+                        .preparedQuery("SELECT count(*) AS total FROM workflow_commands WHERE workflow_id = $1"
+                                + " AND kind = 'MIGRATION'")
+                        .execute(Tuple.of(id.value())))
+                .iterator()
+                .next()
+                .getLong("total");
+    }
+
     // --- Tests ---
 
     @Test
@@ -455,17 +465,21 @@ public class CrossScopeMigrationIT {
             String defaultHash = harness.planHash(DEFAULT, 1L);
             WorkflowInstanceId id = waitingPinnedTo(harness, DEFAULT, ACME, defaultHash);
 
-            // When: it migrates to the acme definition of contract D, then to the globex definition
+            // When: it migrates to the acme definition of contract D, and a migration to the globex definition is
+            // recorded
             Row otherContract = migrated(harness, id, ACME, 1L);
-            Row foreignScope = migrated(harness, id, GLOBEX, 1L);
+            Throwable foreignScope = failureOf(() -> harness.engine().migrate(id, GLOBEX, 1L));
 
-            // Then: both migrations are rejected, with a reason that names neither scope
+            // Then: the first is rejected by the executor, and the second is refused when it is recorded, with a
+            // reason that names neither scope
             assertThat(otherContract.getString("state")).isEqualTo("REJECTED");
             assertThat(otherContract.getString("last_error")).startsWith("MIGRATION_REJECTED: ");
-            assertThat(foreignScope.getString("state")).isEqualTo("REJECTED");
-            assertThat(foreignScope.getString("last_error"))
-                    .startsWith("MIGRATION_REJECTED: ")
+            assertThat(foreignScope)
+                    .isInstanceOf(dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException.class);
+            assertThat(foreignScope.getMessage())
+                    .contains("target scope not admitted")
                     .doesNotContain(GLOBEX, ACME);
+            assertThat(migrationCommands(harness, id)).isEqualTo(1);
 
             // and: no handler ran and the pin is unchanged
             assertThat(toAcme.contexts).isEmpty();

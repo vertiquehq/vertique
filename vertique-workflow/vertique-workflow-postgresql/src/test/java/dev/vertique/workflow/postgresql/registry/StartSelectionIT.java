@@ -430,6 +430,85 @@ public class StartSelectionIT {
         }
     }
 
+    @Test
+    @DisplayName("the selection read ships the schemas of an available version only")
+    @SuppressWarnings("unchecked")
+    void selectionReadShipsTheSchemasOfAnAvailableVersionOnly(Vertx vertx) {
+        String id = "selection-shipped";
+        DefinitionKey available = new DefinitionKey(DEFAULT, id, 1);
+        DefinitionKey deprecated = new DefinitionKey(DEFAULT, id, 2);
+
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            FailingScopeRowIT.own(database, id);
+
+            // Given an available and a deprecated version, both storing a start schema
+            Node node = Nodes.start(database, vertx, StartSelectionIT.class, Deployment.firstWith(null, false));
+            publish(node, id, 1, 2);
+            await(node.service().deprecate(deprecated));
+            Rows.setStartSchema(database, available, requiringOrderId());
+            Rows.setStartSchema(database, deprecated, requiringOrderId());
+
+            // When the selection read runs
+            var read =
+                    await(((dev.vertique.workflow.engine.spi.TransactionalDefinitionReads<io.vertx.sqlclient.SqlClient>)
+                                    node.graph().definitionRegistryStore())
+                            .selectionRead(DEFAULT, id, database.admin()));
+
+            // Then the available version carries its schemas and the deprecated one only its status
+            var byVersion = read.versions().stream()
+                    .collect(java.util.stream.Collectors.toMap(v -> v.key().definitionVersion(), v -> v));
+            assertThat(byVersion.get(1L).startSchema()).isNotNull();
+            assertThat(byVersion.get(1L).signalNames()).isNotNull();
+            assertThat(byVersion.get(2L).status().name()).isEqualTo("DEPRECATED");
+            assertThat(byVersion.get(2L).startSchema()).isNull();
+            assertThat(byVersion.get(2L).signalNames()).isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("an oversized idempotency key or business key is refused before the selection read")
+    void oversizedKeysAreRefusedBeforeTheSelectionRead(Vertx vertx) {
+        String id = "selection-keys";
+
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            FailingScopeRowIT.own(database, id);
+
+            // Given a published version
+            Node node = Nodes.start(database, vertx, StartSelectionIT.class, Deployment.firstWith(null, false));
+            publish(node, id, 1);
+            Nodes.stopExecutors(node);
+            String longKey = "k".repeat(256);
+
+            // When starts with a 256-character idempotency key and with a 256-character business key are recorded
+            int statementsBefore = node.observer().statements().size();
+            Throwable idempotency = failureOf(node.ops().start(command(id, longKey, 1L)));
+            Throwable business = failureOf(node.ops()
+                    .start(new StartCommand(
+                            id,
+                            SelectionContract.class.getName(),
+                            new PlaceOrderDoc("order"),
+                            "business-key-test",
+                            longKey,
+                            null,
+                            1L,
+                            null,
+                            null)));
+            List<String> reads = selections(node.observer(), statementsBefore);
+
+            // Then both are refused without repeating the key, and no selection read, instance or command was made
+            assertThat(idempotency).isInstanceOfSatisfying(WorkflowInvalidPayloadException.class, refusal -> {
+                assertThat(refusal.getMessage())
+                        .contains("idempotency key", "255")
+                        .doesNotContain(longKey);
+            });
+            assertThat(business).isInstanceOfSatisfying(WorkflowInvalidPayloadException.class, refusal -> {
+                assertThat(refusal.getMessage()).contains("business key", "255").doesNotContain(longKey);
+            });
+            assertThat(reads).isEmpty();
+            assertThat(database.instanceCount(id)).isZero();
+        }
+    }
+
     // --- Nodes ---
 
     /** A running graph with the boot that owns it and the observer of its pool. */

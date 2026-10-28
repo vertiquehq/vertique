@@ -217,7 +217,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         this.peekHeads = "SELECT c.id, c.workflow_id, c.kind, i.definition_scope_key, i.definition_id,"
                 + " i.definition_version, i.plan_hash, i.status IN " + ENDED + " AS instance_ended,"
                 + " CASE WHEN c.kind = 'MIGRATION' THEN (c.target_json->>'version')::bigint END AS migration_version,"
-                + " CASE WHEN c.kind = 'MIGRATION' THEN c.target_json->>'scope' END AS migration_scope FROM " + commands
+                + " CASE WHEN c.kind = 'MIGRATION' THEN c.target_json->>'scope' END AS migration_scope,"
+                + " i.scope_key AS instance_scope_key FROM " + commands
                 + " c JOIN " + instances
                 + " i ON i.id = c.workflow_id WHERE " + eligibility.claimable("c")
                 + " ORDER BY c.available_at, c.id LIMIT $1";
@@ -517,7 +518,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                 row.getString("plan_hash"),
                                 row.getBoolean("instance_ended"),
                                 row.getLong("migration_version"),
-                                row.getString("migration_scope")));
+                                row.getString("migration_scope"),
+                                row.getString("instance_scope_key")));
                     }
                     return heads;
                 })

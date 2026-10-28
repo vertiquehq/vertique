@@ -394,6 +394,28 @@ class WorkflowPayloadSchemasDescribeTest {
     }
 
     @Test
+    @DisplayName("a definition whose stored source does not build is answered as unknown without its cause")
+    void aDefinitionThatDoesNotBuildIsAnsweredAsUnknown() {
+        // Given: a registry whose load fails with a definition refusal that carries a detail
+        DefinitionKey key = new DefinitionKey("acme", "order", 4L);
+        DeferredRegistry registry = DeferredRegistry.failsLater(
+                key, new dev.vertique.workflow.exception.WorkflowDefinitionException("secret-detail of the document"));
+        registry.release();
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+
+        // When / Then: describe and decision complete empty, as for an absent row
+        assertThat(AwaitedSchemas.await(schemas.describe(key))).isEmpty();
+        assertThat(AwaitedSchemas.await(schemas.decision(key, "review", "approve")))
+                .isEmpty();
+
+        // And: validation answers the single definition violation, which does not repeat the cause
+        PayloadValidationResult start = AwaitedSchemas.await(schemas.validateStart(key, null));
+        assertThat(start.violations()).hasSize(1);
+        assertThat(start.violations().get(0).type()).isEqualTo("definition");
+        assertThat(start.violations().toString()).doesNotContain("secret-detail");
+    }
+
+    @Test
     @DisplayName("a load failure other than an absent row fails the returned future")
     void aLoadFailureFailsTheFuture() {
         // Given: a registry whose load fails with a persistence error

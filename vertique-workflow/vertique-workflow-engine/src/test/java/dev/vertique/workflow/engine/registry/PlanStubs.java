@@ -88,6 +88,13 @@ final class PlanStubs {
     static final class BuildProbe implements PersistedDefinitionLoader {
 
         private final AtomicInteger builds = new AtomicInteger();
+        private final AtomicReference<RuntimeException> nextLoadFailure = new AtomicReference<>();
+
+        /** Makes the next compile of a document fail with the failure, once. */
+        BuildProbe failLoadOnce(RuntimeException failure) {
+            nextLoadFailure.set(failure);
+            return this;
+        }
 
         int builds() {
             return builds.get();
@@ -105,6 +112,8 @@ final class PlanStubs {
 
         @Override
         public WorkflowDefinition<?, ?> load(WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+            RuntimeException failure = nextLoadFailure.getAndSet(null);
+            if (failure != null) throw failure;
             builds.incrementAndGet();
             return new StubDefinition(record.key());
         }
@@ -122,6 +131,8 @@ final class PlanStubs {
         private final AtomicInteger finds = new AtomicInteger();
         private final AtomicInteger documentReads = new AtomicInteger();
         private final AtomicReference<Throwable> nextFailure = new AtomicReference<>();
+        private final java.util.concurrent.atomic.AtomicBoolean hangNext =
+                new java.util.concurrent.atomic.AtomicBoolean();
 
         /** Stores an available document row of the key, as a published scope document would be. */
         CountingDefinitionStore with(DefinitionKey key) {
@@ -150,6 +161,12 @@ final class PlanStubs {
             return this;
         }
 
+        /** Makes the next read of a row never end, once. */
+        CountingDefinitionStore hangOnce() {
+            hangNext.set(true);
+            return this;
+        }
+
         /** The record reads answered or failed so far. */
         int finds() {
             return finds.get();
@@ -168,6 +185,9 @@ final class PlanStubs {
         @Override
         public Future<Optional<WorkflowDefinitionRecord>> find(DefinitionKey key) {
             finds.incrementAndGet();
+            if (hangNext.getAndSet(false))
+                return io.vertx.core.Promise.<Optional<WorkflowDefinitionRecord>>promise()
+                        .future();
             Throwable failure = nextFailure.getAndSet(null);
             if (failure != null) return Future.failedFuture(failure);
             return Future.succeededFuture(Optional.ofNullable(rows.get(key)));
@@ -196,6 +216,18 @@ final class PlanStubs {
             long maxEntries) {
         DefinitionPlanLoader loader = new DefinitionPlanLoader(store, Set.of(probe), registry, vertx, Optional.empty());
         return new PlanCache(loader, maxEntries, Set.of());
+    }
+
+    /** Like {@link #planCache} with a load that may take {@code loadTimeoutMs} at most. */
+    static PlanCache planCache(
+            CountingDefinitionStore store,
+            BuildProbe probe,
+            DefaultWorkflowRegistry registry,
+            Vertx vertx,
+            long maxEntries,
+            long loadTimeoutMs) {
+        DefinitionPlanLoader loader = new DefinitionPlanLoader(store, Set.of(probe), registry, vertx, Optional.empty());
+        return new PlanCache(loader, maxEntries, Set.of(), loadTimeoutMs);
     }
 
     /** Waits for the future on the calling thread and returns its value. */

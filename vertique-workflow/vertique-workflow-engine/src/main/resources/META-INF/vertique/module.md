@@ -253,14 +253,17 @@ segment of its own, so a caller that needs the effect awaits the probe (`executi
   that is called while another retry of the instance is still pending, deferred or claimed succeeds and records nothing. A deterministic failure or a step-limit overrun of the drive fails the command and
   leaves the instance `FAILED`, like a start.
 - `migrate` records a `MIGRATION` command holding the target version and, when named, the target scope. It is refused when the
-  instance has ended (`WorkflowMigrationIllegalStateException` naming the status) or when a migration to another target is still
+  instance has ended (`WorkflowMigrationIllegalStateException` naming the status), when the named target scope is none of the
+  instance's definition scope, its start scope and the default scope (`WorkflowMigrationIllegalStateException`, "target scope not
+  admitted"; nothing is stored and no plan of that scope is built) or when a migration to another target is still
   pending, deferred or claimed (the same exception); a repeat of the pending migration succeeds and records nothing. It is refused, too,
   with `UnsupportedOperationException` when no
   `WorkflowMigrationRegistry` is bound. Before it claims the command the executor makes the source and the target plan resident; a
   node that holds either plan not defers the command (`DEFERRED`, no attempt spent) for a node that does. In the segment, an instance
   pinned to another plan than the one made resident releases the claim, and the rest runs under a savepoint: a failed instance, an
   instance with active branches, a target outside the instance's start and default scopes or marked failing, a target of another
-  contract or with an incompatible state class, a deprecated target, a missing handler, a handler whose state types are not the state
+  contract or with an incompatible state class, a target whose row is not `AVAILABLE` (deprecated or retired, whatever plan this node still
+  holds), a missing handler, a handler whose state types are not the state
   types of the two definitions, a failing handler and a refused pin admission all roll back to the savepoint and settle the command
   `REJECTED` with a reason code `MIGRATION_REJECTED` and fixed framework text (never the handler's text, a state value or a class
   name); a run of more than `maxStepsPerSegment` nodes in the handler's re-drive is `REJECTED` with reason `STEP_LIMIT`. The instance,
@@ -554,7 +557,7 @@ public interface AppComponent {
 
 ### Instance Scopes
 
-`WorkflowEngine.start` resolves a null `StartCommand.startScope` to the default scope (`WorkflowScopes.DEFAULT`) and `doCreateInstance` stamps that start scope and the scope of the resolved definition version on the new instance; the engine takes no scope source of its own. The order of a start is: look up the start dedup row of `(start scope, definition id, idempotency key)` (`WorkflowDedupRepository.findStart`); on a first start, one selection read of the database on the caller's transaction (see Activation Records And The Current Version), then the choice of the version, the compare of the command contract with the definition contract and the refusal of a deprecated version from that read, then the subject, payload size, payload depth and start-schema checks, then the execution lock on the new instance, the dedup claim, pin admission and the `PENDING` insert with its `START` command. Everything before the lock runs without a lock. A subject whose type is longer than 64 characters, whose id is longer than 255 or whose version is longer than 64 (the widths of the instance's columns) is refused with `WorkflowInvalidPayloadException` before the lock. A replay that names a version or target scope other than the existing pin fails with `WorkflowIdempotencyConflictException`; the stored fingerprint stays `definitionVersion=N` and is not used for the comparison. `MigrationExecutor` carries both scopes of the instance into the re-pinned snapshot, and resurrection keeps them, so a scope written by another writer stays with the instance. The scopes are information and a filter, not an isolation boundary.
+`WorkflowEngine.start` resolves a null `StartCommand.startScope` to the default scope (`WorkflowScopes.DEFAULT`) and `doCreateInstance` stamps that start scope and the scope of the resolved definition version on the new instance; the engine takes no scope source of its own. The order of a start is: look up the start dedup row of `(start scope, definition id, idempotency key)` (`WorkflowDedupRepository.findStart`); on a first start, one selection read of the database on the caller's transaction (see Activation Records And The Current Version), then the choice of the version, the compare of the command contract with the definition contract and the refusal of a deprecated version from that read, then the subject, payload size, payload depth and start-schema checks, then the execution lock on the new instance, the dedup claim, pin admission and the `PENDING` insert with its `START` command. Everything before the lock runs without a lock. A subject whose type is longer than 64 characters, whose id is longer than 255 or whose version is longer than 64 (the widths of the instance's columns), and an idempotency key or a business key longer than 255 characters, is refused with `WorkflowInvalidPayloadException` before the selection read and the lock; the refusal repeats no value. A replay that names a version or target scope other than the existing pin fails with `WorkflowIdempotencyConflictException`; the stored fingerprint stays `definitionVersion=N` and is not used for the comparison. `MigrationExecutor` carries both scopes of the instance into the re-pinned snapshot, and resurrection keeps them, so a scope written by another writer stays with the instance. The scopes are information and a filter, not an isolation boundary.
 
 `migrate(id, targetScope, targetVersion)` (and the transactional form with a trailing transaction) resolves the target in `targetScope`, which must be the instance's start scope or the default scope. The executor, before it looks up the handler, rejects the migration for a target of another contract, a target whose state class differs from the source's and does not extend it (or any differing state class when no `WorkflowStateCompatibility` is bound), and a target version that this node evaluated as failing (see Failing scope rows), before any write; the reason is fixed text and never names a state class; it then finds the handler by both scopes and re-pins the instance's definition scope to the target. `migrate(id, targetVersion)` keeps meaning the instance's definition scope.
 
@@ -569,7 +572,7 @@ Every event and side-effect correlation the engine records, single-path and bran
 A start without a version runs the version that activation records select. A first start (one with no start dedup row) makes one selection
 read on the caller's transaction connection: `TransactionalDefinitionReads.selectionRead(startScope, definitionId, tx)` returns, in
 one statement, the stored versions of the id in the start scope and the default scope (version, status, kind, contract, state type,
-failure mark, plan hash, signal names and start-payload schema, no document text) and the activation records of both scopes.
+failure mark, plan hash, and for an `AVAILABLE` version only the signal names and start-payload schema, no document text) and the activation records of both scopes.
 The version, the contract ownership and the refusal of a deprecated version are decided from that result; no plan is loaded, no
 registry is consulted and no payload class is read. A replay returns before the read. The engine consults, in this order: the
 start scope's record of the definition id and the default scope's record. No record means the start fails
@@ -630,7 +633,7 @@ The engine orchestrates `WorkflowDefinitionLifecycle.publish` through the requir
 store and format-specific loaders. Parsing remains in the loader module. Publication claims a durable
 candidate, recompiles its stored source, verifies its key and plan hash, builds its plan with the checks of an
 on-demand load (plan graph, signals, callbacks, contributed definition validators, per-plan validators, and for a scope other than the default one the check that its
-state type extends the state type of the default scope's code definition of the id, a default-scope document not counting), and completes the fenced claim only when the build succeeds, which makes the
+state type extends the state type of the default scope's current version of the id, as the stored row of a document or the registered code definition gives it), and completes the fenced claim only when the build succeeds, which makes the
 version `AVAILABLE`. A document that does not build is refused with a `WorkflowDefinitionException` (a failure that is not one is its cause and its message ends the text), the claim is released and the row stays a `CANDIDATE`. Publication registers nothing in memory and
 leaves the plan to the plan cache of each node, which builds it when a command first needs it. Publishing a version that is already available
 succeeds without a change, and publishing does not touch any other version or scope of the id. JVM fatal errors
@@ -675,7 +678,7 @@ per-definition queue, and fails startup (nothing deploys) on any violation:
    a `WorkflowDefinitionLifecycleException` for drift or a missing loader). No row of another scope is read at startup:
    the rows of other scopes are evaluated against the code this node ships when their plan is built on use (see Failing
    scope rows below). A CODE row that conflicts still fails startup.
-4. It resets stale PUBLISHING claims (older than twice the staleness bound, in any scope) to CANDIDATE.
+4. It resets stale PUBLISHING claims (older than `workflow.definitions.publicationClaimTimeoutSeconds`, in any scope) to CANDIDATE.
 5. It seals the registry: `DefaultWorkflowRegistry.register(WorkflowDefinition)` throws `IllegalStateException` naming the
    definition from then on. Registration is a startup operation (code definitions register while
    the registry is constructed); `DefaultWorkflowRegistry.seal()` is internal to this step and applications never call it.
@@ -688,8 +691,8 @@ by the plan cache like any other document.
 **Failing scope rows.** Evaluating a live DOCUMENT row of a scope other than the default one, which happens when the plan
 cache builds its plan for a command, can find that the
 code this node ships conflicts with the stored row. Two conflicts mark the row failing instead of failing the command:
-the row's state class no longer extends the default scope's definition of the same id and contract
-(`STATE_TYPE_NOT_EXTENDED`), and a type name in the row's recorded name binding no longer resolves
+the row's state class no longer extends the default scope's current version of the same id and contract, as the
+stored row of a default scope document or the registered code gives it (`STATE_TYPE_NOT_EXTENDED`), and a type name in the row's recorded name binding no longer resolves
 (`NAME_BINDING_UNRESOLVED`). A default scope row that conflicts fails startup with `WorkflowDefinitionException` for the state
 rule or `WorkflowUnknownTypeNameException` for an unresolved binding, each naming the scope `default` and the
 definition id. A RETIRED row is not registered and is never evaluated, and a contract overlap between a scope row and
@@ -712,12 +715,16 @@ when it is published, with `WorkflowUnknownTypeNameException`, and the row stays
   completions, timers, retries and migrations out of it, runs unchanged, so running instances keep resuming. A migration
   into a flagged version is rejected like one into a marked version. A flag is kept with the plan in the plan cache and is
   evaluated again, in place, when the default scope's state type name that the operation reads differs from the name it
-  was evaluated against. A version of the default scope is never flagged or marked. A start recorded before any node has evaluated
+  was evaluated against. The comparison for a plan the cache builds reads the default scope's current row (the version its
+  activation record names) when that row is a document, and the registered code definition otherwise; the in-place
+  re-evaluation follows the registered code only, so a changed default document is seen when the plan is built again.
+  A version of the default scope is never flagged or marked. A start recorded before any node has evaluated
   the version fails the same way when the executor runs it.
 - **Mark writes.** When the executor's outcome differs from the mark the row stored when the plan was built, it writes or
   clears the mark with `recordFailure` in a statement of its own, after the command's segment or deferral has ended and
-  never inside its transaction. The write is best effort: a failure is logged at warning level with the key only and
-  dropped, the command's outcome is unchanged, nothing retries it, and the next command that finds the outcome different
+  never inside its transaction, and detached: the executor frees the command's slot and asks for the next pass before the
+  write ends, so a slow or hung write holds no slot. The write is best effort: a failure is logged at warning level with
+  the key only and dropped, the command's outcome is unchanged, a RETIRED row is not marked, nothing retries it, and the next command that finds the outcome different
   writes again; once a write succeeds, later commands write nothing. The node that evaluated last wins. The stored mark
   feeds listings only.
 - **Default scope unaffected.** A failing scope row never blocks a default scope version of the same id, at startup or
@@ -748,8 +755,8 @@ new-code node that finds no live instance pinned to that version rewrites the st
 from then on every old-code node refuses new starts, migrations and failed-instance retries of that version with
 `WorkflowDefinitionLifecycleException` reason `DRIFT` until it restarts on the new code. A node that restarts on old
 code, including a rollback, then fails startup with `CODE_UNAVAILABLE` or drift for a row its code does not carry.
-Prefer a new version over editing a deployed version; to remove a version, deprecate it, wait out the cooling window and
-retire it while no live instance is pinned, before removing its code.
+Prefer a new version over editing a deployed version; to remove a version, deprecate it and
+retire it once no live instance is pinned, before removing its code.
 
 `WorkflowDefinitionLifecycle.deprecate` commits AVAILABLE to DEPRECATED in the store through the per-id queue; deprecating a
 version that is already deprecated succeeds. A deprecated version is skipped by current resolution, and an
@@ -896,9 +903,11 @@ command it peeks on a live instance through `load`, so a node runs a document ve
   document like any other: it is not registered and not listed by `codeDefinitions()`, and the cache builds it from its row. A request completes on the
   caller's own Vert.x context, so a continuation runs on its executor instance's event loop.
 - **What is remembered.** A `WorkflowDefinitionException` is remembered under the key and fails every later request: the
-  document does not compile, a recorded type name no class resolves, no loader supports its format, or the rebuilt hash
-  differs from the stored one. An absent row, a row that is not `AVAILABLE` or `DEPRECATED`, a failure to read the row, a
-  timeout and every `Error` are never remembered, so the next request reads again.
+  document does not compile, a recorded type name no class resolves, no loader supports its format, a plan rule refuses it,
+  or the rebuilt hash differs from the stored one. An absent row, a row that is not `AVAILABLE` or `DEPRECATED`, a failure
+  to read the row, a failure of a validator an application contributes that is not a definition refusal, a load that takes
+  longer than 30 seconds (it fails with a `TimeoutException`) and every `Error` are never remembered, so the next request
+  reads again.
 - **Failing flag.** An entry of a scope other than the default one carries the evaluation of its plan (see Failing scope
   rows): the flag, the default scope's state type name it was evaluated against and the mark the row stored when the plan was
   built. A name binding that no class resolves is remembered as a failure like any other that does not build.

@@ -80,6 +80,28 @@ class StartPayloadValidationTest {
                 });
     }
 
+    @Test
+    @DisplayName(
+            "the no-payload schema of a void start type refuses a payload and admits none, and a null schema leaves"
+                    + " the decision to the executor")
+    void noPayloadSchemaRefusesAPayload() {
+        // Given the schema stored for a void start type, and a validator with the real schema compiler
+        var validation =
+                new StartPayloadValidation(new RecordTimePayloadValidator(new WorkflowRecordingConfig(5000L, 1024)));
+        JsonObject noPayload = new JsonObject().put("type", "null");
+
+        // When a payload and then no payload are validated against it
+        // Then the payload is refused naming the definition and the value is not echoed, and the absent one passes
+        WorkflowInvalidPayloadException refusal = assertThrows(
+                WorkflowInvalidPayloadException.class,
+                () -> validation.validate(new JsonObject().put("note", VALUE), noPayload, KEY));
+        assertThat(refusal.getMessage()).contains(KEY.definitionId()).doesNotContain(VALUE);
+        assertDoesNotThrow(() -> validation.validate(null, noPayload, KEY));
+
+        // And a row without a schema still accepts a payload here, as the executor decides for it
+        assertDoesNotThrow(() -> validation.validate(new JsonObject().put("note", VALUE), null, KEY));
+    }
+
     /** Wraps a scalar iteratively; every object contributes exactly one depth level. */
     private static JsonObject nested(int depth) {
         Object payload = VALUE;

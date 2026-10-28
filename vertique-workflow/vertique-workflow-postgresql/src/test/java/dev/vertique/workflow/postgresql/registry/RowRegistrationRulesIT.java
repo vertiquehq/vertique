@@ -20,11 +20,13 @@ import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
+import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionProvenance;
@@ -243,6 +245,143 @@ public class RowRegistrationRulesIT {
             assertThat(outcome).isEqualTo(ReconcileOutcome.INSERTED);
             assertThat(scenario.rowCount(id)).isEqualTo(2);
         }
+    }
+
+    @Test
+    @DisplayName("reinstating a retired version is refused when another version of the scope names another contract")
+    void reinstatementChecksTheRulesFromRows(Vertx vertx) {
+        String id = "row-rules-reinstate-order";
+
+        try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
+            scenario.ownRows(id);
+
+            // Given acme order v1 naming contract C, retired, and acme order v2 naming contract D, available, which the
+            // retirement allowed
+            Boot node = scenario.node(none(), unobserved());
+            loadYaml(node, "acme", id, 1, ContractC.class);
+            retire(node, new DefinitionKey("acme", id, 1));
+            loadYaml(node, "acme", id, 2, ContractD.class);
+            await(node.app().definitionService().publish(new DefinitionKey("acme", id, 2)));
+
+            // When version 1 is reinstated in the store
+            Throwable refused = failureOf(node.app()
+                    .definitionRegistryStore()
+                    .transition(
+                            new DefinitionKey("acme", id, 1), DefinitionStatus.RETIRED, DefinitionStatus.AVAILABLE));
+
+            // Then it is refused naming the contract rule and stays retired
+            assertThat(refused).isInstanceOf(WorkflowDefinitionException.class);
+            assertThat(refused.getMessage()).contains("'acme'").contains("v1").contains("same contract");
+            assertThat(scenario.stored("acme", id, 1).status()).isEqualTo("RETIRED");
+        }
+    }
+
+    @Test
+    @DisplayName("reinstating the only version of a scope is refused when the default scope holds another contract")
+    void reinstatementChecksTheDefaultContractFromRows(Vertx vertx) {
+        String id = "row-rules-reinstate-default";
+
+        try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
+            scenario.ownRows(id);
+
+            // Given acme order v1 naming contract C, retired, and then a default-scope row of another contract
+            Boot node = scenario.node(none(), unobserved());
+            loadYaml(node, "acme", id, 1, ContractC.class);
+            retire(node, new DefinitionKey("acme", id, 1));
+            scenario.seedCode(id, 1, "1".repeat(64), "AVAILABLE");
+
+            // When version 1 is reinstated in the store
+            Throwable refused = failureOf(node.app()
+                    .definitionRegistryStore()
+                    .transition(
+                            new DefinitionKey("acme", id, 1), DefinitionStatus.RETIRED, DefinitionStatus.AVAILABLE));
+
+            // Then it is refused as a contract mismatch and stays retired
+            assertThat(refused).isInstanceOf(WorkflowDefinitionContractMismatchException.class);
+            assertThat(scenario.stored("acme", id, 1).status()).isEqualTo("RETIRED");
+        }
+    }
+
+    @Test
+    @DisplayName("a code version with another contract than the id's other versions is refused on insert and on rehash")
+    void codeReconcileChecksTheRulesFromRows(Vertx vertx) {
+        String id = "row-rules-code";
+
+        try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
+            scenario.ownRows(id);
+
+            // Given default-scope code v1 of contract example.Contract and, from another deployment, v2 of the same
+            Boot node = scenario.node(none(), unobserved());
+            scenario.seedCode(id, 1, "1".repeat(64), "AVAILABLE");
+            scenario.seedCode(id, 2, "2".repeat(64), "AVAILABLE");
+
+            // When v3 of another contract is reconciled
+            Throwable inserted = failureOf(node.app()
+                    .definitionRegistryStore()
+                    .upsertCode(codeRecord(id, 3, "3".repeat(64), "other.Contract"), false));
+
+            // Then it is refused and nothing is stored
+            assertThat(inserted).isInstanceOf(WorkflowDefinitionException.class);
+            assertThat(inserted.getMessage()).contains("v3").contains("same contract");
+            assertThat(scenario.findStored(id, 3)).isEmpty();
+
+            // When v2 is reconciled with a new hash and another contract
+            Throwable rehashed = failureOf(node.app()
+                    .definitionRegistryStore()
+                    .upsertCode(codeRecord(id, 2, "4".repeat(64), "other.Contract"), false));
+
+            // Then it is refused and the row keeps its hash
+            assertThat(rehashed).isInstanceOf(WorkflowDefinitionException.class);
+            assertThat(scenario.stored(id, 2).planHash()).isEqualTo("2".repeat(64));
+        }
+    }
+
+    @Test
+    @DisplayName("a failing mark is not written to a retired row")
+    void failingMarkIsNotWrittenToARetiredRow(Vertx vertx) {
+        String id = "row-rules-mark-retired";
+
+        try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
+            scenario.ownRows(id);
+
+            // Given a retired acme document
+            Boot node = scenario.node(none(), unobserved());
+            loadYaml(node, "acme", id, 1, ContractC.class);
+            DefinitionKey key = new DefinitionKey("acme", id, 1);
+            retire(node, key);
+
+            // When a failing mark is recorded for it
+            await(node.app()
+                    .definitionRegistryStore()
+                    .recordFailure(key, DefinitionFailure.of(DefinitionFailure.Rule.STATE_TYPE_NOT_EXTENDED)));
+
+            // Then the row carries no mark
+            assertThat(await(scenario.admin()
+                                    .preparedQuery("SELECT failure_reason FROM workflow_definitions"
+                                            + " WHERE scope_key = 'acme' AND definition_id = $1")
+                                    .execute(Tuple.of(id)))
+                            .iterator()
+                            .next()
+                            .getString("failure_reason"))
+                    .isNull();
+        }
+    }
+
+    private static WorkflowDefinitionRecord codeRecord(String id, long version, String hash, String contract) {
+        Instant now = Instant.now();
+        return new WorkflowDefinitionRecord(
+                new DefinitionKey("default", id, version),
+                DefinitionKind.CODE,
+                contract,
+                "example.State",
+                hash,
+                DefinitionStatus.AVAILABLE,
+                new DefinitionProvenance("code", "memory:code", null, null, null, now),
+                null,
+                now,
+                now,
+                Map.of(),
+                null);
     }
 
     /** Reconciles the version as a packaged document row of the scope through the registry store. */

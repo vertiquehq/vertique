@@ -306,8 +306,8 @@ code. `follow(scopeKey,
 definitionId)` removes a non-default scope's record so it follows the default again, `deactivateDefault(definitionId)` clears
 the default scope's record (an absent record is accepted), and `activations(scopeKey)` lists the records of a scope or, with
 `null`, of every scope. The default scope's current version cannot be deprecated or retired until another version is activated
-or `deactivateDefault` clears the record; to decommission an id call `deactivateDefault`, `deprecate`, and `retire` after the
-cooling window. Like
+or `deactivateDefault` clears the record; to decommission an id call `deactivateDefault`, `deprecate`, and `retire` once no
+instance is pinned to the version. Like
 `load`, they take any scope, so restrict them to authorized callers. A deactivation is not durable across a release: when a
 later release deploys a higher version whose header does not set `activateOnDeploy: false`, that version becomes the
 default scope's current version again on its first publication. Ship such a version with `activateOnDeploy: false` to keep

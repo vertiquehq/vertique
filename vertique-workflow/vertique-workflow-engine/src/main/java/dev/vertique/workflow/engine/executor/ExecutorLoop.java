@@ -465,13 +465,14 @@ final class ExecutorLoop {
                             instanceId,
                             result.cause().getClass().getName());
                 }
-                // the marks are written after the segment has ended, and never change its outcome
-                marks.run().onComplete(written -> {
-                    release();
-                    if (running) {
-                        kick();
-                    }
-                });
+                // the slot is free once the segment has ended: a mark write that is slow or hung must not hold it
+                release();
+                if (running) {
+                    kick();
+                }
+                // the marks are written after the segment has ended, detached, and never change its outcome; a
+                // write that fails is dropped by Marks.run, which never fails
+                marks.run();
             });
         });
     }

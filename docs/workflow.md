@@ -403,7 +403,7 @@ Code registers itself from the deployed application, so `load` and `publish` app
 | Status | Meaning |
 |---|---|
 | `CANDIDATE` | Loaded and compiled, not published |
-| `PUBLISHING` | A node holds a short-lived publication claim; a claim older than twice the staleness bound counts as abandoned |
+| `PUBLISHING` | A node holds a short-lived publication claim; a claim older than `workflow.definitions.publicationClaimTimeoutSeconds` counts as abandoned |
 | `AVAILABLE` | Published: it can be started explicitly, pinned and resolved. Any number of versions and scopes of one id are available together; which version starts by default is selected by an activation record (see [Current version and activation](#current-version-and-activation)) |
 | `DEPRECATED` | Live for pinned instances; refused for new starts and migration targets |
 | `RETIRED` | Retained metadata only; no executable membership |
@@ -452,7 +452,7 @@ The version that a start without a version runs is selected by activation record
 - **Contract-aware.** A scope's own record applies only to clients of the contract that the scope's own versions implement. A client never starts a definition of another contract.
 - **Operations.** `activate(scopeKey, definitionId, targetScopeKey, version)` replaces the scope's record. The target must be `AVAILABLE` in the target scope, otherwise the call fails with `INVALID_TRANSITION`; a target in the default scope of another contract than the scope's own versions fails with `WorkflowDefinitionContractMismatchException`. `deactivateDefault(definitionId)` clears the default scope's record; an absent record is accepted. `follow(scopeKey, definitionId)` removes a non-default scope's record so that the scope follows the default again, and fails with `IllegalArgumentException` for the default scope. `activations(scopeKey)` lists the records of a scope or, with `null`, of every scope.
 - **Publishing never activates.** `publish` makes a version available and changes no record.
-- **Propagation.** A start reads the node's own view of the records. Records are restored at startup and refreshed by the peer propagation pass, so an `activate`, `follow` or `deactivateDefault` committed on one node reaches the others within the propagation bound.
+- **Visibility.** A node keeps no copy of the records. A first start reads the records of the id together with its rows on the caller's transaction, so an `activate`, `follow` or `deactivateDefault` committed on one node is seen by the next start on every node: at once under the default `READ COMMITTED`, and as of the caller's snapshot under `REPEATABLE READ` or `SERIALIZABLE`.
 - **Without a store** the same operations act on the node's in-memory view and are lost on restart.
 
 ### Deploying new versions
@@ -555,10 +555,13 @@ without reading the source body.
 Before any `BOOTSTRAP` verticle deploys, the engine records and restores the registry, in this order:
 
 1. It records every code definition as a default-scope `CODE` row and every packaged document as a `DOCUMENT` row, both `AVAILABLE`, together with the name binding of each. A version inserted for the first time that does not opt out is also activated in the default scope, in the same transaction.
-2. It restores every live `DOCUMENT` row of every scope (`AVAILABLE`, `DEPRECATED`) from its stored text,
-   checking the compiled plan hash and the stored text digest. A row of a non-default scope that newly deployed code conflicts with is marked failing instead of failing startup (see [Failing scope rows](#failing-scope-rows)).
-3. It applies deprecation marks, removes runtimes of `RETIRED` rows that belong to the row's own key, and resets
-   abandoned publication claims. It also restores the stored activation records into the node's view.
+2. It reads the default scope's rows and requires every live `CODE` row to be provided by the deployed code. A packaged
+   document is built once, with the stored text digest and plan hash checked, so one that does not build fails startup;
+   the plan is not kept. No plan of a document is registered: the plan cache builds a document from its row the first time a
+   command needs it, and rows of other scopes are not read at startup. A row of a non-default scope that newly deployed code
+   conflicts with is marked failing when its plan is built (see [Failing scope rows](#failing-scope-rows)).
+3. It resets abandoned publication claims and seals the registry. Nothing is restored into a copy of the table, because a
+   node keeps none.
 
 Startup fails, naming the definition, in these cases, among others (a loader or compile failure of a stored document, a failing
 loader callback, a stored document over the envelope after lowering the limit, a non-UTF8 database, a second loader for one
@@ -579,28 +582,22 @@ format, an unattributed direct registration, and a lock timeout):
   [Upgrading to 0.4.0](#upgrading-to-040); prefer a new version.
 - **Digest.** Each `DOCUMENT` row stores the SHA-256 of its stored UTF-8 text. It detects accidental or concurrent change
   of the stored text; it does not authenticate the writer, so restrict write access to the table.
-- **Compose validators** run in `VALIDATE` and do not re-run for restored, propagated or runtime-published definitions.
+- **Compose validators** run in `VALIDATE` and do not re-run for documents the plan cache builds later or that are published at run time.
 
-### Peer propagation
+### Seeing a change on other nodes
 
-Each node polls the table and applies differences, so a change committed on one node reaches the others.
+A node keeps no copy of the definition table and runs no poller, so there is nothing to refresh.
 
-- **`pollNow()`.** `WorkflowDefinitionPropagationPoller.pollNow()` runs one pass immediately and returns its `Future`.
-  A call while a pass runs returns that pass. The future succeeds even when some rows failed, and fails only when the
-  table cannot be read.
-- **What a pass does.** It restores live rows the node does not hold, marks deprecated rows, and removes runtimes of
-  retired rows that the node holds for that row's own key. A `CODE` row needs the same version in the code deployed on that
-  node with an equal plan hash, otherwise the row fails with `CODE_UNAVAILABLE` or `DRIFT`. After the rows, it refreshes
-  the node's activation records from the committed ones, so an `activate`, `follow` or `deactivateDefault` on another node
-  reaches this node within the same bound. Polling never records a code hash, never reinstates and never changes a durable row.
-- **Failures.** A row that cannot be applied, or is not applied within twice the period, is logged with its key and
-  reason (never source text; repeats of the same failure log at debug level), counted, and retried on the next pass.
-- **Observability.** The bound `WorkflowDefinitionRegistryView` reports `registered()`, the live records this node
-  has applied, and `applyFailures()`, the number of rows currently failing. It lists every scope's records, so it is an
-  operator view: do not expose it to end users unfiltered. It describes one node; another node can differ until its own
-  pass has run.
-- **Do not rely on peers for safety.** Deprecation and retirement checks use each node's own registry until its pass
-  runs. Starts and migrations are protected by a database check at pin time (below), not by polling.
+- **Starts** read the rows and activation records of the id on the caller's transaction, so a publication, deprecation,
+  retirement or activation committed on another node is seen by the next start at the isolation level of that transaction.
+- **Commands** read their plan through the plan cache, which builds a document version from its row the first time the node
+  runs it. A version published, deprecated or retired elsewhere needs no step on this node; a plan the cache holds is
+  determined by the row's plan hash, which never changes for a version that has instances.
+- **Failures.** A row that does not build is not runnable: its commands are deferred, and a warning names its key once per
+  time the cache remembers the failure. The log never carries source text.
+- **Do not rely on peers for safety.** Starts and migrations are protected by a database check at pin time (below), and a
+  migration reads its target's status from the database, so a retired or deprecated target is refused whatever plan a node
+  still holds.
 
 ### Database coordination
 
@@ -838,9 +835,8 @@ is registered, and a static source failing a limit fails startup naming the reso
   Forward all four members. `DefaultWorkflowRegistry` implements them.
 - **Instance query.** `WorkflowInstanceQueryService.countNonTerminal(id, version)` is a default method that fails with
   `UnsupportedOperationException`; the PostgreSQL implementation overrides it.
-- **Added bindings.** Applications gain the bound `WorkflowDefinitionLifecycle`, `WorkflowDefinitionRegistryView` and
-  `WorkflowDefinitionPropagationPoller`. The poller adds one periodic timer per node; it is scheduled after startup and
-  stopped at shutdown.
+- **Added bindings.** Applications gain the bound `WorkflowDefinitionLifecycle` and the engine's plan cache. No poller and no
+  timer are added: a node reads the rows it needs when it needs them.
 - **Instance scopes.** `V002__` adds the scope columns, which default to `default` (see [Scopes](#scopes) and
   [Scope Keys On Instances And Tasks](#scope-keys-on-instances-and-tasks)). Record patterns that deconstruct `WorkflowInstance`,
   `TaskRecord`, `WorkflowInstanceQuery` or `TaskFilter` by component list need the new trailing `scopeKey` components

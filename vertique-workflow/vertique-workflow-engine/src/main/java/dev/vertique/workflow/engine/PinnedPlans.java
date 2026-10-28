@@ -46,6 +46,13 @@ final class PinnedPlans {
         return resolve(registry, key, null);
     }
 
+    /**
+     * Invariant: a lookup made inside a segment is resident-only. {@code WorkflowRegistry.resolve} never loads a
+     * document plan, so it can answer only a plan the registry holds (code) or one the executor warmed and holds for
+     * the segment: the pin of the command and, for a migration, its target. Both are made resident before the command
+     * is claimed and stay held until its segment ends, whatever the plan cache evicts meanwhile. A lookup of any other
+     * document key inside a segment is therefore a fault of the caller, not a cache miss to be loaded.
+     */
     private static RuntimeWorkflow resolve(WorkflowRegistry registry, DefinitionKey key, WorkflowInstance inst) {
         try {
             return registry.resolve(key);

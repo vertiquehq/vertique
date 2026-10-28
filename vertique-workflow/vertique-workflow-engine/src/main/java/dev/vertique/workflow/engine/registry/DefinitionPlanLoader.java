@@ -145,19 +145,34 @@ public final class DefinitionPlanLoader {
                     .compose(document -> work(() -> build(
                             loader, record, document.orElseThrow(() -> new WorkflowDefinitionNotFoundException(key)))))
                     .compose(built -> backfill(record, built)
-                            .map(new Loaded(built.plan(), scoped ? evaluate(built.plan(), record.failure()) : null)));
+                            .compose(filled -> scoped
+                                    ? evaluate(built.plan(), record.failure())
+                                            .map(evaluation -> new Loaded(built.plan(), evaluation))
+                                    : Future.succeededFuture(new Loaded(built.plan(), null))));
         });
     }
 
-    /** The default scope's state type name that a plan of the id is compared with, or {@code null} when there is none. */
+    /**
+     * The registered code definition's state type name that tells whether an {@linkplain Evaluation evaluation} is
+     * still current, or {@code null} when none is registered. A document of the default scope is compared from its
+     * row when the plan is built and is not covered by this name.
+     */
     @Nullable
     String defaultStateTypeName(String definitionId) {
         return builder.defaultStateTypeName(definitionId).orElse(null);
     }
 
-    /** Evaluates the plan of a version of a scope other than the default one against the default scope now. */
-    private Evaluation evaluate(RuntimeWorkflow plan, @Nullable DefinitionFailure stored) {
-        StateComparison comparison = builder.compareWithDefault(plan);
+    /**
+     * Evaluates the plan of a version of a scope other than the default one against the default scope's current row
+     * as it is now.
+     */
+    private Future<Evaluation> evaluate(RuntimeWorkflow plan, @Nullable DefinitionFailure stored) {
+        return DefinitionPublication.defaultCurrentRow(store, plan.plan().definitionId())
+                .map(defaultRow ->
+                        evaluated(plan, stored, DefinitionPublication.compareWithDefault(builder, plan, defaultRow)));
+    }
+
+    private Evaluation evaluated(RuntimeWorkflow plan, @Nullable DefinitionFailure stored, StateComparison comparison) {
         DefinitionFailure failure = failureOf(comparison);
         if (failure != null) {
             log.warn(
@@ -167,7 +182,7 @@ public final class DefinitionPlanLoader {
                     EchoedNames.bounded(plan.plan().definitionId()),
                     plan.plan().definitionVersion());
         }
-        return new Evaluation(failure, comparison.defaultStateTypeName(), stored);
+        return new Evaluation(failure, defaultStateTypeName(plan.plan().definitionId()), stored);
     }
 
     /**
@@ -194,42 +209,51 @@ public final class DefinitionPlanLoader {
         return store;
     }
 
+    /** The Vert.x instance whose timers bound a load, or {@code null} when loads run on the calling thread. */
+    @Nullable
+    Vertx vertx() {
+        return vertx;
+    }
+
     private static boolean buildable(WorkflowDefinitionRecord record) {
         return record.kind() == DefinitionKind.DOCUMENT && LIVE.contains(record.status());
     }
 
     /**
      * Compiles the document, checks the rebuilt hash and builds the plan. It runs on a worker thread; every failure of
-     * the document itself leaves it as a {@link WorkflowDefinitionException}.
+     * the document itself leaves it as a {@link WorkflowDefinitionException}, and any other failure of the build is not
+     * one.
      */
     private Built build(
             PersistedDefinitionLoader loader, WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
         DefinitionKey key = record.key();
+        WorkflowDefinition<?, ?> definition;
+        String hash;
         try {
-            WorkflowDefinition<?, ?> definition = loader.load(record, document);
-            String hash = DefinitionPublication.planHash(loader, definition, record);
-            if (!key.definitionId().equals(definition.definitionId())
-                    || key.definitionVersion() != definition.definitionVersion()
-                    || !record.planHash().equals(hash)) {
-                throw new WorkflowDefinitionLifecycleException(
-                        Reason.DRIFT,
-                        key,
-                        "Definition " + key + ": stored hash " + record.planHash() + " differs from rebuilt hash "
-                                + hash);
-            }
-            RuntimeWorkflow plan = builder.build(key.scopeKey(), definition, record.nameBinding());
-            if (schemaProducer.isEmpty() || record.signalNames() != null) {
-                return new Built(plan, null, null);
-            }
-            return new Built(
-                    plan,
-                    DeclaredSignalNames.of(plan),
-                    schemaProducer.orElseThrow().startSchema(plan));
+            definition = loader.load(record, document);
+            hash = DefinitionPublication.planHash(loader, definition, record);
         } catch (WorkflowDefinitionException failure) {
             throw failure;
         } catch (RuntimeException failure) {
+            // the document does not compile: the same text fails the same way, so the failure is remembered
             throw new WorkflowDefinitionException("Cannot build DOCUMENT " + key + " from its stored source", failure);
         }
+        if (!key.definitionId().equals(definition.definitionId())
+                || key.definitionVersion() != definition.definitionVersion()
+                || !record.planHash().equals(hash)) {
+            throw new WorkflowDefinitionLifecycleException(
+                    Reason.DRIFT,
+                    key,
+                    "Definition " + key + ": stored hash " + record.planHash() + " differs from rebuilt hash " + hash);
+        }
+        // A failure of the build that is not a definition refusal, such as one thrown by a validator an application
+        // contributes, says nothing certain about the document and is left as it is: the cache does not remember it.
+        RuntimeWorkflow plan = builder.build(key.scopeKey(), definition, record.nameBinding());
+        if (schemaProducer.isEmpty() || record.signalNames() != null) {
+            return new Built(plan, null, null);
+        }
+        return new Built(
+                plan, DeclaredSignalNames.of(plan), schemaProducer.orElseThrow().startSchema(plan));
     }
 
     /** Fills the null columns of a legacy row in a statement of its own; a failure is logged and ignored. */

@@ -1050,7 +1050,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         @Override
         public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
-            throw new UnsupportedOperationException();
+            return Future.succeededFuture(List.of());
         }
 
         @Override
@@ -1156,7 +1156,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         @Override
         public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
-            throw new UnsupportedOperationException();
+            return Future.succeededFuture(List.of());
         }
 
         @Override
@@ -1252,7 +1252,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         @Override
         public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
-            throw new UnsupportedOperationException();
+            return Future.succeededFuture(List.of());
         }
 
         @Override
@@ -1359,7 +1359,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         @Override
         public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
-            throw new UnsupportedOperationException();
+            return Future.succeededFuture(List.of());
         }
 
         @Override

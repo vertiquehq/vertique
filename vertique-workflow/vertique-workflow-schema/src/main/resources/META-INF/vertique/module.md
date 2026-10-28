@@ -77,7 +77,7 @@ once whether the supplement is enabled.
 
 ## Schemas Stored On Definition Rows
 
-`WorkflowSchemaModule` also binds the internal `WorkflowPlanSchemaProducer`. A node that installs the module stores, with the plan hash of every definition row it writes, the signal names the version declares and the JSON Schema of its start payload. The producer reads the schemas the registration validator cached, so the start schema equals the one `validateStart` checks against; a payload type that is not cached yet, as for a document candidate that is loaded but not published, is described by the same generator under the same profile. A version without a start payload has no start schema. A node without the module still starts and writes both row columns as null.
+`WorkflowSchemaModule` also binds the internal `WorkflowPlanSchemaProducer`. A node that installs the module stores, with the plan hash of every definition row it writes, the signal names the version declares and the JSON Schema of its start payload. The producer reads the schemas the registration validator cached, so the start schema equals the one `validateStart` checks against; a payload type that is not cached yet, as for a document candidate that is loaded but not published, is described by the same generator under the same profile. A version whose start type is `void` gets the explicit schema `{"type":"null"}`, which admits no payload, so that a start that submits one is refused at record time; a row without a start schema (a null column, written before the schema was stored) leaves the decision to the executor. A node without the module still starts and writes both row columns as null.
 
 ---
 
@@ -229,8 +229,12 @@ in the document's `properties` nor in `propertyOrder`; extra keys are described 
   violation instead (see Validating Payloads).
 - **The plan comes from `WorkflowRegistry.load`.** A version that is stored but not resident is built on
   demand, so `describe` for it completes after the plan is loaded instead of answering empty. A version
-  that no stored row supplies completes empty. Any other load failure, deterministic or transient, fails
-  the future with that failure unchanged. No plan reference is held after the call.
+  that cannot run on this node, because no stored row supplies it or its stored source does not build (a
+  definition refusal or an unavailable pin), is unknown: it completes empty, or with the `definition`
+  violation, and the cause is logged on the server and never returned. Any other load failure, such as an
+  unreadable row, fails the future with that failure unchanged. The service does not decide who may ask:
+  authorize access to the definition and check the scope of the key before calling. No plan reference is held
+  after the call.
 - **No class loading or generation on read.** Descriptors are assembled from the loaded plan and the
   cache filled at registration; the read itself generates nothing.
 - **Non-blocking and event-loop safe.** The calls add no blocking work; a plan that must be built is built

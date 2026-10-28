@@ -18,13 +18,15 @@ import java.util.Optional;
  * so a version that is not resident is built on demand off the event loop; nothing here blocks, loads a class or
  * generates a schema, so every method is safe on the event loop. Describing an unknown scope, definition id,
  * version, step or decision completes with an empty result, and validating a payload for one completes with a
- * single violation; neither fails for an unknown key. A load that fails for any other reason fails the returned
- * future with that failure. Reads and validation fail the future with {@link IllegalStateException} when a
+ * single violation; neither fails for an unknown key. A version that cannot run on this node, because no row
+ * supplies it or its stored source does not build, is unknown in the same way, and the cause is logged on the server
+ * and never returned. A load that fails for any other reason fails the returned future with that failure. Reads and validation fail the future with {@link IllegalStateException} when a
  * registered definition has a payload type without a cached schema, which is a wiring fault: the schema module's
  * registration validator did not run for the registry.
  *
  * <p>The service reports what a definition declares; it does not decide who may see it. Callers authorize access to
- * the definition before exposing a descriptor.
+ * the definition, and check that the scope of the key is one the caller may read, before calling and before exposing a
+ * descriptor.
  */
 public interface WorkflowPayloadSchemas {
 

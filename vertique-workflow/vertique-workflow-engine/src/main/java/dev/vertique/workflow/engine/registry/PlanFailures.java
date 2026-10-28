@@ -12,7 +12,8 @@ import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
  * <p>A failure is deterministic when loading again can only fail the same way until the stored row changes: the
  * document does not compile, a recorded name no class resolves, or the rebuilt plan hash differs from the stored one.
  * Those are {@link WorkflowDefinitionException}s, and the plan cache remembers them. An absent row, a failure to read
- * the row, a timeout and every {@link Error} are never remembered.
+ * the row, a timeout, a failure that a validator contributed by an application throws without being a definition
+ * refusal, and every {@link Error} are never remembered.
  */
 public final class PlanFailures {
 

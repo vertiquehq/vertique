@@ -61,8 +61,12 @@ final class DefaultWorkflowPlanSchemaProducer implements WorkflowPlanSchemaProdu
     @Override
     public JsonObject startSchema(RuntimeWorkflow plan) {
         Class<?> startType = plan.startPayloadType();
-        if (startType == null || startType == void.class || startType == Void.class) {
+        if (startType == null) {
             return null;
+        }
+        if (startType == void.class || startType == Void.class) {
+            // an explicit "no payload", which a row written before the schema was stored (a null column) is not
+            return new JsonObject().put("type", "null");
         }
         return schemaOf(typeNames.nameOf(startType), startType);
     }

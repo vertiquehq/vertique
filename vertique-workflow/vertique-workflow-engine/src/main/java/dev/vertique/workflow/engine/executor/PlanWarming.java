@@ -14,6 +14,7 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import java.util.ArrayList;
@@ -87,16 +88,23 @@ final class PlanWarming {
         });
     }
 
-    /** The key a migration moves its instance to, or {@code null} when the command is no migration or names none. */
+    /**
+     * The key a migration moves its instance to, or {@code null} when the command is no migration, names none or
+     * names a scope the instance may not migrate into: only the scope of the instance's definition, the scope it was
+     * started in and the default scope are loaded, so that no other scope's plan is built or marked for it.
+     */
     private static @Nullable DefinitionKey target(CommandHead head) {
         if (head.migrationVersion() == null) {
             return null;
         }
+        String scope = head.migrationScope() != null ? head.migrationScope() : head.definitionScopeKey();
+        if (!scope.equals(head.definitionScopeKey())
+                && !scope.equals(head.instanceScopeKey())
+                && !WorkflowScopes.DEFAULT.equals(scope)) {
+            return null;
+        }
         try {
-            return new DefinitionKey(
-                    head.migrationScope() != null ? head.migrationScope() : head.definitionScopeKey(),
-                    head.definitionId(),
-                    head.migrationVersion());
+            return new DefinitionKey(scope, head.definitionId(), head.migrationVersion());
         } catch (IllegalArgumentException e) {
             // a target no key can name is left to the segment, which rejects the migration
             return null;

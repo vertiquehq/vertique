@@ -900,7 +900,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * definition table to select from.
      */
     private Future<WorkflowInstanceId> firstStart(StartCommand cmd, String startScope, SqlClient tx) {
-        WorkflowInvalidPayloadException oversized = oversizedSubject(cmd.subjectRef());
+        WorkflowInvalidPayloadException oversized = oversizedKey(cmd);
+        if (oversized == null) {
+            oversized = oversizedSubject(cmd.subjectRef());
+        }
         if (oversized != null) {
             return Future.failedFuture(oversized);
         }
@@ -982,6 +985,22 @@ final class WorkflowEngine implements WorkflowEngineHandle {
 
     private static final int MAX_SUBJECT_ID_LENGTH = 255;
     private static final int MAX_SUBJECT_VERSION_LENGTH = 64;
+
+    /** The longest idempotency key or business key a start accepts, in characters: the width of their columns. */
+    private static final int MAX_KEY_LENGTH = 255;
+
+    /** Names the key of the start that is too long, as a refusal, without repeating it; {@code null} when both fit. */
+    private static @Nullable WorkflowInvalidPayloadException oversizedKey(StartCommand cmd) {
+        String part = cmd.idempotencyKey().length() > MAX_KEY_LENGTH
+                ? "idempotency key"
+                : cmd.businessKey() != null && cmd.businessKey().length() > MAX_KEY_LENGTH ? "business key" : null;
+        if (part == null) {
+            return null;
+        }
+        return new WorkflowInvalidPayloadException(
+                "Start is refused: the " + part + " exceeds " + MAX_KEY_LENGTH + " characters",
+                List.of(ViolationDetail.unlocated("the " + part + " is too long", "payload")));
+    }
 
     /** Names the first part of the subject that is too long, as a refusal; {@code null} when the subject is within bounds. */
     private static @Nullable WorkflowInvalidPayloadException oversizedSubject(@Nullable WorkflowSubjectRef subject) {

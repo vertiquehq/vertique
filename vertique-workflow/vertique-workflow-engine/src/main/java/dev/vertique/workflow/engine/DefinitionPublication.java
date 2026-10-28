@@ -14,13 +14,17 @@ import dev.vertique.workflow.registry.DefaultWorkflowRegistry.StateComparison;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
+import io.vertx.core.Future;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -141,42 +145,110 @@ public final class DefinitionPublication {
     }
 
     /**
+     * Reads the row of the default scope's current version of the id, which is the one its activation record names.
+     *
+     * @param store the durable definition rows
+     * @param definitionId the definition id
+     * @return a future of the row, or empty when the default scope has no activation record of the id or the row it
+     *     names is gone
+     */
+    public static Future<Optional<WorkflowDefinitionRecord>> defaultCurrentRow(
+            WorkflowDefinitionRegistryStore store, String definitionId) {
+        return store.listActivations(WorkflowScopes.DEFAULT).compose(activations -> activations.stream()
+                .filter(activation -> activation.definitionId().equals(definitionId))
+                .findFirst()
+                .map(activation ->
+                        store.find(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, activation.version())))
+                .orElseGet(() -> Future.succeededFuture(Optional.empty())));
+    }
+
+    /**
+     * Compares the state type of a plan of a scope other than the default one with the default scope's current
+     * state type. A current row that is a document is compared by the names it stores, because a document of the
+     * default scope is never registered; any other case is compared with the code definition registered for the id.
+     *
+     * @param framework the registry that resolves the stored names and holds the code definitions
+     * @param plan the plan of the scoped version
+     * @param defaultRow the default scope's current row of the id, as {@link #defaultCurrentRow} reads it
+     * @return the comparison
+     */
+    public static StateComparison compareWithDefault(
+            DefaultWorkflowRegistry framework, RuntimeWorkflow plan, Optional<WorkflowDefinitionRecord> defaultRow) {
+        return defaultRow
+                .filter(row -> row.kind() == DefinitionKind.DOCUMENT)
+                .map(row -> framework.compareWithDefault(plan, row.contractName(), row.stateTypeName()))
+                .orElseGet(() -> framework.compareWithDefault(plan));
+    }
+
+    /**
      * Builds the plan of a stored document for publication or reinstatement: the build of {@link #build}, with a
      * failure of the document always leaving as a {@link WorkflowDefinitionException}, and, for a scope other than
-     * the default one, the check that the state type extends the state type of the default scope's code definition
-     * of the id.
+     * the default one, the check that the state type extends the default scope's current state type of the id.
      *
-     * <p>The default scope's current state type is the one of the code definition registered for the id when the
-     * check runs; a document of the default scope is never registered and so does not count. A registry other than
-     * the framework's has no default scope to compare with and builds with the framework's rules alone. A refusal
-     * names the scope, id and version and never the document's content.
+     * <p>The default scope's current state type is the one its current row stores when that row is a document, and
+     * otherwise the one of the code definition registered for the id when the check runs. A registry other than the
+     * framework's has no default scope to compare with and builds with the framework's rules alone. A refusal names
+     * the scope, id and version and never the document's content.
      *
+     * @param defaultRow the default scope's current row of the id, as {@link #defaultCurrentRow} reads it
      * @return the built plan, which the caller may validate but does not register
      * @throws WorkflowDefinitionException when the document does not build or its state type does not extend the
-     *     default scope's; a failure that is not one is the cause of the exception thrown and its message ends the message
+     *     default scope's; a failure that is not one is the cause of the exception thrown and its bounded message ends
+     *     the message
      */
     static RuntimeWorkflow buildPublished(
             WorkflowRegistry registry,
             DefinitionKey key,
             WorkflowDefinition<?, ?> definition,
-            Map<String, String> nameBinding) {
+            Map<String, String> nameBinding,
+            Optional<WorkflowDefinitionRecord> defaultRow) {
         RuntimeWorkflow plan;
         try {
             plan = build(registry, key, definition, nameBinding);
         } catch (WorkflowDefinitionException refusal) {
             throw refusal;
         } catch (RuntimeException failure) {
-            throw new WorkflowDefinitionException(
-                    "Cannot build DOCUMENT " + key + " from its stored source: " + failure.getMessage(), failure);
+            throw unbuildable(key, failure);
         }
         if (!WorkflowScopes.DEFAULT.equals(key.scopeKey()) && registry instanceof DefaultWorkflowRegistry framework) {
-            StateComparison comparison = framework.compareWithDefault(plan);
+            StateComparison comparison = compareWithDefault(framework, plan, defaultRow);
             if (!comparison.accepted())
                 throw new WorkflowDefinitionException("Definition " + key + ": the state type does not extend the"
                         + " state type of the default scope's '" + EchoedNames.bounded(key.definitionId())
                         + "' of the same contract");
         }
         return plan;
+    }
+
+    /** The most code points of a failure's own message that a refusal repeats. */
+    private static final int MAX_CAUSE_CODE_POINTS = 512;
+
+    /** The refusal of a document that did not build for a reason other than the definition rules. */
+    static WorkflowDefinitionException unbuildable(DefinitionKey key, RuntimeException failure) {
+        return new WorkflowDefinitionException(
+                "Cannot build DOCUMENT " + key + " from its stored source: " + boundedCause(failure.getMessage()),
+                failure);
+    }
+
+    /**
+     * The message of a failure the framework did not write, cut at {@value #MAX_CAUSE_CODE_POINTS} code points with
+     * a cut marker and its control characters replaced, so that a validator an application contributes can neither
+     * flood a refusal nor forge a log line. The cause keeps the full text.
+     */
+    private static String boundedCause(String message) {
+        if (message == null) return "null";
+        int end = message.offsetByCodePoints(
+                0, Math.min(message.codePointCount(0, message.length()), MAX_CAUSE_CODE_POINTS));
+        StringBuilder out = new StringBuilder(end + 3);
+        message.substring(0, end)
+                .codePoints()
+                .forEach(codePoint -> out.appendCodePoint(
+                        Character.isISOControl(codePoint)
+                                        || (codePoint >= Character.MIN_SURROGATE
+                                                && codePoint <= Character.MAX_SURROGATE)
+                                ? '?'
+                                : codePoint));
+        return end < message.length() ? out.append("...").toString() : out.toString();
     }
 
     static WorkflowDefinitionLifecycleException failure(Reason reason, DefinitionKey key, String message) {

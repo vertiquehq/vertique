@@ -25,6 +25,7 @@ import jakarta.annotation.Nullable;
  * @param migrationScope       the scope of the definition a {@code MIGRATION} command moves its instance to, or
  *                             {@code null} when it names none (the scope the instance is pinned to) and for every other
  *                             kind
+ * @param instanceScopeKey     the scope the instance was started in, or {@code null} when the head does not tell
  */
 public record CommandHead(
         long commandId,
@@ -36,7 +37,47 @@ public record CommandHead(
         String planHash,
         boolean instanceEnded,
         @Nullable Long migrationVersion,
-        @Nullable String migrationScope) {
+        @Nullable String migrationScope,
+        @Nullable String instanceScopeKey) {
+
+    /**
+     * Creates a head that does not tell the scope the instance was started in.
+     *
+     * @param commandId          the command's row id
+     * @param workflowId         the instance the command belongs to
+     * @param kind               the command kind
+     * @param definitionScopeKey the scope of the definition the instance is pinned to
+     * @param definitionId       the definition id of the instance's pin
+     * @param definitionVersion  the definition version of the instance's pin
+     * @param planHash           the plan hash of the instance's pin
+     * @param instanceEnded      whether the instance has ended
+     * @param migrationVersion   the version a {@code MIGRATION} command moves its instance to, or {@code null}
+     * @param migrationScope     the scope a {@code MIGRATION} command moves its instance to, or {@code null}
+     */
+    public CommandHead(
+            long commandId,
+            WorkflowInstanceId workflowId,
+            String kind,
+            String definitionScopeKey,
+            String definitionId,
+            long definitionVersion,
+            String planHash,
+            boolean instanceEnded,
+            @Nullable Long migrationVersion,
+            @Nullable String migrationScope) {
+        this(
+                commandId,
+                workflowId,
+                kind,
+                definitionScopeKey,
+                definitionId,
+                definitionVersion,
+                planHash,
+                instanceEnded,
+                migrationVersion,
+                migrationScope,
+                null);
+    }
 
     /**
      * Creates a head that names no migration target.

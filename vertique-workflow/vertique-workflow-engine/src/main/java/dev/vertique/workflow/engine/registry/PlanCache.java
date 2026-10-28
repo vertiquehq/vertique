@@ -19,12 +19,14 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,6 +54,9 @@ public final class PlanCache implements DocumentPlanSource {
     /** The cache name its events carry. */
     public static final String NAME = "workflow-plans";
 
+    /** The longest a load may take before it fails, in milliseconds; a timeout is never remembered. */
+    static final long LOAD_TIMEOUT_MS = 30_000;
+
     /** A plan held across a segment with its evaluation, and by how many holders. */
     private record Held(Loaded loaded, int holders) {}
 
@@ -59,6 +64,7 @@ public final class PlanCache implements DocumentPlanSource {
     private final ObjectCache<DefinitionKey, Loaded> cache;
     private final ConcurrentHashMap<DefinitionKey, Held> held = new ConcurrentHashMap<>();
     private final FailingMarks marks;
+    private final long loadTimeoutMs;
 
     /**
      * Creates the cache.
@@ -69,6 +75,11 @@ public final class PlanCache implements DocumentPlanSource {
      * @throws IllegalArgumentException if {@code maxEntries} is below 1
      */
     public PlanCache(DefinitionPlanLoader loader, long maxEntries, Set<CacheObserver> observers) {
+        this(loader, maxEntries, observers, LOAD_TIMEOUT_MS);
+    }
+
+    PlanCache(DefinitionPlanLoader loader, long maxEntries, Set<CacheObserver> observers, long loadTimeoutMs) {
+        this.loadTimeoutMs = loadTimeoutMs;
         this.loader = Objects.requireNonNull(loader, "loader");
         this.cache = ObjectCaches.create(NAME, maxEntries, PlanFailures::isDeterministic, observers);
         this.marks = new FailingMarks(loader.store(), this);
@@ -120,8 +131,29 @@ public final class PlanCache implements DocumentPlanSource {
     @Override
     public Future<RuntimeWorkflow> load(DefinitionKey key) {
         Objects.requireNonNull(key, "key");
-        return cache.getOrLoad(key, () -> loader.loadEvaluated(key).onFailure(failure -> warnOnce(key, failure)))
+        return cache.getOrLoad(
+                        key, () -> bounded(loader.loadEvaluated(key)).onFailure(failure -> warnOnce(key, failure)))
                 .map(Loaded::plan);
+    }
+
+    /** Fails the load with a timeout when it does not end in time; a timeout is not a deterministic failure. */
+    private Future<Loaded> bounded(Future<Loaded> load) {
+        Vertx vertx = loader.vertx();
+        if (vertx == null || load.isComplete()) {
+            return load;
+        }
+        Promise<Loaded> bounded = Promise.promise();
+        long timer = vertx.setTimer(
+                loadTimeoutMs, ignored -> bounded.tryFail(new TimeoutException("the plan load took too long")));
+        load.onComplete(result -> {
+            vertx.cancelTimer(timer);
+            if (result.succeeded()) {
+                bounded.tryComplete(result.result());
+            } else {
+                bounded.tryFail(result.cause());
+            }
+        });
+        return bounded.future();
     }
 
     /**

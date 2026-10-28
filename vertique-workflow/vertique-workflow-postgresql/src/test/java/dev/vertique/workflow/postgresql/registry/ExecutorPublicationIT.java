@@ -145,6 +145,10 @@ public class ExecutorPublicationIT {
                     .noneMatch(runtime -> runtime.plan().definitionId().equals(candidate.id()));
             assertThat(eventsB.count(CACHE, CacheOutcome.MISS)).isZero();
 
+            // And node A's executor is stopped, so that only node B can claim and warm the plan
+            await(nodeA.verticleDeployer()
+                    .undeploy(dev.vertique.workflow.engine.executor.WorkflowExecutor.DEPLOYMENT_NAME));
+
             // When a start command of the version is executed on node B, which never saw the publication
             WorkflowInstanceId started = await(nodeB.workflowOperations().start(start(candidate)));
             PlanCacheFixture.awaitCondition("the instance to wait", IDLE_TIMEOUT, () -> "WAITING"
@@ -155,8 +159,7 @@ public class ExecutorPublicationIT {
                     IDLE_TIMEOUT,
                     () -> loads(eventsA, eventsB, CacheOperation.LOAD, CacheOutcome.SUCCESS) > 0);
 
-            // Then the node that ran the command, which is either of the two because both poll the one database,
-            // loaded the plan through its plan cache with one miss and one load
+            // Then node B, the only executor left, loaded the plan through its plan cache with one miss and one load
             assertThat(loads(eventsA, eventsB, CacheOperation.GET, CacheOutcome.MISS))
                     .isEqualTo(1);
             assertThat(loads(eventsA, eventsB, CacheOperation.LOAD, CacheOutcome.SUCCESS))

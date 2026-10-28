@@ -628,8 +628,18 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             String scopeKey,
             String definitionId,
             long scopeOwnedVersion) {
-        if (!defaultRw.contractName().equals(scopeOwned.contractName())
-                || defaultRw.stateType().equals(scopeOwned.stateType())) {
+        requireExtension(
+                defaultRw.contractName(), defaultRw.stateType(), scopeOwned, scopeKey, definitionId, scopeOwnedVersion);
+    }
+
+    private void requireExtension(
+            String defaultContractName,
+            Class<?> defaultStateType,
+            RuntimeWorkflow scopeOwned,
+            String scopeKey,
+            String definitionId,
+            long scopeOwnedVersion) {
+        if (!defaultContractName.equals(scopeOwned.contractName()) || defaultStateType.equals(scopeOwned.stateType())) {
             return;
         }
         String subject = "definition " + describe(scopeKey, definitionId, scopeOwnedVersion)
@@ -641,7 +651,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                     + " differing state types are refused");
         }
         Optional<String> incompatible =
-                stateCompatibility.orElseThrow().firstIncompatibility(defaultRw.stateType(), scopeOwned.stateType());
+                stateCompatibility.orElseThrow().firstIncompatibility(defaultStateType, scopeOwned.stateType());
         if (incompatible.isPresent()) {
             throw new WorkflowDefinitionException(subject + "; the state type must extend the default scope's, but"
                     + " property '" + incompatible.orElseThrow() + "' is removed or has another type");
@@ -1099,6 +1109,44 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             }
         } finally {
             rwLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Compares the state type of a scope-owned plan with the default scope's current definition as its stored row
+     * names it, which holds for a document of the default scope although none is registered.
+     *
+     * <p>INTERNAL: the engine reads the default scope's current row and passes its names; applications never call
+     * it. A state type name that no class resolves cannot be compared and is refused, so the comparison fails closed.
+     *
+     * @param scopeOwned the plan of a version of a scope other than the default one
+     * @param defaultContractName the logical contract name of the default scope's current row
+     * @param defaultStateTypeName the logical state type name of the default scope's current row
+     * @return the comparison, which names {@code defaultStateTypeName}
+     */
+    public StateComparison compareWithDefault(
+            RuntimeWorkflow scopeOwned, String defaultContractName, String defaultStateTypeName) {
+        Objects.requireNonNull(scopeOwned, "scopeOwned");
+        Objects.requireNonNull(defaultContractName, "defaultContractName");
+        Objects.requireNonNull(defaultStateTypeName, "defaultStateTypeName");
+        Optional<Class<?>> defaultState = typeNames.find(defaultStateTypeName);
+        if (!defaultContractName.equals(scopeOwned.contractName())) {
+            return new StateComparison(defaultStateTypeName, true);
+        }
+        if (defaultState.isEmpty()) {
+            return new StateComparison(defaultStateTypeName, false);
+        }
+        try {
+            requireExtension(
+                    defaultContractName,
+                    defaultState.orElseThrow(),
+                    scopeOwned,
+                    scopeOwned.definitionScopeKey(),
+                    scopeOwned.plan().definitionId(),
+                    scopeOwned.plan().definitionVersion());
+            return new StateComparison(defaultStateTypeName, true);
+        } catch (WorkflowDefinitionException refused) {
+            return new StateComparison(defaultStateTypeName, false);
         }
     }
 

@@ -6,13 +6,16 @@ package dev.vertique.workflow.schema;
 import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.json.schema.validation.PathForm;
 import dev.vertique.json.schema.validation.ViolationDetails;
+import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
@@ -23,6 +26,8 @@ import jakarta.inject.Singleton;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Assembles descriptors from the workflow registry and the schemas cached at registration.
@@ -33,8 +38,10 @@ import java.util.Optional;
  * It never loads a class and never generates a schema. A definition that is registered but has no cached schema for
  * one of its payload types means the registration validator was not installed for the registry; that is reported as
  * an {@link IllegalStateException} that fails the returned future rather than being thrown from the call, and not
- * as an unknown definition. A version that no row supplies is an unknown definition; any other load failure fails
- * the future with the load's own failure.
+ * as an unknown definition. A version that cannot run on this node, because no row supplies it or its stored source
+ * does not build, is an unknown definition and its cause is logged, not returned; any other load failure fails the
+ * future with the load's own failure. The service does not decide who may ask: a caller authorizes access to the
+ * definition and checks its scope before calling.
  *
  * <p>Validation resolves the same keys, then runs the compiled validator held by the cache entry inside a window of
  * its pattern-input guard. Nothing is generated, compiled or loaded per call, and the submitted payload is only read.
@@ -43,6 +50,8 @@ import java.util.Optional;
  */
 @Singleton
 final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
+
+    private static final Logger log = LoggerFactory.getLogger(DefaultWorkflowPayloadSchemas.class);
 
     private static final String VOID_PRIMITIVE = "void";
     private static final String VOID_WRAPPER = Void.class.getName();
@@ -173,12 +182,29 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
         return VOID_PRIMITIVE.equals(typeName) || VOID_WRAPPER.equals(typeName);
     }
 
+    /**
+     * Loads the plan. A version that cannot run on this node (no row supplies it, or the row does not build) is
+     * answered as an unknown definition, whatever the reason, so the answer does not tell a caller what the stored
+     * source of a definition holds; the cause is logged for the operator. Any other failure fails the future.
+     */
     private Future<Optional<RuntimeWorkflow>> resolve(DefinitionKey key) {
-        return registry.load(key)
-                .map(Optional::of)
-                .recover(failure -> failure instanceof WorkflowDefinitionNotFoundException
-                        ? Future.succeededFuture(Optional.empty())
-                        : Future.failedFuture(failure));
+        return registry.load(key).map(Optional::of).recover(failure -> {
+            if (!(failure instanceof WorkflowDefinitionException
+                    || failure instanceof WorkflowVersionPinUnavailableException)) {
+                return Future.failedFuture(failure);
+            }
+            if (!(failure instanceof WorkflowDefinitionNotFoundException)) {
+                log.warn(
+                        "Definition scope '{}' id '{}' version {} is reported as unknown because its plan does not"
+                                + " load: {}",
+                        EchoedNames.bounded(key.scopeKey()),
+                        EchoedNames.bounded(key.definitionId()),
+                        key.definitionVersion(),
+                        failure.getClass().getName());
+                log.debug("Plan load failure", failure);
+            }
+            return Future.succeededFuture(Optional.empty());
+        });
     }
 
     private DecisionDescriptor descriptorOf(HumanTaskNode.TaskDecision decision) {
