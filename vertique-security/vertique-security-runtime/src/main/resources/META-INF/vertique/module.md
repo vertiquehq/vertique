@@ -564,7 +564,7 @@ static AuthorizationNarrower myNarrower(MyNarrower n) { return n; }
 
 ```java
 @Provides @IntoSet
-static SecurityEventObserver auditObserver(SecurityAuditObserver o) { return o; }
+static SecurityEventObserver myObserver(MySecurityEventObserver o) { return o; }
 ```
 
 ### Opting into Mode-2 live authority re-resolution

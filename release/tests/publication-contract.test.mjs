@@ -612,7 +612,7 @@ describe('PublicCiContractTest', () => {
     );
   });
 
-  it('pullRequestBuildHasReadOnlyPermissionsAndNoSecrets', () => {
+  it('buildHasReadOnlyPermissionsAndOnlyTheSonarSecret', () => {
     const yaml = ci();
 
     // Required CI must hold no package, release, tag, or repository-content
@@ -624,15 +624,18 @@ describe('PublicCiContractTest', () => {
     }
     assert.match(yaml, /^permissions:\s*$/m, 'ci.yml must declare a top-level permissions block');
 
-    // No secret may be referenced at all: nothing in required CI needs one.
-    const secretRefs = [...yaml.matchAll(/\$\{\{\s*secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]);
-    assert.deepEqual(secretRefs, [], `required CI must reference no secrets, found ${secretRefs}`);
+    // The Sonar token is the only secret referenced by required CI.
+    const secretRefs = [...yaml.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]);
+    assert.deepEqual(secretRefs, ['SONAR_TOKEN']);
+    assert.match(yaml, /SONAR_TOKEN: \$\{\{ secrets\.SONAR_TOKEN \}\}/);
+    assert.match(yaml, /SONAR_OPTIONAL: \$\{\{ github\.event_name == 'pull_request' && \(github\.event\.pull_request\.head\.repo\.full_name != github\.repository \|\| github\.actor == 'dependabot\[bot\]'\) \}\}/);
+    assert.match(yaml, /run: bash scripts\/ci-build\.sh/);
 
     // It must run on both PR and main push, and must actually verify.
     assert.match(yaml, /pull_request:/, 'ci.yml must run on pull_request');
     assert.match(yaml, /push:/, 'ci.yml must run on push');
     const bodies = runStepBodies(yaml).join('\n');
-    assert.match(bodies, /mvnw[^\n]*\bverify\b/, 'ci.yml must run a clean Maven verification');
+    assert.match(bodies, /bash scripts\/ci-build\.sh/, 'ci.yml must run the Maven verification entry point');
     assert.match(bodies, /spotless:check/, 'ci.yml must run the formatting check');
     // A glob, never an enumeration: a hand-maintained list silently drops
     // every release-contract test nobody remembers to add.
@@ -641,6 +644,21 @@ describe('PublicCiContractTest', () => {
       /^node --test release\/tests\/\*\.test\.mjs$/m,
       'ci.yml must run every release-contract test by glob'
     );
+  });
+
+  it('routesMarkdownPullRequestsToDocumentationChecks', () => {
+    const yaml = ci();
+    assert.match(yaml, /markdown_only: \$\{\{ steps\.scope\.outputs\.markdown_only \}\}/);
+    const docs = yaml.match(/^  docs:\n([\s\S]*?)(?=^  build:)/m)?.[1];
+    const build = yaml.match(/^  build:\n([\s\S]*)/m)?.[1];
+    assert.ok(docs && build);
+    assert.match(docs, /needs\.classify\.outputs\.markdown_only == 'true'/);
+    assert.match(build, /!cancelled\(\) && needs\.classify\.outputs\.docs_only != 'true' && needs\.classify\.outputs\.markdown_only != 'true'/);
+    assert.match(docs, /actions\/setup-node@[a-f0-9]+[^\n]*\n\s+with:\n\s+node-version: "24"/);
+    assert.match(docs, /node --test release\/tests\/\*\.test\.mjs/);
+    assert.match(docs, /bash scripts\/test-verify-documentation-contracts\.sh[\s\S]*bash scripts\/verify-documentation-contracts\.sh/);
+    assert.match(docs, /bash scripts\/test-verify-module-docs\.sh[\s\S]*bash scripts\/verify-module-docs\.sh/);
+    assert.match(build, /bash scripts\/test-verify-module-docs\.sh[\s\S]*bash scripts\/verify-module-docs\.sh/);
   });
 
   it('delegatesSubstantiveLogicToRepositoryOwnedScripts', () => {

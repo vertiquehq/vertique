@@ -81,15 +81,12 @@ import org.junit.jupiter.params.provider.MethodSource;
  * rejection — runs strictly after negotiation has already completed and so must still carry the
  * negotiated version. Every row asserts the terminal event's {@code protocolVersion}, {@code
  * correlation}, and {@code authorization} facts (or their documented absence) rather than only the
- * wire response, because the frozen record's own fields are exactly what {@code vertique-audit-mcp}
- * and the OpenTelemetry adapter consume — a proof that only inspected the HTTP response could not
- * tell them apart from the pre-repair {@code null} facts.
+ * wire response, because observers consume the terminal record's fields. A proof that only inspected
+ * the HTTP response could not distinguish these facts from absent values.
  *
- * <p>Enterprise-side consumption ({@code McpAuditProjector} reading {@link
- * McpRequestTerminalEvent#correlation()} instead of {@code AuditCorrelation.empty()}) is outside this
- * module's worktree and is not re-proven here; {@code McpAuditProjector} already branches on a
- * non-{@code null} correlation (see its source), so once this slice makes production ever populate one,
- * that branch starts exercising for real without an enterprise-side code change.
+ * <p>Observers can use {@link McpRequestTerminalEvent#correlation()} to project correlation facts
+ * when they are present. This test verifies the event emitted by the server, not an observer's
+ * downstream projection.
  */
 class McpLifecycleFactsTest {
 

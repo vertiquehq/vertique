@@ -45,6 +45,19 @@ calls.
 
 ## Core Concepts
 
+### Asynchronous timeouts
+
+`dev.vertique.core.async.Timeouts` provides shared timeout boundaries for asynchronous work:
+
+- `awaitCondition(vertx, condition, pollIntervalMs, timeoutMs, operation)` polls a condition on a
+  Vert.x timer, completing when it becomes true or failing with `TimeoutException` at the deadline.
+- `withTimeout(future, timeoutMs, description)` returns the future's result or failure, bounded by
+  the timeout.
+
+Both timeout values must be positive. A timeout does not cancel the underlying asynchronous
+operation, so the caller still owns cleanup and failure policy. For example, a consumer can report
+the timeout while its close future continues to settle in the background.
+
 ### The graph-input seam
 
 Every bootstrap path funnels two values into the application's Dagger graph: the `Vertx` instance
@@ -142,6 +155,37 @@ A value that must ride along with a request or a durable dispatch implements the
 can be read back. The five context-producing SPIs carry the same bound on their context-type
 parameter. The holder implementation and the encoder/decoder registries ship in
 `dev.vertique:vertique-context`.
+
+### Scope vocabulary
+
+`ScopeKey` and `ScopeContext` live in `dev.vertique.core.scope`. Applications use a key to name a
+data or execution partition — a tenant, project, workspace, or organization supplies the meaning.
+The key constructor rejects `null` with `NullPointerException` and other invalid text with
+`IllegalArgumentException`. A valid key has 1–255 Unicode code points, no ISO controls, no unpaired
+surrogate, no format character, at least one non-whitespace code point, and no leading or trailing
+whitespace (`Character.isWhitespace` or `Character.isSpaceChar`). Internal whitespace other than
+controls (including U+00A0, U+2028, and U+2029) is accepted. Construction preserves the exact
+string; equality uses that exact text. `ScopeKey.DEFAULT` equals `new ScopeKey("default")` and
+names an ordinary partition — it confers no privilege, fallback, or automatic binding.
+
+`ScopeContext` wraps one non-null `ScopeKey` and implements `ContextValue`, so callers may bind it
+explicitly through the existing holder API. Construction itself installs no ambient state. When the
+application's existing context runtime includes `ContextRuntimeModule` from `vertique-context`, its
+default durable codec pair carries an explicitly bound scope unless an explicit durable contribution
+claims the scope type or namespace. When active, the built-in pair captures at `WORKFLOW`, `OUTBOX`,
+and `DELAYED_JOB`, and decodes at `WORKFLOW`, `OUTBOX_SERVICE`, and `DELAYED_JOB`; it does neither
+at `KAFKA` or any other identifier. The pair does not affect generic snapshots or service-dispatch
+propagation. When the built-in pair is active, a raw scope body already in a Kafka carrier remains
+untyped and is not decoded; the existing authoritative ingress still clears a prior ambient scope for
+its lifetime, and closing its holder scope restores that binding. Applications that need scope at
+Kafka bind it after ingress.
+
+On a later workflow drive, the caller's ambient scope or valid explicit scope metadata can override
+the saved scope for that drive without changing the saved carrier or workflow scope fields. The saved
+value is not an immutable partition pin; applications that require one partition for an entire
+instance must enforce that policy before supplying or accepting context. Neither type asserts trust or
+access, and scope never selects a workflow. Key text is not neutralized for logging, so consumers
+encode values for their sink.
 
 ---
 
@@ -397,6 +441,20 @@ The resilience annotation vocabulary and its declaration metadata are provided b
 applications using `@Retry`, `@Timeout`, or `@CircuitBreaker` should depend on the resilience module
 directly or through the module that enforces those declarations.
 
+### `ScopeKey` and `ScopeContext`
+
+```java
+public record ScopeKey(String value) {
+    public static final ScopeKey DEFAULT;   // equal to new ScopeKey("default")
+}
+
+public record ScopeContext(ScopeKey scopeKey) implements ContextValue {}
+```
+
+Validated exact-identity partition name and its holder-eligible composition. See
+[Scope vocabulary](#scope-vocabulary). `system` is an ordinary accepted key, not a special variant.
+`ScopeKey` itself does not implement `ContextValue`.
+
 ### `CorrelationContext`
 
 Read-only view of the correlation identifiers bound to the current execution. It is a
@@ -427,6 +485,37 @@ fail-closed emission sites that still need an audit join key when no ambient cor
 The runtime that binds this context, and the `CorrelationIdGenerator` SPI it uses, ship in
 `dev.vertique:vertique-correlation`. An application overrides ID generation by binding its own
 `CorrelationIdGenerator` — that module declares the binding as optional.
+
+### `UUIDV7`
+
+Time-ordered identifiers (RFC 9562 `UUIDv7`) as plain `java.util.UUID` values, for keys that should
+sort by creation time — for example database primary keys that append to the index instead of
+scattering across it.
+
+```java
+UUID id = UUIDV7.randomUUID();           // drop-in for UUID.randomUUID()
+long createdAt = UUIDV7.timestampMillis(id);   // embedded Unix epoch milliseconds
+```
+
+#### Invariants & Gotchas
+
+- **Same layout as PostgreSQL `uuidv7()` and Hibernate's version 7 generator.** The 12 `rand_a`
+  bits hold the fraction of the millisecond in 1/4096 steps (about 244 ns) and the 62 `rand_b` bits
+  are random, so database-generated and application-generated keys sort together.
+- **Monotonic per JVM.** Every call returns a UUID strictly greater than all earlier results from
+  the same JVM, including within one millisecond and across clock regressions. `UUID.compareTo` and
+  the string form sort identically.
+- **No cross-process guarantee.** Different processes or hosts order by their clocks, then by
+  random bits where the clocks give the same instant.
+- **Not a secret.** The UUID discloses its creation time and carries fewer random bits than a
+  version 4 UUID. Do not use it as a token or session secret; keep `UUID.randomUUID()` for those.
+- **The embedded timestamp can run ahead of the clock** after a backwards clock step, by as much as
+  the step, or during a sustained burst above about four million identifiers per second, until the
+  clock catches up. It never runs behind the last issued value.
+- **Thread-safe, short lock.** Callers contend only for a brief critical section, so it is safe to
+  call from an event-loop thread.
+- `timestampMillis` throws `IllegalArgumentException` for any UUID that is not version 7, variant 2,
+  and `randomUUID` throws `IllegalStateException` if the system clock is outside the 48-bit range.
 
 ### `PayloadSource` and `PayloadSources`
 
@@ -977,18 +1066,23 @@ bounded `<T extends ContextValue>` on its context type; the registries that coll
 | `InboundContextInitializer` | `ContextHolder.Scope initialize(InboundContextInitializationContext)` |
 
 ```java
-public record TenantContext(String tenantId) implements ContextValue {}
+public record RequestLabelContext(String label) implements ContextValue {}
 
-public final class TenantDispatchEncoder implements ServiceDispatchContextEncoder<TenantContext> {
-    @Inject public TenantDispatchEncoder() {}
+public final class RequestLabelDispatchEncoder
+        implements ServiceDispatchContextEncoder<RequestLabelContext> {
+    @Inject public RequestLabelDispatchEncoder() {}
 
-    @Override public Class<TenantContext> type() { return TenantContext.class; }
+    @Override public Class<RequestLabelContext> type() { return RequestLabelContext.class; }
 
-    @Override public Object encode(TenantContext value, ServiceDispatchEncodeContext context) {
-        return value.tenantId();
+    @Override public Object encode(RequestLabelContext value, ServiceDispatchEncodeContext context) {
+        return value.label();
     }
 }
 ```
+
+`ScopeContext` is partition vocabulary eligible for the same explicit holder write path. This core
+foundation does not register a scope encoder; the conditional default durable codec pair is supplied
+by `vertique-context`'s `ContextRuntimeModule`.
 
 Decoders report problems by returning `ContextDecodeResult.failure(warnings)` rather than throwing;
 the record is `(Optional<T> value, List<ContextDecodeWarning> warnings)` with the factories

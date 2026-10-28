@@ -172,7 +172,7 @@ public final class DefaultSecurityIdentityResolver implements SecurityIdentityRe
         Optional<String> clientIdFromEvidence = Optional.ofNullable(getStringAttr(safeAttrs, "client_id"))
                 .or(() -> Optional.ofNullable(getStringAttr(safeAttrs, "azp")));
 
-        // Classification heuristic (mirrors prior DefaultAuditIdentityResolver):
+        // Classification heuristic:
         // - JWT / BASIC: USER when sub present (human user flow); SERVICE otherwise
         //   (client-credentials / machine-only flow).
         // - API_KEY / HMAC / MTLS: always SERVICE — these auth methods are machine-to-machine.

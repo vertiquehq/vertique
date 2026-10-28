@@ -28,7 +28,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 /**
- * Guards the neutral open-core MCP surface against enterprise audit vocabulary.
+ * Guards the neutral open-core MCP surface against the vocabulary listed in {@code FORBIDDEN_VOCABULARY}.
  *
  * <p>The scan reads the compiled production bytecode of both open-core MCP artifacts, so a newly
  * added public type is covered without touching this test.

@@ -28,7 +28,7 @@ import java.util.function.UnaryOperator;
  * <pre>{@code
  * {
  *   "type": "vault",
- *   "address": "http://vault:8200",           // required; Vault base URL
+ *   "address": "https://vault:8200",          // required; Vault base URL
  *   "namespace": "my-ns",                     // optional; Vault Enterprise namespace
  *   "auth": {
  *     "method": "token",                      // "token" | "kubernetes" | "approle"

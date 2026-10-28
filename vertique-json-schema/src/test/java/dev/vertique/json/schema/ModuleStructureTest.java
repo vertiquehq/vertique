@@ -78,8 +78,8 @@ class ModuleStructureTest {
             "java.");
 
     /**
-     * Explicitly banned prefixes (FR-JSON-070: no REST, MCP, transport, validator-runtime,
-     * telemetry, or enterprise type). Every one of these is already excluded by {@link
+     * Explicitly banned prefixes (no REST, MCP, transport, validator-runtime, or telemetry
+     * type). Every one of these is already excluded by {@link
      * #ALLOWED_MAIN_IMPORT_PREFIXES} being an allowlist, not a denylist — this constant exists so
      * the forbidden surface named in the plan is documented and independently assertable.
      */
