@@ -473,6 +473,13 @@ public class InMemoryWorkflowDefinitionRegistryStore
     }
 
     @Override
+    public synchronized Future<Optional<String>> pinnedContract(DefinitionKey key, SqlClient tx) {
+        if (code != null) seedCodeFrom(code);
+        WorkflowDefinitionRecord row = rows.get(key);
+        return Future.succeededFuture(row == null ? Optional.empty() : Optional.of(row.contractName()));
+    }
+
+    @Override
     public synchronized Future<StartSelection> selectionRead(String startScope, String definitionId, SqlClient tx) {
         if (code != null) seedCodeFrom(code);
         List<StartVersion> versions = rows.values().stream()

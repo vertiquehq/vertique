@@ -103,6 +103,8 @@ public abstract class WorkflowCoreModule {
      *     depend on the registry); the set may be empty
      * @param typeNames the shared type-name index the registry fills as definitions register
      * @param stateCompatibility the state comparison when the application installs one; empty otherwise
+     * @param executorConfig the executor configuration; a registry of a node with the executor turned off refuses
+     *     {@code load}
      * @return a fully-populated, immutable-after-build registry
      */
     @Provides
@@ -112,9 +114,13 @@ public abstract class WorkflowCoreModule {
             WorkflowPlanValidator forkJoinValidator,
             Provider<Set<WorkflowDefinitionValidator>> definitionValidators,
             DefaultWorkflowTypeNames typeNames,
-            Optional<WorkflowStateCompatibility> stateCompatibility) {
+            Optional<WorkflowStateCompatibility> stateCompatibility,
+            Optional<WorkflowExecutorConfig> executorConfig) {
         DefaultWorkflowRegistry reg =
                 new DefaultWorkflowRegistry(forkJoinValidator, definitionValidators, typeNames, stateCompatibility);
+        if (!executorConfig.map(WorkflowExecutorConfig::enabled).orElse(true)) {
+            reg.markRecordingOnly();
+        }
         contributors.forEach(c -> c.contribute(reg));
         return reg;
     }

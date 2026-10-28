@@ -32,6 +32,7 @@ import dev.vertique.inboxoutbox.postgresql.TransactionalMessagingPostgresqlModul
 import dev.vertique.inboxoutbox.services.TransactionalMessagingServiceModule;
 import dev.vertique.job.cron.dagger.CronPersistenceModule;
 import dev.vertique.job.postgresql.JobPostgresqlModule;
+import dev.vertique.json.JsonRuntimeModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.services.DispatchModule;
 import dev.vertique.workflow.client.WorkflowClientFactory;
@@ -40,6 +41,7 @@ import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
+import dev.vertique.workflow.schema.WorkflowSchemaModule;
 import dev.vertique.workflow.services.compose.WorkflowOutboxComposeValidator;
 import dev.vertique.workflow.services.di.WorkflowServicesModule;
 import dev.vertique.workflow.tasks.TaskService;
@@ -61,8 +63,8 @@ import java.util.Set;
  * {@code verticleDeploymentManager()} accessors expose the lifecycle inputs the runner consumes.
  *
  * <p>The runner reproduces the former {@code MainVerticle} choreography exactly through lifecycle
- * phases: this graph includes no JSON runtime module, so no {@code CONFIGURE}-phase step installs a
- * JSON profile as the process codec and JSON runs on Vert.x's raw semantics; the {@code VALIDATE}-phase
+ * phases: the {@code CONFIGURE}-phase step of the {@link JsonRuntimeModule}, which the schema module
+ * needs, installs the configured JSON profile as the process codec; the {@code VALIDATE}-phase
  * {@code ComposeValidationStep} forces construction of every {@code ComposeValidator} — including
  * the {@link WorkflowTasksComposeValidator} (contributed by {@link WorkflowTasksModule}) — so that
  * fail-fast startup contract still runs without any hand-written call; the
@@ -96,6 +98,9 @@ import java.util.Set;
  *       {@code WorkflowEngineModule}), PostgreSQL repositories, and recorder multibinding.</li>
  *   <li>{@link WorkflowExecutorConfigModule} — the parsed {@code workflow.executor} configuration of the
  *       workflow executor, which the engine deploys in the {@code SERVICES} phase.</li>
+ *   <li>{@link WorkflowSchemaModule} and {@link JsonRuntimeModule} — the producer of the schemas that
+ *       definition rows store, which a node that runs the executor needs, and the JSON profile
+ *       bindings it reads.</li>
  *   <li>{@link WorkflowServicesModule} — outbox recorder + signal contributor + compose
  *       validator.</li>
  *   <li>{@link CronPersistenceModule} and {@link JobPostgresqlModule} — the cron scheduler and the
@@ -143,6 +148,8 @@ import java.util.Set;
             TransactionalMessagingServiceModule.class,
             WorkflowPostgresqlModule.class,
             WorkflowExecutorConfigModule.class,
+            WorkflowSchemaModule.class,
+            JsonRuntimeModule.class,
             WorkflowServicesModule.class,
             CronPersistenceModule.class,
             JobPostgresqlModule.class,

@@ -3,10 +3,12 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
+import dev.vertique.workflow.exception.WorkflowNodeRoleException;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
@@ -47,6 +49,10 @@ import java.util.function.Supplier;
  * <p>Reinstating a retired version first restores its executable source: the deployed code for a code row, or the
  * stored document text for a document row, each checked against the hash of the row. Only then is the durable change
  * committed.
+ *
+ * <p>Publishing and reinstating build a plan, so a recording-only node ({@code workflow.executor.enabled=false}) refuses
+ * both with {@link WorkflowNodeRoleException}; deprecating, retiring and the activation operations need no build and
+ * run on every node.
  */
 @Singleton
 final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLifecycle {
@@ -56,6 +62,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private final Set<PersistedDefinitionLoader> loaders;
     private final DefinitionApplyQueue queue;
     private final WorkflowCodeDefinitionCatalog catalog;
+    private final boolean executorNode;
 
     /** Constructs a lifecycle over an empty code catalog, for unit tests only. */
     DefaultWorkflowDefinitionLifecycle(
@@ -63,7 +70,17 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
             DefinitionApplyQueue queue) {
-        this(store, registry, loaders, queue, new WorkflowCodeDefinitionCatalog());
+        this(store, registry, loaders, queue, new WorkflowCodeDefinitionCatalog(), Optional.empty());
+    }
+
+    /** Constructs a lifecycle for a node that runs the executor. */
+    DefaultWorkflowDefinitionLifecycle(
+            WorkflowDefinitionRegistryStore store,
+            Provider<WorkflowRegistry> registry,
+            Set<PersistedDefinitionLoader> loaders,
+            DefinitionApplyQueue queue,
+            WorkflowCodeDefinitionCatalog catalog) {
+        this(store, registry, loaders, queue, catalog, Optional.empty());
     }
 
     @Inject
@@ -72,7 +89,9 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
             DefinitionApplyQueue queue,
-            WorkflowCodeDefinitionCatalog catalog) {
+            WorkflowCodeDefinitionCatalog catalog,
+            Optional<WorkflowExecutorConfig> executorConfig) {
+        this.executorNode = executorConfig.map(WorkflowExecutorConfig::enabled).orElse(true);
         this.store = Objects.requireNonNull(store, "store");
         this.registry = registry;
         this.loaders = loaders;
@@ -84,6 +103,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<Void> publish(DefinitionKey key) {
         try {
             Objects.requireNonNull(key, "key");
+            requireExecutorNode("publish");
             return queue.submit(key.definitionId(), () -> publishQueued(key));
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
@@ -114,6 +134,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<Void> reinstate(DefinitionKey key) {
         try {
             Objects.requireNonNull(key, "key");
+            requireExecutorNode("reinstate");
             return queue.submit(key.definitionId(), () -> reinstateQueued(key));
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
@@ -162,6 +183,11 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
+    }
+
+    /** Refuses an operation that builds a plan on a node that does not run the executor. */
+    private void requireExecutorNode(String operation) {
+        if (!executorNode) throw new WorkflowNodeRoleException(operation);
     }
 
     private Future<Void> removeRecord(String scopeKey, String definitionId) {

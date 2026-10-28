@@ -20,6 +20,7 @@ import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.sqlclient.Tuple;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -116,7 +117,12 @@ public class TaskReviewSagaIT extends SagaTestBase {
                     WorkflowInstanceId id = (WorkflowInstanceId) pair[0];
                     UUID taskId = (UUID) pair[1];
                     var cmd = new TaskCompletionCommand(
-                            taskId, "approve", "needs-fix", idempotencyKey, new WorkflowActor.User("alice"), null);
+                            taskId,
+                            "approve",
+                            Map.of("comment", "needs-fix"),
+                            idempotencyKey,
+                            new WorkflowActor.User("alice"),
+                            null);
                     return component.taskService().complete(cmd).compose(v -> awaitIdle(id));
                 })
                 .compose(id -> component.workflowOperations().query(id))
@@ -174,9 +180,19 @@ public class TaskReviewSagaIT extends SagaTestBase {
                     WorkflowInstanceId id = (WorkflowInstanceId) pair[0];
                     UUID taskId = (UUID) pair[1];
                     var firstCmd = new TaskCompletionCommand(
-                            taskId, "approve", "ok", "approve-first-" + testId, new WorkflowActor.User("bob"), null);
+                            taskId,
+                            "approve",
+                            Map.of("comment", "ok"),
+                            "approve-first-" + testId,
+                            new WorkflowActor.User("bob"),
+                            null);
                     var secondCmd = new TaskCompletionCommand(
-                            taskId, "approve", "ok", "approve-second-" + testId, new WorkflowActor.User("bob"), null);
+                            taskId,
+                            "approve",
+                            Map.of("comment", "ok"),
+                            "approve-second-" + testId,
+                            new WorkflowActor.User("bob"),
+                            null);
                     // First completion transitions the workflow; second must be rejected as stale.
                     return component
                             .taskService()

@@ -8,6 +8,7 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException;
+import dev.vertique.workflow.exception.WorkflowNodeRoleException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.plan.CompensationNode;
@@ -160,6 +161,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
 
     /** Set once the engine's startup has ended; {@link #register(WorkflowDefinition)} is refused from then on. */
     private volatile boolean sealed;
+
+    /** Set when the node is recording-only; {@link #load(DefinitionKey)} is refused from then on. */
+    private volatile boolean recordingOnly;
 
     /**
      * Creates a new empty {@code DefaultWorkflowRegistry} with no fork/join validator.
@@ -991,6 +995,17 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     }
 
     /**
+     * Marks this registry as the registry of a recording-only node: {@link #load(DefinitionKey)} is refused from
+     * then on.
+     *
+     * <p>INTERNAL: called only when the registry is assembled for a node configured with
+     * {@code workflow.executor.enabled=false}; applications never call it.
+     */
+    public void markRecordingOnly() {
+        this.recordingOnly = true;
+    }
+
+    /**
      * Binds the source of the plans of document keys that this registry does not hold.
      *
      * <p>INTERNAL: called only by the engine when it wires its plan cache; applications never call it. The source
@@ -1008,11 +1023,15 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      *
      * <p>A key the registry holds, which is every code definition and every document registered at startup, is
      * answered here. Any other key is handed to the bound {@link DocumentPlanSource}; without one the future fails
-     * with {@link WorkflowDefinitionNotFoundException}.
+     * with {@link WorkflowDefinitionNotFoundException}. On a recording-only node, which holds no workflow code and
+     * builds no plan, the future fails with {@link WorkflowNodeRoleException}.
      */
     @Override
     public Future<RuntimeWorkflow> load(DefinitionKey key) {
         Objects.requireNonNull(key, "key");
+        if (recordingOnly) {
+            return Future.failedFuture(new WorkflowNodeRoleException("load"));
+        }
         RuntimeWorkflow held = lookup(key.scopeKey(), key.definitionId(), key.definitionVersion());
         if (held != null) {
             return Future.succeededFuture(held);

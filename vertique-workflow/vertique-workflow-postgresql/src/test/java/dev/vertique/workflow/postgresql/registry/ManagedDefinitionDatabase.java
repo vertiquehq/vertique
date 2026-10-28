@@ -10,6 +10,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.application.VertiqueApplicationComponent;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
+import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.core.lifecycle.LifecyclePhase;
@@ -18,6 +19,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.deploy.DeployerModule;
 import dev.vertique.deploy.VerticleDeployment;
+import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.callbacks.NamedPayloadMapper;
 import dev.vertique.workflow.definition.callbacks.NamedStartStateMapper;
@@ -62,6 +65,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.schema.WorkflowSchemaModule;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
@@ -315,7 +319,9 @@ public final class ManagedDefinitionDatabase {
                 PostgresInfrastructureModule.class,
                 BootObservationModule.class,
                 WorkflowDefinitionParserProbe.ParserModule.class,
-                TypeCatalogModule.class
+                TypeCatalogModule.class,
+                WorkflowSchemaModule.class,
+                SchemaBindings.class
             })
     public interface AppComponent extends VertiqueApplicationComponent {
 
@@ -580,7 +586,9 @@ public final class ManagedDefinitionDatabase {
                 CoreLifecycleStepsModule.class,
                 WorkflowPostgresqlModule.class,
                 PostgresInfrastructureModule.class,
-                NoLoaderBootObservationModule.class
+                NoLoaderBootObservationModule.class,
+                WorkflowSchemaModule.class,
+                SchemaBindings.class
             })
     interface NoLoaderAppComponent extends VertiqueApplicationComponent {
 
@@ -602,6 +610,25 @@ public final class ManagedDefinitionDatabase {
         Set<VerticleDeployment> verticleDeployments();
 
         Pool pool();
+    }
+
+    /**
+     * The JSON bindings that {@code WorkflowSchemaModule} reads, without the process codec that the JSON runtime module
+     * installs. A graph that runs the executor lists it next to the schema module.
+     */
+    @Module
+    public abstract static class SchemaBindings {
+
+        @Provides
+        @Singleton
+        static JsonMapperProfileRegistry profileRegistry() {
+            return new DefaultJsonMapperProfileRegistry(Set.of());
+        }
+
+        @Provides
+        static JsonConfig jsonConfig() {
+            return JsonConfig.defaults();
+        }
     }
 
     @Module

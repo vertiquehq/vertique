@@ -77,7 +77,7 @@ once whether the supplement is enabled.
 
 ## Schemas Stored On Definition Rows
 
-`WorkflowSchemaModule` also binds the internal `WorkflowPlanSchemaProducer`. A node that installs the module stores, with the plan hash of every definition row it writes, the signal names the version declares and the JSON Schema of its start payload. The producer reads the schemas the registration validator cached, so the start schema equals the one `validateStart` checks against; a payload type that is not cached yet, as for a document candidate that is loaded but not published, is described by the same generator under the same profile. A version whose start type is `void` gets the explicit schema `{"type":"null"}`, which admits no payload, so that a start that submits one is refused at record time; a row without a start schema (a null column, written before the schema was stored) leaves the decision to the executor. A node without the module still starts and writes both row columns as null.
+`WorkflowSchemaModule` also binds the internal `WorkflowPlanSchemaProducer`. A node that installs the module stores, with the plan hash of every definition row it writes, the signal names the version declares and the JSON Schema of its start payload. The producer reads the schemas the registration validator cached, so the start schema equals the one `validateStart` checks against; a payload type that is not cached yet, as for a document candidate that is loaded but not published, is described by the same generator under the same profile. A version whose start type is `void` gets the explicit schema `{"type":"null"}`, which admits no payload, so that a start that submits one is refused at record time; a row without a start schema (a null column, written before the schema was stored) leaves the decision to the executor. A node that runs the executor (`workflow.executor.enabled` is `true`, the default) needs this producer: without the module its startup fails with a `WorkflowConfigurationException` that names `vertique-workflow-schema` and `workflow.executor.enabled`, before it writes any definition row. A recording-only node (`workflow.executor.enabled=false`) needs neither the producer nor the module.
 
 ---
 
@@ -182,6 +182,8 @@ linear-safe, or review them before they enter a payload type.
 ---
 
 ## Reading Payload Schemas
+
+Every `WorkflowPayloadSchemas` method resolves a plan, so on a recording-only node (`workflow.executor.enabled=false`) each one fails with `WorkflowNodeRoleException` (a failed future) and reads nothing.
 
 `WorkflowPayloadSchemas` is bound by `WorkflowSchemaModule`. It returns the schemas generated at
 registration as plain descriptors, so a client can render a form for a decision or a start payload

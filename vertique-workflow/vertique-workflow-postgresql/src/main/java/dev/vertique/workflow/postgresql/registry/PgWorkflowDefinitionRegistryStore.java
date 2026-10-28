@@ -82,6 +82,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private final String sqlFind;
     private final String sqlFindDocument;
     private final String sqlFindStoredDocument;
+    private final String sqlPinnedContract;
     private final String sqlList;
     private final String sqlInsert;
     private final String sqlInsertCode;
@@ -159,6 +160,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " CASE WHEN octet_length(convert_to(document, 'UTF8')) <= $4 AND char_length(document) <= $5"
                 + " THEN document ELSE NULL END AS document FROM " + definitions + " WHERE " + KEY
                 + " AND kind = 'DOCUMENT'";
+
+        this.sqlPinnedContract = "SELECT contract_name FROM " + definitions + " WHERE " + KEY;
 
         // The filter is applied by the database: each parameter is null when its criterion is absent.
         this.sqlList = "SELECT " + COLUMNS + " FROM " + definitions
@@ -316,6 +319,24 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         Row r = rows.iterator().next();
                         return Optional.of(new StoredDocument(metadata(r), documentOf(key, r)));
                     })
+                    .recover(failure -> Future.failedFuture(translated(failure, key.definitionId())));
+        });
+    }
+
+    /**
+     * Reads the contract name of a definition row on the caller's transaction. It takes no connection of its own, and a
+     * failure is translated like the failure of any other read of this store.
+     */
+    @Override
+    public Future<Optional<String>> pinnedContract(DefinitionKey key, SqlClient tx) {
+        return attempt(() -> {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(tx, "tx");
+            return tx.preparedQuery(sqlPinnedContract)
+                    .execute(parameters(key))
+                    .map(rows -> rows.iterator().hasNext()
+                            ? Optional.of(rows.iterator().next().getString("contract_name"))
+                            : Optional.<String>empty())
                     .recover(failure -> Future.failedFuture(translated(failure, key.definitionId())));
         });
     }

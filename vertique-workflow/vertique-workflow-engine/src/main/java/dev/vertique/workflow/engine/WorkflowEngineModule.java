@@ -270,16 +270,22 @@ public abstract class WorkflowEngineModule {
 
     /**
      * Contributes the {@code workflow-executor} deployment to the {@code SERVICES} phase, like the outbox relay:
-     * {@code workflow.executor.instances} instances on the event loop at priority 100.
+     * {@code workflow.executor.instances} instances on the event loop at priority 100. A recording-only node
+     * ({@code workflow.executor.enabled=false}) contributes none.
      *
-     * @param executor the executor
-     * @return a set holding the deployment
+     * @param config   the executor configuration, or empty for the defaults
+     * @param executor the executor, built only when the node runs one
+     * @return a set holding the deployment, or an empty set on a recording-only node
      */
     @Provides
     @Singleton
     @ElementsIntoSet
-    static Set<VerticleDeployment> executorDeployments(WorkflowExecutor executor) {
-        return Set.of(executor.deployment());
+    static Set<VerticleDeployment> executorDeployments(
+            Optional<WorkflowExecutorConfig> config, Provider<WorkflowExecutor> executor) {
+        if (!config.orElseGet(WorkflowExecutorConfig::defaults).enabled()) {
+            return Set.of();
+        }
+        return Set.of(executor.get().deployment());
     }
 
     /**

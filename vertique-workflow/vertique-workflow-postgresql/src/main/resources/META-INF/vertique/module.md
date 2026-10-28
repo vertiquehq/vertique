@@ -539,6 +539,10 @@ Missing required recorders fail the transition. Optional event recording may be 
 
 ---
 
+## Node Roles
+
+Set `workflow.executor.enabled=false` for a node that only records. The adapter then contributes no `workflow-executor` deployment, so the node claims no command, and its startup writes no definition row and needs no workflow class or `vertique-workflow-schema` module; it still starts, signals, completes and reassigns tasks, cancels, migrates, queries (the contract-aware `query(id, contractName)` reads the `contract_name` of the pinned `workflow_definitions` row in its transaction through `PgWorkflowDefinitionRegistryStore.pinnedContract`) and activates, deprecates and retires versions. A node with the default `true` runs the commands any node recorded and requires the schema module's producer at startup.
+
 ## Queries And Management
 
 The module exposes query services for workflow instances and branch state. These are read-model APIs for management screens and operational tools.

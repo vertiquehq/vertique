@@ -267,7 +267,7 @@ Future<List<WorkflowDefinitionRecord>> definitions = service.list(
         new DefinitionFilter(WorkflowScopes.DEFAULT, null, null));
 ```
 
-`load` parses, validates, and compiles a candidate into the named scope without registering it. When a `WorkflowPlanSchemaProducer` is bound (install `WorkflowSchemaModule`), the candidate row is inserted with the signal names its plan declares and its start schema; without one both columns stay null. The scope argument is the only
+`load` parses, validates, and compiles a candidate into the named scope without registering it. When a `WorkflowPlanSchemaProducer` is bound (install `WorkflowSchemaModule`), the candidate row is inserted with the signal names its plan declares and its start schema; without one both columns stay null. A recording-only node (`workflow.executor.enabled=false`), which builds no plan and loads no workflow class, refuses `load`, `publish` and `reinstate` with `WorkflowNodeRoleException`; `deprecate`, `retire`, `activate`, `deactivateDefault`, `follow`, `activations`, `list` and `sourceMetadata` run on every node. The scope argument is the only
 source of the scope: a document never names one, and a top-level `scope` property is rejected as an unknown property with a
 parse failure and stores nothing. The scope key is required, nonblank, at most 255 code points and free of control characters;
 a `null` key fails the returned Future with `NullPointerException` and any other invalid key with `IllegalArgumentException`,

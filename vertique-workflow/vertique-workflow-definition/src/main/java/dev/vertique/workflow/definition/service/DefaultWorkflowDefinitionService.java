@@ -3,12 +3,14 @@
 
 package dev.vertique.workflow.definition.service;
 
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.pipeline.CompiledDefinition;
 import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowNodeRoleException;
 import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -56,6 +58,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     private final WorkflowDefinitionLifecycle lifecycle;
     private final WorkflowDefinitionsConfig config;
     private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
+    private final boolean executorNode;
 
     /**
      * Constructs the facade over the durable registry, its lifecycle and the typed policy, for a node that does not
@@ -72,7 +75,24 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
 
     /**
      * Constructs the facade over the durable registry, its lifecycle and the typed policy. When a schema producer is
-     * bound, a loaded candidate is stored with the signal names and start schema its plan declares.
+     * bound, a loaded candidate is stored with the signal names and start schema its plan declares. The node runs the
+     * executor.
+     */
+    public DefaultWorkflowDefinitionService(
+            WorkflowDefinitionPipeline pipeline,
+            Provider<WorkflowRegistry> registryProvider,
+            WorkflowDefinitionRegistryStore durable,
+            WorkflowDefinitionLifecycle lifecycle,
+            Optional<WorkflowDefinitionsConfig> config,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+        this(pipeline, registryProvider, durable, lifecycle, config, schemaProducer, Optional.empty());
+    }
+
+    /**
+     * Constructs the facade over the durable registry, its lifecycle and the typed policy. When a schema producer is
+     * bound, a loaded candidate is stored with the signal names and start schema its plan declares. When the executor
+     * configuration turns the executor off, the node is recording-only and {@code load} and {@code reinstate} are
+     * refused with {@link WorkflowNodeRoleException}.
      */
     @Inject
     public DefaultWorkflowDefinitionService(
@@ -81,7 +101,9 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
             WorkflowDefinitionRegistryStore durable,
             WorkflowDefinitionLifecycle lifecycle,
             Optional<WorkflowDefinitionsConfig> config,
-            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+            Optional<WorkflowPlanSchemaProducer> schemaProducer,
+            Optional<WorkflowExecutorConfig> executorConfig) {
+        this.executorNode = executorConfig.map(WorkflowExecutorConfig::enabled).orElse(true);
         this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
         this.pipeline = Objects.requireNonNull(pipeline, "pipeline");
         this.registryProvider = Objects.requireNonNull(registryProvider, "registryProvider");
@@ -94,6 +116,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     public Future<CompiledDefinitionRef> load(
             String scopeKey, byte[] content, DocumentFormat format, SourceMetadata metadata) {
         return attempt(() -> {
+            requireExecutorNode("load");
             // The scope is checked before the document is read, so a bad scope costs no parsing work.
             requireValidScope(scopeKey);
             Objects.requireNonNull(content, "content");
@@ -138,6 +161,11 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
         });
     }
 
+    /** Refuses an operation that compiles and builds a document on a node that does not run the executor. */
+    private void requireExecutorNode(String operation) {
+        if (!executorNode) throw new WorkflowNodeRoleException(operation);
+    }
+
     /**
      * Applies the scope-key rules of {@link DefinitionKey} to the caller's scope argument. The key rejects a missing
      * scope with {@link NullPointerException} and any other invalid value with {@link IllegalArgumentException}; its
@@ -175,6 +203,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     public Future<Void> reinstate(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
+            requireExecutorNode("reinstate");
             return lifecycle.reinstate(key);
         });
     }

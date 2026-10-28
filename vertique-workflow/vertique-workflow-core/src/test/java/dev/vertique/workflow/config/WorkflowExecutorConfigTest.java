@@ -118,6 +118,44 @@ class WorkflowExecutorConfigTest {
         assertRefused(failureKeys(5, 200, 30_000, 1000, 0), "workflow.executor.stuckAfterSeconds");
     }
 
+    @Test
+    @DisplayName("enabled defaults to true and parses false")
+    void enabledDefaultsToTrueAndParsesFalse() {
+        // Given an empty workflow.executor section, then one that turns the executor role off, with one other key
+        JsonObject empty = new JsonObject().put("workflow", new JsonObject().put("executor", new JsonObject()));
+        JsonObject disabled = new JsonObject()
+                .put(
+                        "workflow",
+                        new JsonObject()
+                                .put(
+                                        "executor",
+                                        new JsonObject().put("enabled", false).put("instances", 3)));
+        JsonObject enabled = new JsonObject()
+                .put("workflow", new JsonObject().put("executor", new JsonObject().put("enabled", true)));
+
+        // When each is parsed through the config module
+        WorkflowExecutorConfig byDefault = configured(empty);
+        WorkflowExecutorConfig off = configured(disabled);
+        WorkflowExecutorConfig on = configured(enabled);
+
+        // Then the node is an executor by default and when it says so, and recording-only when it is turned off
+        assertThat(byDefault.enabled()).isTrue();
+        assertThat(on.enabled()).isTrue();
+        assertThat(off.enabled()).isFalse();
+        assertThat(WorkflowExecutorConfig.defaults().enabled()).isTrue();
+        assertThat(configured(new JsonObject()).enabled()).isTrue();
+
+        // And the other components keep their defaults, or the value given beside it
+        assertThat(byDefault.instances()).isEqualTo(1);
+        assertThat(byDefault.concurrency()).isEqualTo(8);
+        assertThat(byDefault.pollIntervalMs()).isEqualTo(5000L);
+        assertThat(byDefault.leaseSeconds()).isEqualTo(60);
+        assertThat(byDefault.maxAttempts()).isEqualTo(5);
+        assertThat(off.instances()).isEqualTo(3);
+        assertThat(off.concurrency()).isEqualTo(8);
+        assertThat(off.leaseSeconds()).isEqualTo(60);
+    }
+
     private static void assertRefused(JsonObject config, String key) {
         assertThatThrownBy(() -> configured(config))
                 .isInstanceOf(ConfigurationException.class)

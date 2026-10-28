@@ -27,6 +27,9 @@ import jakarta.annotation.Nullable;
  * @param maxStepsPerSegment the nodes one segment may execute before it is failed; at least 1
  * @param stuckAfterSeconds how long a command may stay unsettled after it first became available before it is
  *     reported stuck, in seconds; at least 1
+ * @param enabled whether this node runs the workflow executor. {@code false} makes the node recording-only: it
+ *     records starts, signals, completions, cancels and reassignments and serves queries, but deploys no executor,
+ *     builds no plan and loads no workflow class, and it refuses the operations that need a build
  */
 public record WorkflowExecutorConfig(
         int instances,
@@ -37,7 +40,8 @@ public record WorkflowExecutorConfig(
         long transientBackoffBaseMs,
         long transientBackoffMaxMs,
         int maxStepsPerSegment,
-        long stuckAfterSeconds) {
+        long stuckAfterSeconds,
+        boolean enabled) {
 
     /** The default number of executor instances per node. */
     public static final int DEFAULT_INSTANCES = 1;
@@ -66,6 +70,46 @@ public record WorkflowExecutorConfig(
     /** The default age after which an unsettled command is reported stuck, in seconds. */
     public static final long DEFAULT_STUCK_AFTER_SECONDS = 300L;
 
+    /** Whether a node runs the executor unless the configuration turns it off. */
+    public static final boolean DEFAULT_ENABLED = true;
+
+    /**
+     * Creates an executor-role configuration with every component given except the node role.
+     *
+     * @param instances      the verticle instances of the executor on this node; 1 to 64
+     * @param concurrency    the segments one instance keeps in flight at a time; 1 to 256
+     * @param pollIntervalMs the pause between two looks for runnable commands, in milliseconds; at least 100
+     * @param leaseSeconds   how long a claim holds a command, in seconds; at least 5
+     * @param maxAttempts    the claims that may end by a crash or a lease overrun before dead-lettering; at least 1
+     * @param transientBackoffBaseMs the pause before the first retry of a transient failure, in milliseconds
+     * @param transientBackoffMaxMs the longest pause before a retry of a transient failure, in milliseconds
+     * @param maxStepsPerSegment the nodes one segment may execute before it is failed; at least 1
+     * @param stuckAfterSeconds how long a command may stay unsettled before it is reported stuck; at least 1
+     * @throws ConfigurationException naming the offending key if a value is outside its bound
+     */
+    public WorkflowExecutorConfig(
+            int instances,
+            int concurrency,
+            long pollIntervalMs,
+            int leaseSeconds,
+            int maxAttempts,
+            long transientBackoffBaseMs,
+            long transientBackoffMaxMs,
+            int maxStepsPerSegment,
+            long stuckAfterSeconds) {
+        this(
+                instances,
+                concurrency,
+                pollIntervalMs,
+                leaseSeconds,
+                maxAttempts,
+                transientBackoffBaseMs,
+                transientBackoffMaxMs,
+                maxStepsPerSegment,
+                stuckAfterSeconds,
+                DEFAULT_ENABLED);
+    }
+
     /**
      * Creates a configuration with the defaults for attempts, backoff, step cap and stuck age.
      *
@@ -85,7 +129,8 @@ public record WorkflowExecutorConfig(
                 DEFAULT_TRANSIENT_BACKOFF_BASE_MS,
                 DEFAULT_TRANSIENT_BACKOFF_MAX_MS,
                 DEFAULT_MAX_STEPS_PER_SEGMENT,
-                DEFAULT_STUCK_AFTER_SECONDS);
+                DEFAULT_STUCK_AFTER_SECONDS,
+                DEFAULT_ENABLED);
     }
 
     /**
@@ -141,7 +186,8 @@ public record WorkflowExecutorConfig(
             @JsonProperty("transientBackoffBaseMs") @Nullable Long transientBackoffBaseMs,
             @JsonProperty("transientBackoffMaxMs") @Nullable Long transientBackoffMaxMs,
             @JsonProperty("maxStepsPerSegment") @Nullable Integer maxStepsPerSegment,
-            @JsonProperty("stuckAfterSeconds") @Nullable Long stuckAfterSeconds) {
+            @JsonProperty("stuckAfterSeconds") @Nullable Long stuckAfterSeconds,
+            @JsonProperty("enabled") @Nullable Boolean enabled) {
         return new WorkflowExecutorConfig(
                 instances == null ? DEFAULT_INSTANCES : instances,
                 concurrency == null ? DEFAULT_CONCURRENCY : concurrency,
@@ -151,7 +197,8 @@ public record WorkflowExecutorConfig(
                 transientBackoffBaseMs == null ? DEFAULT_TRANSIENT_BACKOFF_BASE_MS : transientBackoffBaseMs,
                 transientBackoffMaxMs == null ? DEFAULT_TRANSIENT_BACKOFF_MAX_MS : transientBackoffMaxMs,
                 maxStepsPerSegment == null ? DEFAULT_MAX_STEPS_PER_SEGMENT : maxStepsPerSegment,
-                stuckAfterSeconds == null ? DEFAULT_STUCK_AFTER_SECONDS : stuckAfterSeconds);
+                stuckAfterSeconds == null ? DEFAULT_STUCK_AFTER_SECONDS : stuckAfterSeconds,
+                enabled == null ? DEFAULT_ENABLED : enabled);
     }
 
     /**

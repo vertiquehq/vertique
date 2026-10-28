@@ -20,7 +20,6 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
-import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
@@ -204,32 +203,9 @@ public class DefinitionRowSchemasIT {
         }
     }
 
-    @Test
-    @DisplayName("a node without the schema producer writes rows without the columns")
-    void nodeWithoutTheSchemaProducerWritesRowsWithoutColumns(Vertx vertx) {
-        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
-            database.ownRows(SHIPMENT);
-
-            // Given a graph that omits the schema module and registers the shipment definition
-            // When the graph starts
-            Boot node = graphWithoutSchemaModule(database, new ShipmentCode(SHIPMENT, Shape.BASE));
-            RowColumns row = rowColumns(database, WorkflowScopes.DEFAULT, SHIPMENT, 1);
-            node.close();
-
-            // Then startup succeeded and the row has its plan hash and neither column
-            assertThat(row.planHash()).matches("[0-9a-f]{64}");
-            assertThat(row.signalNames()).isNull();
-            assertThat(row.startSchema()).isNull();
-        }
-    }
-
     private static Boot schemaGraph(DefinitionScenario database, Vertx vertx, WorkflowDefinition<?, ?> code) {
         return database.nodeOf(pool ->
                 SchemaDefinitionGraph.build(vertx, pool, DefinitionRowSchemasIT.class, List.of(code), List.of()));
-    }
-
-    private static Boot graphWithoutSchemaModule(DefinitionScenario database, WorkflowDefinition<?, ?> code) {
-        return database.node(List::of, new BootObservation("row-schemas-unused", 1, "unused", false), List.of(code));
     }
 
     private static RowColumns rowColumns(DefinitionScenario database, String scope, String id, long version) {

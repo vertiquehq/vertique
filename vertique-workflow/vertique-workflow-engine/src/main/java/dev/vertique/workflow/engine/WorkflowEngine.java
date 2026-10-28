@@ -743,9 +743,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * {@inheritDoc}
      *
      * <p>Reads like {@link #query(WorkflowInstanceId)}, after comparing {@code contractName} with the
-     * contract of the definition version the instance is pinned to. A node that holds no code for that
-     * version fails the future with
-     * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException}. A different contract
+     * contract that the definition row of the version the instance is pinned to stores, read in the query's
+     * transaction, so the check needs no plan and no code on any node. A pinned row that no longer exists fails the
+     * future with {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException}. A different contract
      * fails the future with
      * {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException} before the
      * history is read.
@@ -768,19 +768,24 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     }
                     WorkflowInstance inst = optInst.get();
                     if (callerContractName != null) {
-                        // A contract can only be compared with the pinned plan; a node without the code
-                        // cannot vouch for the caller's contract and refuses.
-                        RuntimeWorkflow pinned;
-                        try {
-                            pinned = PinnedPlans.resolve(registry, inst);
-                        } catch (Exception e) {
-                            return Future.<WorkflowView>failedFuture(e);
-                        }
-                        WorkflowDefinitionContractMismatchException refusal =
-                                ContractMismatch.refusal(inst, pinned, callerContractName, "query");
-                        if (refusal != null) {
-                            return Future.<WorkflowView>failedFuture(refusal);
-                        }
+                        // The contract is compared with the one the pinned definition's row stores, read in this
+                        // transaction, so no plan is resolved or built on any node.
+                        DefinitionKey pin = new DefinitionKey(
+                                inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion());
+                        Future<Optional<String>> row = definitionReads != null
+                                ? definitionReads.pinnedContract(pin, tx)
+                                : instances.findDefinitionContract(pin, tx);
+                        return row.compose(stored -> {
+                            if (stored.isEmpty()) {
+                                return Future.<WorkflowView>failedFuture(
+                                        new WorkflowVersionNotRunnableException(pin, inst.id()));
+                            }
+                            WorkflowDefinitionContractMismatchException refusal =
+                                    ContractMismatch.refusal(inst, pin, stored.get(), callerContractName, "query");
+                            return refusal != null
+                                    ? Future.<WorkflowView>failedFuture(refusal)
+                                    : history.listByInstance(id, tx).map(entries -> new WorkflowView(inst, entries));
+                        });
                     }
                     return history.listByInstance(id, tx).map(entries -> new WorkflowView(inst, entries));
                 }));

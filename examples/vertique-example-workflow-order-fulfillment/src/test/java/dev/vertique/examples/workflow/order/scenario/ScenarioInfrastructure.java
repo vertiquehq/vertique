@@ -17,12 +17,14 @@ import dev.vertique.inboxoutbox.postgresql.TransactionalMessagingPostgresqlModul
 import dev.vertique.inboxoutbox.services.TransactionalMessagingServiceModule;
 import dev.vertique.job.cron.dagger.CronPersistenceModule;
 import dev.vertique.job.postgresql.JobPostgresqlModule;
+import dev.vertique.json.JsonRuntimeModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.services.DispatchModule;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.di.WorkflowDefinitionsConfigModule;
 import dev.vertique.workflow.di.WorkflowExecutorConfigModule;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
+import dev.vertique.workflow.schema.WorkflowSchemaModule;
 import dev.vertique.workflow.services.di.WorkflowServicesModule;
 import dev.vertique.workflow.tasks.di.WorkflowTasksModule;
 
@@ -54,6 +56,8 @@ import dev.vertique.workflow.tasks.di.WorkflowTasksModule;
             WorkflowDefinitionModule.class,
             WorkflowDefinitionsConfigModule.class,
             WorkflowExecutorConfigModule.class,
+            WorkflowSchemaModule.class,
+            JsonRuntimeModule.class,
             ScenarioWiring.class
         })
 interface ScenarioInfrastructure {}

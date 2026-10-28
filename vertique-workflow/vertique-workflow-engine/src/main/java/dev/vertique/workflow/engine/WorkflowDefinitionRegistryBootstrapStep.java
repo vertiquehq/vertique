@@ -5,9 +5,11 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.LifecyclePhase;
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition;
 import dev.vertique.workflow.engine.registry.PlanCache;
+import dev.vertique.workflow.exception.WorkflowConfigurationException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
@@ -77,6 +79,11 @@ import org.slf4j.LoggerFactory;
  *   <li>It seals the registry: registering a definition is refused from then on.
  * </ol>
  *
+ * <p>A node with {@code workflow.executor.enabled=false} is recording-only: it holds and runs no workflow code, so it
+ * records nothing, checks no code row, builds no plan and resets no attempt; it only seals the registry. A node that
+ * runs the executor and has no {@link WorkflowPlanSchemaProducer} bound (the {@code vertique-workflow-schema} module)
+ * fails the step before any write.
+ *
  * <p>The step keeps no copy of the table: the registry holds the code, the plan cache holds the plans in use, and a
  * node reads the rows it needs. It reads the rows of the default scope and the rows being published, so none of its
  * reads grows with the rows of other scopes.
@@ -99,6 +106,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
     private final Provider<PlanCache> planCache;
     private final boolean buildDefaultScopeDocuments;
+    private final boolean executorNode;
 
     @Inject
     WorkflowDefinitionRegistryBootstrapStep(
@@ -110,7 +118,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             WorkflowTypeNames typeNames,
             Optional<WorkflowPlanSchemaProducer> schemaProducer,
             Provider<PlanCache> planCache,
-            Optional<WorkflowDefinitionsConfig> config) {
+            Optional<WorkflowDefinitionsConfig> config,
+            Optional<WorkflowExecutorConfig> executorConfig) {
+        this.executorNode = executorConfig.map(WorkflowExecutorConfig::enabled).orElse(true);
         this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
         this.planCache = planCache;
         this.buildDefaultScopeDocuments = config.map(WorkflowDefinitionsConfig::buildDefaultScopeDocumentsAtStartup)
@@ -135,6 +145,17 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
 
     @Override
     public Future<Void> start() {
+        if (executorNode && schemaProducer.isEmpty()) {
+            return Future.failedFuture(new WorkflowConfigurationException(
+                    "A node that runs the workflow executor (workflow.executor.enabled=true) needs the"
+                            + " vertique-workflow-schema module, which binds the producer of the schemas that definition"
+                            + " rows store; add the module, or set workflow.executor.enabled=false for a node that only"
+                            + " records"));
+        }
+        if (!executorNode) {
+            // A recording-only node holds no workflow code: it writes nothing, checks no code row and builds no plan.
+            return work(() -> seal(registry.get()));
+        }
         // Registry construction invokes static contributors; keep their parsing off the event loop.
         return work(this::prepare).compose(prepared -> {
             WorkflowRegistry local = prepared.registry();

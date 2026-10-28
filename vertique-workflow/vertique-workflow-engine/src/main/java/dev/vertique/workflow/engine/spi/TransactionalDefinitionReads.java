@@ -99,4 +99,15 @@ public interface TransactionalDefinitionReads<C> {
      * @return a future of the selection data
      */
     Future<StartSelection> selectionRead(String startScope, String definitionId, C tx);
+
+    /**
+     * Reads, on the caller's transaction, the contract that the stored row of a definition version names, so that a
+     * contract-aware query compares the caller's contract with the pinned version's without a plan or a class. The
+     * read takes no lock and changes nothing.
+     *
+     * @param key the scope, definition id and version the instance is pinned to
+     * @param tx  the caller's transaction handle; the read neither commits nor releases it
+     * @return a future of the logical name of the contract, or empty when no row exists for the key
+     */
+    Future<Optional<String>> pinnedContract(DefinitionKey key, C tx);
 }

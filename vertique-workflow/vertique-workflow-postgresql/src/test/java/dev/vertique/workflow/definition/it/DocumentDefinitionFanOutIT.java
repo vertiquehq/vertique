@@ -55,10 +55,12 @@ import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
+import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.schema.WorkflowSchemaModule;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
@@ -402,7 +404,9 @@ public class DocumentDefinitionFanOutIT {
                 WorkflowPostgresqlModule.class,
                 FanOutDefinitionSourceModule.class,
                 FanOutCallbackModule.class,
-                FanOutInfrastructureModule.class
+                FanOutInfrastructureModule.class,
+                WorkflowSchemaModule.class,
+                ManagedDefinitionDatabase.SchemaBindings.class
             })
     interface FanOutTestComponent extends VertiqueApplicationComponent {
 

@@ -56,12 +56,14 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
+import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.schema.WorkflowSchemaModule;
 import dev.vertique.workflow.services.di.WorkflowServicesModule;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
@@ -241,7 +243,9 @@ public class PerPlanValidatorIT {
                 WorkflowDefinitionModule.class,
                 WorkflowDefinitionParserProbe.ParserModule.class,
                 Infrastructure.class,
-                Catalog.class
+                Catalog.class,
+                WorkflowSchemaModule.class,
+                ManagedDefinitionDatabase.SchemaBindings.class
             })
     interface PlainApp extends Graph {
 
@@ -273,7 +277,9 @@ public class PerPlanValidatorIT {
                 Infrastructure.class,
                 Catalog.class,
                 WorkflowServicesModule.class,
-                ServiceBindings.class
+                ServiceBindings.class,
+                WorkflowSchemaModule.class,
+                ManagedDefinitionDatabase.SchemaBindings.class
             })
     interface ServicesApp extends Graph {
 

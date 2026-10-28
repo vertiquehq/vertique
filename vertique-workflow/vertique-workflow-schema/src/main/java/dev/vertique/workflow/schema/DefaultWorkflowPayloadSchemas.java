@@ -6,8 +6,10 @@ package dev.vertique.workflow.schema;
 import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.json.schema.validation.PathForm;
 import dev.vertique.json.schema.validation.ViolationDetails;
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException;
+import dev.vertique.workflow.exception.WorkflowNodeRoleException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WorkflowNode;
@@ -47,6 +49,9 @@ import org.slf4j.LoggerFactory;
  * its pattern-input guard. Nothing is generated, compiled or loaded per call, and the submitted payload is only read.
  * Every violation is returned in the order produced. A definition that
  * declares no start type has nothing to validate, so every start payload is accepted.
+ *
+ * <p>Every call resolves a plan, so a recording-only node ({@code workflow.executor.enabled=false}), which builds none,
+ * fails each call with {@link WorkflowNodeRoleException}.
  */
 @Singleton
 final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
@@ -68,20 +73,31 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
     private final WorkflowRegistry registry;
     private final PayloadSchemaCache cache;
     private final WorkflowTypeNames typeNames;
+    private final boolean executorNode;
 
     DefaultWorkflowPayloadSchemas(WorkflowRegistry registry, PayloadSchemaCache cache) {
-        this(registry, cache, new DefaultWorkflowTypeNames());
+        this(registry, cache, new DefaultWorkflowTypeNames(), Optional.empty());
+    }
+
+    DefaultWorkflowPayloadSchemas(WorkflowRegistry registry, PayloadSchemaCache cache, WorkflowTypeNames typeNames) {
+        this(registry, cache, typeNames, Optional.empty());
     }
 
     @Inject
-    DefaultWorkflowPayloadSchemas(WorkflowRegistry registry, PayloadSchemaCache cache, WorkflowTypeNames typeNames) {
+    DefaultWorkflowPayloadSchemas(
+            WorkflowRegistry registry,
+            PayloadSchemaCache cache,
+            WorkflowTypeNames typeNames,
+            Optional<WorkflowExecutorConfig> executorConfig) {
         this.registry = registry;
         this.cache = cache;
         this.typeNames = typeNames;
+        this.executorNode = executorConfig.map(WorkflowExecutorConfig::enabled).orElse(true);
     }
 
     @Override
     public Future<Optional<WorkflowDefinitionDescriptor>> describe(DefinitionKey key) {
+        if (!executorNode) return Future.failedFuture(new WorkflowNodeRoleException("describe"));
         return resolve(key)
                 .map(found -> found.map(workflow -> {
                     Class<?> startType = workflow.startPayloadType();
@@ -102,6 +118,7 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
 
     @Override
     public Future<Optional<DecisionDescriptor>> decision(DefinitionKey key, String stepId, String decisionName) {
+        if (!executorNode) return Future.failedFuture(new WorkflowNodeRoleException("decision"));
         return resolve(key).map(found -> found.flatMap(workflow -> findDecision(workflow, stepId, decisionName))
                 .map(this::descriptorOf));
     }
@@ -109,6 +126,7 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
     @Override
     public Future<PayloadValidationResult> validateDecision(
             DefinitionKey key, String stepId, String decisionName, @Nullable JsonObject payload) {
+        if (!executorNode) return Future.failedFuture(new WorkflowNodeRoleException("validateDecision"));
         return resolve(key).map(workflow -> {
             if (workflow.isEmpty()) {
                 return single(UNKNOWN_DEFINITION, DEFINITION_TYPE);
@@ -123,6 +141,7 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
 
     @Override
     public Future<PayloadValidationResult> validateStart(DefinitionKey key, @Nullable JsonObject payload) {
+        if (!executorNode) return Future.failedFuture(new WorkflowNodeRoleException("validateStart"));
         return resolve(key).map(workflow -> {
             if (workflow.isEmpty()) {
                 return single(UNKNOWN_DEFINITION, DEFINITION_TYPE);

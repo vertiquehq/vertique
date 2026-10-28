@@ -135,9 +135,9 @@ public interface WorkflowOperations {
      * Returns a read-only view of the workflow instance on behalf of a client of the named contract.
      *
      * <p>A binding that checks contracts compares {@code contractName} with the contract of the
-     * definition version the instance is pinned to and refuses the query when they differ. Unlike
-     * {@link #query(WorkflowInstanceId)}, which needs no plan, the check needs the pinned plan: a binding
-     * that holds no code for that version fails with
+     * definition version the instance is pinned to and refuses the query when they differ. Like
+     * {@link #query(WorkflowInstanceId)}, the check needs no plan: it compares with the contract stored on the pinned
+     * definition row, on every node. A pinned row that no longer exists fails with
      * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException}. The default implementation
      * performs no check and delegates to {@link #query(WorkflowInstanceId)}.
      *
