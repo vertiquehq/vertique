@@ -4,9 +4,8 @@
 # CI for pull requests and main.
 #
 # This workflow checks pull requests and pushes to main. It holds
-# read-only permissions and references no secret, so no package, release, tag
-# or repository-content write credential is ever available to code arriving
-# through a pull request.
+# read-only repository permissions. The Sonar token is available to trusted
+# pull requests and main builds; forks and Dependabot do not receive it.
 #
 # Every step binds an event or invokes a versioned, locally runnable
 # repository-owned entry point; substantive logic never lives in this YAML.
@@ -129,9 +128,7 @@ jobs:
       # most recent per-run save for a pull request branch that has none of
       # its own yet. A deliberately-refreshed stable key would need
       # `gh cache delete`, which needs actions: write — forbidden in this
-      # job by PublicCiContractTest's pullRequestBuildHasReadOnlyPermissions
-      # AndNoSecrets: CI holds read-only
-      # permissions, no exceptions.
+      # job by PublicCiContractTest: CI holds read-only repository permissions.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.m2/repository
@@ -139,6 +136,13 @@ jobs:
           restore-keys: |
             maven-${{ runner.os }}-${{ steps.pom-hash.outputs.value }}-
             maven-${{ runner.os }}-
+
+      - name: Cache Sonar packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -196,7 +200,10 @@ jobs:
       # OpenAPI plugin guards swagger-core's shared registry initialization,
       # so unrelated modules remain parallel.
       - name: Build and test
-        run: ./mvnw -ntp -Djacoco.module.report.skip=true clean verify
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_OPTIONAL: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]') }}
+        run: bash scripts/ci-build.sh
 
       # Building on a newer JDK must not raise the class-file version of what
       # we ship. The harness runs first so a broken checker cannot pass by
