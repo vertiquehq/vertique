@@ -14,6 +14,7 @@ import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.Deferral;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DispositionResult;
 import dev.vertique.workflow.engine.spi.InstanceFailureListener;
@@ -75,6 +76,12 @@ import java.util.function.IntToLongFunction;
 public final class PgWorkflowCommandRepository implements WorkflowCommandRepository<SqlClient> {
 
     /** The instance statuses that are ended: the instance takes no further command. */
+    /** The columns that hold who asked for a command. */
+    private static final String ACTOR_COLUMNS = "actor_kind, actor_id, actor_reason, on_behalf_of, attribution_status";
+
+    /** The reason a timer command is logged with: the system fires it. */
+    private static final String TIMER_REASON = "timer";
+
     private static final String ENDED = "('COMPLETED','COMPENSATED','CANCELLED','EXPIRED')";
 
     private static final String ENDED_OR_FAILED = "('COMPLETED','COMPENSATED','CANCELLED','EXPIRED','FAILED')";
@@ -98,6 +105,9 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final String failCommandRow;
     private final String failInstance;
     private final String insertHistory;
+    private final String insertHistoryAs;
+    private final String attributeEntries;
+    private final String attributeEntriesToCommands;
     private final String lockForTransientRetry;
     private final String retryTransientRow;
     private final String lockForFailure;
@@ -212,8 +222,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         String instances = PgTableNames.qualify(schemas, "workflow", "workflow_instances");
         this.insertStart = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
                 + " (workflow_id, seq, kind, state, recorded_at, available_at, payload_json, dedup_key, target_json,"
-                + " context_json) SELECT $1, $2, 'START', 'PENDING', recorded.at, recorded.at, $3::jsonb, $4,"
-                + " $5::jsonb, $6::jsonb FROM recorded RETURNING id";
+                + " context_json, " + ACTOR_COLUMNS + ") SELECT $1, $2, 'START', 'PENDING', recorded.at, recorded.at,"
+                + " $3::jsonb, $4, $5::jsonb, $6::jsonb, " + actorValues(7) + " FROM recorded RETURNING id";
         this.peekHeads = "SELECT c.id, c.workflow_id, c.kind, i.definition_scope_key, i.definition_id,"
                 + " i.definition_version, i.plan_hash, i.status IN " + ENDED + " AS instance_ended,"
                 + " CASE WHEN c.kind = 'MIGRATION' THEN (c.target_json->>'version')::bigint END AS migration_version,"
@@ -257,10 +267,39 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + ENDED_OR_FAILED
                 + " RETURNING id";
         String history = PgTableNames.qualify(schemas, "workflow", "workflow_history");
-        this.insertHistory = "INSERT INTO " + history
-                + " (workflow_id, sequence, entry_type, payload_json, recorded_at, command_id, outcome)"
-                + " SELECT $1::uuid, COALESCE(MAX(sequence), 0) + 1, $2, $3::jsonb, now(), $4::bigint, $5 FROM "
-                + history + " WHERE workflow_id = $1::uuid RETURNING sequence";
+        String historyColumns = " (workflow_id, sequence, entry_type, payload_json, recorded_at, command_id, outcome, "
+                + ACTOR_COLUMNS + ")";
+        // The entry is logged with the actor that recorded the command it is about; a command recorded before actors
+        // were logged counts as recorded with no identity.
+        this.insertHistory = "WITH owner AS (SELECT c.actor_kind, c.actor_id, c.actor_reason, c.on_behalf_of,"
+                + " c.attribution_status FROM (SELECT 1) one LEFT JOIN " + commands + " c ON c.id = $4::bigint)"
+                + " INSERT INTO " + history + historyColumns
+                + " SELECT $1::uuid, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM " + history
+                + " WHERE workflow_id = $1::uuid), $2, $3::jsonb, now(), $4::bigint, $5,"
+                + " COALESCE(owner.actor_kind, 'NONE'), owner.actor_id, owner.actor_reason, owner.on_behalf_of,"
+                + " COALESCE(owner.attribution_status, 'ABSENT') FROM owner RETURNING sequence";
+        this.insertHistoryAs = "INSERT INTO " + history + historyColumns
+                + " SELECT $1::uuid, COALESCE(MAX(sequence), 0) + 1, $2, $3::jsonb, now(), $4::bigint, $5, "
+                + actorValues(6) + " FROM " + history + " WHERE workflow_id = $1::uuid RETURNING sequence";
+        this.attributeEntries = "UPDATE " + history + " SET actor_kind = $3, actor_id = $4, actor_reason = $5,"
+                + " on_behalf_of = $6, attribution_status = $7 WHERE workflow_id = $1 AND sequence >= $2"
+                + " AND actor_kind IS NULL";
+        // An entry that names a command (by its column or by the command id in its payload) takes the actor that
+        // recorded that command, and a command recorded before actors were logged counts as recorded with no identity;
+        // any other entry takes the fallback.
+        this.attributeEntriesToCommands = "UPDATE " + history + " h SET"
+                + " actor_kind = CASE WHEN o.id IS NULL THEN $3 ELSE COALESCE(o.actor_kind, 'NONE') END,"
+                + " actor_id = CASE WHEN o.id IS NULL THEN $4 ELSE o.actor_id END,"
+                + " actor_reason = CASE WHEN o.id IS NULL THEN $5 ELSE o.actor_reason END,"
+                + " on_behalf_of = CASE WHEN o.id IS NULL THEN $6 ELSE o.on_behalf_of END,"
+                + " attribution_status = CASE WHEN o.id IS NULL THEN $7"
+                + " ELSE COALESCE(o.attribution_status, 'ABSENT') END"
+                + " FROM (SELECT x.sequence, c.id, c.actor_kind, c.actor_id, c.actor_reason, c.on_behalf_of,"
+                + " c.attribution_status FROM " + history + " x LEFT JOIN " + commands
+                + " c ON c.workflow_id = x.workflow_id AND c.id = CASE WHEN x.command_id IS NOT NULL THEN x.command_id"
+                + " WHEN x.payload_json->>'commandId' ~ '^[0-9]{1,18}$' THEN (x.payload_json->>'commandId')::bigint END"
+                + " WHERE x.workflow_id = $1 AND x.sequence >= $2 AND x.actor_kind IS NULL) o"
+                + " WHERE h.workflow_id = $1 AND h.sequence = o.sequence";
         this.lockForTransientRetry = "SELECT transient_count FROM " + commands
                 + " WHERE id = $1 AND state = 'CLAIMED' AND claim_token = $2 AND lease_until > now() FOR UPDATE";
         this.retryTransientRow = "UPDATE " + commands + " SET state = 'PENDING', attempts = attempts - 1,"
@@ -271,7 +310,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         this.fenceCommand =
                 "SELECT c.id, c.payload_json::text AS payload_json, c.target_json::text AS target_json, c.dedup_key,"
                         + " c.explicit_carrier_json::text AS explicit_carrier_json, c.context_json::text AS context_json,"
-                        + " c.timer_kind, c.timer_id, c.task_id FROM "
+                        + " c.timer_kind, c.timer_id, c.task_id, c.actor_kind, c.actor_id, c.actor_reason, c.on_behalf_of,"
+                        + " c.attribution_status FROM "
                         + commands
                         + " c WHERE c.id = $1 AND c.state = 'CLAIMED' AND c.claim_token = $2 AND "
                         + eligibility.atHead("c")
@@ -298,12 +338,14 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 "UPDATE " + queues + " SET open_signals = open_signals - 1 WHERE workflow_id = $1 AND open_signals > 0";
         this.insertSignal = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
                 + " (workflow_id, seq, kind, state, recorded_at, available_at, payload_json, dedup_key, target_json,"
-                + " explicit_carrier_json, context_json) SELECT $1, $2, 'SIGNAL', 'PENDING', recorded.at, recorded.at,"
-                + " $3::jsonb, $4, $5::jsonb, $6::jsonb, $7::jsonb FROM recorded RETURNING id";
+                + " explicit_carrier_json, context_json, " + ACTOR_COLUMNS + ") SELECT $1, $2, 'SIGNAL', 'PENDING',"
+                + " recorded.at, recorded.at, $3::jsonb, $4, $5::jsonb, $6::jsonb, $7::jsonb, " + actorValues(8)
+                + " FROM recorded RETURNING id";
         this.insertCompletion = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
                 + " (workflow_id, seq, kind, state, recorded_at, available_at, task_id, payload_json, dedup_key,"
-                + " target_json, context_json) SELECT $1, $2, 'COMPLETION', 'PENDING', recorded.at, recorded.at, $3,"
-                + " $4::jsonb, $5, $6::jsonb, $7::jsonb FROM recorded RETURNING id";
+                + " target_json, context_json, " + ACTOR_COLUMNS + ") SELECT $1, $2, 'COMPLETION', 'PENDING',"
+                + " recorded.at, recorded.at, $3, $4::jsonb, $5, $6::jsonb, $7::jsonb, " + actorValues(8)
+                + " FROM recorded RETURNING id";
         // The fire time is read once, with the recording time, from the database clock: a delay counts from it and an
         // instant already past is taken as the recording time, so a timer never fires before it was recorded.
         this.insertTimer = "WITH recorded AS (SELECT clock_timestamp() AS at), fire AS (SELECT recorded.at AS at,"
@@ -311,8 +353,9 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " ELSE recorded.at + ($7::float8 * interval '1 millisecond') END AS fire_at FROM recorded)"
                 + " INSERT INTO " + commands
                 + " (workflow_id, seq, kind, timer_kind, timer_id, task_id, target_json, state, recorded_at,"
-                + " available_at, fire_at) SELECT $1, $2, 'TIMER', $3, $4, $5, $8::jsonb, 'PENDING', fire.at,"
-                + " fire.fire_at, fire.fire_at FROM fire RETURNING id, recorded_at, fire_at";
+                + " available_at, fire_at, actor_kind, actor_reason, attribution_status) SELECT $1, $2, 'TIMER', $3, $4,"
+                + " $5, $8::jsonb, 'PENDING', fire.at, fire.fire_at, fire.fire_at, 'SYSTEM', '" + TIMER_REASON
+                + "', 'VERIFIED' FROM fire RETURNING id, recorded_at, fire_at";
         // A timer whose last command cannot fire it any more: a failed one (the row is FAILED) or one a failed instance
         // settled stale (the row is still SCHEDULED). The replacement keeps the original fire time.
         String timerTable = PgTableNames.qualify(schemas, "workflow", "workflow_timers");
@@ -326,8 +369,9 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                         + " ORDER BY l.fire_at, t.timer_id FOR UPDATE OF t";
         this.insertRearmed = "INSERT INTO " + commands
                 + " (workflow_id, seq, kind, timer_kind, timer_id, task_id, target_json, state, recorded_at,"
-                + " available_at, fire_at) VALUES ($1, $2, 'TIMER', $3, $4, $5, $6::jsonb, 'PENDING',"
-                + " clock_timestamp(), LEAST($7::timestamptz, clock_timestamp()), $7::timestamptz) RETURNING id";
+                + " available_at, fire_at, actor_kind, actor_reason, attribution_status) VALUES ($1, $2, 'TIMER', $3,"
+                + " $4, $5, $6::jsonb, 'PENDING', clock_timestamp(), LEAST($7::timestamptz, clock_timestamp()),"
+                + " $7::timestamptz, 'SYSTEM', '" + TIMER_REASON + "', 'VERIFIED') RETURNING id";
         this.relinkTimer = "UPDATE " + timerTable + " SET status = 'SCHEDULED', command_id = $2, failed_at = NULL,"
                 + " failure_reason = NULL WHERE timer_id = $1";
         this.failTimerRow = "UPDATE " + timerTable + " SET status = 'FAILED', failed_at = now(), failure_reason = $2"
@@ -340,9 +384,9 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         this.selectUnsettledTargets = "SELECT COALESCE(target_json::text, '') AS target FROM " + commands
                 + " WHERE workflow_id = $1 AND kind = $2 AND state IN ('PENDING','DEFERRED','CLAIMED') ORDER BY seq";
         this.insertRecovery = "WITH recorded AS (SELECT clock_timestamp() AS at) INSERT INTO " + commands
-                + " (workflow_id, seq, kind, state, recorded_at, available_at, target_json, context_json)"
-                + " SELECT $1, $2, $3, 'PENDING', recorded.at, recorded.at, $4::jsonb, $5::jsonb FROM recorded"
-                + " RETURNING id";
+                + " (workflow_id, seq, kind, state, recorded_at, available_at, target_json, context_json, "
+                + ACTOR_COLUMNS + ") SELECT $1, $2, $3, 'PENDING', recorded.at, recorded.at, $4::jsonb, $5::jsonb, "
+                + actorValues(6) + " FROM recorded RETURNING id";
         this.deadLettersExist =
                 "SELECT EXISTS (SELECT 1 FROM " + commands + " WHERE workflow_id = $1 AND state = 'DEAD') AS dead";
         this.readStartRow =
@@ -464,16 +508,19 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             String idempotencyKey,
             @Nullable String payloadJson,
             @Nullable String targetJson,
+            CommandActor actor,
             SqlClient tx) {
         return nextQueueSequence(instance, tx)
                 .compose(seq -> tx.preparedQuery(insertStart)
-                        .execute(Tuple.of(
-                                instance.value(),
-                                seq,
-                                jsonValue(payloadJson),
-                                idempotencyKey,
-                                jsonValue(targetJson),
-                                capturedContext(instance, seq))))
+                        .execute(withActor(
+                                Tuple.of(
+                                        instance.value(),
+                                        seq,
+                                        jsonValue(payloadJson),
+                                        idempotencyKey,
+                                        jsonValue(targetJson),
+                                        capturedContext(instance, seq)),
+                                actor)))
                 .map(rows -> rows.iterator().next().getLong("id"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordStart")));
     }
@@ -491,6 +538,40 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                         DurableMetadata.empty(), DispatchBoundary.WORKFLOW, CommandContextCarrier.of(instance, seq))
                 .without(CommandContextCarrier.IDENTITY_SNAPSHOT_NAMESPACE);
         return captured.isEmpty() ? null : captured.toCarrier();
+    }
+
+    /** The five placeholders, from the given one on, that bind the actor columns in the order of {@code ACTOR_COLUMNS}. */
+    private static String actorValues(int first) {
+        StringBuilder values = new StringBuilder();
+        for (int i = 0; i < 5; i++) {
+            values.append(i == 0 ? "" : ", ").append('$').append(first + i).append("::text");
+        }
+        return values.toString();
+    }
+
+    /** Adds the five actor values, in the order of {@code ACTOR_COLUMNS}, to the parameters. */
+    private static Tuple withActor(Tuple parameters, CommandActor actor) {
+        return parameters
+                .addValue(actor.kind().name())
+                .addValue(actor.id())
+                .addValue(actor.reason())
+                .addValue(actor.onBehalfOf())
+                .addValue(actor.attribution().name());
+    }
+
+    /** The actor stored on a command row, or {@code null} for a row recorded before actors were logged. */
+    private static @Nullable CommandActor actorOf(Row row) {
+        String kind = row.getString("actor_kind");
+        if (kind == null) {
+            return null;
+        }
+        String attribution = row.getString("attribution_status");
+        return new CommandActor(
+                CommandActor.Kind.valueOf(kind),
+                row.getString("actor_id"),
+                row.getString("actor_reason"),
+                row.getString("on_behalf_of"),
+                attribution == null ? CommandActor.Attribution.ABSENT : CommandActor.Attribution.valueOf(attribution));
     }
 
     /** A JSON text as the value the PostgreSQL client binds to a {@code jsonb} parameter, so it is stored as JSON. */
@@ -738,8 +819,24 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             String entryType,
             JsonObject payload,
             String outcome) {
-        return conn.preparedQuery(insertHistory)
-                .execute(Tuple.of(workflow.value(), entryType, payload, commandId, outcome))
+        return appendHistory(conn, workflow, commandId, entryType, payload, outcome, null);
+    }
+
+    /**
+     * Writes a history entry about a command. It is logged with the actor that recorded the command, unless the entry
+     * is the doing of someone else, such as the canceller, who is then given.
+     */
+    private Future<Long> appendHistory(
+            SqlClient conn,
+            WorkflowInstanceId workflow,
+            long commandId,
+            String entryType,
+            JsonObject payload,
+            String outcome,
+            @Nullable CommandActor loggedAs) {
+        Tuple parameters = Tuple.of(workflow.value(), entryType, payload, commandId, outcome);
+        return conn.preparedQuery(loggedAs == null ? insertHistory : insertHistoryAs)
+                .execute(loggedAs == null ? parameters : withActor(parameters, loggedAs))
                 .map(rows -> rows.iterator().next().getLong("sequence"));
     }
 
@@ -763,7 +860,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             row.getString("context_json"),
                             row.getString("timer_kind"),
                             row.getUUID("timer_id"),
-                            row.getUUID("task_id")));
+                            row.getUUID("task_id"),
+                            actorOf(row)));
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands fence")));
     }
@@ -873,6 +971,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             String dedupKey,
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,
+            CommandActor actor,
             SqlClient tx) {
         JsonObject target = new JsonObject().put("name", signalName);
         if (forkStepId != null) {
@@ -883,38 +982,50 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         }
         return nextQueueSequence(instance, tx)
                 .compose(seq -> tx.preparedQuery(insertSignal)
-                        .execute(Tuple.of(
-                                instance.value(),
-                                seq,
-                                jsonValue(payloadJson),
-                                dedupKey,
-                                target,
-                                jsonValue(explicitCarrierJson),
-                                capturedContext(instance, seq))))
+                        .execute(withActor(
+                                Tuple.of(
+                                        instance.value(),
+                                        seq,
+                                        jsonValue(payloadJson),
+                                        dedupKey,
+                                        target,
+                                        jsonValue(explicitCarrierJson),
+                                        capturedContext(instance, seq)),
+                                actor)))
                 .map(rows -> rows.iterator().next().getLong("id"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordSignal")));
     }
 
     @Override
-    public Future<Long> recordRetry(WorkflowInstanceId instance, SqlClient tx) {
-        return recordRecovery(instance, "RETRY", null, tx, "recordRetry");
+    public Future<Long> recordRetry(WorkflowInstanceId instance, CommandActor actor, SqlClient tx) {
+        return recordRecovery(instance, "RETRY", null, actor, tx, "recordRetry");
     }
 
     @Override
     public Future<Long> recordMigration(
-            WorkflowInstanceId instance, long targetVersion, @Nullable String targetScope, SqlClient tx) {
+            WorkflowInstanceId instance,
+            long targetVersion,
+            @Nullable String targetScope,
+            CommandActor actor,
+            SqlClient tx) {
         JsonObject target = new JsonObject().put("version", targetVersion);
         if (targetScope != null) {
             target.put("scope", targetScope);
         }
-        return recordRecovery(instance, "MIGRATION", target, tx, "recordMigration");
+        return recordRecovery(instance, "MIGRATION", target, actor, tx, "recordMigration");
     }
 
     private Future<Long> recordRecovery(
-            WorkflowInstanceId instance, String kind, @Nullable JsonObject target, SqlClient tx, String operation) {
+            WorkflowInstanceId instance,
+            String kind,
+            @Nullable JsonObject target,
+            CommandActor actor,
+            SqlClient tx,
+            String operation) {
         return nextQueueSequence(instance, tx)
                 .compose(seq -> tx.preparedQuery(insertRecovery)
-                        .execute(Tuple.of(instance.value(), seq, kind, target, capturedContext(instance, seq))))
+                        .execute(withActor(
+                                Tuple.of(instance.value(), seq, kind, target, capturedContext(instance, seq)), actor)))
                 .map(rows -> rows.iterator().next().getLong("id"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands " + operation)));
     }
@@ -983,7 +1094,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     }
 
     @Override
-    public Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, SqlClient tx) {
+    public Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, CommandActor canceller, SqlClient tx) {
         Tuple parameters = Tuple.tuple();
         parameters.addValue(instance.value());
         for (String kind : List.of("START", "SIGNAL", "COMPLETION", "RETRY", "MIGRATION", "TIMER")) {
@@ -1006,7 +1117,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                 row.getString("signal_name"),
                                 row.getString("last_error"),
                                 "COMMAND_CANCELLED",
-                                "CANCELLED"));
+                                "CANCELLED",
+                                canceller));
                     }
                     return written.map(done -> List.copyOf(cancelled));
                 })
@@ -1074,11 +1186,30 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                         row.getString("signal_name"),
                                         reason,
                                         entryType(settlement),
-                                        settlement.name()));
+                                        settlement.name(),
+                                        null));
                     }
                     return written.map(done -> count);
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands settleEnded")));
+    }
+
+    @Override
+    public Future<Void> attributeHistory(
+            WorkflowInstanceId instance, long fromSequence, CommandActor actor, SqlClient tx) {
+        return tx.preparedQuery(attributeEntries)
+                .execute(withActor(Tuple.of(instance.value(), fromSequence), actor))
+                .<Void>mapEmpty()
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history attribute")));
+    }
+
+    @Override
+    public Future<Void> attributeSegmentHistory(
+            WorkflowInstanceId instance, long fromSequence, CommandActor fallback, SqlClient tx) {
+        return tx.preparedQuery(attributeEntriesToCommands)
+                .execute(withActor(Tuple.of(instance.value(), fromSequence), fallback))
+                .<Void>mapEmpty()
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history attribute")));
     }
 
     /** Writes the history entry of a command a bulk write settled; a signal's entry also names the signal, bounded. */
@@ -1090,13 +1221,14 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             @Nullable String signalName,
             String reason,
             String entryType,
-            String outcome) {
+            String outcome,
+            @Nullable CommandActor loggedAs) {
         JsonObject payload =
                 new JsonObject().put("commandId", commandId).put("kind", kind).put("reason", reason);
         if ("SIGNAL".equals(kind)) {
             payload.put("signalName", EchoedNames.bounded(signalName));
         }
-        return appendHistory(tx, instance, commandId, entryType, payload, outcome)
+        return appendHistory(tx, instance, commandId, entryType, payload, outcome, loggedAs)
                 .mapEmpty();
     }
 
@@ -1263,17 +1395,20 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             String dedupKey,
             @Nullable String payloadJson,
             String targetJson,
+            CommandActor actor,
             SqlClient tx) {
         return nextQueueSequence(instance, tx)
                 .compose(seq -> tx.preparedQuery(insertCompletion)
-                        .execute(Tuple.of(
-                                instance.value(),
-                                seq,
-                                taskId,
-                                jsonValue(payloadJson),
-                                dedupKey,
-                                jsonValue(targetJson),
-                                capturedContext(instance, seq))))
+                        .execute(withActor(
+                                Tuple.of(
+                                        instance.value(),
+                                        seq,
+                                        taskId,
+                                        jsonValue(payloadJson),
+                                        dedupKey,
+                                        jsonValue(targetJson),
+                                        capturedContext(instance, seq)),
+                                actor)))
                 .map(rows -> rows.iterator().next().getLong("id"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands recordCompletion")));
     }

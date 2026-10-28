@@ -46,6 +46,7 @@ public final class WorkflowExecutor implements WorkflowExecutorControl {
     private final String nodeId;
     private final Set<WorkflowExecutorObserver> observers;
     private final CommandWakeups wakeups;
+    private final OutboxRelayCarriage carriage;
 
     private String deploymentId;
     private boolean starting;
@@ -116,6 +117,35 @@ public final class WorkflowExecutor implements WorkflowExecutorControl {
             String nodeId,
             Set<WorkflowExecutorObserver> observers,
             CommandWakeups wakeups) {
+        this(vertx, config, commands, runner, segments, nodeId, observers, wakeups, OutboxRelayCarriage.none());
+    }
+
+    /**
+     * Creates the executor of one engine that also warns, when it is deployed, about identity carriage the application
+     * requires and a segment cannot meet.
+     *
+     * @param vertx     the Vert.x instance the executor is deployed on; {@code null} when the engine was assembled
+     *                  without one, in which case {@link #start()} fails
+     * @param config    the executor configuration
+     * @param commands  the command repository
+     * @param runner    the transaction runner segments run through
+     * @param segments  the engine's side of a segment
+     * @param nodeId    the node id the instances' ids are derived from; see {@link #newNodeId()}
+     * @param observers the observers of the executor's events; may be empty
+     * @param wakeups   the source that wakes the instances when a command becomes pending or deferred
+     * @param carriage  the identity carriage requirements the deployment warns about
+     */
+    public WorkflowExecutor(
+            @Nullable Vertx vertx,
+            WorkflowExecutorConfig config,
+            WorkflowCommandRepository<SqlClient> commands,
+            WorkflowTransactionRunner<SqlClient> runner,
+            WorkflowSegments segments,
+            String nodeId,
+            Set<WorkflowExecutorObserver> observers,
+            CommandWakeups wakeups,
+            OutboxRelayCarriage carriage) {
+        this.carriage = Objects.requireNonNull(carriage, "carriage");
         this.wakeups = Objects.requireNonNull(wakeups, "wakeups");
         this.observers = Set.copyOf(Objects.requireNonNull(observers, "observers"));
         this.vertx = vertx;
@@ -150,6 +180,7 @@ public final class WorkflowExecutor implements WorkflowExecutorControl {
      * @return the deployment
      */
     public VerticleDeployment deployment() {
+        RelayCarriageWarning.check(carriage);
         AtomicInteger instanceCounter = new AtomicInteger();
         return new VerticleDeployment(
                 DEPLOYMENT_NAME,

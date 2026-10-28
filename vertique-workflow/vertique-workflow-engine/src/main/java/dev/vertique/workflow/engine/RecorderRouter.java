@@ -3,6 +3,8 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.spi.CommandActor;
+import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
@@ -10,11 +12,17 @@ import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.util.Collections;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
+import java.util.function.Supplier;
 
 /**
  * Routes a {@link WorkflowSideEffectIntent} to exactly one registered {@link WorkflowSideEffectRecorder}
@@ -36,6 +44,9 @@ final class RecorderRouter {
 
     private final Map<IntentKind, WorkflowSideEffectRecorder<SqlClient>> byKind;
     private final Set<IntentKind> optionalKinds;
+
+    /** The command each segment transaction executes, while it executes it; keyed by the transaction handle. */
+    private final Map<SqlClient, SegmentCommand> executing = Collections.synchronizedMap(new WeakHashMap<>());
 
     /**
      * Constructs a {@code RecorderRouter} from the given set of recorders and optional kinds.
@@ -84,9 +95,53 @@ final class RecorderRouter {
      *     been durably recorded, or a failed future if no recorder handles the intent's kind
      */
     Future<RecorderResult> route(WorkflowSideEffectIntent intent, SqlClient tx) {
-        WorkflowSideEffectRecorder<SqlClient> recorder = byKind.get(intent.kind());
+        return route(intent, executing.get(tx), tx);
+    }
+
+    /**
+     * Runs the work of a segment, during which every intent routed on the segment's transaction is attributed to the
+     * command the segment executes. Segments overlap on one context, so the command is keyed by the transaction handle
+     * and not by the context.
+     *
+     * @param command the command the segment executes
+     * @param tx      the segment's transaction
+     * @param work    the segment's work
+     * @param <T>     the type the work yields
+     * @return the future of the work
+     */
+    <T> Future<T> executing(SegmentCommand command, SqlClient tx, Supplier<Future<T>> work) {
+        executing.put(tx, command);
+        Future<T> result;
+        try {
+            result = work.get();
+        } catch (RuntimeException e) {
+            executing.remove(tx);
+            throw e;
+        }
+        return result.eventually(() -> {
+            executing.remove(tx);
+            return Future.succeededFuture();
+        });
+    }
+
+    /**
+     * Routes an intent a segment writes for the command it executes: every application-set header whose name starts
+     * with {@code x-workflow-}, in any letter case, is removed, and the command's actor is added as attribution
+     * headers ({@code x-workflow-actor-kind}, {@code -actor-id}, {@code -actor-reason}, {@code -on-behalf-of} and
+     * {@code -attribution}; absent values are omitted). The headers are data for audit and logs only: they are
+     * unauthenticated, and nothing reads them as an identity. Without a command, the application-set workflow headers
+     * are removed and none are added.
+     *
+     * @param intent  the side-effect intent to record
+     * @param command the command the segment executes, or {@code null}
+     * @param tx      the active SQL transaction; passed through to the recorder
+     * @return the result of the recorder
+     */
+    Future<RecorderResult> route(WorkflowSideEffectIntent intent, @Nullable SegmentCommand command, SqlClient tx) {
+        WorkflowSideEffectIntent attributed = attributed(intent, command);
+        WorkflowSideEffectRecorder<SqlClient> recorder = byKind.get(attributed.kind());
         if (recorder != null) {
-            return recorder.record(intent, tx);
+            return recorder.record(attributed, tx);
         }
         if (optionalKinds.contains(intent.kind())) {
             return Future.succeededFuture(RecorderResult.empty());
@@ -94,5 +149,36 @@ final class RecorderRouter {
         return Future.failedFuture(new IllegalStateException("No WorkflowSideEffectRecorder registered for kind "
                 + intent.kind()
                 + "; check application Dagger composition."));
+    }
+
+    /** The prefix of the header names the framework owns. */
+    private static final String PREFIX = "x-workflow-";
+
+    private static WorkflowSideEffectIntent attributed(
+            WorkflowSideEffectIntent intent, @Nullable SegmentCommand command) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        for (Map.Entry<String, String> header : intent.headers().entrySet()) {
+            if (!header.getKey().toLowerCase(Locale.ROOT).startsWith(PREFIX)) {
+                headers.put(header.getKey(), header.getValue());
+            }
+        }
+        if (command != null) {
+            CommandActor actor = command.actor() == null ? CommandActor.none() : command.actor();
+            headers.put(PREFIX + "actor-kind", actor.kind().name());
+            putIfPresent(headers, PREFIX + "actor-id", actor.id());
+            putIfPresent(headers, PREFIX + "actor-reason", actor.reason());
+            putIfPresent(headers, PREFIX + "on-behalf-of", actor.onBehalfOf());
+            headers.put(PREFIX + "attribution", actor.attribution().name());
+        }
+        return headers.equals(intent.headers())
+                ? intent
+                : new WorkflowSideEffectIntent(
+                        intent.kind(), intent.targetId(), intent.payload(), headers, intent.correlation());
+    }
+
+    private static void putIfPresent(Map<String, String> headers, String name, @Nullable String value) {
+        if (value != null) {
+            headers.put(name, value);
+        }
     }
 }

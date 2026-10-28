@@ -10,6 +10,7 @@ import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.failureO
 import static dev.vertique.workflow.postgresql.executor.ExecutorFixture.sleep;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.IsolationLevel;
@@ -611,6 +612,8 @@ public class RecordedSignalIT {
 
     record Signal(boolean fail, String card, String value, boolean spin, boolean cancelOrder) {}
 
+    /** Start payload; fields it does not declare are ignored, so a proof can send the workflow extra data. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
     record Start(String ref) {}
 
     record State(String ref, List<String> applied, boolean spin, boolean cancelOrder) {

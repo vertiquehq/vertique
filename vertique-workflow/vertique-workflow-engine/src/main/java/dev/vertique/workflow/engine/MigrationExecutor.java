@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.Savepoints;
@@ -116,6 +117,9 @@ final class MigrationExecutor {
      */
     private final WorkflowContextBinder contextBinder;
 
+    /** Takes the actor a recorded migration is logged with from the identity of the caller. */
+    private final CommandActors actors;
+
     /**
      * Constructs a new migration executor.
      *
@@ -143,6 +147,7 @@ final class MigrationExecutor {
      *     instance
      * @param definitionReads the reads of definition rows on the migration's transaction, by which a deprecated target
      *     is refused; may be {@code null}
+     * @param actors takes the actor a recorded migration is logged with from the caller's identity
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -156,7 +161,9 @@ final class MigrationExecutor {
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
             Function<DefinitionKey, Optional<DefinitionFailure>> failing,
             WorkflowCommandRepository<SqlClient> commands,
-            @jakarta.annotation.Nullable TransactionalDefinitionReads<SqlClient> definitionReads) {
+            @jakarta.annotation.Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
+            CommandActors actors) {
+        this.actors = actors;
         // migrationRegistryOpt is null only from test-only constructors that delegate with null;
         // Dagger always provides a non-null Optional via @BindsOptionalOf.
         this.migrationRegistry = migrationRegistryOpt != null ? migrationRegistryOpt.orElse(null) : null;
@@ -188,6 +195,7 @@ final class MigrationExecutor {
      * @param marks the failing marks, resolved when a migration runs because building them builds the plan cache
      * @param commands the command repository whose execution lock a migration takes
      * @param definitionReads the reads of definition rows on a transaction, when the store offers them
+     * @param actors takes the actor a recorded migration is logged with from the caller's identity
      */
     @Inject
     MigrationExecutor(
@@ -202,7 +210,8 @@ final class MigrationExecutor {
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
             Provider<FailingMarks> marks,
             WorkflowCommandRepository<SqlClient> commands,
-            Optional<TransactionalDefinitionReads<SqlClient>> definitionReads) {
+            Optional<TransactionalDefinitionReads<SqlClient>> definitionReads,
+            CommandActors actors) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -215,7 +224,8 @@ final class MigrationExecutor {
                 stateCompatibility,
                 key -> marks.get().find(key),
                 commands,
-                definitionReads.orElse(null));
+                definitionReads.orElse(null),
+                actors);
     }
 
     /**
@@ -255,7 +265,8 @@ final class MigrationExecutor {
                 stateCompatibility,
                 key -> Optional.empty(),
                 commands,
-                null);
+                null,
+                CommandActors.ambient());
     }
 
     /**
@@ -350,7 +361,10 @@ final class MigrationExecutor {
                     }
                     return commands.unsettledTargets(id, "MIGRATION", tx).compose(pending -> {
                         if (pending.isEmpty()) {
-                            return commands.recordMigration(id, targetVersion, targetScope, tx)
+                            return actors.recording(
+                                            "MIGRATION",
+                                            actor ->
+                                                    commands.recordMigration(id, targetVersion, targetScope, actor, tx))
                                     .<Void>mapEmpty();
                         }
                         // A migration is on its way: the same one is recorded once, another one waits for it

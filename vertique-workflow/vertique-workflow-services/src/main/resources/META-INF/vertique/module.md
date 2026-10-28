@@ -55,6 +55,14 @@ pinned definition does not declare for the addressed wait, a payload or carrier 
 holds `workflow.recording.maxOpenSignalsPerInstance` open signals (`WorkflowSignalLimitException`). A refusal rolls the inbox record back
 with the transaction, so the relay retries it.
 
+**Who is logged.** The endpoint records the signal inside the dispatch context the relay rebuilt for the delivery, and the engine
+logs the signal's actor from the identity of that context (see "Who asked for a command" in the engine module reference). The
+actor is never read from `WorkflowSignalRequest`, its payload or its carrier. By default the relay's identity is `SYSTEM` with the
+outbox row's event type as the reason; a bound `ServiceIdentityResolver` names a service instead. Either acts for the user whose
+transaction wrote the outbox row (`on_behalf_of`). A snapshot that cannot be verified refuses the delivery under the default
+degradation policy, so no command, dedup or inbox row is written; under `CONTINUE_WITHOUT_IDENTITY` the signal is logged `DEGRADED`
+and acts for no one. A graph without identity carriage logs the signal as `NONE`.
+
 Signal dedup happens at two layers:
 
 | Layer | Scope | Purpose |

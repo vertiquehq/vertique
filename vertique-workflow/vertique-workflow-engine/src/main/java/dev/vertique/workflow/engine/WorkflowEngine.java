@@ -13,12 +13,14 @@ import dev.vertique.workflow.actor.WorkflowActorMaps;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.engine.executor.ClaimLostException;
+import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.StartPayloadValidation;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
@@ -263,6 +265,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** The most signals an instance may hold open. */
     private final int maxOpenSignals;
 
+    /** Takes the actor a recorded command is logged with from the identity of the caller that records it. */
+    private final CommandActors actors;
+
+    /** Routes the intents of a segment; told which command a segment executes so that it can attribute them. */
+    private final RecorderRouter recorderRouter;
+
     @Inject
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -291,8 +299,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowExecutionProbe executionProbe,
             WorkflowCommandRepository<SqlClient> commands,
             Provider<WorkflowExecutorControl> executorControl,
-            Optional<WorkflowRecordingConfig> recording) {
+            Optional<WorkflowRecordingConfig> recording,
+            CommandActors actors,
+            RecorderRouter recorderRouter) {
         WorkflowRecordingConfig recordingConfig = recording.orElseGet(WorkflowRecordingConfig::defaults);
+        this.actors = actors;
+        this.recorderRouter = recorderRouter;
         this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
         this.startPayloadValidation = new StartPayloadValidation(recordValidator);
         this.maxOpenSignals = recordingConfig.maxOpenSignalsPerInstance();
@@ -389,7 +401,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 reservations,
                 Optional.empty(),
                 key -> Optional.empty(),
-                definitionReads);
+                definitionReads,
+                CommandActors.ambient());
     }
 
     /**
@@ -475,7 +488,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             TaskReservations<SqlClient> reservations,
             Optional<WorkflowPlanSchemaProducer> schemaProducer,
             Function<DefinitionKey, Optional<DefinitionFailure>> failingMarks,
-            @Nullable TransactionalDefinitionReads<SqlClient> definitionReads) {
+            @Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
+            CommandActors actors) {
+        this.actors = actors;
+        this.recorderRouter = recorders;
         this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
         this.startPayloadValidation = new StartPayloadValidation(recordValidator);
         this.definitionReads = definitionReads;
@@ -571,7 +587,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 reservations,
                 historyRecorder,
                 Optional.of(recordingConfig),
-                schemaProducer);
+                schemaProducer,
+                actors);
         taskLifecycleHolder[0] = this.taskLifecycle;
         // TimerLifecycleService needs the driver, coordinator, and task service eagerly; all three
         // are now built. The driver reaches resolveFireAt through the lazy Provider above
@@ -620,7 +637,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 stateCompatibility,
                 failingMarks,
                 commands,
-                definitionReads);
+                definitionReads,
+                actors);
     }
 
     // --- WorkflowEngineHandle ---
@@ -1120,9 +1138,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 startScope,
                 selected.scopeKey());
 
-        return instances
-                .insert(pending, tx)
-                .compose(v -> commands.recordStart(id, cmd.idempotencyKey(), payloadJson, targetJson, tx))
+        return actors.recording("START", actor -> instances
+                        .insert(pending, tx)
+                        .compose(v ->
+                                commands.recordStart(id, cmd.idempotencyKey(), payloadJson, targetJson, actor, tx)))
                 .map(v -> id);
     }
 
@@ -1213,12 +1232,18 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private Future<WorkflowSegments.Outcome> runSegment(
             CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
-        return runCommand(head, claim, command, tx, maxSteps)
-                .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
-                        // A command the segment applied may have ended the instance: its dead-lettered commands are
-                        // settled
-                        ? commands.settleEnded(command.workflowId(), tx).map(settled -> outcome)
-                        : Future.succeededFuture(outcome));
+        // Every history entry the segment writes is logged with the actor that recorded the command it is about, and
+        // with the actor of the executed command when it names none. The executor never reads the ambient identity.
+        CommandActor recorded = command.actor() == null ? CommandActor.none() : command.actor();
+        return recorderRouter.executing(command, tx, () -> history.nextSequence(command.workflowId(), tx)
+                .compose(from -> runCommand(head, claim, command, tx, maxSteps)
+                        .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
+                                // A command the segment applied may have ended the instance: its dead-lettered
+                                // commands are settled
+                                ? commands.settleEnded(command.workflowId(), tx).map(settled -> outcome)
+                                : Future.succeededFuture(outcome))
+                        .compose(outcome -> commands.attributeSegmentHistory(command.workflowId(), from, recorded, tx)
+                                .map(attributed -> outcome))));
     }
 
     private Future<WorkflowSegments.Outcome> runCommand(
@@ -2002,28 +2027,32 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @Nullable String payloadJson,
             @Nullable String carrierJson,
             SqlClient tx) {
-        return commands.raiseOpenSignals(id, maxOpenSignals, tx).compose(raised -> {
-            if (!raised) {
-                return Future.<Void>failedFuture(new WorkflowSignalLimitException(id, maxOpenSignals));
-            }
-            return dedup.claimOrResolveSignalScoped(WorkflowDedupScopes.signalScope(id), dedupKeyOfClaim, id, tx)
-                    .compose(inserted -> {
-                        if (!inserted) {
-                            // A concurrent duplicate won the claim: undo the slot taken for this recording.
-                            return commands.lowerOpenSignals(id, tx);
-                        }
-                        return commands.recordSignal(
-                                        id,
-                                        signalName,
-                                        forkStepId,
-                                        branchId,
-                                        signalDedupKey,
-                                        payloadJson,
-                                        carrierJson,
-                                        tx)
-                                .<Void>mapEmpty();
-                    });
-        });
+        return actors.captured().compose(actor -> commands.raiseOpenSignals(id, maxOpenSignals, tx)
+                .compose(raised -> {
+                    if (!raised) {
+                        return Future.<Void>failedFuture(new WorkflowSignalLimitException(id, maxOpenSignals));
+                    }
+                    return dedup.claimOrResolveSignalScoped(
+                                    WorkflowDedupScopes.signalScope(id), dedupKeyOfClaim, id, tx)
+                            .compose(inserted -> {
+                                if (!inserted) {
+                                    // A concurrent duplicate won the claim: undo the slot taken for this recording.
+                                    return commands.lowerOpenSignals(id, tx);
+                                }
+                                return commands.recordSignal(
+                                                id,
+                                                signalName,
+                                                forkStepId,
+                                                branchId,
+                                                signalDedupKey,
+                                                payloadJson,
+                                                carrierJson,
+                                                actor,
+                                                tx)
+                                        .onSuccess(recorded -> actors.reportAbsence(actor, "SIGNAL"))
+                                        .<Void>mapEmpty();
+                            });
+                }));
     }
 
     /**
@@ -2137,7 +2166,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         // Non-locking read: same lock-order rationale as signal(). The optimistic UPDATE catches
         // concurrent writes; using findByIdForUpdate would invert the timers-before-instances
         // invariant and cause deadlocks under cancel-vs-fire races.
-        return underExecutionLock(id, tx, () -> instances.findById(id, tx))
+        // The canceller is the caller's identity, taken before the instance's own context is bound.
+        return actors.captured().compose(canceller -> underExecutionLock(id, tx, () -> instances.findById(id, tx))
                 .compose((Optional<WorkflowInstance> optInst) -> {
                     if (optInst.isEmpty()) {
                         return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
@@ -2148,9 +2178,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                 + id.value() + "': already in terminal status " + inst.status()));
                     }
 
-                    // Binder-row bind (Contract Appendix C2): instance-owned cancel drive.
-                    return contextBinder.withBound(inst, null, () -> doCancel(id, reason, inst, tx));
-                });
+                    // Binder-row bind (Contract Appendix C2): instance-owned cancel drive. Every history entry the
+                    // cancellation writes is logged with the canceller.
+                    return history.nextSequence(id, tx).compose(from -> contextBinder
+                            .withBound(inst, null, () -> doCancel(id, reason, inst, canceller, tx))
+                            .compose(done -> commands.attributeHistory(id, from, canceller, tx)));
+                }));
     }
 
     /** The most code points of a cancellation's reason that are stored. */
@@ -2187,10 +2220,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * @param id     the workflow instance id
      * @param reason human-readable reason for the cancellation
      * @param inst   the loaded (non-terminal) instance snapshot
+     * @param canceller who cancelled the instance, logged on the entries of the cancelled commands
      * @param tx     the active transaction
      * @return a {@link Future} that completes when the cancellation has been persisted
      */
-    private Future<Void> doCancel(WorkflowInstanceId id, String reason, WorkflowInstance inst, SqlClient tx) {
+    private Future<Void> doCancel(
+            WorkflowInstanceId id, String reason, WorkflowInstance inst, CommandActor canceller, SqlClient tx) {
         UUID waitTaskId = null;
         if (inst.waitType() == WaitType.TASK) {
             try {
@@ -2207,7 +2242,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
 
         // Command rows first, in ascending id order: every command the instance still has is cancelled in one
         // statement.
-        Future<Void> cancelTaskFuture = commands.cancelAll(id, tx).compose(cancelled -> {
+        Future<Void> cancelTaskFuture = commands.cancelAll(id, canceller, tx).compose(cancelled -> {
             // Timers: the timer the instance waits on, the reminders of the task it waits for, then every other timer
             // whose command was cancelled and that is still scheduled.
             Future<Void> timersDone = Future.succeededFuture();
@@ -2403,7 +2438,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private Future<Void> recordRetryOnce(WorkflowInstanceId id, SqlClient tx) {
         return commands.unsettledTargets(id, "RETRY", tx)
                 .compose(pending -> pending.stream().noneMatch(String::isEmpty)
-                        ? commands.recordRetry(id, tx).<Void>mapEmpty()
+                        ? actors.recording("RETRY", actor -> commands.recordRetry(id, actor, tx))
+                                .<Void>mapEmpty()
                         : Future.<Void>succeededFuture());
     }
 

@@ -3,9 +3,13 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DurableContextPropagator;
+import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
+import dev.vertique.workflow.actor.WorkflowActorMapper;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
@@ -74,6 +78,8 @@ public final class WorkflowEngineParts {
     private final CommandWakeups commandWakeups;
     private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
     private final @Nullable Vertx vertx;
+    private final ContextHolder contextHolder;
+    private final WorkflowActorMapper actorMapper;
 
     private WorkflowEngineParts(Builder b) {
         this.txRunner = Objects.requireNonNull(b.txRunner, "txRunner");
@@ -103,6 +109,8 @@ public final class WorkflowEngineParts {
         this.commandWakeups = Objects.requireNonNull(b.commandWakeups, "commandWakeups");
         this.schemaProducer = b.schemaProducer;
         this.vertx = b.vertx;
+        this.contextHolder = Objects.requireNonNull(b.contextHolder, "contextHolder");
+        this.actorMapper = Objects.requireNonNull(b.actorMapper, "actorMapper");
     }
 
     /**
@@ -252,6 +260,22 @@ public final class WorkflowEngineParts {
     }
 
     /**
+     * The holder the engine reads the current security identity from when it records a command; a
+     * {@link DefaultContextHolder} by default.
+     */
+    public ContextHolder contextHolder() {
+        return contextHolder;
+    }
+
+    /**
+     * The mapper from the current security identity to the actor a recorded command is logged with; a
+     * {@link DefaultWorkflowActorMapper} by default.
+     */
+    public WorkflowActorMapper actorMapper() {
+        return actorMapper;
+    }
+
+    /**
      * The producer of the payload schemas a new task's decision snapshot stores; empty by default, in which case the
      * tasks it creates carry no schemas and the executor alone validates their completions.
      */
@@ -296,6 +320,8 @@ public final class WorkflowEngineParts {
         private CommandWakeups commandWakeups = CommandWakeups.none();
         private Optional<WorkflowPlanSchemaProducer> schemaProducer = Optional.empty();
         private @Nullable Vertx vertx;
+        private ContextHolder contextHolder = new DefaultContextHolder();
+        private WorkflowActorMapper actorMapper = new DefaultWorkflowActorMapper();
 
         private Builder() {}
 
@@ -453,6 +479,18 @@ public final class WorkflowEngineParts {
         /** Sets the producer of the payload schemas a new task's decision snapshot stores. */
         public Builder schemaProducer(Optional<WorkflowPlanSchemaProducer> schemaProducer) {
             this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
+            return this;
+        }
+
+        /** Sets the holder the current security identity is read from when a command is recorded. */
+        public Builder contextHolder(ContextHolder contextHolder) {
+            this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
+            return this;
+        }
+
+        /** Sets the mapper from the current security identity to the actor a recorded command is logged with. */
+        public Builder actorMapper(WorkflowActorMapper actorMapper) {
+            this.actorMapper = Objects.requireNonNull(actorMapper, "actorMapper");
             return this;
         }
 

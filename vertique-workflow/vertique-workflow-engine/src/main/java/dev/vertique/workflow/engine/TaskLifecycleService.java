@@ -9,12 +9,14 @@ import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMaps;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.executor.ClaimLostException;
+import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.Savepoints;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DedupClaim;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
@@ -192,6 +194,9 @@ final class TaskLifecycleService {
     /** Writes the history of what became of a recorded completion. */
     private final WorkflowHistoryRecorder historyRecorder;
 
+    /** Takes the actor of a recorded completion and of a reassignment from the identity of the caller. */
+    private final CommandActors actors;
+
     /** The size, depth and schema checks a completion meets before it is recorded. */
     private final RecordTimePayloadValidator recordValidator;
 
@@ -232,6 +237,8 @@ final class TaskLifecycleService {
      * @param recording the recording configuration whose bounds a completion's payload must meet, or empty for the
      *     defaults
      * @param schemaProducer the producer of the payload schemas a new task's decision snapshot stores, if any
+     * @param actors takes the actor a recorded completion and a reassignment are logged with from the caller's
+     *     identity
      */
     @Inject
     TaskLifecycleService(
@@ -256,7 +263,9 @@ final class TaskLifecycleService {
             TaskReservations<SqlClient> reservations,
             WorkflowHistoryRecorder historyRecorder,
             Optional<WorkflowRecordingConfig> recording,
-            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+            Optional<WorkflowPlanSchemaProducer> schemaProducer,
+            CommandActors actors) {
+        this.actors = actors;
         this.commands = commands;
         this.reservations = reservations;
         this.historyRecorder = historyRecorder;
@@ -647,13 +656,16 @@ final class TaskLifecycleService {
                         return duplicateOf(cmd, fingerprint, claim.existingFingerprint());
                     }
                     String payloadJson = cmd.payload() == null ? null : Json.encode(cmd.payload());
-                    return commands.recordCompletion(
-                                    task.workflowId(),
-                                    cmd.taskId(),
-                                    cmd.idempotencyKey(),
-                                    payloadJson,
-                                    CompletionTarget.of(cmd).encode(),
-                                    tx)
+                    return actors.recording(
+                                    "COMPLETION",
+                                    actor -> commands.recordCompletion(
+                                            task.workflowId(),
+                                            cmd.taskId(),
+                                            cmd.idempotencyKey(),
+                                            payloadJson,
+                                            CompletionTarget.of(cmd).encode(),
+                                            actor,
+                                            tx))
                             .compose(commandId ->
                                     reservations.markCompleting(cmd.taskId().toString(), commandId, tx))
                             .compose(reserved -> reserved
@@ -1961,6 +1973,11 @@ final class TaskLifecycleService {
      * @return a {@link Future} resolving to the mutation result
      */
     Future<TaskMutationResult> taskReassigned(TaskReassignmentCommand cmd, SqlClient tx) {
+        // The reassigner is the caller's identity; the command's own reassignedBy is application data.
+        return actors.captured().compose(reassigner -> reassign(cmd, reassigner, tx));
+    }
+
+    private Future<TaskMutationResult> reassign(TaskReassignmentCommand cmd, CommandActor reassigner, SqlClient tx) {
         return taskStore.findById(cmd.taskId(), tx).compose(optTask -> {
             if (optTask.isEmpty()) {
                 return Future.failedFuture(new WorkflowTaskNotFoundException(cmd.taskId()));
@@ -2001,7 +2018,8 @@ final class TaskLifecycleService {
                                                 task.workflowId()));
                             }
                             WorkflowInstance inst = optInst.get();
-                            return contextBinder.withBound(inst, null, () -> doReassignBound(cmd, task, inst, tx));
+                            return contextBinder.withBound(
+                                    inst, null, () -> doReassignBound(cmd, task, inst, reassigner, tx));
                         });
                     });
         });
@@ -2015,11 +2033,16 @@ final class TaskLifecycleService {
      * @param cmd  the reassignment command
      * @param task the task record fetched in step 1
      * @param inst the loaded instance snapshot (reused for event emission)
+     * @param reassigner who reassigned the task, logged on the {@code TASK_REASSIGNED} entry
      * @param tx   the active transaction
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> doReassignBound(
-            TaskReassignmentCommand cmd, TaskRecord task, WorkflowInstance inst, SqlClient tx) {
+            TaskReassignmentCommand cmd,
+            TaskRecord task,
+            WorkflowInstance inst,
+            CommandActor reassigner,
+            SqlClient tx) {
         Instant now = clock.instant();
         // Lock the task row first so the expectedAssignment precondition is checked against the
         // row the reassignment then mutates.
@@ -2071,6 +2094,8 @@ final class TaskLifecycleService {
                                                             hp,
                                                             now),
                                                     tx)
+                                            .compose(v ->
+                                                    commands.attributeHistory(task.workflowId(), seq, reassigner, tx))
                                             .compose(v -> eventEmitter.emitEvent(
                                                     inst,
                                                     WorkflowEventType.TASK_REASSIGNED,

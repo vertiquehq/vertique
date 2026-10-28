@@ -26,6 +26,7 @@ import java.util.UUID;
  *                    {@code REMINDER}), or {@code null}
  * @param timerId     the timer row a {@code TIMER} command fires, or {@code null}
  * @param taskId      the task a {@code TIMER} command of a due date or reminder belongs to, or {@code null}
+ * @param actor       who recorded the command, or {@code null} for a command recorded before actors were logged
  */
 public record SegmentCommand(
         long commandId,
@@ -38,7 +39,50 @@ public record SegmentCommand(
         @Nullable String contextJson,
         @Nullable String timerKind,
         @Nullable UUID timerId,
-        @Nullable UUID taskId) {
+        @Nullable UUID taskId,
+        @Nullable CommandActor actor) {
+
+    /**
+     * Creates a command that carries the timer fields and no recorded actor.
+     *
+     * @param commandId   the command's row id
+     * @param workflowId  the instance the command belongs to
+     * @param kind        the command kind
+     * @param payloadJson the command's payload as recorded, or {@code null}
+     * @param targetJson  the command's target as recorded, or {@code null}
+     * @param dedupKey    the caller's idempotency key as recorded, or {@code null}
+     * @param explicitCarrierJson the explicit durable-context carrier a signal was recorded with, or {@code null}
+     * @param contextJson the durable context captured when the command was recorded, or {@code null}
+     * @param timerKind   the timer kind of a {@code TIMER} command, or {@code null}
+     * @param timerId     the timer row a {@code TIMER} command fires, or {@code null}
+     * @param taskId      the task a {@code TIMER} command belongs to, or {@code null}
+     */
+    public SegmentCommand(
+            long commandId,
+            WorkflowInstanceId workflowId,
+            String kind,
+            @Nullable String payloadJson,
+            @Nullable String targetJson,
+            @Nullable String dedupKey,
+            @Nullable String explicitCarrierJson,
+            @Nullable String contextJson,
+            @Nullable String timerKind,
+            @Nullable UUID timerId,
+            @Nullable UUID taskId) {
+        this(
+                commandId,
+                workflowId,
+                kind,
+                payloadJson,
+                targetJson,
+                dedupKey,
+                explicitCarrierJson,
+                contextJson,
+                timerKind,
+                timerId,
+                taskId,
+                null);
+    }
 
     /**
      * Creates a command that is not a timer.

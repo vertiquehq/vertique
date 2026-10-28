@@ -153,6 +153,7 @@ public interface WorkflowCommandRepository<TX> {
      * @param payloadJson    the start payload as JSON, or {@code null} when the start has none
      * @param targetJson     the caller-supplied subject reference of the start as JSON, or {@code null} when the
      *                       caller supplied none
+     * @param actor          who asked for the start, stored on the command
      * @param tx             the caller's transaction handle
      * @return a {@link Future} containing the command's row id
      */
@@ -161,7 +162,27 @@ public interface WorkflowCommandRepository<TX> {
             String idempotencyKey,
             @Nullable String payloadJson,
             @Nullable String targetJson,
+            CommandActor actor,
             TX tx);
+
+    /**
+     * Records a {@code START} command for a caller with no identity, as {@link CommandActor#none()}.
+     *
+     * @param instance       the new instance
+     * @param idempotencyKey the caller's idempotency key, kept for display
+     * @param payloadJson    the start payload as JSON, or {@code null} when the start has none
+     * @param targetJson     the caller-supplied subject reference of the start as JSON, or {@code null}
+     * @param tx             the caller's transaction handle
+     * @return a {@link Future} containing the command's row id
+     */
+    default Future<Long> recordStart(
+            WorkflowInstanceId instance,
+            String idempotencyKey,
+            @Nullable String payloadJson,
+            @Nullable String targetJson,
+            TX tx) {
+        return recordStart(instance, idempotencyKey, payloadJson, targetJson, CommandActor.none(), tx);
+    }
 
     /**
      * Reads, without locks, the commands an executor could claim now, oldest availability first. Judges eligibility
@@ -414,6 +435,7 @@ public interface WorkflowCommandRepository<TX> {
      * @param dedupKey            the caller's idempotency key, kept for display
      * @param payloadJson         the payload as JSON, or {@code null} when the signal has none
      * @param explicitCarrierJson the sanitized explicit durable-context carrier as JSON, or {@code null}
+     * @param actor               who sent the signal, stored on the command
      * @param tx                  the caller's transaction handle
      * @return a {@link Future} containing the command's row id
      */
@@ -425,7 +447,42 @@ public interface WorkflowCommandRepository<TX> {
             String dedupKey,
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,
+            CommandActor actor,
             TX tx);
+
+    /**
+     * Records a {@code SIGNAL} command for a caller with no identity, as {@link CommandActor#none()}.
+     *
+     * @param instance            the instance
+     * @param signalName          the signal's name
+     * @param forkStepId          the fork step of a branch-addressed signal, or {@code null}
+     * @param branchId            the branch of a branch-addressed signal, or {@code null}
+     * @param dedupKey            the caller's idempotency key, kept for display
+     * @param payloadJson         the payload as JSON, or {@code null} when the signal has none
+     * @param explicitCarrierJson the sanitized explicit durable-context carrier as JSON, or {@code null}
+     * @param tx                  the caller's transaction handle
+     * @return a {@link Future} containing the command's row id
+     */
+    default Future<Long> recordSignal(
+            WorkflowInstanceId instance,
+            String signalName,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            String dedupKey,
+            @Nullable String payloadJson,
+            @Nullable String explicitCarrierJson,
+            TX tx) {
+        return recordSignal(
+                instance,
+                signalName,
+                forkStepId,
+                branchId,
+                dedupKey,
+                payloadJson,
+                explicitCarrierJson,
+                CommandActor.none(),
+                tx);
+    }
 
     /**
      * Records a {@code COMPLETION} command in the caller's transaction: the next position of the instance's queue,
@@ -440,6 +497,7 @@ public interface WorkflowCommandRepository<TX> {
      * @param dedupKey    the caller's idempotency key, kept for display
      * @param payloadJson the decision payload as JSON, or {@code null} when the decision has none
      * @param targetJson  the decision, reviewed subject version and completing actor as JSON
+     * @param actor       who asked for the completion, stored on the command
      * @param tx          the caller's transaction handle
      * @return a {@link Future} containing the command's row id
      */
@@ -449,7 +507,29 @@ public interface WorkflowCommandRepository<TX> {
             String dedupKey,
             @Nullable String payloadJson,
             String targetJson,
+            CommandActor actor,
             TX tx);
+
+    /**
+     * Records a {@code COMPLETION} command for a caller with no identity, as {@link CommandActor#none()}.
+     *
+     * @param instance    the instance
+     * @param taskId      the task the completion reserves
+     * @param dedupKey    the caller's idempotency key, kept for display
+     * @param payloadJson the decision payload as JSON, or {@code null} when the decision has none
+     * @param targetJson  the decision, reviewed subject version and completing actor as JSON
+     * @param tx          the caller's transaction handle
+     * @return a {@link Future} containing the command's row id
+     */
+    default Future<Long> recordCompletion(
+            WorkflowInstanceId instance,
+            UUID taskId,
+            String dedupKey,
+            @Nullable String payloadJson,
+            String targetJson,
+            TX tx) {
+        return recordCompletion(instance, taskId, dedupKey, payloadJson, targetJson, CommandActor.none(), tx);
+    }
 
     /**
      * Records a timer in the caller's transaction: a {@code workflow_timers} row linked by the command's id and the
@@ -605,10 +685,22 @@ public interface WorkflowCommandRepository<TX> {
      * <p>The caller must hold the instance's execution lock.
      *
      * @param instance the instance to recover
+     * @param actor    who asked for the retry, stored on the command
      * @param tx       the caller's transaction handle
      * @return a {@link Future} containing the command's row id
      */
-    Future<Long> recordRetry(WorkflowInstanceId instance, TX tx);
+    Future<Long> recordRetry(WorkflowInstanceId instance, CommandActor actor, TX tx);
+
+    /**
+     * Records a {@code RETRY} command for a caller with no identity, as {@link CommandActor#none()}.
+     *
+     * @param instance the instance to recover
+     * @param tx       the caller's transaction handle
+     * @return a {@link Future} containing the command's row id
+     */
+    default Future<Long> recordRetry(WorkflowInstanceId instance, TX tx) {
+        return recordRetry(instance, CommandActor.none(), tx);
+    }
 
     /**
      * Records a {@code MIGRATION} command in the caller's transaction: the next position of the instance's queue, state
@@ -621,10 +713,26 @@ public interface WorkflowCommandRepository<TX> {
      * @param targetVersion the definition version to migrate to
      * @param targetScope   the scope of the definition to migrate to, or {@code null} for the scope the instance is
      *                      pinned to
+     * @param actor         who asked for the migration, stored on the command
      * @param tx            the caller's transaction handle
      * @return a {@link Future} containing the command's row id
      */
-    Future<Long> recordMigration(WorkflowInstanceId instance, long targetVersion, @Nullable String targetScope, TX tx);
+    Future<Long> recordMigration(
+            WorkflowInstanceId instance, long targetVersion, @Nullable String targetScope, CommandActor actor, TX tx);
+
+    /**
+     * Records a {@code MIGRATION} command for a caller with no identity, as {@link CommandActor#none()}.
+     *
+     * @param instance      the instance to migrate
+     * @param targetVersion the definition version to migrate to
+     * @param targetScope   the scope of the definition to migrate to, or {@code null}
+     * @param tx            the caller's transaction handle
+     * @return a {@link Future} containing the command's row id
+     */
+    default Future<Long> recordMigration(
+            WorkflowInstanceId instance, long targetVersion, @Nullable String targetScope, TX tx) {
+        return recordMigration(instance, targetVersion, targetScope, CommandActor.none(), tx);
+    }
 
     /**
      * Tells whether the instance holds a dead-lettered command, in the caller's transaction.
@@ -683,10 +791,24 @@ public interface WorkflowCommandRepository<TX> {
      * timers they fire and the task a completion reserves.
      *
      * @param instance the instance being cancelled
+     * @param canceller who cancelled the instance, stored on the {@code COMMAND_CANCELLED} entries; the cancelled
+     *                  commands keep the actor that recorded them
      * @param tx       the caller's transaction handle
      * @return a {@link Future} containing the cancelled commands in ascending id order
      */
-    Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, TX tx);
+    Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, CommandActor canceller, TX tx);
+
+    /**
+     * Cancels every unsettled command of the instance for a canceller with no identity, as
+     * {@link CommandActor#none()}.
+     *
+     * @param instance the instance being cancelled
+     * @param tx       the caller's transaction handle
+     * @return a {@link Future} containing the cancelled commands in ascending id order
+     */
+    default Future<List<SettledCommand>> cancelAll(WorkflowInstanceId instance, TX tx) {
+        return cancelAll(instance, CommandActor.none(), tx);
+    }
 
     /**
      * Cancels the claimed command as cancelled with a reason, in the segment's transaction: its instance was cancelled
@@ -713,4 +835,38 @@ public interface WorkflowCommandRepository<TX> {
      * @return a {@link Future} containing the number of commands settled
      */
     Future<Integer> settleEnded(WorkflowInstanceId instance, TX tx);
+
+    /**
+     * Logs who is behind the history entries a transaction wrote since {@code fromSequence}: every entry of the
+     * instance from that sequence on that carries no actor yet takes the actor and its attribution status. An entry
+     * that already carries an actor is left as it is. A repository that keeps no actor columns inherits this no-op.
+     *
+     * @param instance     the instance
+     * @param fromSequence the first sequence to attribute, as the history's next sequence was before the entries were
+     *                     written
+     * @param actor        the actor to log
+     * @param tx           the active transaction, which holds the instance's execution lock
+     * @return a {@link Future} that completes when the entries are attributed
+     */
+    default Future<Void> attributeHistory(WorkflowInstanceId instance, long fromSequence, CommandActor actor, TX tx) {
+        return Future.succeededFuture();
+    }
+
+    /**
+     * Logs who is behind the history entries an executor segment wrote since {@code fromSequence}: an entry that names
+     * a command takes the actor that recorded that command, and any other entry takes the fallback, which is the actor
+     * of the command the segment executes. An entry that already carries an actor is left as it is. A command recorded
+     * before actors were logged counts as recorded with no identity. A repository that keeps no actor columns inherits
+     * this no-op.
+     *
+     * @param instance     the instance
+     * @param fromSequence the first sequence to attribute, as the history's next sequence was before the segment wrote
+     * @param fallback     the actor of the command the segment executes
+     * @param tx           the segment's transaction, which holds the instance's execution lock
+     * @return a {@link Future} that completes when the entries are attributed
+     */
+    default Future<Void> attributeSegmentHistory(
+            WorkflowInstanceId instance, long fromSequence, CommandActor fallback, TX tx) {
+        return Future.succeededFuture();
+    }
 }

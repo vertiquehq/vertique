@@ -4,6 +4,7 @@
 package dev.vertique.workflow.engine;
 
 import dev.vertique.context.DurableContextPropagator;
+import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
 import dev.vertique.workflow.engine.executor.HoldingSegments;
 import dev.vertique.workflow.engine.executor.WorkflowExecutor;
@@ -196,7 +197,8 @@ public final class WorkflowEngineFactory {
                 parts.taskReservations(),
                 parts.schemaProducer(),
                 planCache.marks()::find,
-                transactionalReads(parts.definitionStore()));
+                transactionalReads(parts.definitionStore()),
+                new CommandActors(parts.contextHolder(), parts.actorMapper(), parts.executorObservers()));
         executorHolder[0] = new WorkflowExecutor(
                 parts.vertx(),
                 parts.executorConfig(),

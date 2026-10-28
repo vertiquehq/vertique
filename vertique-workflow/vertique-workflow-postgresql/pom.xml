@@ -231,6 +231,22 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
 
+        <!--
+          Test scope only: the relayed-signal proofs install identity carriage and reconstruction around a real
+          outbox relay that delivers to the workflow signal endpoint. No production code in this module depends on
+          the security runtime or on the outbox service destination.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-security-runtime</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-inbox-outbox-services</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Annotation processing of the Dagger components that the integration tests declare. -->
         <dependency>
             <groupId>com.google.dagger</groupId>

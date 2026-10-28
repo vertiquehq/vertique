@@ -3,6 +3,8 @@
 
 package dev.vertique.workflow.engine;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import dagger.Binds;
 import dagger.BindsOptionalOf;
 import dagger.Module;
@@ -12,12 +14,16 @@ import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.cache.spi.CacheObserver;
 import dev.vertique.context.ContextRuntimeModule;
+import dev.vertique.core.VertxConfig;
+import dev.vertique.core.config.ConfigParser;
+import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
 import dev.vertique.workflow.engine.executor.HoldingSegments;
+import dev.vertique.workflow.engine.executor.OutboxRelayCarriage;
 import dev.vertique.workflow.engine.executor.WorkflowExecutor;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.registry.FailingMarks;
@@ -42,6 +48,7 @@ import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
@@ -247,7 +254,8 @@ public abstract class WorkflowEngineModule {
             WorkflowTransactionRunner<SqlClient> runner,
             WorkflowSegments segments,
             Set<WorkflowExecutorObserver> observers,
-            Optional<CommandWakeups> wakeups) {
+            Optional<CommandWakeups> wakeups,
+            OutboxRelayCarriage carriage) {
         return new WorkflowExecutor(
                 vertx.orElse(null),
                 config.orElseGet(WorkflowExecutorConfig::defaults),
@@ -256,8 +264,65 @@ public abstract class WorkflowEngineModule {
                 segments,
                 WorkflowExecutor.newNodeId(),
                 observers,
-                wakeups.orElseGet(CommandWakeups::none));
+                wakeups.orElseGet(CommandWakeups::none),
+                carriage);
     }
+
+    /** The carriage requirements of {@code identity.snapshot.carriageRequirements} the executor start warns about. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private record CarriageRequirements(
+            @JsonProperty("outbox-relay") String outboxRelay, String workflow) {}
+
+    /**
+     * Binds the {@code outbox-relay} and {@code workflow} entries of {@code identity.snapshot.carriageRequirements}
+     * as a typed value: an entry counts only when it is {@code REQUIRED}, and an absent entry, section or other
+     * key is not required and is not an error. Only the framework's typed configuration binding reads the
+     * configuration; the security runtime is not a dependency.
+     *
+     * @param config the application configuration
+     * @param parser the typed configuration binding
+     * @return the carriage requirements
+     */
+    public static OutboxRelayCarriage outboxRelayCarriage(JsonObject config, ConfigParser parser) {
+        CarriageRequirements requirements = parser.parse(
+                JsonConfigPaths.navigateObject(config, "identity", "snapshot", "carriageRequirements"),
+                CarriageRequirements.class);
+        return new OutboxRelayCarriage(
+                "REQUIRED".equals(requirements.outboxRelay()), "REQUIRED".equals(requirements.workflow()));
+    }
+
+    /**
+     * Provides the carriage requirements for the executor start; an application without a configuration binding
+     * requires none.
+     *
+     * @param config the optional application configuration
+     * @param parser the optional typed configuration binding
+     * @return the carriage requirements
+     */
+    @Provides
+    @Singleton
+    static OutboxRelayCarriage carriage(@VertxConfig Optional<JsonObject> config, Optional<ConfigParser> parser) {
+        return config.isPresent() && parser.isPresent()
+                ? outboxRelayCarriage(config.get(), parser.get())
+                : OutboxRelayCarriage.none();
+    }
+
+    /**
+     * Declares the application configuration as an optional binding.
+     *
+     * @return the optional configuration declaration
+     */
+    @BindsOptionalOf
+    @VertxConfig
+    abstract JsonObject optionalConfig();
+
+    /**
+     * Declares the typed configuration binding as an optional binding.
+     *
+     * @return the optional parser declaration
+     */
+    @BindsOptionalOf
+    abstract ConfigParser optionalConfigParser();
 
     /**
      * Binds the executor as the control the engine exposes.
