@@ -40,6 +40,9 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
     /** Name of the migration instance whose schema mapping places the workflow tables. */
     private static final String INSTANCE_NAME = "workflow";
 
+    /** The predicate that leaves the decision log out of a narrow list. */
+    private static final String NOT_DECISION_LOG = "entry_type NOT IN ('DECISION', 'STATE_BASELINE')";
+
     // --- SQL statements ---
     //
     // The statements are built once at construction because every table reference is qualified with
@@ -106,11 +109,15 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
         this.sqlNextSequence =
                 "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_seq FROM " + history + " WHERE workflow_id = $1";
 
+        // The narrow lists serve query(), the migration context and compensation. They leave out the decision log: its
+        // entries are served by the history service, and a baseline holds the whole (redacted) state, so it must not
+        // shrink the window of the recent list or travel into a view.
         this.sqlListByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at,"
-                + " entry_version FROM " + history + " WHERE workflow_id = $1 ORDER BY sequence ASC";
+                + " entry_version FROM " + history + " WHERE workflow_id = $1 AND " + NOT_DECISION_LOG
+                + " ORDER BY sequence ASC";
 
         this.sqlListRecentByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at,"
-                + " entry_version FROM " + history + " WHERE workflow_id = $1"
+                + " entry_version FROM " + history + " WHERE workflow_id = $1 AND " + NOT_DECISION_LOG
                 + " ORDER BY sequence DESC LIMIT $2";
 
         this.sqlListPage = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at, entry_version,"
@@ -207,7 +214,8 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
 
     /**
      * Returns the most recent {@code limit} history entries for the given workflow instance,
-     * ordered by sequence descending (most recent first) within the transaction.
+     * ordered by sequence descending (most recent first) within the transaction. The entries of the decision log
+     * ({@code DECISION} and {@code STATE_BASELINE}) are left out and do not count toward the limit.
      *
      * <p>Callers that need oldest-first ordering should reverse the returned list. This method is
      * used by the migration engine to populate

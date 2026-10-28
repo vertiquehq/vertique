@@ -200,12 +200,17 @@ public class WorkflowInstanceHistoryServiceIT {
             assertThat(await(history.entries(id, 0, 500))).hasSameSizeAs(all);
             assertThat(await(history.entries(id, all.getLast().sequence(), 10))).isEmpty();
 
-            // And query lists the same entries in the same order with the five original fields, the stored entry
-            // version, and nothing else that is new
+            // And query lists the same entries in the same order, except the decision log that this service serves,
+            // with the five original fields, the stored entry version, and nothing else that is new
+            List<WorkflowHistoryEntry> narrow = all.stream()
+                    .filter(entry -> entry.entryType() != WorkflowEntryType.DECISION
+                            && entry.entryType() != WorkflowEntryType.STATE_BASELINE)
+                    .toList();
             List<WorkflowHistoryEntry> recent = view.recentHistory();
-            assertThat(recent).hasSameSizeAs(all);
-            for (int i = 0; i < all.size(); i++) {
-                WorkflowHistoryEntry enriched = all.get(i);
+            assertThat(narrow).hasSizeLessThan(all.size());
+            assertThat(recent).hasSameSizeAs(narrow);
+            for (int i = 0; i < narrow.size(); i++) {
+                WorkflowHistoryEntry enriched = narrow.get(i);
                 WorkflowHistoryEntry fiveFields = recent.get(i);
                 assertThat(fiveFields.instanceId()).as("entry %d", i).isEqualTo(enriched.instanceId());
                 assertThat(fiveFields.sequence()).as("entry %d", i).isEqualTo(enriched.sequence());
@@ -216,11 +221,16 @@ public class WorkflowInstanceHistoryServiceIT {
                 assertNothingElseNew(fiveFields);
             }
 
-            // And the entry version is the stored one: two for the decision entries, one for the others
-            assertThat(recent)
+            // And the entry version is the stored one: two for the decision entries the service lists, one for the
+            // others, and query lists no decision entry
+            assertThat(all)
                     .filteredOn(entry -> entry.entryType() == WorkflowEntryType.DECISION)
+                    .isNotEmpty()
                     .extracting(WorkflowHistoryEntry::entryVersion)
                     .containsOnly(2);
+            assertThat(recent)
+                    .noneMatch(entry -> entry.entryType() == WorkflowEntryType.DECISION
+                            || entry.entryType() == WorkflowEntryType.STATE_BASELINE);
             assertThat(recent)
                     .filteredOn(entry -> entry.entryType() == WorkflowEntryType.COMMAND_RECEIVED)
                     .extracting(WorkflowHistoryEntry::entryVersion)
@@ -246,7 +256,7 @@ public class WorkflowInstanceHistoryServiceIT {
                 assertThat(stored.payloadJson()).isEqualTo("{}");
                 assertNothingElseNew(stored);
             }
-            assertThat(await(run.graph().operations().query(older)).recentHistory())
+            assertThat(await(history.entries(older, 0, 500)))
                     .filteredOn(entry -> entry.entryType() == WorkflowEntryType.DECISION)
                     .isNotEmpty()
                     .extracting(WorkflowHistoryEntry::entryVersion)

@@ -75,13 +75,13 @@ import java.util.function.IntToLongFunction;
 @Singleton
 public final class PgWorkflowCommandRepository implements WorkflowCommandRepository<SqlClient> {
 
-    /** The instance statuses that are ended: the instance takes no further command. */
     /** The columns that hold who asked for a command. */
     private static final String ACTOR_COLUMNS = "actor_kind, actor_id, actor_reason, on_behalf_of, attribution_status";
 
     /** The reason a timer command is logged with: the system fires it. */
     private static final String TIMER_REASON = "timer";
 
+    /** The instance statuses that are ended: the instance takes no further command. */
     private static final String ENDED = "('COMPLETED','COMPENSATED','CANCELLED','EXPIRED')";
 
     private static final String ENDED_OR_FAILED = "('COMPLETED','COMPENSATED','CANCELLED','EXPIRED','FAILED')";
@@ -272,9 +272,18 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         String historyColumns = " (workflow_id, sequence, entry_type, payload_json, recorded_at, command_id, outcome, "
                 + ACTOR_COLUMNS + ")";
         // The entry is logged with the actor that recorded the command it is about; a command recorded before actors
-        // were logged counts as recorded with no identity.
-        this.insertHistory = "WITH owner AS (SELECT c.actor_kind, c.actor_id, c.actor_reason, c.on_behalf_of,"
-                + " c.attribution_status FROM (SELECT 1) one LEFT JOIN " + commands + " c ON c.id = $4::bigint)"
+        // were logged counts as recorded with no identity. The entry of a command that the instance's cancellation
+        // cancelled is the canceller's doing, so it takes the actor of the instance's cancellation entry.
+        String cancellerOf = "LEFT JOIN LATERAL (SELECT h.actor_kind, h.actor_id, h.actor_reason, h.on_behalf_of,"
+                + " h.attribution_status FROM " + history + " h WHERE h.workflow_id = $1::uuid"
+                + " AND $2::text = 'COMMAND_CANCELLED' AND h.entry_type = 'CANCELLED' AND h.actor_kind IS NOT NULL"
+                + " ORDER BY h.sequence DESC LIMIT 1) k ON TRUE";
+        this.insertHistory = "WITH owner AS (SELECT " + ownerOrCanceller("actor_kind") + " AS actor_kind, "
+                + ownerOrCanceller("actor_id") + " AS actor_id, " + ownerOrCanceller("actor_reason")
+                + " AS actor_reason, "
+                + ownerOrCanceller("on_behalf_of") + " AS on_behalf_of, " + ownerOrCanceller("attribution_status")
+                + " AS attribution_status FROM (SELECT 1) one LEFT JOIN " + commands + " c ON c.id = $4::bigint "
+                + cancellerOf + ")"
                 + " INSERT INTO " + history + historyColumns
                 + " SELECT $1::uuid, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM " + history
                 + " WHERE workflow_id = $1::uuid), $2, $3::jsonb, now(), $4::bigint, $5,"
@@ -296,10 +305,17 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " on_behalf_of = CASE WHEN o.id IS NULL THEN $6 ELSE o.on_behalf_of END,"
                 + " attribution_status = CASE WHEN o.id IS NULL THEN $7"
                 + " ELSE COALESCE(o.attribution_status, 'ABSENT') END"
-                + " FROM (SELECT x.sequence, c.id, c.actor_kind, c.actor_id, c.actor_reason, c.on_behalf_of,"
-                + " c.attribution_status FROM " + history + " x LEFT JOIN " + commands
+                + " FROM (SELECT x.sequence, c.id, " + ownerOrCanceller("actor_kind") + " AS actor_kind, "
+                + ownerOrCanceller("actor_id") + " AS actor_id, " + ownerOrCanceller("actor_reason")
+                + " AS actor_reason, " + ownerOrCanceller("on_behalf_of") + " AS on_behalf_of, "
+                + ownerOrCanceller("attribution_status") + " AS attribution_status FROM " + history
+                + " x LEFT JOIN " + commands
                 + " c ON c.workflow_id = x.workflow_id AND c.id = CASE WHEN x.command_id IS NOT NULL THEN x.command_id"
                 + " WHEN x.payload_json->>'commandId' ~ '^[0-9]{1,18}$' THEN (x.payload_json->>'commandId')::bigint END"
+                + " LEFT JOIN LATERAL (SELECT h.actor_kind, h.actor_id, h.actor_reason, h.on_behalf_of,"
+                + " h.attribution_status FROM " + history + " h WHERE h.workflow_id = x.workflow_id"
+                + " AND x.entry_type = 'COMMAND_CANCELLED' AND h.entry_type = 'CANCELLED' AND h.actor_kind IS NOT NULL"
+                + " ORDER BY h.sequence DESC LIMIT 1) k ON TRUE"
                 + " WHERE x.workflow_id = $1 AND x.sequence >= $2 AND x.actor_kind IS NULL) o"
                 + " WHERE h.workflow_id = $1 AND h.sequence = o.sequence";
         this.lockForTransientRetry = "SELECT transient_count FROM " + commands
@@ -459,7 +475,8 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         this.parkedAll = parked + " ORDER BY c.seq";
         this.readParkedRow =
                 "SELECT c.payload_json::text AS payload_json, c.target_json::text AS target_json, c.dedup_key,"
-                        + " c.explicit_carrier_json::text AS explicit_carrier_json, c.context_json::text AS context_json FROM "
+                        + " c.explicit_carrier_json::text AS explicit_carrier_json, c.context_json::text AS context_json,"
+                        + " c.actor_kind, c.actor_id, c.actor_reason, c.on_behalf_of, c.attribution_status FROM "
                         + commands + " c WHERE c.workflow_id = $1 AND c.id = $2 AND c.state = 'PARKED'";
         this.parkedBefore = "SELECT EXISTS (SELECT 1 FROM " + history
                 + " WHERE workflow_id = $1 AND entry_type IN ('SIGNAL_PARKED','COMMAND_DEAD_LETTERED')"
@@ -543,6 +560,11 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     }
 
     /** The five placeholders, from the given one on, that bind the actor columns in the order of {@code ACTOR_COLUMNS}. */
+    /** The column of the canceller's entry when there is one, otherwise of the command row. */
+    private static String ownerOrCanceller(String column) {
+        return "CASE WHEN k.actor_kind IS NOT NULL THEN k." + column + " ELSE c." + column + " END";
+    }
+
     private static String actorValues(int first) {
         StringBuilder values = new StringBuilder();
         for (int i = 0; i < 5; i++) {
@@ -1479,7 +1501,11 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             row.getString("target_json"),
                             row.getString("dedup_key"),
                             row.getString("explicit_carrier_json"),
-                            row.getString("context_json")));
+                            row.getString("context_json"),
+                            null,
+                            null,
+                            null,
+                            actorOf(row)));
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands readParked")));
     }

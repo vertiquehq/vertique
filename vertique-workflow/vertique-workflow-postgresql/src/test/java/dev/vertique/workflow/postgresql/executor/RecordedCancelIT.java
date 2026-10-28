@@ -651,6 +651,75 @@ public class RecordedCancelIT {
         }
     }
 
+    @Test
+    @DisplayName("a claimed command cancelled in its own segment is logged with the canceller, not with its recorder")
+    void claimedCommandCancelledInItsOwnSegmentIsLoggedWithTheCanceller() {
+        try (SignalFixture f = order()) {
+            CommandFaults faults = new CommandFaults();
+            Node node = f.node("engine").commands(faults.decorator()).build();
+            WorkflowInstanceId id = f.waiting(node, "claimed-canceller");
+            // Given a signal that user "recorder" recorded, and an instance whose cancellation by "canceller" is
+            // logged after the signal's command was claimed and before its segment ran, so that the claimed command
+            // meets the cancelled instance itself
+            await(f.caller(() -> asUser(
+                    "recorder",
+                    f,
+                    () -> node.pool.withTransaction(tx -> node.engine.signal(id, "paid", signal("paid"), "k", tx)))));
+            faults.afterClaimOf(id, claim -> setStatus(f, id, "CANCELLED").compose(done -> f.fixture
+                    .observer()
+                    .preparedQuery("INSERT INTO workflow_history (workflow_id, sequence, entry_type, payload_json,"
+                            + " recorded_at, actor_kind, actor_id, attribution_status) SELECT $1, COALESCE(MAX(sequence),"
+                            + " 0) + 1, 'CANCELLED', '{}'::jsonb, now(), 'USER', 'canceller', 'VERIFIED' FROM"
+                            + " workflow_history WHERE workflow_id = $1")
+                    .execute(Tuple.of(id.value()))
+                    .mapEmpty()));
+
+            // When the command's segment runs
+            node.startExecutor();
+            try {
+                awaitCondition("the command to settle", IDLE, () -> f.signal(id, "k")
+                        .state()
+                        .equals("CANCELLED"));
+                node.awaitIdle(id);
+            } finally {
+                node.stopExecutor();
+            }
+
+            // Then the command-cancelled entry carries the canceller, while the command row keeps its recorder
+            long command = f.signal(id, "k").id();
+            var entry = await(f.fixture
+                            .observer()
+                            .preparedQuery("SELECT actor_kind, actor_id FROM workflow_history WHERE workflow_id = $1"
+                                    + " AND entry_type = 'COMMAND_CANCELLED'"
+                                    + " AND COALESCE(command_id, (payload_json->>'commandId')::bigint) = $2")
+                            .execute(Tuple.of(id.value(), command)))
+                    .iterator()
+                    .next();
+            assertThat(entry.getString("actor_id")).isEqualTo("canceller");
+            assertThat(entry.getString("actor_kind")).isEqualTo("USER");
+            var row = await(f.fixture
+                            .observer()
+                            .preparedQuery("SELECT actor_id FROM workflow_commands WHERE id = $1")
+                            .execute(Tuple.of(command)))
+                    .iterator()
+                    .next();
+            assertThat(row.getString("actor_id")).isEqualTo("recorder");
+        }
+    }
+
+    private static <T> Future<T> asUser(String user, SignalFixture f, java.util.function.Supplier<Future<T>> work) {
+        return f.caller(() -> {
+            var identity = dev.vertique.security.SecurityIdentity.user(
+                    new dev.vertique.security.PrincipalRef(dev.vertique.security.PrincipalType.USER, user, Map.of()));
+            var scope = f.fixture
+                    .holder()
+                    .bind(
+                            dev.vertique.security.SecurityContext.class,
+                            dev.vertique.security.SecurityContexts.unauthenticated(identity));
+            return work.get().onComplete(ignored -> scope.close());
+        });
+    }
+
     // --- Deferral, counters, uninitialized instances and the ordinary end ---
 
     @Test

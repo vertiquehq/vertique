@@ -55,6 +55,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -114,6 +115,7 @@ final class SignalHandler {
     private final DeadlineGuard deadlineGuard;
     private final ParkedSignals parkedSignals;
     private final DecisionLog decisions;
+    private final RecorderRouter recorderRouter;
 
     /**
      * Constructs a new signal handler.
@@ -135,6 +137,8 @@ final class SignalHandler {
      * @param commands the command repository the signal segments settle their commands through
      * @param contextBinder the binder that installs the durable context of a drive
      * @param historyRecorder the recorder of the history entries of command outcomes
+     * @param recorderRouter the router that attributes the intents of a drained parked signal to that signal's command;
+     *     may be {@code null} in tests that do not route intents
      */
     @Inject
     SignalHandler(
@@ -150,7 +154,8 @@ final class SignalHandler {
             Clock clock,
             WorkflowCommandRepository<SqlClient> commands,
             WorkflowContextBinder contextBinder,
-            WorkflowHistoryRecorder historyRecorder) {
+            WorkflowHistoryRecorder historyRecorder,
+            RecorderRouter recorderRouter) {
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -164,6 +169,7 @@ final class SignalHandler {
         this.commands = commands;
         this.contextBinder = contextBinder;
         this.historyRecorder = historyRecorder;
+        this.recorderRouter = recorderRouter;
         this.decisions = historyRecorder == null ? null : historyRecorder.decisions();
         this.deadlineGuard = new DeadlineGuard(commands);
         this.parkedSignals = new ParkedSignals(commands, deadlineGuard, new ParkedHost());
@@ -865,35 +871,47 @@ final class SignalHandler {
         @Override
         public Future<Void> apply(SegmentCommand command, SqlClient tx) {
             SignalTarget signal = SignalTarget.of(command);
-            return decisions.forCommand(tx, command, () -> instances
-                    .findById(command.workflowId(), tx)
-                    .compose(found -> {
-                        if (found.isEmpty()) {
-                            return Future.failedFuture(new WorkflowInstanceNotFoundException(command.workflowId()));
-                        }
-                        WorkflowInstance inst = found.get();
-                        RuntimeWorkflow rw;
-                        try {
-                            rw = PinnedPlans.resolve(registry, inst);
-                            WorkflowPayloads.requirePlanHashMatches(inst, rw);
-                        } catch (Exception e) {
-                            // This node cannot run the pinned plan: the whole segment fails rather than rejecting a
-                            // signal.
-                            return Future.failedFuture(e);
-                        }
-                        if (!signal.branchAddressed()) {
-                            return applyRecorded(inst, null, command, signal, rw, tx);
-                        }
-                        return branchTokens
-                                .findByWaitForBranch(
-                                        inst.id(),
-                                        signal.forkStepId(),
-                                        signal.branchId(),
-                                        WaitType.SIGNAL.name(),
-                                        signal.name(),
-                                        tx)
-                                .compose(waiting -> applyRecorded(inst, waiting.orElse(null), command, signal, rw, tx));
-                    }));
+            // the intents the signal's handler writes belong to the signal's recorder, not to the segment's command
+            return attributedTo(
+                    command,
+                    tx,
+                    () -> decisions.forCommand(tx, command, () -> instances
+                            .findById(command.workflowId(), tx)
+                            .compose(found -> {
+                                if (found.isEmpty()) {
+                                    return Future.failedFuture(
+                                            new WorkflowInstanceNotFoundException(command.workflowId()));
+                                }
+                                WorkflowInstance inst = found.get();
+                                RuntimeWorkflow rw;
+                                try {
+                                    rw = PinnedPlans.resolve(registry, inst);
+                                    WorkflowPayloads.requirePlanHashMatches(inst, rw);
+                                } catch (Exception e) {
+                                    // This node cannot run the pinned plan: the whole segment fails rather than
+                                    // rejecting a
+                                    // signal.
+                                    return Future.failedFuture(e);
+                                }
+                                if (!signal.branchAddressed()) {
+                                    return applyRecorded(inst, null, command, signal, rw, tx);
+                                }
+                                return branchTokens
+                                        .findByWaitForBranch(
+                                                inst.id(),
+                                                signal.forkStepId(),
+                                                signal.branchId(),
+                                                WaitType.SIGNAL.name(),
+                                                signal.name(),
+                                                tx)
+                                        .compose(waiting ->
+                                                applyRecorded(inst, waiting.orElse(null), command, signal, rw, tx));
+                            })));
+        }
+
+        /** Runs work whose routed intents belong to the command; without a router the work runs as it is. */
+        private Future<Void> attributedTo(SegmentCommand command, SqlClient tx, Supplier<Future<Void>> work) {
+            return recorderRouter == null ? work.get() : recorderRouter.executing(command, tx, work);
         }
 
         @Override

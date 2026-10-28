@@ -79,7 +79,9 @@ public interface WorkflowHistoryRepository<TX> {
 
     /**
      * Returns the most recent {@code limit} history entries for the given workflow instance, ordered
-     * by sequence descending (most recent first) within the transaction.
+     * by sequence descending (most recent first) within the transaction. The entries of the decision log
+     * ({@code DECISION} and {@code STATE_BASELINE}) are not listed and do not count toward the limit; the history
+     * service serves them.
      *
      * @param id    the workflow instance id whose history to retrieve
      * @param limit the maximum number of entries to return; must be positive
@@ -89,7 +91,8 @@ public interface WorkflowHistoryRepository<TX> {
     Future<List<WorkflowHistoryEntry>> listRecentByInstance(WorkflowInstanceId id, int limit, TX tx);
 
     /**
-     * Returns all history entries for the given workflow instance, ordered by sequence ascending.
+     * Returns the history entries for the given workflow instance, ordered by sequence ascending, without the entries
+     * of the decision log ({@code DECISION} and {@code STATE_BASELINE}), which the history service serves.
      * Executes read-only (no locking).
      *
      * @param id the workflow instance id whose history to retrieve
@@ -98,7 +101,8 @@ public interface WorkflowHistoryRepository<TX> {
     Future<List<WorkflowHistoryEntry>> listByInstance(WorkflowInstanceId id);
 
     /**
-     * Returns all history entries for the given workflow instance, ordered by sequence ascending.
+     * Returns the history entries for the given workflow instance, ordered by sequence ascending, without the entries
+     * of the decision log ({@code DECISION} and {@code STATE_BASELINE}).
      * Executes against the given transaction handle, allowing callers to run the read within the
      * same transaction that holds write locks on the instance row.
      *

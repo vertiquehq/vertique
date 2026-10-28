@@ -396,8 +396,10 @@ public class PgWorkflowEngineHumanTaskIT {
     void truncateTables(VertxTestContext ctx) {
         lastTimerId.set(null);
         RESOLVER_CALL_COUNT.set(0);
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
-                        + " workflow_instances RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
+                                + " workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }

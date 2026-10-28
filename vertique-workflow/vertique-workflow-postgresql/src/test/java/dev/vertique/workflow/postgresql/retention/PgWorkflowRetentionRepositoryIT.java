@@ -10,6 +10,7 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
@@ -75,8 +76,10 @@ public class PgWorkflowRetentionRepositoryIT {
 
     @BeforeEach
     void truncate(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history,"
-                        + " workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history,"
+                                + " workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ctx.succeedingThenComplete());
     }

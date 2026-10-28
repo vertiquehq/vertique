@@ -442,16 +442,18 @@ public final class PgWorkflowEngineTestSupport {
                 own,
                 handle);
         boolean mocked = Mockito.mockingDetails(pool).isMock();
-        WorkflowEngineHandle engine = WorkflowEngineFactory.create(parts.commands(commands)
+        WorkflowEngineHandle created = WorkflowEngineFactory.create(parts.commands(commands)
                 .taskReservations(new PgTaskReservations(pool, new PgDbExceptionMapper()))
                 .vertx(mocked ? null : ownerOf(pool))
                 .executorConfig(new WorkflowExecutorConfig(1, 8, 100, 60))
                 .build());
-        handle.set(engine);
         if (mocked) {
             // an engine over a mocked pool has no database to claim from, so it runs no executor
-            return engine;
+            handle.set(created);
+            return created;
         }
+        WorkflowEngineHandle engine = WorkflowTestTables.tracking(created, pool);
+        handle.set(engine);
         try {
             engine.executor().start().toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
         } catch (Exception e) {
@@ -749,7 +751,7 @@ public final class PgWorkflowEngineTestSupport {
             if (historyRedactor != null) {
                 parts.historyRedactor(Optional.of(historyRedactor));
             }
-            return WorkflowEngineFactory.create(parts.build());
+            return WorkflowTestTables.tracking(WorkflowEngineFactory.create(parts.build()), pool);
         }
     }
 }

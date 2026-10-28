@@ -11,6 +11,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.state.JoinPolicyType;
 import dev.vertique.workflow.state.JoinState;
 import dev.vertique.workflow.state.JoinStateStatus;
@@ -69,9 +70,11 @@ public class PgJoinStateRepositoryIT {
 
     @BeforeEach
     void cleanTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> {
                     if (ar.failed()) ctx.failNow(ar.cause());

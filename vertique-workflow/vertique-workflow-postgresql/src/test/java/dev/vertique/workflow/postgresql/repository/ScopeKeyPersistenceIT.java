@@ -12,6 +12,7 @@ import dev.vertique.db.query.PagedResult;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.query.WorkflowInstanceQuery;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
@@ -83,9 +84,11 @@ public class ScopeKeyPersistenceIT {
 
     @BeforeEach
     void truncateTables() throws Exception {
-        await(pool.query("TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
-                        + " workflow_branch_tokens, workflow_join_states, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        await(WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
+                                + " workflow_branch_tokens, workflow_join_states, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute());
     }
 

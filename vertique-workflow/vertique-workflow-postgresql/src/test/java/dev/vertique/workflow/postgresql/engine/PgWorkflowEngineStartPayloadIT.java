@@ -259,8 +259,10 @@ public class PgWorkflowEngineStartPayloadIT {
 
     @BeforeEach
     void truncateTables() {
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .toCompletionStage()
                 .toCompletableFuture()
@@ -375,20 +377,33 @@ public class PgWorkflowEngineStartPayloadIT {
                 warning.getFormattedMessage().contains(INITIALIZER_SENTINEL),
                 "the warning must not copy the application exception message");
 
-        // And: nothing of the segment committed, so the failed instance has no state
-        assertEquals(
-                "FAILED",
-                pool.preparedQuery("SELECT status FROM workflow_instances WHERE id = $1")
-                        .execute(Tuple.of(id.value()))
-                        .map(rs -> rs.iterator().next().getString("status"))
-                        .toCompletionStage()
-                        .toCompletableFuture()
-                        .join());
+        // And: nothing of the segment committed, so the failed instance has no state; the failure disposition runs in
+        // a transaction after the warning is logged, so the status is awaited
+        assertEquals("FAILED", awaitStatusOtherThan(id, "PENDING"));
         assertEquals(
                 0L,
                 count(
                         "SELECT count(*) FROM workflow_instances WHERE id = $1 AND state_json IS NOT NULL",
                         Tuple.of(id.value())));
+    }
+
+    /** Reads the instance status until it is not the given one, for at most ten seconds, and returns the last read. */
+    private static String awaitStatusOtherThan(WorkflowInstanceId id, String unwanted) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        String status;
+        do {
+            status = pool.preparedQuery("SELECT status FROM workflow_instances WHERE id = $1")
+                    .execute(Tuple.of(id.value()))
+                    .map(rs -> rs.iterator().next().getString("status"))
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .join();
+            if (!unwanted.equals(status)) {
+                return status;
+            }
+            Thread.sleep(50);
+        } while (System.nanoTime() < deadline);
+        return status;
     }
 
     /** Waits for the warning that the executor logs when a segment fails and rolls back. */

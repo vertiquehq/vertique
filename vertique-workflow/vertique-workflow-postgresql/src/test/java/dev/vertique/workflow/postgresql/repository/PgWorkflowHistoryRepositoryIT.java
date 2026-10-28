@@ -12,6 +12,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -77,7 +78,8 @@ public class PgWorkflowHistoryRepositoryIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        pool.query(
+        WorkflowTestTables.truncating(
+                        pool,
                         "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
@@ -179,6 +181,59 @@ public class PgWorkflowHistoryRepositoryIT {
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("the narrow lists leave out decision-log entries, which do not shrink the recent window")
+    void narrowListsLeaveOutDecisionLogEntries(VertxTestContext ctx) {
+        insertInstance()
+                .compose(instanceId -> pool.withTransaction(tx -> historyRepository
+                                .append(entry(instanceId, 1L, WorkflowEntryType.START), tx)
+                                .compose(v -> historyRepository.appendDecision(
+                                        decision(instanceId, WorkflowEntryType.DECISION, "[]", null), tx))
+                                .compose(v -> historyRepository.appendDecision(
+                                        decision(instanceId, WorkflowEntryType.STATE_BASELINE, null, "{\"a\":1}"), tx))
+                                .compose(v -> historyRepository.append(
+                                        entry(instanceId, 4L, WorkflowEntryType.COMPLETED), tx)))
+                        .compose(v -> historyRepository.listByInstance(instanceId))
+                        .compose(all -> historyRepository
+                                .listRecentByInstance(instanceId, 2, pool)
+                                .map(recent -> new java.util.List<?>[] {all, recent}))
+                        .onSuccess(lists -> ctx.verify(() -> {
+                            assertEquals(
+                                    java.util.List.of(WorkflowEntryType.START, WorkflowEntryType.COMPLETED),
+                                    lists[0].stream()
+                                            .map(e -> ((WorkflowHistoryEntry) e).entryType())
+                                            .toList());
+                            assertEquals(
+                                    java.util.List.of(WorkflowEntryType.COMPLETED, WorkflowEntryType.START),
+                                    lists[1].stream()
+                                            .map(e -> ((WorkflowHistoryEntry) e).entryType())
+                                            .toList());
+                            ctx.completeNow();
+                        }))
+                        .onFailure(ctx::failNow))
+                .onFailure(ctx::failNow);
+    }
+
+    private static dev.vertique.workflow.engine.spi.DecisionEntry decision(
+            WorkflowInstanceId id, WorkflowEntryType type, String patch, String state) {
+        return new dev.vertique.workflow.engine.spi.DecisionEntry(
+                id,
+                type,
+                null,
+                "start",
+                "outcome",
+                "default",
+                "order-fulfillment",
+                1L,
+                "abc123",
+                0L,
+                0L,
+                null,
+                patch,
+                state,
+                Instant.now());
     }
 
     // =========================================================================

@@ -245,8 +245,10 @@ public class PgWorkflowEngineCancelTimerIT {
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
         lastTimerId.set(null);
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup,"
-                        + " workflow_instances RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup,"
+                                + " workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }

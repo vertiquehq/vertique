@@ -156,8 +156,10 @@ final class ScopedStartFixture {
 
     /** Empties every table a start writes. */
     static void truncate(Pool pool) throws Exception {
-        await(pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        await(WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute());
     }
 

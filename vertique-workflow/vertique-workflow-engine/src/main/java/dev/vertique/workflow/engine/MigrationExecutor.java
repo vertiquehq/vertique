@@ -858,8 +858,8 @@ final class MigrationExecutor {
         return decisions.logMigration(
                 decision,
                 sourceKey,
-                new io.vertx.core.json.JsonObject(source.stateJson()),
-                new io.vertx.core.json.JsonObject(migrated.stateJson()),
+                DecisionLog.parseState(source.stateJson()),
+                DecisionLog.parseState(migrated.stateJson()),
                 tx);
     }
 

@@ -13,6 +13,7 @@ import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -68,9 +69,11 @@ public class PgWorkflowDedupRepositoryDispatchIT {
 
     @BeforeEach
     void cleanTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> {
                     if (ar.failed()) ctx.failNow(ar.cause());

@@ -219,8 +219,10 @@ class PgWorkflowEngineSubjectResolverIT {
     @BeforeEach
     void truncate() {
         spyResolverCalled.set(false);
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .toCompletionStage()
                 .toCompletableFuture()

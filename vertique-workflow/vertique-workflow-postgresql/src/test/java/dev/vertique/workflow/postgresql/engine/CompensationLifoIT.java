@@ -234,7 +234,8 @@ public class CompensationLifoIT {
     @BeforeEach
     void truncate(VertxTestContext ctx) {
         capturedIntents.clear();
-        pool.query(
+        WorkflowTestTables.truncating(
+                        pool,
                         "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());

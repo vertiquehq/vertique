@@ -10,6 +10,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
@@ -66,8 +67,10 @@ public class PgTaskReservationsIT {
             PgTaskReservations reservations = new PgTaskReservations(pool, mapper);
             UUID taskId = UUID.randomUUID();
             WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
-            join(pool.query("TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
-                            + " workflow_instances RESTART IDENTITY CASCADE")
+            join(WorkflowTestTables.truncating(
+                            pool,
+                            "TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
+                                    + " workflow_instances RESTART IDENTITY CASCADE")
                     .execute());
             join(pool.withTransaction(
                     tx -> new PgWorkflowInstanceRepository(pool, mapper).insert(waitingInstance(workflowId), tx)));

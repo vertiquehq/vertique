@@ -629,7 +629,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 clock,
                 commands,
                 builtContextBinder,
-                historyRecorder);
+                historyRecorder,
+                recorderRouter);
         // MigrationExecutor needs the driver eagerly (built above) plus the optional migration
         // registry; nothing references it back, so it is a plain leaf in the construction order.
         this.migrationExecutor = new MigrationExecutor(

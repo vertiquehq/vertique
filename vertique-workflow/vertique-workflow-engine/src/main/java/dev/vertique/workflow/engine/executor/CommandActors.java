@@ -40,8 +40,9 @@ import java.util.function.Function;
  *   <li>The attribution is {@code ABSENT} with no identity, {@code DEGRADED} when the context carries the security
  *       module's snapshot-degradation marker (a relayed identity that could not be verified and was let through), and
  *       {@code VERIFIED} otherwise.</li>
- *   <li>Ids and reasons are logged without control characters and without the line and paragraph separators U+2028 and
- *       U+2029, then cut at {@value #MAX_LENGTH} characters.</li>
+ *   <li>Ids and reasons are logged without control characters, without the line and paragraph separators U+2028 and
+ *       U+2029 and without Unicode format characters (bidirectional overrides, zero-width characters), then cut at
+ *       {@value #MAX_LENGTH} characters. An id left empty by that is logged as {@value #UNPRINTABLE}.</li>
  * </ul>
  */
 @Singleton
@@ -49,6 +50,15 @@ public final class CommandActors {
 
     /** The most characters of an actor id, reason or party acted for that are logged. */
     static final int MAX_LENGTH = 255;
+
+    /** What an id, reason or party acted for is logged as when nothing of it is printable. */
+    static final String UNPRINTABLE = "[unprintable]";
+
+    /** U+2028, the line separator. */
+    private static final int LINE_SEPARATOR = 0x2028;
+
+    /** U+2029, the paragraph separator. */
+    private static final int PARAGRAPH_SEPARATOR = 0x2029;
 
     private final ContextHolder holder;
     private final WorkflowActorMapper mapper;
@@ -162,7 +172,12 @@ public final class CommandActors {
         }
     }
 
-    /** Removes control characters and the line and paragraph separators, then cuts the text at the bound. */
+    /**
+     * Removes control characters, the line and paragraph separators U+2028 and U+2029, and Unicode format characters
+     * (bidirectional overrides and isolates, zero-width characters), then cuts the text at the bound. Text that is
+     * left empty by the removal, such as an id made only of such characters, becomes {@value #UNPRINTABLE}, so that an
+     * identity is never recorded as a verified actor without an id.
+     */
     @Nullable
     static String clean(@Nullable String text) {
         if (text == null) {
@@ -173,12 +188,15 @@ public final class CommandActors {
         for (int index = 0; index < text.length() && count < MAX_LENGTH; ) {
             int codePoint = text.codePointAt(index);
             index += Character.charCount(codePoint);
-            if (Character.isISOControl(codePoint) || codePoint == ' ' || codePoint == ' ') {
+            if (Character.isISOControl(codePoint)
+                    || codePoint == LINE_SEPARATOR
+                    || codePoint == PARAGRAPH_SEPARATOR
+                    || Character.getType(codePoint) == Character.FORMAT) {
                 continue;
             }
             kept.appendCodePoint(codePoint);
             count++;
         }
-        return kept.isEmpty() ? null : kept.toString();
+        return kept.isEmpty() ? UNPRINTABLE : kept.toString();
     }
 }

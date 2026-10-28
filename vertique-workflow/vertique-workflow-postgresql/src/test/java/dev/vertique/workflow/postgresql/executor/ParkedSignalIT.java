@@ -11,6 +11,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.security.PrincipalRef;
+import dev.vertique.security.PrincipalType;
+import dev.vertique.security.SecurityContext;
+import dev.vertique.security.SecurityContexts;
+import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.executor.WorkflowExecutorEvent.CommandSettled;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -23,6 +28,8 @@ import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.SignalFixture;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.State;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
+import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.Tuple;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -409,6 +416,63 @@ public class ParkedSignalIT {
             assertThat(f.fixture.historyOf(a)).doesNotContain("FAILED");
             assertThat(f.fixture.historyOf(b)).doesNotContain("FAILED");
         }
+    }
+
+    @Test
+    @DisplayName(
+            "a parked signal drained by another user's segment keeps its recorder on its decisions and its intents")
+    void drainedParkedSignalKeepsItsRecorderOnDecisionsAndIntents() {
+        try (SignalFixture f = shipping(1)) {
+            Node node = f.node("engine").build();
+            WorkflowInstanceId id = f.waiting(node, "drained-actor");
+            // Given user B's shipped signal parked at the approve wait
+            recordAs(f, node, id, user("B"), "shipped", "shipped");
+            f.idle(node, id);
+            assertThat(f.signal(id, "shipped").state()).isEqualTo("PARKED");
+            f.intents.routed.clear();
+
+            // When user A's approve segment reaches the ship wait and drains the signal
+            recordAs(f, node, id, user("A"), "approve", "approve");
+            f.idle(node, id);
+
+            // Then the drained signal's decisions carry B and the segment's own carry A
+            CommandRow shipped = f.signal(id, "shipped");
+            CommandRow approve = f.signal(id, "approve");
+            assertThat(shipped.state()).isEqualTo("COMPLETE");
+            assertThat(decisionActors(f, id, shipped.id())).isNotEmpty().containsOnly("B");
+            assertThat(decisionActors(f, id, approve.id())).isNotEmpty().containsOnly("A");
+
+            // And the shipping intent the drained signal's handler wrote names B, not the segment's user
+            assertThat(f.intents.routed)
+                    .extracting(intent -> intent.headers().get("x-workflow-actor-id"))
+                    .containsExactly("B");
+        }
+    }
+
+    private static SecurityIdentity user(String id) {
+        return SecurityIdentity.user(new PrincipalRef(PrincipalType.USER, id, Map.of()));
+    }
+
+    private static void recordAs(
+            SignalFixture f, Node node, WorkflowInstanceId id, SecurityIdentity caller, String name, String key) {
+        await(f.caller(() -> {
+            var scope = f.fixture.holder().bind(SecurityContext.class, SecurityContexts.unauthenticated(caller));
+            return node.pool
+                    .withTransaction(tx -> node.engine.signal(id, name, signal(key), key, tx))
+                    .onComplete(ignored -> scope.close());
+        }));
+    }
+
+    private static List<String> decisionActors(SignalFixture f, WorkflowInstanceId id, long commandId) {
+        List<String> actors = new ArrayList<>();
+        for (Row row : await(f.fixture
+                .observer()
+                .preparedQuery("SELECT actor_id FROM workflow_history WHERE workflow_id = $1"
+                        + " AND entry_type = 'DECISION' AND command_id = $2")
+                .execute(Tuple.of(id.value(), commandId)))) {
+            actors.add(row.getString("actor_id"));
+        }
+        return actors;
     }
 
     static SignalFixture shipping(int shipments) {

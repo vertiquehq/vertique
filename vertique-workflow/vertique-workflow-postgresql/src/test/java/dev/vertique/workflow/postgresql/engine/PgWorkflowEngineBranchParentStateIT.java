@@ -203,9 +203,11 @@ public class PgWorkflowEngineBranchParentStateIT {
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
         capturingRecorder.clear();
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }

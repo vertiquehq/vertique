@@ -52,6 +52,7 @@ import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.postgresql.engine.PgWorkflowEngineTestSupport;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -282,9 +283,11 @@ final class ExecutorFixture implements AutoCloseable {
         await(observer.query("CREATE TABLE IF NOT EXISTS executor_it_outbox (workflow_id UUID NOT NULL,"
                         + " step_id VARCHAR(255) NOT NULL)")
                 .execute());
-        await(observer.query("TRUNCATE workflow_commands, workflow_command_queues, workflow_history, workflow_dedup,"
-                        + " workflow_timers, workflow_tasks, workflow_instances, workflow_definitions,"
-                        + " executor_it_outbox CASCADE")
+        await(WorkflowTestTables.truncating(
+                        observer,
+                        "TRUNCATE workflow_commands, workflow_command_queues, workflow_history, workflow_dedup,"
+                                + " workflow_timers, workflow_tasks, workflow_instances, workflow_definitions,"
+                                + " executor_it_outbox CASCADE")
                 .execute());
         intentCalls.clear();
         workflowEvents.clear();

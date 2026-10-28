@@ -265,7 +265,8 @@ public class SignalDedupInstanceScopingIT {
     @BeforeEach
     void truncate(VertxTestContext ctx) {
         capturedIntents.clear();
-        pool.query(
+        WorkflowTestTables.truncating(
+                        pool,
                         "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances, inbox RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());

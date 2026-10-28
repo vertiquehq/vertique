@@ -86,12 +86,12 @@ class JsonPatchDiffTest {
     @DisplayName("a diff applied to the state before yields the state after, with add, remove and replace only")
     void diffAppliedToBeforeYieldsAfter(Pair pair) throws Exception {
         // Given a state before and after, as the persisted JSON
-        JsonObject before = new JsonObject(pair.before());
-        JsonObject after = new JsonObject(pair.after());
+        JsonNode before = JSON.readTree(pair.before());
+        JsonNode after = JSON.readTree(pair.after());
 
         // When the diff is computed and the library applies it to the state before
-        JsonArray patch = new JsonPatchDiff().diff(before, after);
-        JsonNode patched = JsonPatch.apply(JSON.readTree(patch.encode()), JSON.readTree(pair.before()));
+        JsonArray patch = new JsonArray(new JsonPatchDiff().diff(before, after).toString());
+        JsonNode patched = JsonPatch.apply(JSON.readTree(patch.encode()), before);
 
         // Then the result is the state after
         assertThat(patched).isEqualTo(JSON.readTree(pair.after()));

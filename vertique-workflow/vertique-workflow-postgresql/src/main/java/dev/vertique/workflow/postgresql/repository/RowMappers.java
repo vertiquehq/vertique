@@ -173,9 +173,7 @@ class RowMappers {
             HistoryActor actor = actorKind == null
                     ? null
                     : new HistoryActor(
-                            HistoryActor.Kind.valueOf(actorKind),
-                            row.getString("actor_id"),
-                            row.getString("actor_reason"));
+                            historyActorKind(actorKind), row.getString("actor_id"), row.getString("actor_reason"));
             String scopeKey = row.getString("definition_scope_key");
             DefinitionKey definitionKey = scopeKey == null
                     ? null
@@ -200,6 +198,18 @@ class RowMappers {
                     row.getLong("state_version_after"),
                     extractJsonb(row, "patch_json"));
         };
+    }
+
+    /**
+     * The kind of a stored actor. A value this version does not know, such as one a newer version wrote, is read as
+     * {@link HistoryActor.Kind#NONE} so that it does not fail the whole page.
+     */
+    private static HistoryActor.Kind historyActorKind(String stored) {
+        try {
+            return HistoryActor.Kind.valueOf(stored);
+        } catch (IllegalArgumentException e) {
+            return HistoryActor.Kind.NONE;
+        }
     }
 
     // --- BranchToken (PRD-WF-002) ---

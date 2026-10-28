@@ -101,7 +101,8 @@ final class RecorderRouter {
     /**
      * Runs the work of a segment, during which every intent routed on the segment's transaction is attributed to the
      * command the segment executes. Segments overlap on one context, so the command is keyed by the transaction handle
-     * and not by the context.
+     * and not by the context. A nested call, such as the application of a parked signal inside another command's
+     * segment, attributes its intents to its own command and restores the outer command when its work ends.
      *
      * @param command the command the segment executes
      * @param tx      the segment's transaction
@@ -110,27 +111,38 @@ final class RecorderRouter {
      * @return the future of the work
      */
     <T> Future<T> executing(SegmentCommand command, SqlClient tx, Supplier<Future<T>> work) {
-        executing.put(tx, command);
+        SegmentCommand outer = executing.put(tx, command);
         Future<T> result;
         try {
             result = work.get();
         } catch (RuntimeException e) {
-            executing.remove(tx);
+            restore(tx, outer);
             throw e;
         }
         return result.eventually(() -> {
-            executing.remove(tx);
+            restore(tx, outer);
             return Future.succeededFuture();
         });
+    }
+
+    /** Puts back the command that was executing on the transaction before a nested one, or none. */
+    private void restore(SqlClient tx, SegmentCommand outer) {
+        if (outer == null) {
+            executing.remove(tx);
+        } else {
+            executing.put(tx, outer);
+        }
     }
 
     /**
      * Routes an intent a segment writes for the command it executes: every application-set header whose name starts
      * with {@code x-workflow-}, in any letter case, is removed, and the command's actor is added as attribution
-     * headers ({@code x-workflow-actor-kind}, {@code -actor-id}, {@code -actor-reason}, {@code -on-behalf-of} and
-     * {@code -attribution}; absent values are omitted). The headers are data for audit and logs only: they are
-     * unauthenticated, and nothing reads them as an identity. Without a command, the application-set workflow headers
-     * are removed and none are added.
+     * headers. A {@link IntentKind#SERVICE} dispatch, which stays inside the deployment's own services, gets the full
+     * set ({@code x-workflow-actor-kind}, {@code -actor-id}, {@code -actor-reason}, {@code -on-behalf-of} and
+     * {@code -attribution}; absent values are omitted). Any other intent, such as a workflow event that reaches brokers
+     * and webhooks, gets only the actor kind and the attribution status, so no subject identifier leaves the
+     * deployment. The headers are data for audit and logs only: they are unauthenticated, and nothing reads them as an
+     * identity. Without a command, the application-set workflow headers are removed and none are added.
      *
      * @param intent  the side-effect intent to record
      * @param command the command the segment executes, or {@code null}
@@ -165,9 +177,11 @@ final class RecorderRouter {
         if (command != null) {
             CommandActor actor = command.actor() == null ? CommandActor.none() : command.actor();
             headers.put(PREFIX + "actor-kind", actor.kind().name());
-            putIfPresent(headers, PREFIX + "actor-id", actor.id());
-            putIfPresent(headers, PREFIX + "actor-reason", actor.reason());
-            putIfPresent(headers, PREFIX + "on-behalf-of", actor.onBehalfOf());
+            if (intent.kind() == IntentKind.SERVICE) {
+                putIfPresent(headers, PREFIX + "actor-id", actor.id());
+                putIfPresent(headers, PREFIX + "actor-reason", actor.reason());
+                putIfPresent(headers, PREFIX + "on-behalf-of", actor.onBehalfOf());
+            }
             headers.put(PREFIX + "attribution", actor.attribution().name());
         }
         return headers.equals(intent.headers())

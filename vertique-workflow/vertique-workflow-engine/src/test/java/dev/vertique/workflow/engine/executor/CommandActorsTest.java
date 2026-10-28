@@ -18,6 +18,7 @@ import dev.vertique.security.SystemIdentities;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
+import dev.vertique.workflow.engine.spi.CommandActor;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -204,9 +205,9 @@ class CommandActorsTest {
                 + "d".repeat(50)
                 + "\u001b"
                 + "e".repeat(50)
-                + " "
+                + "\u2028"
                 + "f".repeat(30)
-                + " "
+                + "\u2029"
                 + "g".repeat(14);
         assertThat(id).hasSize(300);
         String cleanId =
@@ -218,18 +219,37 @@ class CommandActorsTest {
         // Then no control character and no U+2028 or U+2029 remains, and the id is the first 255 after removal
         assertThat(userActor.id()).hasSize(255).isEqualTo(cleanId);
         assertThat(userActor.id().chars().anyMatch(Character::isISOControl)).isFalse();
-        assertThat(userActor.id()).doesNotContain(" ", " ");
+        assertThat(userActor.id()).doesNotContain("\u2028", "\u2029");
 
         // And a system reason with a tab and a line separator loses both
         var systemActor = new CommandActors(
-                        holding(SystemIdentities.scheduledJob("night\tly run")), new DefaultWorkflowActorMapper())
+                        holding(SystemIdentities.scheduledJob("night\tly\u2028run")), new DefaultWorkflowActorMapper())
                 .capture();
         assertThat(systemActor.reason()).isEqualTo("nightlyrun");
 
         // And the party acted for is cleaned and bounded in the same way
-        String subject = "u-" + " " + "\n" + "x".repeat(300);
+        String subject = "u-" + "\u2028" + "\n" + "x".repeat(300);
         var delegated = new CommandActors(holding(serviceActingFor("svc-1", subject)), new DefaultWorkflowActorMapper())
                 .capture();
         assertThat(delegated.onBehalfOf()).hasSize(255).isEqualTo("u-" + "x".repeat(253));
+    }
+
+    @Test
+    @DisplayName("format characters are removed and an id left empty is logged with a placeholder, never as no id")
+    void formatCharactersAreRemovedAndAnEmptyIdGetsAPlaceholder() {
+        // Given a user id with a bidirectional override and a zero-width space inside
+        var actor = new CommandActors(holding(user("ali\u202ece\u200b")), new DefaultWorkflowActorMapper()).capture();
+
+        // Then they are gone
+        assertThat(actor.id()).isEqualTo("alice");
+
+        // And given an id made only of such characters
+        var unprintable =
+                new CommandActors(holding(user("\u202e\u200b\u2028\n")), new DefaultWorkflowActorMapper()).capture();
+
+        // Then the user is logged with the placeholder, verified, not with a null id
+        assertThat(unprintable.kind()).isEqualTo(CommandActor.Kind.USER);
+        assertThat(unprintable.id()).isEqualTo(CommandActors.UNPRINTABLE);
+        assertThat(unprintable.attribution()).isEqualTo(CommandActor.Attribution.VERIFIED);
     }
 }

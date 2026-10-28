@@ -19,7 +19,13 @@ import java.util.Set;
  * <ul>
  *   <li>A pointer is an RFC 6901 JSON Pointer such as {@code /card/number}. A key that holds {@code /} or {@code ~}
  *       is escaped as {@code ~1} or {@code ~0}.</li>
- *   <li>A pointer resolves into an array by index, for example {@code /cards/1/number}.</li>
+ *   <li>A pointer resolves into an array by index, for example {@code /cards/1/number}. An index names a position,
+ *       not a record: when an element is inserted or removed the same index names another record, so the history of an
+ *       array of sensitive records must not be redacted by index.</li>
+ *   <li>A segment that is exactly {@code *} matches every element of an array and every member of an object at that
+ *       position, whatever its index or key: {@code /cards/*}{@code /number} redacts the number of every card, and
+ *       {@code /cards} redacts the whole array. Prefer the wildcard, or the array root, for an array of sensitive
+ *       records. A key that is literally {@code *} cannot be named on its own.</li>
  *   <li>One set covers both the state and the command payloads of the definition version: the same pointers are applied
  *       to every logged document.</li>
  *   <li>A pointer that does not resolve in a document, or resolves to a JSON {@code null}, is ignored for that
@@ -29,6 +35,16 @@ import java.util.Set;
  *   <li>Across a migration the pointers of the source version cover the migration command and every entry before it,
  *       and those of the target version cover the migrated state and every later entry; both cover the migration's own
  *       patch.</li>
+ * </ul>
+ *
+ * <p>Limits to know:
+ *
+ * <ul>
+ *   <li>Redaction is not retroactive: rows written before a redactor was bound, or before a pointer was added, keep the
+ *       values they hold.</li>
+ *   <li>The copy of a command's payload is matched on the JSON the client sent, as the engine bound it, so a value
+ *       reachable under an alias or under a differently cased key is not matched by a pointer written for the
+ *       definition's own field names.</li>
  * </ul>
  *
  * <p>The engine calls this method at most once per definition key in a segment, on the executor's event loop, so

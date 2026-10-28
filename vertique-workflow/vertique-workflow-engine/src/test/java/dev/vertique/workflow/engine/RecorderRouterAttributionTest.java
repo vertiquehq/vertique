@@ -17,7 +17,9 @@ import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -128,5 +130,105 @@ class RecorderRouterAttributionTest {
                 .doesNotContainKey("x-workflow-actor-id")
                 .doesNotContainKey("x-workflow-on-behalf-of")
                 .doesNotContainKey("X-Workflow-On-Behalf-Of");
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @DisplayName("a workflow event carries only the actor kind and the attribution, never an id or a party acted for")
+    void workflowEventCarriesNoSubjectIdentifier() {
+        // Given a recorder of workflow events and a command by a user acting for another
+        AtomicReference<WorkflowSideEffectIntent> recorded = new AtomicReference<>();
+        WorkflowSideEffectRecorder<SqlClient> recorder = mock(WorkflowSideEffectRecorder.class);
+        when(recorder.kind()).thenReturn(IntentKind.WORKFLOW_EVENT);
+        when(recorder.record(any(), any())).thenAnswer(invocation -> {
+            recorded.set(invocation.getArgument(0));
+            return Future.succeededFuture(RecorderResult.empty());
+        });
+        RecorderRouter router = new RecorderRouter(Set.of(recorder), Set.of());
+        WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
+                IntentKind.WORKFLOW_EVENT,
+                "event",
+                new Object(),
+                Map.of("x-workflow-actor-id", "mallory"),
+                WorkflowSideEffectIntent.Correlation.singlePath(id, 1L, "def", "acme", "tenant-1", "charge"));
+        SegmentCommand command = new SegmentCommand(
+                9L,
+                id,
+                "SIGNAL",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new CommandActor(CommandActor.Kind.USER, "alice", "why", "bob", CommandActor.Attribution.VERIFIED));
+
+        // When the router routes the event for the command
+        router.route(intent, command, mock(SqlClient.class));
+
+        // Then only the kind and the attribution are stamped
+        assertThat(recorded.get().headers())
+                .containsEntry("x-workflow-actor-kind", "USER")
+                .containsEntry("x-workflow-attribution", "VERIFIED")
+                .doesNotContainKey("x-workflow-actor-id")
+                .doesNotContainKey("x-workflow-actor-reason")
+                .doesNotContainKey("x-workflow-on-behalf-of");
+        assertThat(recorded.get().headers().values()).doesNotContain("alice", "bob", "why", "mallory");
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @DisplayName(
+            "a command executed inside another's segment attributes its intents to itself, then the outer one resumes")
+    void nestedCommandAttributesItsOwnIntentsAndRestoresTheOuterOne() {
+        // Given a segment of user A that applies a signal recorded by user B
+        List<String> actors = new ArrayList<>();
+        WorkflowSideEffectRecorder<SqlClient> recorder = mock(WorkflowSideEffectRecorder.class);
+        when(recorder.kind()).thenReturn(IntentKind.SERVICE);
+        when(recorder.record(any(), any())).thenAnswer(invocation -> {
+            WorkflowSideEffectIntent routed = invocation.getArgument(0);
+            actors.add(routed.headers().get("x-workflow-actor-id"));
+            return Future.succeededFuture(RecorderResult.empty());
+        });
+        RecorderRouter router = new RecorderRouter(Set.of(recorder), Set.of());
+        WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
+        WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
+                IntentKind.SERVICE,
+                "billing.charge",
+                new Object(),
+                Map.of(),
+                WorkflowSideEffectIntent.Correlation.singlePath(id, 1L, "def", "acme", "tenant-1", "charge"));
+        SegmentCommand segment = commandBy(1L, id, "A");
+        SegmentCommand signal = commandBy(2L, id, "B");
+        SqlClient tx = mock(SqlClient.class);
+
+        // When the segment routes an intent, applies the signal, which routes one, and routes another
+        router.executing(segment, tx, () -> {
+            router.route(intent, tx);
+            return router.executing(signal, tx, () -> router.route(intent, tx))
+                    .compose(done -> router.route(intent, tx));
+        });
+
+        // Then the signal's intent is B's, and the segment's before and after it are A's
+        assertThat(actors).containsExactly("A", "B", "A");
+    }
+
+    private static SegmentCommand commandBy(long commandId, WorkflowInstanceId id, String user) {
+        return new SegmentCommand(
+                commandId,
+                id,
+                "SIGNAL",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new CommandActor(CommandActor.Kind.USER, user, null, null, CommandActor.Attribution.VERIFIED));
     }
 }

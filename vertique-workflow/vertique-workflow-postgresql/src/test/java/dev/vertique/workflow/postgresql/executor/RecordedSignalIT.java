@@ -1101,6 +1101,9 @@ public class RecordedSignalIT {
         final class RecordingIntents implements WorkflowSideEffectRecorder<SqlClient> {
             final AtomicBoolean failOnce = new AtomicBoolean();
 
+            /** Every intent the recorder was handed, in order. */
+            final List<WorkflowSideEffectIntent> routed = new CopyOnWriteArrayList<>();
+
             void failOnceAfterOutboxWrite() {
                 failOnce.set(true);
             }
@@ -1112,6 +1115,7 @@ public class RecordedSignalIT {
 
             @Override
             public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
+                routed.add(intent);
                 String correlation = fixture.holder()
                         .current(CorrelationCtx.class)
                         .map(CorrelationCtx::correlationId)

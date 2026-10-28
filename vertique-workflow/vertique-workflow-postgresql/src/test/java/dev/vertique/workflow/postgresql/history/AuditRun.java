@@ -22,6 +22,7 @@ import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.postgresql.history.HistoryGraph.Approve;
 import dev.vertique.workflow.postgresql.history.HistoryGraph.Contract;
 import dev.vertique.workflow.postgresql.history.HistoryGraph.Relaying;
@@ -99,8 +100,10 @@ final class AuditRun implements AutoCloseable {
     private static void reset(Vertx vertx, PgConnectOptions options) {
         Pool admin = HistoryGraph.pool(vertx, options);
         try {
-            await(admin.query("TRUNCATE workflow_commands, workflow_command_queues, workflow_history, workflow_dedup,"
-                            + " workflow_timers, workflow_tasks, workflow_instances, workflow_definitions CASCADE")
+            await(WorkflowTestTables.truncating(
+                            admin,
+                            "TRUNCATE workflow_commands, workflow_command_queues, workflow_history, workflow_dedup,"
+                                    + " workflow_timers, workflow_tasks, workflow_instances, workflow_definitions CASCADE")
                     .execute());
             await(admin.query("DELETE FROM outbox").execute());
             await(admin.query("DELETE FROM inbox").execute());

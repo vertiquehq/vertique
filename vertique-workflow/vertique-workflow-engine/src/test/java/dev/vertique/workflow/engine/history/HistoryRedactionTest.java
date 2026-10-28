@@ -19,7 +19,8 @@ import org.junit.jupiter.api.Test;
 class HistoryRedactionTest {
 
     private static JsonObject redact(String tree, String... pointers) {
-        return HistoryRedaction.apply(new JsonObject(tree), Set.of(pointers));
+        return new JsonObject(HistoryRedaction.apply(ExactJson.readObject(tree), Set.of(pointers))
+                .toString());
     }
 
     @Test
@@ -84,6 +85,87 @@ class HistoryRedactionTest {
                 .as("an invalid pointer")
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("card/number")
+                .hasMessageNotContaining("4111111111111111");
+    }
+
+    @Test
+    @DisplayName("a wildcard segment matches every element of an array and every member of an object")
+    void wildcardMatchesEveryElementAndMember() {
+        // Given three cards in an array
+        String cards = """
+                {"cards":[{"number":"1","brand":"a"},{"number":"2","brand":"b"},{"number":"3","brand":"c"}]}""";
+
+        // When the number of every card is named by a wildcard
+        // Then every number is replaced and nothing else
+        assertThat(redact(cards, "/cards/*/number")).isEqualTo(new JsonObject("""
+                        {"cards":[{"number":"[redacted]","brand":"a"},{"number":"[redacted]","brand":"b"},\
+                        {"number":"[redacted]","brand":"c"}]}"""));
+
+        // Given an object keyed by an id
+        // When the wildcard stands for the key
+        // Then every member is replaced
+        assertThat(redact("""
+                {"by":{"x":{"pan":"1"},"y":{"pan":"2"}}}""", "/by/*/pan")).isEqualTo(new JsonObject("""
+                        {"by":{"x":{"pan":"[redacted]"},"y":{"pan":"[redacted]"}}}"""));
+
+        // Given nested arrays
+        // When two wildcards are used
+        // Then every inner value is replaced
+        assertThat(redact("""
+                {"a":[{"b":[{"s":1},{"s":2}]},{"b":[{"s":3}]}]}""", "/a/*/b/*/s")).isEqualTo(new JsonObject("""
+                        {"a":[{"b":[{"s":"[redacted]"},{"s":"[redacted]"}]},{"b":[{"s":"[redacted]"}]}]}"""));
+
+        // Given a pointer that ends in the wildcard
+        // When it is applied
+        // Then every non-null element is replaced and a null element stays
+        assertThat(redact("""
+                {"keys":["k1",null,"k3"]}""", "/keys/*")).isEqualTo(new JsonObject("""
+                        {"keys":["[redacted]",null,"[redacted]"]}"""));
+
+        // Given a wildcard where the document holds a scalar or nothing
+        // When it is applied
+        // Then the document is unchanged
+        String untouched = """
+                {"cards":"none","other":1}""";
+        assertThat(redact(untouched, "/cards/*/number", "/missing/*")).isEqualTo(new JsonObject(untouched));
+    }
+
+    @Test
+    @DisplayName("a wildcard redacts the same elements after an array shifts, which an index would not")
+    void wildcardSurvivesArrayShifts() {
+        // Given a card number that sat at index 1 and moved to index 0 after the first card was removed
+        String before = """
+                {"cards":[{"number":"1"},{"number":"2"}]}""";
+        String after = """
+                {"cards":[{"number":"2"}]}""";
+
+        // When an index pointer and a wildcard are applied to both
+        // Then the index pointer leaks the shifted number and the wildcard does not
+        assertThat(redact(before, "/cards/1/number")).isNotEqualTo(redact(before, "/cards/*/number"));
+        assertThat(redact(after, "/cards/1/number")).isEqualTo(new JsonObject(after));
+        assertThat(redact(after, "/cards/*/number")).isEqualTo(new JsonObject("""
+                        {"cards":[{"number":"[redacted]"}]}"""));
+    }
+
+    @Test
+    @DisplayName("the values a wildcard reaches are the ones removed from a text")
+    void wildcardValuesAreRemovedFromText() {
+        // Given a document with two secrets and a reason that echoes both
+        var values = HistoryRedaction.valuesAt(
+                ExactJson.read("{\"cards\":[{\"n\":\"AAA\"},{\"n\":\"BBB\"}]}"), Set.of("/cards/*/n"));
+
+        // When the text is redacted
+        // Then both are replaced
+        assertThat(HistoryRedaction.redactText("bad AAA and BBB", values)).isEqualTo("bad [redacted] and [redacted]");
+    }
+
+    @Test
+    @DisplayName("an invalid escape is refused with the pointer and no value")
+    void invalidEscapeIsRefused() {
+        assertThatThrownBy(() -> redact("""
+                        {"card":"4111111111111111"}""", "/card~2"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("/card~2")
                 .hasMessageNotContaining("4111111111111111");
     }
 }

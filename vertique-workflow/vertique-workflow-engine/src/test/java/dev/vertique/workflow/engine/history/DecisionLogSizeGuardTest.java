@@ -6,6 +6,8 @@ package dev.vertique.workflow.engine.history;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import dev.vertique.workflow.engine.history.DecisionLog.Decision;
 import dev.vertique.workflow.engine.spi.DecisionEntry;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
@@ -69,7 +71,7 @@ class DecisionLogSizeGuardTest {
         int calls;
 
         @Override
-        public JsonArray diff(JsonObject before, JsonObject after) {
+        public ArrayNode diff(JsonNode before, JsonNode after) {
             calls++;
             return super.diff(before, after);
         }
@@ -121,7 +123,11 @@ class DecisionLogSizeGuardTest {
     private List<DecisionEntry> logDecision(JsonObject before, JsonObject after) throws Exception {
         int already = history.entries.size();
         Decision decision = new Decision(INSTANCE, 7L, "step", "outcome", KEY, "plan-hash", 3L, 4L, "node-1");
-        log.log(decision, before, after, mock(SqlClient.class))
+        log.log(
+                        decision,
+                        DecisionLog.parseState(before.encode()),
+                        DecisionLog.parseState(after.encode()),
+                        mock(SqlClient.class))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get(5, TimeUnit.SECONDS);

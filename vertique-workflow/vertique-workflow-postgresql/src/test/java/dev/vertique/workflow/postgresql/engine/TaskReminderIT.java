@@ -369,8 +369,10 @@ public class TaskReminderIT {
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
         insertedTimerIds.clear();
-        pool.query("TRUNCATE TABLE outbox, workflow_timers, workflow_tasks, workflow_history,"
-                        + " workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE outbox, workflow_timers, workflow_tasks, workflow_history,"
+                                + " workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }

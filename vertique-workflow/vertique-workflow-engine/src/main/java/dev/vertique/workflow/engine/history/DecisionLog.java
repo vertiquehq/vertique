@@ -3,6 +3,8 @@
 
 package dev.vertique.workflow.engine.history;
 
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.workflow.engine.spi.DecisionEntry;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
@@ -292,7 +294,7 @@ public final class DecisionLog {
             for (String source : new String[] {payloadJson, stateJson}) {
                 if (source != null) {
                     result = HistoryRedaction.redactText(
-                            result, HistoryRedaction.valuesAt(io.vertx.core.json.Json.decodeValue(source), pointers));
+                            result, HistoryRedaction.valuesAt(ExactJson.read(source), pointers));
                 }
             }
         } catch (IllegalArgumentException e) {
@@ -342,8 +344,8 @@ public final class DecisionLog {
     public Future<Void> record(
             WorkflowInstance before, WorkflowInstance after, String stepId, String outcome, SqlClient tx) {
         boolean sameText = Objects.equals(before.stateJson(), after.stateJson());
-        JsonObject beforeState = stateOf(before);
-        JsonObject afterState = sameText ? beforeState : stateOf(after);
+        ObjectNode beforeState = parseState(before.stateJson());
+        ObjectNode afterState = sameText ? beforeState : parseState(after.stateJson());
         boolean changed = !sameText && !beforeState.equals(afterState);
         SegmentCommand command = commandOf(tx);
         Decision decision = new Decision(
@@ -369,7 +371,7 @@ public final class DecisionLog {
      * @param tx       the segment's transaction handle
      * @return a future that completes when the entries are appended
      */
-    public Future<Void> log(Decision decision, JsonObject before, JsonObject after, SqlClient tx) {
+    public Future<Void> log(Decision decision, ObjectNode before, ObjectNode after, SqlClient tx) {
         Set<String> pointers;
         try {
             pointers = pointers(decision.key(), tx);
@@ -392,7 +394,7 @@ public final class DecisionLog {
      * @return a future that completes when the entries are appended
      */
     public Future<Void> logMigration(
-            Decision decision, DefinitionKey source, JsonObject before, JsonObject after, SqlClient tx) {
+            Decision decision, DefinitionKey source, ObjectNode before, ObjectNode after, SqlClient tx) {
         Set<String> sourcePointers;
         Set<String> targetPointers;
         try {
@@ -408,15 +410,15 @@ public final class DecisionLog {
 
     private Future<Void> log(
             Decision decision,
-            JsonObject before,
-            JsonObject after,
+            ObjectNode before,
+            ObjectNode after,
             Set<String> patchPointers,
             Set<String> baselinePointers,
             boolean alwaysBaseline,
             SqlClient tx) {
-        JsonObject redactedBefore;
-        JsonObject redactedAfter;
-        JsonObject baselineState;
+        ObjectNode redactedBefore;
+        ObjectNode redactedAfter;
+        ObjectNode baselineState;
         try {
             if (!alwaysBaseline && before.equals(after)) {
                 return append(entry(decision, WorkflowEntryType.DECISION, "[]", null), tx);
@@ -429,9 +431,10 @@ public final class DecisionLog {
             return Future.failedFuture(e);
         }
         String patch = null;
-        if (bytes(redactedBefore.encode()) <= SIZE_BOUND_BYTES && bytes(redactedAfter.encode()) <= SIZE_BOUND_BYTES) {
-            JsonArray computed = diff.diff(redactedBefore, redactedAfter);
-            String encoded = computed.encode();
+        if (bytes(redactedBefore.toString()) <= SIZE_BOUND_BYTES
+                && bytes(redactedAfter.toString()) <= SIZE_BOUND_BYTES) {
+            ArrayNode computed = diff.diff(redactedBefore, redactedAfter);
+            String encoded = computed.toString();
             if (bytes(encoded) <= SIZE_BOUND_BYTES) {
                 patch = encoded;
             }
@@ -441,7 +444,7 @@ public final class DecisionLog {
             return decisionEntry;
         }
         return decisionEntry.compose(
-                done -> append(entry(decision, WorkflowEntryType.STATE_BASELINE, null, baselineState.encode()), tx));
+                done -> append(entry(decision, WorkflowEntryType.STATE_BASELINE, null, baselineState.toString()), tx));
     }
 
     /**
@@ -453,14 +456,14 @@ public final class DecisionLog {
      * @param tx       the segment's transaction handle
      * @return a future that completes when the entry is appended
      */
-    public Future<Void> baseline(Decision decision, JsonObject state, SqlClient tx) {
-        JsonObject redacted;
+    public Future<Void> baseline(Decision decision, ObjectNode state, SqlClient tx) {
+        ObjectNode redacted;
         try {
             redacted = redactState(state, pointers(decision.key(), tx));
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
-        return append(entry(decision, WorkflowEntryType.STATE_BASELINE, null, redacted.encode()), tx);
+        return append(entry(decision, WorkflowEntryType.STATE_BASELINE, null, redacted.toString()), tx);
     }
 
     /**
@@ -483,10 +486,10 @@ public final class DecisionLog {
                 inst.version(),
                 inst.version(),
                 null);
-        return baseline(decision, stateOf(inst), tx);
+        return baseline(decision, parseState(inst.stateJson()), tx);
     }
 
-    private JsonObject redactState(JsonObject state, Set<String> pointers) {
+    private ObjectNode redactState(ObjectNode state, Set<String> pointers) {
         try {
             return HistoryRedaction.apply(state, pointers);
         } catch (IllegalArgumentException e) {
@@ -523,8 +526,16 @@ public final class DecisionLog {
         return new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion());
     }
 
-    private static JsonObject stateOf(WorkflowInstance inst) {
-        return inst.stateJson() == null ? new JsonObject() : new JsonObject(inst.stateJson());
+    /**
+     * Reads the persisted state text once, as a tree that keeps every number exactly: the equality test, the size
+     * check, the diff and the baseline of a decision all use this tree.
+     *
+     * @param stateJson the state's JSON text, or {@code null} for an empty state
+     * @return the state
+     * @throws IllegalArgumentException if the text is not a JSON object
+     */
+    public static ObjectNode parseState(@Nullable String stateJson) {
+        return ExactJson.readObject(stateJson);
     }
 
     private static String bounded(String outcome) {

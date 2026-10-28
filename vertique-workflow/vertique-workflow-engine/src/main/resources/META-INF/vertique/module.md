@@ -183,23 +183,29 @@ caller's current `SecurityContext` (read through the `ContextHolder`, which defa
   anonymous identity. An exception the mapper throws refuses the recording and reaches the caller unchanged; nothing is written.
 - **On behalf of.** `on_behalf_of` holds the identity's subject when its id differs from the actor's id, for example the user a
   service acts for. It holds a principal id only, never a claim or a token.
-- **Bounded.** Ids and reasons are logged without control characters and without the line and paragraph separators U+2028 and
-  U+2029, then cut at 255 characters.
+- **Bounded.** Ids and reasons are logged without control characters, without the line and paragraph separators U+2028 and
+  U+2029 and without Unicode format characters (bidirectional overrides, zero-width characters), then cut at 255 characters. An id
+  that nothing of is left after that is logged as `[unprintable]`, so a verified user or service is never recorded without an id.
 - **Timers.** A timer command is logged as `SYSTEM` with the reason `timer`, whoever's segment recorded it.
 - **Observers.** A command recorded with `NONE` is reported to the executor observers as `ActorAbsent(kind)` with the command kind
   (`START`, `SIGNAL`, `COMPLETION`, `RETRY` or `MIGRATION`) when the recording call succeeds. A caller that owns the transaction
   commits later, so the event can precede a rollback it does not know of; an observer failure never changes the recording.
 - **The executor reads the command, not the caller.** A segment runs under no security context. It copies the actor of the command it
   executes onto every history entry it writes, and an entry that is about another command (a parked signal it applies, a command it
-  settles at the end of the instance) carries the actor that recorded that command. A command recorded before actors were
+  settles at the end of the instance) carries the actor that recorded that command, and so do the attribution headers of the
+  intents a parked signal's handler writes: while a segment applies a parked signal, its intents are attributed to the signal's
+  recorder and the executing command's attribution resumes afterwards. A command recorded before actors were
   logged is treated as recorded by `NONE`.
 - **Cancellation and reassignment.** `cancel` logs the cancellation entry and every `COMMAND_CANCELLED` entry with the canceller, and
   `taskReassigned` logs the `TASK_REASSIGNED` entry with the reassigner, both taken from the calling identity. The cancelled
-  commands keep the actor that recorded them, and so does every entry already written about them.
-- **Attribution headers on dispatched and published intents.** Every side-effect intent a segment writes (a service dispatch and a
-  workflow event) reaches its recorder with the headers `x-workflow-actor-kind`, `x-workflow-actor-id`, `x-workflow-actor-reason`,
-  `x-workflow-on-behalf-of` and `x-workflow-attribution`, taken from the actor of the command the segment executes (the kind and the
-  status are the enum names; absent values are omitted). Before they are added, `RecorderRouter` removes every application-set header
+  commands keep the actor that recorded them, and so does every entry already written about them. A `COMMAND_CANCELLED` entry that
+  a segment or a claim writes for a command that meets the cancelled instance is logged with the canceller too, taken from the
+  instance's `CANCELLED` entry.
+- **Attribution headers on dispatched and published intents.** A service dispatch a segment writes reaches its recorder with the
+  headers `x-workflow-actor-kind`, `x-workflow-actor-id`, `x-workflow-actor-reason`, `x-workflow-on-behalf-of` and
+  `x-workflow-attribution`, taken from the actor of the command the segment executes (the kind and the status are the enum names;
+  absent values are omitted). Any other intent, such as a workflow event that reaches brokers and webhooks, gets only
+  `x-workflow-actor-kind` and `x-workflow-attribution`, so no subject identifier leaves the deployment. Before they are added, `RecorderRouter` removes every application-set header
   whose name starts with `x-workflow-` in any letter case, so an application cannot set or forge them; other headers are kept. The
   headers are unauthenticated audit data: no relay, contributor or recording path reads them, binds an identity from them or derives an
   actor from them, including a signal relayed back into a workflow.
@@ -234,6 +240,9 @@ Entries are append-only and carry `entry_version = 2`.
   in-memory objects) by `io.github.vishwakarma:zjsonpatch` with `move` and `copy` omitted, so it holds only `add`, `remove` and `replace`;
   a `remove` carries no value and no operation carries an old value. A decision that did not change the state has the patch `[]`.
   Applying an instance's patches in order from its latest full-state entry reproduces its stored state, except at redacted pointers.
+  Numbers are kept exactly: the state is read once with decimals as `BigDecimal`, so a decimal that changes beyond the precision of a
+  `double` is a change that the patch records and a baseline writes back unrounded. `1` becoming `1.0` is a change (an integer and a
+  decimal are different values to the log); `1.0` becoming `1.00` is not.
 - **State version.** `state_version_before` is the instance version the decision read; `state_version_after` equals it when the state did
   not change, and is the new instance version when it did.
 - **Not state patches.** Branch tokens, join rows and the open signals are not part of the instance state: forks and joins appear as
@@ -1212,7 +1221,7 @@ parameterized over `<TX>` (typically `SqlClient`):
 | SPI | Responsibility |
 |---|---|
 | `WorkflowInstanceRepository<TX>` | Instance insert, optimistic update, migration update (which re-pins the definition scope, version and plan hash), and reads (by id without lock, with tx, with `FOR UPDATE`, by start scope, definition id and business key, filtered+paginated), and `findDefinitionContract(key, tx)`, which reads the contract name stored for a definition through the caller's transaction (the default returns empty, so a start replay on a node without the pinned plan refuses instead of guessing) |
-| `WorkflowHistoryRepository<TX>` | History append, next-sequence generation, two list variants (recent, all), and `appendDecision(DecisionEntry, tx)`, which appends an entry of the decision log (`DECISION` or `STATE_BASELINE`) with its command, step, outcome, definition, plan hash, state versions, executor and patch, assigns its sequence, and stores `entry_version = 2`; the default stores only the payload through `append` |
+| `WorkflowHistoryRepository<TX>` | History append, next-sequence generation, two list variants (recent, all; both leave out the `DECISION` and `STATE_BASELINE` entries, which the history service serves, so they do not count toward the recent limit nor carry a baseline's state into `query` and the migration context), and `appendDecision(DecisionEntry, tx)`, which appends an entry of the decision log (`DECISION` or `STATE_BASELINE`) with its command, step, outcome, definition, plan hash, state versions, executor and patch, assigns its sequence, and stores `entry_version = 2`; the default stores only the payload through `append` |
 | `WorkflowDedupRepository<TX>` | Start lookup and race-safe claim/resolve by start scope for start, race-safe claim/resolve for signal (scoped and unscoped), task completion/reassignment, and service dispatch; `findTaskCompletion(taskId, key, tx)` reads, without writing, the fingerprint of a committed completion (the lock-free duplicate lookup) |
 | `TaskReservations<TX>` | `markCompleting(taskId, commandId, tx)` moves an `OPEN` task to `COMPLETING` and stores the completion command as its owner; `reopen(taskId, commandId, tx)` moves a `COMPLETING` task owned by that command back to `OPEN` and clears the owner. Both are compare-and-set and answer `false` when the task is not in the expected state. Engine-internal wiring, not application API; `TaskStore` is unchanged |
 | `BranchTokenRepository<TX>` | Fork/join branch token CRUD and status queries |

@@ -331,9 +331,10 @@ public class CrossScopeMigrationIT {
     void truncateTables() throws Exception {
         Harness harness = open(registry -> {}, scoped -> {});
         try {
-            await(harness.pool()
-                    .query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                            + " workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
+            await(WorkflowTestTables.truncating(
+                            harness.pool(),
+                            "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                    + " workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                     .execute());
         } finally {
             harness.close();

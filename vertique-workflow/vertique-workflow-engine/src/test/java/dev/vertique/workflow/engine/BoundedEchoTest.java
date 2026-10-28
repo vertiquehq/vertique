@@ -144,6 +144,7 @@ class BoundedEchoTest {
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 new EmptyCommandRepository(),
                 WorkflowContextBinder.noop(),
+                null,
                 null);
     }
 

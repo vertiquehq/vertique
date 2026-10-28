@@ -36,6 +36,7 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.migration.WorkflowMigrationModule;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservationModule;
@@ -286,8 +287,10 @@ final class PlanCacheFixture implements AutoCloseable {
     }
 
     private void resetTables() {
-        await(admin.query("TRUNCATE workflow_commands, workflow_command_queues, workflow_history, workflow_dedup,"
-                        + " workflow_timers, workflow_tasks, workflow_instances, workflow_definitions CASCADE")
+        await(WorkflowTestTables.truncating(
+                        admin,
+                        "TRUNCATE workflow_commands, workflow_command_queues, workflow_history, workflow_dedup,"
+                                + " workflow_timers, workflow_tasks, workflow_instances, workflow_definitions CASCADE")
                 .execute());
     }
 

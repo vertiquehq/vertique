@@ -232,7 +232,8 @@ public class PlanHashDriftIT {
 
     @BeforeEach
     void truncate(VertxTestContext ctx) {
-        pool.query(
+        WorkflowTestTables.truncating(
+                        pool,
                         "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());

@@ -479,13 +479,20 @@ public interface WorkflowHistoryRedactor {
 - **Binding.** Provide it with a Dagger binding (`@Provides WorkflowHistoryRedactor`; the engine module declares the binding optional), or pass it to
   `WorkflowEngineParts.Builder.historyRedactor(Optional.of(redactor))` for a factory-built engine. Without one nothing is redacted.
 - **Pointers.** Each pointer is an RFC 6901 JSON Pointer such as `/card/number`; a key that holds `/` or `~` is escaped `~1` or `~0`.
-  A pointer resolves into an array by index (`/cards/1/number`). The root pointer and a string that does not start with `/` are invalid.
+  A pointer resolves into an array by index (`/cards/1/number`), but an index names a position, not a record: it names another record
+  after an insert or removal, so never redact an array of sensitive records by index. A segment that is exactly `*` matches every
+  element of an array and every member of an object at that position (`/cards/*/number`); redacting the array root (`/cards`) also
+  covers every record. A key that is literally `*` cannot be named on its own. The root pointer, a string that does not start with `/`
+  and an escape other than `~0` or `~1` are invalid.
 - **One set per definition version.** The redactor returns one set for the definition version (scope, id, version) the instance is
   pinned to. The same set is applied to the instance state and to every logged command payload. A pointer that does not resolve in a
   document, or resolves to a JSON `null`, is ignored for that document; a pointer that names a subtree redacts the subtree.
 - **Where it applies.** The logged copy of a command's payload (the `payload` of its `COMMAND_RECEIVED` and `SIGNAL_RECEIVED` entries),
   the patch of each decision, every full-state entry and the reasons written to history. The instance's own state, the command rows and the
   events keep their values, because the engine needs them to run; `workflow_commands.payload_json` is not redacted.
+- **Not retroactive.** Rows written before a redactor was bound, or before a pointer was added, keep the values they hold. The payload
+  copy is matched on the JSON the client sent, so a value under an alias or a differently cased key is not matched by a pointer written
+  for the definition's own field names.
 - **Across a migration.** The pointers of the source version cover the migration command and every entry before it; the pointers of the
   target version cover the migrated full state and every later entry; both cover the migration's own patch.
 - **Failure.** The engine asks at most once per definition version in a segment. A redactor that throws, or a pointer that is invalid,
