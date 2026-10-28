@@ -39,8 +39,8 @@ import java.time.Instant;
  * @param entryType typed discriminator identifying the kind of event recorded
  * @param payloadJson JSON-encoded event-specific payload
  * @param recordedAt timestamp when this entry was persisted
- * @param entryVersion the stored version of the entry's format: 1 for an entry written before the decision log, 2
- *     after; {@code null} only when an entry is built without it
+ * @param entryVersion the stored version of the entry's format: 2 for a decision log entry ({@code DECISION}
+ *     and {@code STATE_BASELINE}), 1 for every other entry; {@code null} only when an entry is built without it
  * @param actor who the entry is attributed to, {@code null} when it was not attributed
  * @param onBehalfOf the principal a service acted for, or {@code null}
  * @param attributionStatus how the actor was established ({@code VERIFIED}, {@code ABSENT} or {@code DEGRADED}), or

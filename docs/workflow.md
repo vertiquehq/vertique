@@ -100,7 +100,7 @@ Timers need no module of their own: each timer is a command that the workflow ex
 
 The engine does not make live downstream calls inside a workflow transaction. Instead, it emits side-effect intents. Installed recorders persist durable handoff records inside the same transaction.
 
-Common side effects are service dispatch, timer scheduling, and workflow events.
+Common side effects are service dispatch and workflow events.
 
 ### Recorded starts and the executor
 
@@ -111,8 +111,7 @@ command with a lease, runs the first segment (initial state, subject, steps up t
 transaction that also writes the segment's intents and history and completes the command, and keeps up to
 `workflow.executor.concurrency` segments in flight per instance and `workflow.executor.instances` instances per node. A
 segment that has not completed one margin before its lease ends is rolled back and another executor takes the command after the
-lease. Wait for a recorded start with the execution probe. Signals, timers and the other operations still run in the caller's
-transaction.
+lease. Wait for a recorded start with the execution probe. Signals, task completions, retries and migrations record commands the same way, and timers are commands the executor fires; only `cancel` and task reassignment run in the caller's transaction. See [Recorded Execution](#recorded-execution).
 
 ---
 
@@ -140,7 +139,8 @@ transaction.
 | Run a node that only records starts, signals and task completions and runs no workflow code | `workflow.executor.enabled=false`; the node needs no workflow class and no `WorkflowSchemaModule`, and refuses document load, publication, reinstatement, `WorkflowRegistry.load` and `WorkflowPayloadSchemas` with `WorkflowNodeRoleException` |
 | Run the workflow schema migration without starting the application | `WorkflowMigrationsModule` in a migration-only component (see below) |
 | Dispatch workflow service calls | `WorkflowServicesModule` plus transactional messaging service relay |
-| Wait on timers or signal timeouts | Nothing to add: the workflow executor of `WorkflowPostgresqlModule` fires them |
+| Wait on timers or signal timeouts | Nothing to add: the workflow executor of `WorkflowPostgresqlModule` fires them as commands |
+| Meters for the executor | `MicrometerWorkflowModule` from `vertique-micrometer-workflow`, with a bound `MeterRegistry` (see [Executor metrics](#executor-metrics)) |
 | Human task inbox/actions | `WorkflowTasksModule` |
 | Emit workflow lifecycle events | `WorkflowEventsModule` plus an outbox destination binding |
 | Load YAML/JSON definitions | `WorkflowDefinitionModule` |
@@ -374,6 +374,155 @@ Business keys and start idempotency keys are unique per `(start scope, definitio
 
 ---
 
+## Recorded Execution
+
+Workflow operations record work and return. The executor runs it afterwards, in a transaction of its own. Every
+instance has a queue of commands, and the executor runs the commands of one workflow instance one at a time, in the order they were recorded.
+
+| Operation | What the call does in the caller's transaction | What runs later |
+|---|---|---|
+| `start` | Inserts the instance as `PENDING` and a `START` command, then returns the instance id | The first segment: initial state, subject and steps up to the first wait |
+| `signal` | Checks the signal, takes a slot of the instance's open-signal count and inserts a `SIGNAL` command | The signal is applied when the instance waits for it |
+| Task completion | Inserts a `COMPLETION` command and moves the task from `OPEN` to `COMPLETING` | The decision is applied |
+| `retry`, `migrate` | Inserts a `RETRY` or `MIGRATION` command | The recovery or the migration |
+| Timers | A segment that enters a timed wait records the timer and its `TIMER` command | The timer fires when it comes due |
+| `cancel`, task reassignment | Run in the caller's transaction and record no command | Nothing |
+
+An operation that returns has recorded its command; it has not run it. A failure, a rejection or a stale outcome therefore
+appears in the instance's log (see [Command outcomes](#command-outcomes)) and not as an exception of the call that recorded the
+command. A caller that needs the effect awaits the execution probe (`executionProbe().awaitIdle`), which is meant for tests and
+operator tooling. A rolled-back caller leaves nothing behind. All recording calls wait at most `workflow.recording.lockTimeoutMs`
+(default 5000) for the instance's execution lock and then fail with a retryable `WorkflowPersistenceException`; retry the whole transaction.
+
+### Node roles and the executor
+
+A node is an executor node by default. It runs the `workflow-executor` verticle, which claims commands with a lease, runs each
+as a segment in one transaction together with the segment's intents and history, and completes the command. A segment
+that has not finished one margin before its lease ends is rolled back, and another executor takes the command after the lease.
+A command that fails transiently is retried with a capped backoff, one that exhausts `maxAttempts` claims is dead-lettered and
+reported as stuck, and `retry` offers dead-lettered commands again.
+
+- **Executor nodes.** The node needs `WorkflowSchemaModule` and `JsonRuntimeModule` (see [Common App Wiring](#common-app-wiring)); it fails startup without the schema producer.
+- **Recording-only nodes.** `workflow.executor.enabled=false` deploys no executor. The node claims and runs nothing, needs no workflow class and no `WorkflowSchemaModule`, and still records starts, signals, task completions, retries, migrations, cancellations and reassignments, answers queries, and activates, deprecates and retires versions. It refuses `publish`, `reinstate`, document load, `WorkflowRegistry.load` and `WorkflowPayloadSchemas` with `WorkflowNodeRoleException`. The lifecycle operations stay open on such a node and the framework authorizes none of them, so put an authorization layer in front of them.
+- **Deployment.** The executor is deployed in the `SERVICES` phase with the application's other verticles. An application that is wired by hand and does not use a starter must include the deployer of `vertique-deploy` (`DeployerModule`) and deploy the phase through it. Without it no command executes and every start stays `PENDING`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `workflow.executor.enabled` | `true` | `false` makes the node recording-only |
+| `workflow.executor.instances` | `1` | Executor verticle instances per node, 1 to 64 |
+| `workflow.executor.concurrency` | `8` | Segments one instance keeps in flight, 1 to 256 |
+| `workflow.executor.pollIntervalMs` | `5000` | Pause between two looks for runnable commands; at least 100. A command that becomes pending wakes the executor at commit |
+| `workflow.executor.leaseSeconds` | `60` | How long a claim holds a command; at least 5. Size it above the longest healthy segment |
+| `workflow.executor.maxAttempts` | `5` | Claims that may end by a crash or lease overrun before a command is dead-lettered |
+| `workflow.executor.transientBackoffBaseMs`, `transientBackoffMaxMs` | `200`, `30000` | Backoff of a command after a transient failure |
+| `workflow.executor.maxStepsPerSegment` | `1000` | Nodes one segment may run without reaching a wait |
+| `workflow.executor.stuckAfterSeconds` | `300` | Age after which an unsettled command is reported stuck |
+
+Read the keys by installing `WorkflowExecutorConfigModule` and `WorkflowRecordingConfigModule` together with `ConfigParsingModule`;
+otherwise the defaults apply. The recording keys are `workflow.recording.lockTimeoutMs` (5000), `maxPayloadBytes` (262144, at
+least 1024), `maxOpenSignalsPerInstance` (100, 1 to 10000) and `schemaCacheMaxEntries` (256). See the
+[workflow core reference](../vertique-workflow/vertique-workflow-core/src/main/resources/META-INF/vertique/module.md) for the full table.
+
+### Signals
+
+A signal is recorded when `signal` returns and applied by a segment afterwards, so it can be sent right after the start.
+
+- **Parked signals.** A signal the instance does not await yet is parked: it keeps its place, blocks nothing and spends no attempt, and it is applied when the instance reaches a wait that accepts it. A signal the plan never waits for, or that the contract does not declare, is refused or rejected.
+- **Open-signal cap.** An instance holds at most `workflow.recording.maxOpenSignalsPerInstance` signals that are pending, deferred, claimed or parked. A signal recorded beyond it fails with `WorkflowSignalLimitException` (a 400) and writes nothing, so the dedup key stays free. The cap holds under every isolation level.
+- **Re-queue beyond the segment budget.** After a segment reaches a wait, it applies the parked signals that wait accepts, in order, while it has run at most half of `maxStepsPerSegment` nodes. When the next one would start beyond that, or its application overruns the cap, every signal the wait accepts is set back to `PENDING` at its original place and the segment commits at the wait. Each of them then runs as the command of its own segment.
+
+### Timers
+
+Timers are commands. A timer node, a signal timeout, a task due date and a task reminder are each a `workflow_timers` row linked to a `TIMER` command that comes due at its fire time, and the executor fires it. A segment that leaves the wait cancels the timer and its command. A timer whose wait has gone settles as stale and changes nothing else. A due date or reminder is held back while its task is `COMPLETING`, and a timeout is held back by an earlier signal or completion recorded for its wait. A signal recorded at or after a timeout's fire time is never applied at that wait while the timeout is outstanding. No timer is a scheduled job, and the artifact that ran them is removed in 0.4.0 (see [Removed in 0.4.0](#removed-in-040)).
+
+### Task completions and reservations
+
+A task completion records a `COMPLETION` command and reserves the task by moving it from `OPEN` to `COMPLETING`. The call
+checks the earlier result of a duplicate, the payload bounds and the decision's stored schema before it takes the lock. A
+`COMPLETING` task refuses a second completion and a reassignment with `WorkflowTaskNotWaitingException`. The executor applies the decision;
+when the command is rejected (an invalid payload, a decision applicator that throws, a stale reviewed version, a step-limit overrun) the task is reopened and the instance is unchanged, and when the instance has ended the task is cancelled.
+
+### Command outcomes
+
+Every command ends in one state, and the log records why. The reason is a code with framework text; it never holds a payload value, exception text or a class name.
+
+| State | Meaning |
+|---|---|
+| `COMPLETE` | The command ran |
+| `REJECTED` | The command is invalid for the instance: a deterministic failure, an undeclared signal, an ended instance. The savepoint is rolled back and the instance is unchanged |
+| `STALE` | The wait the command belonged to is gone: a timer whose wait ended, a branch that was superseded |
+| `PARKED` | A signal the instance does not await yet |
+| `DEFERRED` | This node cannot run the pinned plan; another node runs it, and no attempt is spent |
+| `FAILED` | A start, retry or timer failed deterministically, or a segment overran the step cap; the instance becomes `FAILED` and `retry` can recover it |
+| `DEAD` | The command spent `maxAttempts` claims; `retry` offers it again |
+| `CANCELLED` | The instance was cancelled |
+| `SUPERSEDED` | A dead-lettered start that a retry replaced |
+
+What becomes of a command that meets an instance that has ended or failed:
+
+| Command | `FAILED` | `COMPLETED`, `COMPENSATED`, `EXPIRED` | `CANCELLED` |
+|---|---|---|---|
+| signal (instance-addressed) | parked | rejected | cancelled |
+| signal (branch-addressed) | stale if its branch ended, else parked | stale | cancelled |
+| task completion | rejected, task reopened | rejected, task cancelled | cancelled, task cancelled |
+| retry | executes | rejected | cancelled |
+| migration | rejected | rejected | cancelled |
+| timer | stale | stale | cancelled |
+
+### Audit log and history API
+
+The history of an instance is an append-only log. Every segment logs, under the instance's execution lock, a `DECISION` entry
+for each step that changes the instance, with the step, the outcome, the definition scope, id and version, the plan hash, the
+state version before and after, the executor and the actor, and an RFC 6902 patch of the state change. A full `STATE_BASELINE` entry follows the first
+segment, every migration, the first claim of an instance that existed before 0.4.0 and any change too large to log as a patch (over 65,536 bytes).
+Storage grows with the changed fields of each decision, so plan retention accordingly. The entries of an instance are removed with
+the instance by retention, through the cascade from the instance row.
+
+`WorkflowInstanceHistoryService` reads an instance's log and its open commands:
+
+- `entries(id, afterSequence, limit)` pages the log in ascending sequence order; `limit` is 1 to 500.
+- `openCommands(id)` lists the commands that are `PENDING`, `DEFERRED`, `CLAIMED`, `PARKED` or `DEAD`, with their stored failure reason.
+- `WorkflowHistoryEntry` gains the actor, attribution status, executor, command, step, outcome, definition key, plan hash, state versions and patch. Its `entryVersion` is the stored format version of the entry: the `DECISION` and `STATE_BASELINE` entries are stored as version 2, and every other entry, such as the lifecycle entries, as version 1. `query()` keeps its narrow entries and returns only the five original components and the stored `entryVersion`.
+- **Authorize reads.** Entries name actors and carry state patches, and open commands carry stored failure text. The framework authorizes none of these reads; the application must do it before it exposes them.
+
+**Redaction.** The log stores business data. Bind a `WorkflowHistoryRedactor` to name, per definition version, the JSON Pointers whose values must never reach the log. Their values become `"[redacted]"` in the logged copy of command payloads, in the patches, in every full state and in the reasons written to history. The instance's own state, the command rows and the events keep their values, because the engine needs them to run. Redaction is not retroactive, and a redacted value cannot be recovered from the log. Without a redactor nothing is redacted.
+
+**Tamper-evidence.** The workflow history table is an operational log that the database owner can change. Tamper-evident audit comes from the application's audit pipeline, not from the workflow history table.
+
+### Who asked, and what the downstream runs as
+
+Every recorded command carries who asked for it (`actor_kind`, `actor_id`, `actor_reason`, `on_behalf_of`, `attribution_status`), taken in the recording caller's transaction from the caller's `SecurityContext`, never from a payload. A caller with no security context, or an anonymous one, is logged as `NONE` with the status `ABSENT`; a timer is logged as `SYSTEM` with the reason `timer`. The executor copies the actor of the command it runs onto the history entries it writes.
+
+- **Attribution headers.** A service dispatch that a segment writes carries `x-workflow-actor-kind`, `x-workflow-actor-id`, `x-workflow-actor-reason`, `x-workflow-on-behalf-of` and `x-workflow-attribution` on its outbox record. Any other intent, such as a workflow event, carries only the kind and the status. The engine removes every application-set header that starts with `x-workflow-` before it adds them. These headers are attribution, not identity, and they are unauthenticated: no relay, handler or recording path binds an identity from them, and a downstream service must never authorize on them.
+- **Downstream authority.** A segment binds no identity snapshot, so a service operation that a segment dispatches through the outbox runs as the relay's identity, `SYSTEM` with the relay's reason by default, and not as the user who recorded the command. Operators who relied on the user's identity downstream must bind a `ServiceIdentityResolver` that names a dedicated relay service and grant that service the permissions the downstream operation checks.
+- **Startup warning.** When the executor is deployed it logs one warning for each of `identity.snapshot.carriageRequirements.outbox-relay` and `identity.snapshot.carriageRequirements.workflow` that is `REQUIRED`, because the intents of a segment carry no identity snapshot and executor drives bind none. A recording-only node warns about nothing.
+- **Relayed signals.** A signal that the outbox relay delivers is recorded under the identity the relay rebuilt for the delivery.
+
+### Plan cache
+
+Any plan that the registry does not hold, which means every document version, is built by the engine's plan cache from its
+stored row the first time a command needs it. The cache is bounded by `workflow.definitions.planCache.maxEntries` (default 500): it
+bounds the number of plans, not bytes, and a remembered failure counts as an entry. A resident plan is held by reference; the largest plan
+of the order-fulfillment example (15 nodes) retains about 2.4 KB, so the default budgets about 1.2 MB for plans of that size. A plan grows with its node count and
+with the callbacks and schemas it holds, so measure your largest document before you raise the limit. The cache builds one plan per key however many commands ask for it, and the executor holds the plans of a segment until the segment ends so that a plan cannot be evicted under it.
+Startup builds the code definitions and checks the packaged documents but keeps no document plan. Set
+`workflow.definitions.buildDefaultScopeDocumentsAtStartup` to `true` to build every live default scope document into the cache at startup, so that one that does not build fails startup.
+
+### Executor metrics
+
+The engine itself publishes no meters. Add the opt-in `vertique-micrometer-workflow` bridge (`MicrometerWorkflowModule`) and bind a
+`MeterRegistry` to get counters for settled, deferred, transiently retried and lease-expired commands and for recordings
+with an absent actor, a timer for command duration, and gauges for the available, stuck, parked and dead commands and the
+notification queue usage. Tags are the lower-cased command kind and outcome only. See the
+[Micrometer workflow reference](../vertique-micrometer/vertique-micrometer-workflow/src/main/resources/META-INF/vertique/module.md).
+
+### Removed in 0.4.0
+
+The no-store mode, the definition poller, delayed-job timers and the `vertique-workflow-delayed` artifact are removed in 0.4.0.
+Definitions always live in the database, a node reads the rows it needs and runs no poller, and timers are commands.
+
+---
+
 ## Durable Definition Registry
 
 The durable registry stores one row per workflow definition version in the `workflow_definitions` table, so
@@ -381,11 +530,10 @@ definitions, their lifecycle status and their document sources survive restarts 
 
 ### When it is active
 
-- **Store bound.** The registry is active when a `WorkflowDefinitionRegistryStore` is bound. `WorkflowPostgresqlModule`
-  binds one unconditionally, so every PostgreSQL application has it. It needs PostgreSQL 15 or later.
-- **No store.** Without a store (graphs that do not install the PostgreSQL module) nothing changes: definitions stay
-  in memory, the service keeps its local outcomes behind the same `Future` signatures, the startup step does no I/O
-  and no timer is scheduled. `deprecate`, `retire` and `reinstate` need the store and fail without one.
+- **Store required.** The registry runs over a `WorkflowDefinitionRegistryStore`. `WorkflowPostgresqlModule` binds one
+  unconditionally, so every PostgreSQL application has it. It needs PostgreSQL 15 or later. There is no mode without a
+  store: a component that installs the definition service without a store and a lifecycle fails to build, and a factory-built
+  engine takes the store as a part.
 - **Identity.** A row is identified by `DefinitionKey(scopeKey, definitionId, definitionVersion)`. The scope key is
   required; `WorkflowScopes.DEFAULT` is the default scope, which code definitions always use. Any number of versions and scopes of one id are available at once.
 - **Definition ids.** Ids are unprefixed: the document id is the definition id everywhere it is used
@@ -435,7 +583,7 @@ synchronous exceptions.
   reason `DEPRECATED`. Signals, timers and resumes of instances already pinned to the version keep working.
   Deprecating a version leaves every other version available; the default scope's current version cannot be
   deprecated until another version is activated or `deactivateDefault` clears its record.
-- **No cooling window.** A deprecated version retires as soon as no instance is pinned to it, however recently it was
+- **No waiting period.** A deprecated version retires as soon as no instance is pinned to it, however recently it was
   deprecated. Retirement is refused with `PINNED_INSTANCES` while any `PENDING`, `RUNNING`, `WAITING` or `COMPENSATING`
   instance, archived ones included, is pinned to the exact version.
 - **Reinstatement.** `reinstate` of a retired version needs an executable source: the deployed code for a code version, the
@@ -455,12 +603,11 @@ synchronous exceptions.
 The version that a start without a version runs is selected by activation records, not by the registry. A record names, for one scope and definition id, a version of that scope or of the default scope; the default scope's record names only the default scope.
 
 - **Order.** A start consults the start scope's record and then the default scope's record. A scope with no record follows the default scope. Only the start scope and the default scope are consulted; a start never borrows a version of another scope, and nothing in the start path weights or splits traffic between versions.
-- **No record, no start.** With the durable registry, a start without a version fails with `WorkflowNoCurrentVersionException` when neither record exists, including after `deactivateDefault`. Without a store the default scope's current version is computed from the versions the deployment registered (the highest that is not deprecated and does not opt out), and run-time publications never count.
+- **No record, no start.** A start without a version fails with `WorkflowNoCurrentVersionException` when neither record exists, including after `deactivateDefault`.
 - **Contract-aware.** A scope's own record applies only to clients of the contract that the scope's own versions implement. A client never starts a definition of another contract.
 - **Operations.** `activate(scopeKey, definitionId, targetScopeKey, version)` replaces the scope's record. The target must be `AVAILABLE` in the target scope, otherwise the call fails with `INVALID_TRANSITION`; a target in the default scope of another contract than the scope's own versions fails with `WorkflowDefinitionContractMismatchException`. `deactivateDefault(definitionId)` clears the default scope's record; an absent record is accepted. `follow(scopeKey, definitionId)` removes a non-default scope's record so that the scope follows the default again, and fails with `IllegalArgumentException` for the default scope. `activations(scopeKey)` lists the records of a scope or, with `null`, of every scope.
 - **Publishing never activates.** `publish` makes a version available and changes no record.
-- **Visibility.** A node keeps no copy of the records. A first start reads the records of the id together with its rows on the caller's transaction, so an `activate`, `follow` or `deactivateDefault` committed on one node is seen by the next start on every node: at once under the default `READ COMMITTED`, and as of the caller's snapshot under `REPEATABLE READ` or `SERIALIZABLE`.
-- **Without a store** the same operations act on the node's in-memory view and are lost on restart.
+- **Visibility.** A node keeps no copy of the records. A first start reads the records of the id together with its rows on the caller's transaction, so freshness depends on the caller's isolation level. Under `READ COMMITTED` (the default) a start sees every activation, deprecation, retirement and publication committed before it, whichever node committed it. Under `REPEATABLE READ` or `SERIALIZABLE` a start sees the caller's snapshot, so an activation change made after the snapshot can be missed and the start can run the version the snapshot names. The engine neither checks nor changes the isolation level. Pin admission stays the fence for status, so a version deprecated or retired between the read and the insert is refused at every level.
 
 ### Deploying new versions
 
@@ -487,11 +634,17 @@ Activating the previous version again changes only which version new starts use;
 
 #### Work a node cannot run
 
-A node that is already running can still receive work for a version whose code it does not hold, for example while a rolling deploy is in progress. The plan lookup fails with `WorkflowVersionNotRunnableException`, and no node marks an instance failed because it cannot run its pin.
+A node that is already running can still meet work for a version whose code it does not hold, for example while a rolling deploy is in progress. No node marks an instance failed because it cannot run its pin.
 
-- **Calls.** A start that resolves to the version creates no instance. A signal, task completion, typed-client query (`query(id, contractName)`), retry or migration on an instance pinned to it leaves the instance, its history and its dedup rows as they were, because the caller's transaction rolls back. The failure belongs to the node, not to the instance, so a retry on a node that has the code succeeds. The failure is retryable only while some node holds the code: after the version is retired and its class removed, no node will.
-- **Timers.** A timer that no running node can handle is queued again with capped exponential backoff: the new job runs after the time the timer has been due, between 5 seconds and 5 minutes, so the wait roughly doubles on every re-queue until it reaches 5 minutes. The timer callback resolves the pinned plan before it writes anything, so a node that cannot run the version leaves the instance, the task, its reminder counter and the history as they were, and the transaction of the re-queue commits only the new job and the timer row's pointer to it. The re-queue does not spend one of the job's attempts and the timer row stays `SCHEDULED`, so the timer fires on a node that has the code. Each node logs a warning for a re-queue at most once per definition key per minute and logs the others at debug level. There is no metric for it.
-- **Retained job rows.** Every re-queue leaves a completed timer-fire job row, and the job module does not delete completed rows. A timer that stays unrunnable for a long time accumulates about 288 such rows a day; an operator can delete the completed rows of the timer-fire job.
+- **Recording.** A start, a signal, a task completion, a retry and a migration are recorded on any node, because recording needs no plan. A start
+  selects its version from the database rows and records a `PENDING` instance and a `START` command.
+- **Commands.** The executor of a node that cannot run the pinned plan defers the command instead of claiming it: the command
+  gets a later availability (5 seconds, doubled for every earlier deferral, at most 5 minutes), spends no attempt and keeps
+  blocking the later commands of its instance. A node that has the code claims it as soon as it is available. Timers are
+  commands too, so a timer that no running node can run waits the same way and fires on a node that has the code. The first deferral of a command appends
+  one history entry, and a command nobody can run is reported as stuck once it is older than `workflow.executor.stuckAfterSeconds`.
+- **Queries.** A typed-client query (`query(id, contractName)`) on an instance pinned to such a version cannot vouch for the contract, so it fails with `WorkflowVersionNotRunnableException`. It writes nothing. The failure
+  belongs to the node, not to the instance, so a retry on a node that has the code succeeds. It is retryable only while some node holds the code: after the version is retired and its class removed, no node will.
 
 ### Decommissioning a definition
 
@@ -593,7 +746,7 @@ format, an unattributed direct registration, and a lock timeout):
 
 ### Seeing a change on other nodes
 
-A node keeps no copy of the definition table and runs no poller, so there is nothing to refresh.
+A node keeps no copy of the definition table, so there is nothing to refresh.
 
 - **Starts** read the rows and activation records of the id on the caller's transaction, so a publication, deprecation,
   retirement or activation committed on another node is seen by the next start at the isolation level of that transaction.
@@ -635,7 +788,7 @@ A node keeps no copy of the definition table and runs no poller, so there is not
 
 - **Direct registration.** The engine tracks which runtime it published for which key. A runtime registered directly
   through `WorkflowRegistry` is never adopted or removed by the lifecycle: `deprecate`, `retire` and `reinstate` of that
-  version fail with `INVALID_TRANSITION`, and a startup or poll apply that needs the slot fails the same way and leaves the
+  version fail with `INVALID_TRANSITION`, and a startup step that needs the slot fails the same way and leaves the
   runtime in place. Do not register definitions directly at runtime and expect the lifecycle to manage them.
 - **Concurrency boundary.** Managed operations serialize per definition id on each node. A direct `register` or `unregister`
   of the same id during a managed operation is outside that guarantee. Each individual registry operation stays thread safe.
@@ -649,14 +802,16 @@ A node keeps no copy of the definition table and runs no poller, so there is not
 |---|---|---|
 | `workflow.definitions.publicationClaimTimeoutSeconds` | `60` | At least 1: the age in seconds at which a `PUBLISHING` claim is stale, so another `publish` takes it over and startup resets it. Replaces the former staleness-seconds key of the same group, which is no longer read |
 | `workflow.definitions.maxDocumentSizeBytes` | `262144` | Largest runtime `load` input, in bytes (L); the stored form is capped at floor(3L/2) UTF-8 bytes and L code points |
+| `workflow.definitions.planCache.maxEntries` | `500` | At least 1: the most plans the plan cache keeps resident (see [Plan cache](#plan-cache)) |
+| `workflow.definitions.buildDefaultScopeDocumentsAtStartup` | `false` | When `true`, startup builds every live default scope document into the plan cache, so one that does not build fails startup |
 
-Both keys are optional. To read them from configuration, install `WorkflowDefinitionsConfigModule` together with
+All keys are optional. To read them from configuration, install `WorkflowDefinitionsConfigModule` together with
 `ConfigParsingModule`; otherwise the defaults apply, or bind `WorkflowDefinitionsConfig` directly. Use the same values on
 every node sharing the table. Raise L on every node before admitting larger documents. Retire documents that exceed the
-new envelope before lowering L; a lower limit makes restoration fail startup, a poll counts and retries the row, and a later
+new envelope before lowering L; a lower limit makes startup fail for a stored document over the new envelope, and a later
 `publish` or `reinstate` of a retained row that exceeds the new envelope also fails.
 Non-positive values are rejected at startup with a configuration error, as is an L whose stored envelope would overflow an
-integer or a staleness period whose milliseconds would overflow a long.
+integer.
 Raising L increases memory and parse cost; the parser's nesting and expression limits are independent. The
 [workflow definition module reference](../vertique-workflow/vertique-workflow-definition/src/main/resources/META-INF/vertique/module.md)
 holds the per-path size rules.
@@ -665,16 +820,16 @@ holds the per-path size rules.
 
 ## Upgrading to 0.4.0
 
-This section covers the durable definition registry and the contract, definition, scope and activation model. Other changes in the release, such as the payload schema validation,
+This section covers the durable definition registry, the contract, definition, scope and activation model, and recorded execution. Other changes in the release, such as the payload schema validation,
 are described in their own sections. This release adds the durable definition registry, separates workflow contracts from
 definitions, adds scopes and activation records, and adds logical type names. It contains breaking changes to
 `WorkflowClientFactory`, `WorkflowDefinitionService`, `WorkflowRegistry`, `@WorkflowContract` and `StartCommand`, and
-changes startup for every PostgreSQL application. Do the following in order.
+changes startup for every PostgreSQL application. Operations now record work that an executor runs later (see [Recorded Execution](#recorded-execution)). Do the following in order.
 
 ### 1. Migrate the schema
 
-- Flyway applies one new migration, `V002__workflow_definitions_and_scopes.sql`, from `db/migration/workflow`
-  (`V1__` is unchanged). It creates the `workflow_definitions` table, keyed by `(scope_key, definition_id,
+- Flyway applies two new migrations from `db/migration/workflow`: `V002__workflow_definitions_and_scopes.sql` and, after it,
+  `V003__recorded_execution.sql` (see the last bullet of this step). `V1__` is unchanged. `V002__` creates the `workflow_definitions` table, keyed by `(scope_key, definition_id,
   definition_version)`, with its `document_digest`, `contract_name`, `state_type_name` and `name_binding` columns, and the
   `workflow_definition_activations` table, keyed by `(scope_key, definition_id)`. It also converts the
   released tables to scope keys:
@@ -720,12 +875,19 @@ changes startup for every PostgreSQL application. Do the following in order.
   instances resume in it and complete their stored task decisions. A start that names no start scope runs in the default
   scope as well.
 - **Development databases.** A database that applied an earlier 0.4.0 snapshot must be recreated: version 2 changed its
-  checksum and description, so Flyway validation fails, and the versions 3 and 4 it recorded are no longer shipped.
+  checksum and description, so Flyway validation fails.
 - Anything else that writes `DOCUMENT` rows, such as operator scripts or other modules, must supply `document_digest`:
   the lowercase hex SHA-256 of the stored UTF-8 text, present on `DOCUMENT` rows and absent on `CODE` rows. Where Flyway
   is disabled, run the migration script yourself, in one transaction, before the first 0.4.0 node starts.
 - Durable `DOCUMENT` bodies need `server_encoding = UTF8`. The check runs before the first document read or write. `CODE`
   rows and applications without documents work on any encoding.
+- **`V003__recorded_execution.sql` converts the running work of 0.3.0 in the same stop-the-fleet step.** It adds the command
+  log and the history columns, and it turns each scheduled timer into a `TIMER` command and each retry-scheduled branch into a
+  `RETRY` command. It marks every existing instance so that the first segment that claims it logs a full-state baseline; that mark is one unfiltered
+  update of `workflow_instances`, which rewrites every row once inside the migration, so plan the window and a vacuum afterwards on a large table. It also deletes the live
+  jobs that fired 0.3.0 timers (`vertique.workflow.timer.fire`) from `job_executions` when that table resolves in the schema the migration runs in under its default
+  name. A deployment whose job tables are in another schema, or a job table shared by several deployments, runs a manual statement before the first
+  0.4.0 node starts; it is in the [workflow-postgresql reference](../vertique-workflow/vertique-workflow-postgresql/src/main/resources/META-INF/vertique/module.md#recorded-execution-schema).
 
 ### 2. Port `WorkflowDefinitionService` callers (breaking)
 
@@ -747,9 +909,10 @@ cycle. Eight old declarations are removed; constructors and all other members st
   Classes that implement the new `WorkflowDefinitionRegistryStore`, `WorkflowDefinitionLifecycle` or
   `PersistedDefinitionLoader` types implement every method they declare.
 - **`ActivationStatus`** is `CANDIDATE`, `PUBLISHING`, `AVAILABLE`, `DEPRECATED` and `RETIRED`: `ACTIVATING`, `ACTIVE` and `SUPERSEDED` are removed and `DEPRECATED` and `RETIRED` are new. A `switch` over it needs the new cases.
-- **Public `currentStatus`.** `WorkflowDefinitionStore.currentStatus(id, version)` now also reports the persisted status of a
-  version the node knows only as metadata (a candidate or retired row it did not compile); it returns `null` only when
-  nothing is known about the version.
+- **`WorkflowDefinitionStore` is removed.** The node no longer mirrors the definition table in memory, so the class that
+  held that copy and its members (`list`, `get`, `currentStatus`, `markActive`, `storeCandidate`, `sourceMetadata` and the
+  claim and reset helpers) are gone. Read definition metadata through `WorkflowDefinitionService.list` and
+  `sourceMetadata`, and a plan through `WorkflowRegistry.load`.
 
 ### 3. Port contracts, clients and definitions (breaking)
 
@@ -786,14 +949,13 @@ Every PostgreSQL application, including code-first ones that never touch documen
 - **Definition ids are unprefixed.** A document may use the id of a code definition or of another scope's document; each
   scope holds its own versions of the id.
 
-Applications that combine the automatically bound PostgreSQL store with static document sources gain extra startup
-prerequisites. Each packaged document now must:
+Applications that use static document sources gain extra startup prerequisites. Each packaged document now must:
 
 - **Fit the stored envelope.** At the default L it is at most 393216 UTF-8 bytes and 262144 Unicode code points after
-  decoding. Without a store, static JSON had no document size cap; this is a new boundary for JSON sources. A YAML source keeps
+  decoding. In 0.3.0 static JSON had no document size cap; this is a new boundary for JSON sources. A YAML source keeps
   its existing code-point guard, which now follows L.
 - **Be strictly representable.** The whole source must decode without malformed encoding, decoded NUL or unpaired surrogates,
-  including trailing bytes the parser ignores. Without a store such trailing bytes were accepted. Escaped source sequences
+  including trailing bytes the parser ignores. In 0.3.0 such trailing bytes were accepted. Escaped source sequences
   stay as source text.
 - **Be stored as UTF-8 text.** Durable storage keeps decoded characters, comments, whitespace and line endings, not the
   original bytes. JSON may arrive in UTF-8, UTF-16 or UTF-32; YAML must be UTF-8. The database must be `UTF8`.
@@ -803,9 +965,9 @@ prerequisites. Each packaged document now must:
   Bump the version of a changed document: a row of the same id and version blocks startup in every status, retired
   ones included.
 
-Metadata limits now apply in every mode, with or without a store, to `load` and static sources: definition id and scope
+Metadata limits apply to `load` and static sources: definition id and scope
 key at most 255 code points; source type at most 64; URI at most 2048; revision, author and upload id at most 255. The
-retained `WorkflowDefinitionStore` methods check only the key (id length and control characters, positive version). NUL and unpaired surrogates are rejected in every text field, and
+definition service checks the key (id length and control characters, positive version). NUL and unpaired surrogates are rejected in every text field, and
 ISO control characters in ids and scope keys. A scope key must also be nonblank, at most 255 code points, free of format characters (zero-width characters, bidirectional marks and overrides), must not start or end with whitespace, and must not be blank once its format characters are removed. A version must be positive. An over-limit source is rejected before anything
 is registered, and a static source failing a limit fails startup naming the resource.
 
@@ -827,7 +989,7 @@ is registered, and a static source failing a limit fails startup naming the reso
 ### 7. Adapt callers of the engine
 
 - **Transaction clients.** Public transaction-aware engine entrypoints (`start`, the `signal` overloads, `cancel`, `retry`,
-  `migrate`, and the task and timer callbacks) require a `SqlConnection` with a pending transaction begun through Vert.x,
+  `migrate`, and the task callbacks) require a `SqlConnection` with a pending transaction begun through Vert.x,
   for example with `Pool.withTransaction`. A `Pool`, a bare or completed connection, a raw `BEGIN`, a wrapper or a mock
   fails the returned `Future` with `IllegalArgumentException` before any SQL. Await the operation before committing or
   rolling back. A custom `WorkflowTransactionRunner` must keep the transaction pending until the work future completes.
@@ -842,8 +1004,8 @@ is registered, and a static source failing a limit fails startup naming the reso
   Forward all four members. `DefaultWorkflowRegistry` implements them.
 - **Instance query.** `WorkflowInstanceQueryService.countNonTerminal(id, version)` is a default method that fails with
   `UnsupportedOperationException`; the PostgreSQL implementation overrides it.
-- **Added bindings.** Applications gain the bound `WorkflowDefinitionLifecycle` and the engine's plan cache. No poller and no
-  timer are added: a node reads the rows it needs when it needs them.
+- **Added bindings.** Applications gain the bound `WorkflowDefinitionLifecycle` and the engine's plan cache. No timer is
+  armed: a node reads the rows it needs when it needs them.
 - **Instance scopes.** `V002__` adds the scope columns, which default to `default` (see [Scopes](#scopes) and
   [Scope Keys On Instances And Tasks](#scope-keys-on-instances-and-tasks)). Record patterns that deconstruct `WorkflowInstance`,
   `TaskRecord`, `WorkflowInstanceQuery` or `TaskFilter` by component list need the new trailing `scopeKey` components
@@ -852,8 +1014,26 @@ is registered, and a static source failing a limit fails startup naming the reso
 
 ### 8. Configuration
 
-Optional keys include `workflow.definitions.publicationClaimTimeoutSeconds` (60, replacing the former staleness-seconds key) and `workflow.definitions.maxDocumentSizeBytes` (262144).
-An application that still sets the former staleness-seconds key gets the default for the new one, so rename it. See [Configuration](#configuration).
+- `workflow.definitions.publicationClaimTimeoutSeconds` (60) replaces the former staleness-seconds key of the same group,
+  which is no longer read. An application that still sets the old key gets the default for the new one, so rename it.
+- `workflow.definitions.maxDocumentSizeBytes` (262144) is unchanged.
+- New: `workflow.definitions.planCache.maxEntries` (500) and `workflow.definitions.buildDefaultScopeDocumentsAtStartup`
+  (`false`); see [Plan cache](#plan-cache).
+- New: `workflow.executor.*` (see [Node roles and the executor](#node-roles-and-the-executor)) and `workflow.recording.*`,
+  including `workflow.recording.maxOpenSignalsPerInstance` (100).
+
+See [Configuration](#configuration).
+
+### 9. Adopt recorded execution
+
+- **Run an executor.** Every node that should run workflow code needs `WorkflowSchemaModule` and `JsonRuntimeModule` and, when the application is wired by hand, the deployer of `vertique-deploy` so that the `workflow-executor` verticle is deployed in the `SERVICES` phase. Without the deployer no command executes. Use `workflow.executor.enabled=false` for a node that only records.
+- **Expect operations to return before they run.** `start`, `signal`, task completion, `retry` and `migrate` return once the command is recorded. A failure, a rejection or a stale outcome appears in the instance's log and not as an exception of the call. Code and tests that read an instance right after a start await the execution probe.
+- **Remove the delayed module.** The `vertique-workflow-delayed` artifact is removed in 0.4.0, because timers are commands: drop the dependency and `WorkflowDelayedModule` from your components.
+- **Handle the new refusals.** A signal beyond the open-signal cap fails with `WorkflowSignalLimitException`.
+- **Review who the downstream runs as.** A service operation that a segment dispatches through the outbox runs as the relay's identity, not as the recording user. See [Who asked, and what the downstream runs as](#who-asked-and-what-the-downstream-runs-as).
+- **Decide on redaction and read authorization.** Bind a `WorkflowHistoryRedactor` if the log must never hold some values, and authorize the history reads in your application.
+- **Add the metrics bridge** if you want executor meters: `vertique-micrometer-workflow` with a bound `MeterRegistry`.
+- **Transaction deadlines.** `TransactionBuilder.deadline(Duration)` and `TransactionDeadlineExceededException` of `vertique-db-core` are new and additive: the executor bounds its segments with them, and without `deadline(...)` nothing changes in other transactions.
 
 ## Scope Keys On Instances And Tasks
 
