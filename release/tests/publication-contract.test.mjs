@@ -612,7 +612,7 @@ describe('PublicCiContractTest', () => {
     );
   });
 
-  it('pullRequestBuildHasReadOnlyPermissionsAndNoSecrets', () => {
+  it('buildHasReadOnlyPermissionsAndOnlyTheSonarSecret', () => {
     const yaml = ci();
 
     // Required CI must hold no package, release, tag, or repository-content
@@ -624,11 +624,12 @@ describe('PublicCiContractTest', () => {
     }
     assert.match(yaml, /^permissions:\s*$/m, 'ci.yml must declare a top-level permissions block');
 
-    // The analysis token is available only on main pushes, never on pull requests.
+    // The Sonar token is the only secret referenced by required CI.
     const secretRefs = [...yaml.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]);
     assert.deepEqual(secretRefs, ['SONAR_TOKEN']);
-    assert.match(yaml, /SONAR_TOKEN: \$\{\{ github\.event_name == 'push' && secrets\.SONAR_TOKEN \|\| '' \}\}/);
-    assert.match(yaml, /EVENT_NAME: \$\{\{ github\.event_name \}\}\n        run: bash scripts\/ci-build\.sh/);
+    assert.match(yaml, /SONAR_TOKEN: \$\{\{ secrets\.SONAR_TOKEN \}\}/);
+    assert.match(yaml, /SONAR_OPTIONAL: \$\{\{ github\.event_name == 'pull_request' && \(github\.event\.pull_request\.head\.repo\.full_name != github\.repository \|\| github\.actor == 'dependabot\[bot\]'\) \}\}/);
+    assert.match(yaml, /run: bash scripts\/ci-build\.sh/);
 
     // It must run on both PR and main push, and must actually verify.
     assert.match(yaml, /pull_request:/, 'ci.yml must run on pull_request');

@@ -4,8 +4,8 @@
 # CI for pull requests and main.
 #
 # This workflow checks pull requests and pushes to main. It holds
-# read-only permissions. Only main-branch pushes receive the Sonar token;
-# pull requests receive no secret or repository write credential.
+# read-only repository permissions. The Sonar token is available to trusted
+# pull requests and main builds; forks and Dependabot do not receive it.
 #
 # Every step binds an event or invokes a versioned, locally runnable
 # repository-owned entry point; substantive logic never lives in this YAML.
@@ -128,8 +128,7 @@ jobs:
       # most recent per-run save for a pull request branch that has none of
       # its own yet. A deliberately-refreshed stable key would need
       # `gh cache delete`, which needs actions: write — forbidden in this
-      # job by PublicCiContractTest's pullRequestBuildHasReadOnlyPermissions
-      # AndNoSecrets: pull requests hold read-only permissions and no secrets.
+      # job by PublicCiContractTest: CI holds read-only repository permissions.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.m2/repository
@@ -139,7 +138,6 @@ jobs:
             maven-${{ runner.os }}-
 
       - name: Cache Sonar packages
-        if: github.event_name == 'push'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ~/.sonar/cache
@@ -203,8 +201,8 @@ jobs:
       # so unrelated modules remain parallel.
       - name: Build and test
         env:
-          SONAR_TOKEN: ${{ github.event_name == 'push' && secrets.SONAR_TOKEN || '' }}
-          EVENT_NAME: ${{ github.event_name }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_OPTIONAL: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]') }}
         run: bash scripts/ci-build.sh
 
       # Building on a newer JDK must not raise the class-file version of what
