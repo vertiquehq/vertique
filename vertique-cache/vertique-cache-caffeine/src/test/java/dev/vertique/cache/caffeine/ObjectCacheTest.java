@@ -170,6 +170,7 @@ class ObjectCacheTest {
                 .filter(key -> cache.getIfPresent(key).isPresent())
                 .findFirst()
                 .orElseThrow();
+        Thread.sleep(300); // let size evictions still in flight from the overflow surface before the baseline
         long evictionsBefore = observer.count("plans", CacheOperation.EVICT, CacheOutcome.SIZE_EVICTED);
         cache.invalidate(resident);
         awaitTrue(() -> cache.getIfPresent(resident).isEmpty());
