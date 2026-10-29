@@ -327,7 +327,19 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         // An entry that names a command (by its column or by the command id in its payload) takes the actor that
         // recorded that command, and a command recorded before actors were logged counts as recorded with no identity;
         // any other entry takes the fallback.
+        // An entry that names no command in its column takes the command it names in its payload and otherwise the
+        // command the segment executes ($8, which may be null), so that the entries of a segment say which command
+        // they belong to. An entry that records no definition takes the one the segment's instance is pinned to ($9 to
+        // $11), unless the segment migrates the instance, whose entries before the repin are the only ones that still
+        // belong to the source ($12 is false then): the others log the target themselves.
         this.attributeEntriesToCommands = "UPDATE " + history + " h SET"
+                + " command_id = COALESCE(h.command_id, o.id, $8::bigint),"
+                + " definition_scope_key = COALESCE(h.definition_scope_key, CASE WHEN $12::boolean"
+                + " OR h.entry_type IN ('COMMAND_RECEIVED', 'COMMAND_REJECTED') THEN $9::text END),"
+                + " definition_id = COALESCE(h.definition_id, CASE WHEN $12::boolean"
+                + " OR h.entry_type IN ('COMMAND_RECEIVED', 'COMMAND_REJECTED') THEN $10::text END),"
+                + " definition_version = COALESCE(h.definition_version, CASE WHEN $12::boolean"
+                + " OR h.entry_type IN ('COMMAND_RECEIVED', 'COMMAND_REJECTED') THEN $11::bigint END),"
                 + " actor_kind = CASE WHEN o.id IS NULL THEN $3 ELSE COALESCE(o.actor_kind, 'NONE') END,"
                 + " actor_id = CASE WHEN o.id IS NULL THEN $4 ELSE o.actor_id END,"
                 + " actor_reason = CASE WHEN o.id IS NULL THEN $5 ELSE o.actor_reason END,"
@@ -1279,7 +1291,31 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     public Future<Void> attributeSegmentHistory(
             WorkflowInstanceId instance, long fromSequence, CommandActor fallback, SqlClient tx) {
         return tx.preparedQuery(attributeEntriesToCommands)
-                .execute(withActor(Tuple.of(instance.value(), fromSequence), fallback))
+                .execute(withActor(Tuple.of(instance.value(), fromSequence), fallback)
+                        .addValue(null)
+                        .addValue(null)
+                        .addValue(null)
+                        .addValue(null)
+                        .addValue(false))
+                .<Void>mapEmpty()
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history attribute")));
+    }
+
+    @Override
+    public Future<Void> attributeSegmentHistory(
+            WorkflowInstanceId instance,
+            long fromSequence,
+            CommandActor fallback,
+            SegmentCommand command,
+            DefinitionKey pinned,
+            SqlClient tx) {
+        return tx.preparedQuery(attributeEntriesToCommands)
+                .execute(withActor(Tuple.of(instance.value(), fromSequence), fallback)
+                        .addValue(command.commandId())
+                        .addValue(pinned.scopeKey())
+                        .addValue(pinned.definitionId())
+                        .addValue(pinned.definitionVersion())
+                        .addValue(!"MIGRATION".equals(command.kind())))
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history attribute")));
     }

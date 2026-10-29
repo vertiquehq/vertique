@@ -10,6 +10,7 @@ import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.history.CommandKind;
+import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.history.WorkflowHistoryCommit;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
@@ -80,9 +81,9 @@ public class HistoryAnnouncementIT {
         try (AuditRun run = AuditRun.startAnnouncing(vertx, db, recorded)) {
             // Given an instance that a caller started, whose task a caller reassigned and approved, and which a runner
             // owned transaction signalled to its end, and an instance that was cancelled at its task
-            WorkflowInstanceId ended = run.startAtTask("ended");
+            WorkflowInstanceId ended = startAs(run, "u-0", "ended");
             UUID task = taskOf(run, ended);
-            await(run.pool().withTransaction(tx -> run.graph()
+            run.asUser("u-3", () -> run.pool().withTransaction(tx -> run.graph()
                     .taskCallbacks()
                     .taskReassigned(
                             new TaskReassignmentCommand(
@@ -93,10 +94,10 @@ public class HistoryAnnouncementIT {
                                     "out of office"),
                             tx)));
             run.completeTaskAs(AuditRun.TASK_USER, ended);
-            await(run.graph().operations().signal(ended, HistoryGraph.SIGNAL, new Go("v"), "go-key"));
+            run.asUser("u-4", () -> run.graph().operations().signal(ended, HistoryGraph.SIGNAL, new Go("v"), "go-key"));
             await(run.graph().executionProbe().awaitIdle(ended, Duration.ofSeconds(15)));
-            WorkflowInstanceId cancelled = run.startAtTask("cancelled");
-            await(run.graph().operations().cancel(cancelled, "not needed"));
+            WorkflowInstanceId cancelled = startAs(run, "u-0", "cancelled");
+            run.asUser("u-5", () -> run.graph().operations().cancel(cancelled, "not needed"));
             await(run.graph().executionProbe().awaitIdle(cancelled, Duration.ofSeconds(15)));
 
             // When the listener has caught up with the database
@@ -145,6 +146,32 @@ public class HistoryAnnouncementIT {
                     .isEqualTo(CommandKind.SIGNAL);
             only(endedEvents, WorkflowHistoryEvent.SignalReceived.class);
             only(recorded.eventsOf(cancelled), WorkflowHistoryEvent.InstanceCancelled.class);
+
+            // And every entry names who is behind it: the user who recorded the command it belongs to, the user who
+            // reassigned the task, and the user who cancelled
+            for (WorkflowHistoryEvent event : endedEvents) {
+                CommandKind kind = event.entryInfo().commandKind();
+                String expected = event instanceof WorkflowHistoryEvent.TaskReassigned
+                        ? "u-3"
+                        : switch (kind) {
+                            case START -> "u-0";
+                            case COMPLETION -> "u-1";
+                            case SIGNAL -> "u-4";
+                            default -> throw new AssertionError("unexpected command kind " + kind + " of " + event);
+                        };
+                assertThat(event.entryInfo().actor().id()).as(event.toString()).isEqualTo(expected);
+                assertThat(event.entryInfo().attribution()).isEqualTo(HistoryAttribution.VERIFIED);
+            }
+            assertThat(endedEvents)
+                    .filteredOn(event -> !(event instanceof WorkflowHistoryEvent.TaskReassigned))
+                    .allSatisfy(
+                            event -> assertThat(event.entryInfo().commandKind()).isNotNull());
+            assertThat(recorded.eventsOf(cancelled))
+                    .filteredOn(event -> event instanceof WorkflowHistoryEvent.InstanceCancelled
+                            || event instanceof WorkflowHistoryEvent.TaskCancelled)
+                    .hasSize(2)
+                    .allSatisfy(
+                            event -> assertThat(event.entryInfo().actor().id()).isEqualTo("u-5"));
 
             // And no action failed, while the throwing listener was told of every commit and did not alter one
             assertThat(recorded.failures()).isEmpty();
@@ -245,6 +272,13 @@ public class HistoryAnnouncementIT {
     }
 
     // --- Helpers ---
+
+    private static WorkflowInstanceId startAs(AuditRun run, String user, String ref) {
+        WorkflowInstanceId id = run.asUser(user, () -> run.pool()
+                .withTransaction(tx -> run.graph().transactionalOperations().start(startCommand(ref), tx)));
+        await(run.graph().executionProbe().awaitIdle(id, Duration.ofSeconds(15)));
+        return id;
+    }
 
     private static StartCommand startCommand(String ref) {
         return new StartCommand(

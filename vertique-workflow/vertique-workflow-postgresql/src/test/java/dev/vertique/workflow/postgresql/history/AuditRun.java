@@ -207,6 +207,14 @@ final class AuditRun implements AutoCloseable {
         await(graph.executionProbe().awaitIdle(id, Duration.ofSeconds(15)));
     }
 
+    /** Runs the work as the user: on a context of its own with the user's identity bound, waiting for its result. */
+    <T> T asUser(String userId, Supplier<Future<T>> work) {
+        return await(onDuplicatedContext(() -> {
+            ContextHolder.Scope bound = graph.contextHolder().bind(SecurityContext.class, live(user(userId)));
+            return work.get().onComplete(ignored -> bound.close());
+        }));
+    }
+
     /** The id of the one command of the kind that the instance has. */
     long commandIdOf(WorkflowInstanceId id, String kind) {
         Row row = await(pool.preparedQuery("SELECT id FROM workflow_commands WHERE workflow_id = $1 AND kind = $2")

@@ -11,6 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.history.CommandKind;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryEvent.CommandChanged;
 import dev.vertique.workflow.history.WorkflowHistoryEvent.CommandDisposition;
@@ -20,8 +21,10 @@ import dev.vertique.workflow.postgresql.executor.RecordedRecoveryIT.BreakableTim
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.SignalFixture;
 import dev.vertique.workflow.postgresql.executor.TimerCommandIT.TimerFixture;
 import dev.vertique.workflow.postgresql.history.RecordedHistory;
+import dev.vertique.workflow.state.HistoryActor;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -45,8 +48,18 @@ public class ExecutorHistoryAnnouncementIT {
             .withMigration("classpath:db/migration/workflow");
 
     @Test
-    @DisplayName("a failed segment's disposition and the retry that recovers it are announced once, in order")
-    void failureDispositionAndRetryAreAnnounced() {
+    @DisplayName("a failed segment's disposition and the retry a caller records in its own transaction are announced")
+    void failureDispositionAndCallerOwnedRetryAreAnnounced() {
+        failAndRetry(false);
+    }
+
+    @Test
+    @DisplayName("a retry the runner opens a transaction for is announced like one a caller records")
+    void runnerOwnedRetryIsAnnounced() {
+        failAndRetry(true);
+    }
+
+    private void failAndRetry(boolean runnerOwned) {
         BreakableTimeout breakable = new BreakableTimeout();
         RecordedHistory recorded = new RecordedHistory();
         try (SignalFixture f = new SignalFixture(db.toPoolConfig(), breakable, List.of("approve", "finish"))) {
@@ -62,9 +75,13 @@ public class ExecutorHistoryAnnouncementIT {
             f.idle(node, id);
             assertThat(f.fixture.instanceOf(id).status()).isEqualTo("FAILED");
 
-            // When the path is fixed and a caller records a retry that the executor then runs
+            // When the path is fixed and the retry is recorded, then run by the executor
             breakable.broken.set(false);
-            await(f.caller(() -> node.pool.withTransaction(tx -> node.engine.retry(id, tx))));
+            if (runnerOwned) {
+                await(f.caller(() -> node.engine.retry(id)));
+            } else {
+                await(f.caller(() -> node.pool.withTransaction(tx -> node.engine.retry(id, tx))));
+            }
             node.runOneSegment();
             f.idle(node, id);
             awaitCondition("the announcements to catch up", IDLE, () -> announced(recorded, id)
@@ -73,13 +90,66 @@ public class ExecutorHistoryAnnouncementIT {
             // Then every entry is announced once and in order, with the failure and the retry among them
             List<WorkflowHistoryEvent> events = recorded.eventsOf(id);
             assertThat(announced(recorded, id)).isEqualTo(stored(f, id)).doesNotHaveDuplicates();
-            assertThat(events).anyMatch(WorkflowHistoryEvent.InstanceFailed.class::isInstance);
-            assertThat(events).anyMatch(WorkflowHistoryEvent.InstanceRetried.class::isInstance);
+            WorkflowHistoryEvent failed = only(events, WorkflowHistoryEvent.InstanceFailed.class);
+            WorkflowHistoryEvent retried = only(events, WorkflowHistoryEvent.InstanceRetried.class);
+
+            // And the failure of a timer is the system's doing, for the timer command; the retry belongs to its command
+            assertThat(failed.entryInfo().commandKind()).isEqualTo(CommandKind.TIMER);
+            assertThat(failed.entryInfo().actor().kind()).isEqualTo(HistoryActor.Kind.SYSTEM);
+            assertThat(failed.entryInfo().actor().reason()).isEqualTo("timer");
+            assertThat(retried.entryInfo().commandKind()).isEqualTo(CommandKind.RETRY);
+
+            // And no entry of a command is without it, and none that a timer wrote is without the system actor
+            assertThat(events)
+                    .filteredOn(event -> event.entryInfo().commandKind() == CommandKind.TIMER)
+                    .isNotEmpty()
+                    .allSatisfy(event ->
+                            assertThat(event.entryInfo().actor().kind()).isEqualTo(HistoryActor.Kind.SYSTEM));
+            assertThat(events)
+                    .filteredOn(event -> event.entryInfo().commandKind() == null)
+                    .isEmpty();
 
             // And nothing was reported as failed, since an internal retry is not, while the throwing listener changed
             // nothing
             assertThat(recorded.failures()).isEmpty();
             assertThat(recorded.thrown()).isEqualTo(recorded.commits().size());
+        }
+    }
+
+    @Test
+    @DisplayName("the dead-lettering of a command at its claim is announced with the failure of its instance")
+    void claimTimeDeadLetterIsAnnounced() {
+        RecordedHistory recorded = new RecordedHistory();
+        try (ExecutorFixture fixture = ExecutorFixture.open(db.toPoolConfig())) {
+            // Given two attempts and a start whose every segment is abandoned
+            CommandFaults faults = new CommandFaults();
+            Node node = fixture.node("engine")
+                    .leaseSeconds(5)
+                    .maxAttempts(2)
+                    .commands(faults.decorator())
+                    .historyListeners(Set.of(recorded, recorded.thrower()))
+                    .build();
+            WorkflowInstanceId id = node.record(startOf("announced-dead-letter"));
+            faults.crashEverySegmentOf(id);
+
+            // When the executor runs until the command is dead-lettered
+            node.startExecutor();
+            awaitCondition("the start to be dead-lettered", Duration.ofSeconds(40), () -> fixture.commandOf(id)
+                    .state()
+                    .equals("DEAD"));
+            awaitCondition("the announcements to catch up", IDLE, () -> announced(recorded, id)
+                    .equals(stored(fixture, id)));
+            node.stopExecutor();
+
+            // Then the dead-lettering and the failure are announced, for the command, once and in order
+            List<WorkflowHistoryEvent> events = recorded.eventsOf(id);
+            assertThat(announced(recorded, id)).isEqualTo(stored(fixture, id)).doesNotHaveDuplicates();
+            assertThat(events).anySatisfy(event -> assertThat(event)
+                    .isInstanceOfSatisfying(CommandChanged.class, changed -> assertThat(changed.disposition())
+                            .isEqualTo(CommandDisposition.DEAD_LETTERED)));
+            WorkflowHistoryEvent failed = only(events, WorkflowHistoryEvent.InstanceFailed.class);
+            assertThat(failed.entryInfo().commandKind()).isEqualTo(CommandKind.START);
+            assertThat(recorded.failures()).isEmpty();
         }
     }
 
@@ -124,6 +194,13 @@ public class ExecutorHistoryAnnouncementIT {
     }
 
     // --- Helpers ---
+
+    private static <E extends WorkflowHistoryEvent> E only(List<WorkflowHistoryEvent> events, Class<E> type) {
+        List<E> matching =
+                events.stream().filter(type::isInstance).map(type::cast).toList();
+        assertThat(matching).hasSize(1);
+        return matching.getFirst();
+    }
 
     private static List<Long> announced(RecordedHistory recorded, WorkflowInstanceId id) {
         return recorded.eventsOf(id).stream()

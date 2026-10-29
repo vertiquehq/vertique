@@ -145,7 +145,8 @@ public final class WorkflowHistoryEventPublisher {
     /**
      * Runs the work of an action on a known instance and reports what it wrote once its transaction commits. The
      * execution lock of the instance is taken first, before the range starts, so no other transaction can write
-     * entries inside it; the work takes it again at no cost.
+     * entries inside it; the work takes it again at no cost. The cost is that a call which would have returned without
+     * writing, such as a duplicate signal, waits for the lock when a listener is bound.
      *
      * @param action the caller-driven action, for the failure report
      * @param id     the instance the action concerns, or {@code null} when it never resolved one (only a failure is

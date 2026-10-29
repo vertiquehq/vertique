@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
+import dev.vertique.workflow.history.CommandKind;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.MigrationContext;
@@ -187,6 +188,30 @@ public class RecordedMigrationIT {
                     .isEqualTo(stored);
             assertThat(recorded.eventsOf(id)).anyMatch(WorkflowHistoryEvent.InstanceMigrated.class::isInstance);
             assertThat(recorded.failures()).isEmpty();
+
+            // And the migration is pinned to its source by the entry that received it, and to its target by the
+            // decision that logged it
+            DefinitionKey source = new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1);
+            DefinitionKey target = new DefinitionKey(WorkflowScopes.DEFAULT, ID, 2);
+            List<WorkflowHistoryEvent> events = recorded.eventsOf(id);
+            assertThat(events)
+                    .filteredOn(event -> event.entryInfo().commandKind() == CommandKind.MIGRATION)
+                    .isNotEmpty()
+                    .allSatisfy(
+                            event -> assertThat(event.entryInfo().commandId()).isNotNull());
+            assertThat(events)
+                    .filteredOn(event -> event instanceof WorkflowHistoryEvent.CommandChanged changed
+                            && changed.disposition() == WorkflowHistoryEvent.CommandDisposition.RECEIVED
+                            && event.entryInfo().commandKind() == CommandKind.MIGRATION)
+                    .singleElement()
+                    .satisfies(
+                            event -> assertThat(event.entryInfo().definition()).isEqualTo(source));
+            assertThat(events)
+                    .filteredOn(event -> event instanceof WorkflowHistoryEvent.StepDecided decided
+                            && decided.kind() == WorkflowHistoryEvent.DecisionKind.MIGRATED)
+                    .singleElement()
+                    .satisfies(
+                            event -> assertThat(event.entryInfo().definition()).isEqualTo(target));
         }
     }
 

@@ -1289,7 +1289,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                                 .map(settled -> outcome)
                                         : Future.succeededFuture(outcome))
                                 .compose(outcome -> commands.attributeSegmentHistory(
-                                                command.workflowId(), from, recorded, tx)
+                                                command.workflowId(), from, recorded, command, pinned, tx)
                                         .map(attributed -> outcome)))));
     }
 
