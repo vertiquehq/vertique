@@ -15,6 +15,7 @@ import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.WorkflowEngineModule;
+import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -52,6 +53,7 @@ import io.vertx.core.Vertx;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.util.Optional;
 import java.util.Set;
@@ -318,6 +320,8 @@ public abstract class WorkflowPostgresqlModule {
      * @param schemas the optional schema placement; absent means unqualified table names
      * @param recording the optional recording configuration; defaults apply when absent
      * @param propagator the propagator that captures the durable context stored with each recorded command
+     * @param historyPublisher the publisher that announces the history the repository's own transactions write; read
+     *     lazily because the publisher takes execution locks through this repository
      * @return the scoped PostgreSQL command repository
      */
     @Provides
@@ -327,13 +331,15 @@ public abstract class WorkflowPostgresqlModule {
             PgDbExceptionMapper mapper,
             Optional<DbSchemas> schemas,
             Optional<WorkflowRecordingConfig> recording,
-            DurableContextPropagator propagator) {
+            DurableContextPropagator propagator,
+            Provider<WorkflowHistoryEventPublisher> historyPublisher) {
         return new PgWorkflowCommandRepository(
                 pool,
                 mapper,
                 schemas.orElseGet(DbSchemas::empty),
                 recording.orElseGet(WorkflowRecordingConfig::defaults),
-                propagator);
+                propagator,
+                historyPublisher::get);
     }
 
     // --- Store SPI bindings ---
