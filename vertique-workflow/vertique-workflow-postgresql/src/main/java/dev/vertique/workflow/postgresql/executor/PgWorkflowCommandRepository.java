@@ -327,19 +327,16 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         // An entry that names a command (by its column or by the command id in its payload) takes the actor that
         // recorded that command, and a command recorded before actors were logged counts as recorded with no identity;
         // any other entry takes the fallback.
-        // An entry that names no command in its column takes the command it names in its payload and otherwise the
-        // command the segment executes ($8, which may be null), so that the entries of a segment say which command
-        // they belong to. An entry that records no definition takes the one the segment's instance is pinned to ($9 to
-        // $11), unless the segment migrates the instance, whose entries before the repin are the only ones that still
-        // belong to the source ($12 is false then): the others log the target themselves.
+        // An entry that names a command only in its payload takes that command as its command id; it never takes the
+        // command the segment executes, because an entry written under another command's scope (a parked signal
+        // applied during the segment) would be given the wrong one. An entry that records no definition takes the one
+        // the segment's instance is pinned to ($8 to $10), which is null for a segment that migrates the instance: its
+        // pin changes part-way, so its entries keep what their writer recorded.
         this.attributeEntriesToCommands = "UPDATE " + history + " h SET"
-                + " command_id = COALESCE(h.command_id, o.id, $8::bigint),"
-                + " definition_scope_key = COALESCE(h.definition_scope_key, CASE WHEN $12::boolean"
-                + " OR h.entry_type IN ('COMMAND_RECEIVED', 'COMMAND_REJECTED') THEN $9::text END),"
-                + " definition_id = COALESCE(h.definition_id, CASE WHEN $12::boolean"
-                + " OR h.entry_type IN ('COMMAND_RECEIVED', 'COMMAND_REJECTED') THEN $10::text END),"
-                + " definition_version = COALESCE(h.definition_version, CASE WHEN $12::boolean"
-                + " OR h.entry_type IN ('COMMAND_RECEIVED', 'COMMAND_REJECTED') THEN $11::bigint END),"
+                + " command_id = COALESCE(h.command_id, o.id),"
+                + " definition_scope_key = COALESCE(h.definition_scope_key, $8::text),"
+                + " definition_id = COALESCE(h.definition_id, $9::text),"
+                + " definition_version = COALESCE(h.definition_version, $10::bigint),"
                 + " actor_kind = CASE WHEN o.id IS NULL THEN $3 ELSE COALESCE(o.actor_kind, 'NONE') END,"
                 + " actor_id = CASE WHEN o.id IS NULL THEN $4 ELSE o.actor_id END,"
                 + " actor_reason = CASE WHEN o.id IS NULL THEN $5 ELSE o.actor_reason END,"
@@ -685,7 +682,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             if (!locked) {
                                 return Future.succeededFuture(Optional.<ClaimedCommand>empty());
                             }
-                            return announcing(null, head.workflowId(), conn, () -> conn.preparedQuery(claimLookup)
+                            return conn.preparedQuery(claimLookup)
                                     .execute(Tuple.of(head.commandId()))
                                     .compose(rows -> {
                                         if (rows.size() == 0) {
@@ -700,7 +697,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                                         failures,
                                                         conn)
                                                 .map(Optional::of);
-                                    }));
+                                    });
                         }))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands claim")));
     }
@@ -715,7 +712,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             }
                             // claimable already requires the command to be available now, so a command deferred into
                             // the future fails this read as well
-                            return announcing(null, head.workflowId(), conn, () -> conn.preparedQuery(lockForDeferral)
+                            return conn.preparedQuery(lockForDeferral)
                                     .execute(Tuple.of(
                                             head.commandId(),
                                             head.definitionScopeKey(),
@@ -727,7 +724,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                             return Future.succeededFuture(0);
                                         }
                                         return deferLocked(head, rows.iterator().next(), conn);
-                                    }));
+                                    });
                         }))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands defer")));
     }
@@ -746,6 +743,13 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
 
     /** The deferral of a command that was locked and found claimable and still pinned as observed. */
     private Future<Integer> deferLocked(CommandHead head, Row looked, SqlClient conn) {
+        // only the first deferral writes a history entry; a later one writes none and runs no extra statement
+        return looked.getInteger("deferral_count") == 0
+                ? announcing(null, head.workflowId(), conn, () -> writeDeferral(head, looked, conn))
+                : writeDeferral(head, looked, conn);
+    }
+
+    private Future<Integer> writeDeferral(CommandHead head, Row looked, SqlClient conn) {
         int before = looked.getInteger("deferral_count");
         String kind = looked.getString("kind");
         String reason = CommandErrors.notRunnable(kind);
@@ -793,40 +797,51 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                 Boolean.TRUE.equals(looked.getBoolean("branch_signal")),
                                 false))
                 : Optional.empty();
+        // Only the two branches that write history are announced; an ordinary claim writes none.
         if (met.isPresent()) {
-            EndedInstanceOutcomes.Outcome outcome = met.get();
-            String state = outcome.settlement().name();
-            Future<?> reservation = outcome.reservation() == EndedInstanceOutcomes.Reservation.CANCEL
-                    ? conn.preparedQuery(cancelReservedTask).execute(Tuple.of(id))
-                    : Future.succeededFuture();
-            return reservation
-                    .compose(ignored -> conn.preparedQuery(settleEnded).execute(Tuple.of(id, outcome.reason(), state)))
-                    .compose(ignored -> "TIMER".equals(kind)
-                            ? conn.preparedQuery(cancelTimerRowOfCommand).execute(Tuple.of(id))
-                            : Future.succeededFuture())
-                    .compose(ignored ->
-                            appendCommandHistory(conn, head, entryType(outcome.settlement()), outcome.reason(), state))
-                    .map(ignored -> new ClaimedCommand(
-                            id,
-                            head.workflowId(),
-                            kind,
-                            null,
-                            attempts,
-                            ClaimedCommand.Result.SETTLED_INSTANCE_ENDED,
-                            lapsed));
+            return announcing(null, head.workflowId(), conn, () -> {
+                EndedInstanceOutcomes.Outcome outcome = met.get();
+                String state = outcome.settlement().name();
+                Future<?> reservation = outcome.reservation() == EndedInstanceOutcomes.Reservation.CANCEL
+                        ? conn.preparedQuery(cancelReservedTask).execute(Tuple.of(id))
+                        : Future.succeededFuture();
+                return reservation
+                        .compose(ignored ->
+                                conn.preparedQuery(settleEnded).execute(Tuple.of(id, outcome.reason(), state)))
+                        .compose(ignored -> "TIMER".equals(kind)
+                                ? conn.preparedQuery(cancelTimerRowOfCommand).execute(Tuple.of(id))
+                                : Future.succeededFuture())
+                        .compose(ignored -> appendCommandHistory(
+                                conn, head, entryType(outcome.settlement()), outcome.reason(), state))
+                        .map(ignored -> new ClaimedCommand(
+                                id,
+                                head.workflowId(),
+                                kind,
+                                null,
+                                attempts,
+                                ClaimedCommand.Result.SETTLED_INSTANCE_ENDED,
+                                lapsed));
+            });
         }
         if (attempts >= maxAttempts) {
-            String reason = CommandErrors.attemptsExhausted(kind, attempts, maxAttempts);
-            Future<Void> written = conn.preparedQuery(deadLetter)
-                    .execute(Tuple.of(id, reason))
-                    .compose(ignored ->
-                            appendCommandHistory(conn, head, "COMMAND_DEAD_LETTERED", reason, "DEAD_LETTERED"));
-            if ("START".equals(kind)) {
-                written = written.compose(ignored -> failInstanceOf(
-                        conn, head.workflowId(), id, CommandErrors.Reason.ATTEMPTS_EXHAUSTED.name(), reason, failures));
-            }
-            return written.map(ignored -> new ClaimedCommand(
-                    id, head.workflowId(), kind, null, attempts, ClaimedCommand.Result.DEAD_LETTERED, lapsed));
+            return announcing(null, head.workflowId(), conn, () -> {
+                String reason = CommandErrors.attemptsExhausted(kind, attempts, maxAttempts);
+                Future<Void> written = conn.preparedQuery(deadLetter)
+                        .execute(Tuple.of(id, reason))
+                        .compose(ignored ->
+                                appendCommandHistory(conn, head, "COMMAND_DEAD_LETTERED", reason, "DEAD_LETTERED"));
+                if ("START".equals(kind)) {
+                    written = written.compose(ignored -> failInstanceOf(
+                            conn,
+                            head.workflowId(),
+                            id,
+                            CommandErrors.Reason.ATTEMPTS_EXHAUSTED.name(),
+                            reason,
+                            failures));
+                }
+                return written.map(ignored -> new ClaimedCommand(
+                        id, head.workflowId(), kind, null, attempts, ClaimedCommand.Result.DEAD_LETTERED, lapsed));
+            });
         }
         return conn.preparedQuery(claimTake)
                 .execute(Tuple.of(id, leaseSeconds, claimedBy))
@@ -1294,9 +1309,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 .execute(withActor(Tuple.of(instance.value(), fromSequence), fallback)
                         .addValue(null)
                         .addValue(null)
-                        .addValue(null)
-                        .addValue(null)
-                        .addValue(false))
+                        .addValue(null))
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history attribute")));
     }
@@ -1309,13 +1322,13 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             SegmentCommand command,
             DefinitionKey pinned,
             SqlClient tx) {
+        // a migration repins part-way, so no single definition describes its entries
+        boolean pinsEntries = !"MIGRATION".equals(command.kind());
         return tx.preparedQuery(attributeEntriesToCommands)
                 .execute(withActor(Tuple.of(instance.value(), fromSequence), fallback)
-                        .addValue(command.commandId())
-                        .addValue(pinned.scopeKey())
-                        .addValue(pinned.definitionId())
-                        .addValue(pinned.definitionVersion())
-                        .addValue(!"MIGRATION".equals(command.kind())))
+                        .addValue(pinsEntries ? pinned.scopeKey() : null)
+                        .addValue(pinsEntries ? pinned.definitionId() : null)
+                        .addValue(pinsEntries ? pinned.definitionVersion() : null))
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history attribute")));
     }

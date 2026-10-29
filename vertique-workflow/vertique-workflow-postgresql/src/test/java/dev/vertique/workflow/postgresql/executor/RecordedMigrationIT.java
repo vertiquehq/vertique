@@ -137,6 +137,15 @@ public class RecordedMigrationIT {
             CommandRow note = f.signal(c, "note");
             assertThat(note.state()).isEqualTo("REJECTED");
             assertThat(f.entry(c, "COMMAND_REJECTED", note.id())).isNotNull();
+            // and the rejection came after the repin, so no definition is inferred for it: it is not given the source
+            Row rejection = await(f.fixture
+                            .observer()
+                            .preparedQuery("SELECT definition_version FROM workflow_history WHERE workflow_id = $1"
+                                    + " AND entry_type = 'COMMAND_REJECTED' AND command_id = $2")
+                            .execute(Tuple.of(c.value(), note.id())))
+                    .iterator()
+                    .next();
+            assertThat(rejection.getLong("definition_version")).isNull();
             assertThat(f.openSignals(c)).isZero();
             assertThat(f.fixture.historyOf(c)).contains("WORKFLOW_MIGRATED");
         }
@@ -189,9 +198,8 @@ public class RecordedMigrationIT {
             assertThat(recorded.eventsOf(id)).anyMatch(WorkflowHistoryEvent.InstanceMigrated.class::isInstance);
             assertThat(recorded.failures()).isEmpty();
 
-            // And the migration is pinned to its source by the entry that received it, and to its target by the
-            // decision that logged it
-            DefinitionKey source = new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1);
+            // And a migration segment infers no definition, because its pin changes part-way: the entry that received
+            // the migration keeps what its writer recorded, and the decision that logged it names the target itself
             DefinitionKey target = new DefinitionKey(WorkflowScopes.DEFAULT, ID, 2);
             List<WorkflowHistoryEvent> events = recorded.eventsOf(id);
             assertThat(events)
@@ -205,7 +213,7 @@ public class RecordedMigrationIT {
                             && event.entryInfo().commandKind() == CommandKind.MIGRATION)
                     .singleElement()
                     .satisfies(
-                            event -> assertThat(event.entryInfo().definition()).isEqualTo(source));
+                            event -> assertThat(event.entryInfo().definition()).isNull());
             assertThat(events)
                     .filteredOn(event -> event instanceof WorkflowHistoryEvent.StepDecided decided
                             && decided.kind() == WorkflowHistoryEvent.DecisionKind.MIGRATED)

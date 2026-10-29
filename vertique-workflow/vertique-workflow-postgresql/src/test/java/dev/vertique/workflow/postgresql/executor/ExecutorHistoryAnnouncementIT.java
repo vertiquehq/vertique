@@ -93,21 +93,19 @@ public class ExecutorHistoryAnnouncementIT {
             WorkflowHistoryEvent failed = only(events, WorkflowHistoryEvent.InstanceFailed.class);
             WorkflowHistoryEvent retried = only(events, WorkflowHistoryEvent.InstanceRetried.class);
 
-            // And the failure of a timer is the system's doing, for the timer command; the retry belongs to its command
+            // And the failure of a timer is the system's doing, for the timer command; the retry entry is written by
+            // the segment that runs it, which records no command for it, and none is inferred
             assertThat(failed.entryInfo().commandKind()).isEqualTo(CommandKind.TIMER);
             assertThat(failed.entryInfo().actor().kind()).isEqualTo(HistoryActor.Kind.SYSTEM);
             assertThat(failed.entryInfo().actor().reason()).isEqualTo("timer");
-            assertThat(retried.entryInfo().commandKind()).isEqualTo(CommandKind.RETRY);
+            assertThat(retried.entryInfo().commandKind()).isNull();
 
-            // And no entry of a command is without it, and none that a timer wrote is without the system actor
+            // And none that a timer wrote is without the system actor
             assertThat(events)
                     .filteredOn(event -> event.entryInfo().commandKind() == CommandKind.TIMER)
                     .isNotEmpty()
                     .allSatisfy(event ->
                             assertThat(event.entryInfo().actor().kind()).isEqualTo(HistoryActor.Kind.SYSTEM));
-            assertThat(events)
-                    .filteredOn(event -> event.entryInfo().commandKind() == null)
-                    .isEmpty();
 
             // And nothing was reported as failed, since an internal retry is not, while the throwing listener changed
             // nothing

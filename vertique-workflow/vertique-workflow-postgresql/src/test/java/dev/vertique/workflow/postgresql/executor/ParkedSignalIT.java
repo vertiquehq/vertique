@@ -446,7 +446,31 @@ public class ParkedSignalIT {
             assertThat(f.intents.routed)
                     .extracting(intent -> intent.headers().get("x-workflow-actor-id"))
                     .containsExactly("B");
+
+            // And no entry of the drain is given the segment's command: an entry names its own command or none
+            assertThat(commandOf(f, id, "SIGNAL_APPLIED", shipped.id())).isEqualTo(shipped.id());
+            for (Row row : await(f.fixture
+                    .observer()
+                    .preparedQuery("SELECT command_id, payload_json->>'commandId' AS named FROM workflow_history"
+                            + " WHERE workflow_id = $1 AND command_id IS NOT NULL AND entry_type <> 'DECISION'")
+                    .execute(Tuple.of(id.value())))) {
+                String named = row.getString("named");
+                if (named != null) {
+                    assertThat(row.getLong("command_id")).isEqualTo(Long.parseLong(named));
+                }
+            }
         }
+    }
+
+    private static Long commandOf(SignalFixture f, WorkflowInstanceId id, String entryType, long commandId) {
+        Row row = await(f.fixture
+                        .observer()
+                        .preparedQuery("SELECT command_id FROM workflow_history WHERE workflow_id = $1"
+                                + " AND entry_type = $2 AND payload_json->>'commandId' = $3")
+                        .execute(Tuple.of(id.value(), entryType, String.valueOf(commandId))))
+                .iterator()
+                .next();
+        return row.getLong("command_id");
     }
 
     private static SecurityIdentity user(String id) {
