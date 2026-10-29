@@ -13,7 +13,7 @@ SPDX-License-Identifier: EUPL-1.2
 `vertique-workflow-engine` is the portable, dialect-neutral workflow orchestration runtime. It holds the
 execution kernel — the durable saga state machine, fork/join coordinator, task and timer lifecycle
 services, signal delivery, migration executor, and history recorder — decoupled from any specific SQL
-dialect. Persistence is injected at application composition time through six `<TX>`-generic repository
+dialect. Persistence is injected at application composition time through seven `<TX>`-generic repository
 SPIs and a transaction-runner SPI.
 
 The module is the seam for DB portability: a second Vert.x SQL backend needs only dialect-specific
@@ -46,7 +46,7 @@ vertique-workflow-engine     — portable orchestration runtime, <TX>-generic SP
 vertique-workflow-postgresql — PostgreSQL adapter: SPI impls, schema, Pg runner
 ```
 
-The engine depends on `io.vertx:vertx-sql-client` (the abstract Vert.x SQL API JAR) because the six
+The engine depends on `io.vertx:vertx-sql-client` (the abstract Vert.x SQL API JAR) because the seven
 repository SPIs and `WorkflowTransactionRunner` are parameterized with `SqlClient` as the concrete
 transaction-handle type. This is an honest declaration of scope — the engine targets the Vert.x SQL
 family, not arbitrary persistence stores — but carries no Pg-specific APIs.
