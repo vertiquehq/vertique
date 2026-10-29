@@ -7,6 +7,7 @@ import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
 import dev.vertique.db.postgresql.PgTableNames;
+import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.engine.spi.DecisionEntry;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -55,6 +56,7 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
     private final String sqlListByInstance;
     private final String sqlListRecentByInstance;
     private final String sqlListPage;
+    private final String sqlListRange;
 
     // --- Constructor ---
 
@@ -125,6 +127,17 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
                 + " step_id, outcome, definition_scope_key, definition_id, definition_version, plan_hash,"
                 + " state_version_before, state_version_after, patch_json FROM " + history
                 + " WHERE workflow_id = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT $3";
+
+        // The range read serves the history listeners after a commit: the page columns, the baselines left out, and the
+        // kind of the command an entry names (null for an entry that names none).
+        this.sqlListRange = "SELECT h.workflow_id, h.sequence, h.entry_type, h.payload_json, h.recorded_at,"
+                + " h.entry_version, h.actor_kind, h.actor_id, h.actor_reason, h.on_behalf_of, h.attribution_status,"
+                + " h.executor_id, h.command_id, h.step_id, h.outcome, h.definition_scope_key, h.definition_id,"
+                + " h.definition_version, h.plan_hash, h.state_version_before, h.state_version_after, h.patch_json,"
+                + " c.kind AS command_kind FROM " + history + " h LEFT JOIN " + commands
+                + " c ON c.id = h.command_id AND c.workflow_id = h.workflow_id"
+                + " WHERE h.workflow_id = $1 AND h.sequence > $2 AND h.sequence <= $3"
+                + " AND h.entry_type <> 'STATE_BASELINE' ORDER BY h.sequence ASC";
     }
 
     // --- Write operations ---
@@ -299,5 +312,30 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
                     return entries;
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history listPage")));
+    }
+
+    /**
+     * Returns the enriched entries of an instance with {@code after < sequence <= upTo}, ascending, without
+     * {@code STATE_BASELINE} entries, each with the kind of the command it names.
+     *
+     * @param id    the workflow instance id
+     * @param after the sequence the range starts after (exclusive)
+     * @param upTo  the last sequence of the range (inclusive)
+     * @param tx    the SQL client or transaction to read with
+     * @return a {@link Future} containing the entries of the range
+     */
+    @Override
+    public Future<List<CommittedHistoryEntry>> listRange(WorkflowInstanceId id, long after, long upTo, SqlClient tx) {
+        return tx.preparedQuery(sqlListRange)
+                .execute(Tuple.of(id.value(), after, upTo))
+                .map(rs -> {
+                    List<CommittedHistoryEntry> entries = new ArrayList<>();
+                    var mapper = RowMappers.enrichedWorkflowHistoryEntry();
+                    for (var row : rs) {
+                        entries.add(new CommittedHistoryEntry(mapper.map(row), row.getString("command_kind")));
+                    }
+                    return entries;
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history listRange")));
     }
 }

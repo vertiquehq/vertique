@@ -111,4 +111,22 @@ public interface WorkflowHistoryRepository<TX> {
      * @return a {@link Future} containing the ordered history entries
      */
     Future<List<WorkflowHistoryEntry>> listByInstance(WorkflowInstanceId id, TX tx);
+
+    /**
+     * INTERNAL: returns the enriched history entries of an instance in the sequence range {@code (after, upTo]},
+     * ascending, without {@code STATE_BASELINE} entries, each with the kind of the command it names. Read after a
+     * commit to collect what the committed transaction wrote.
+     *
+     * <p>The default fails with {@link UnsupportedOperationException}: a repository that does not implement it cannot
+     * serve history listeners, whose notification is then lost and logged.
+     *
+     * @param id    the workflow instance id
+     * @param after the sequence the range starts after (exclusive)
+     * @param upTo  the last sequence of the range (inclusive)
+     * @param tx    the SQL client or transaction to read with
+     * @return a {@link Future} containing the entries of the range, possibly empty
+     */
+    default Future<List<CommittedHistoryEntry>> listRange(WorkflowInstanceId id, long after, long upTo, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException("listRange is not supported"));
+    }
 }

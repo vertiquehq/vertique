@@ -11,6 +11,7 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.state.WorkflowEntryType;
@@ -25,6 +26,7 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
+import io.vertx.sqlclient.Tuple;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -222,6 +224,106 @@ public class PgWorkflowHistoryRepositoryIT {
                 id,
                 type,
                 null,
+                "start",
+                "outcome",
+                "default",
+                "order-fulfillment",
+                1L,
+                "abc123",
+                0L,
+                0L,
+                null,
+                patch,
+                state,
+                Instant.now());
+    }
+
+    // =========================================================================
+    // listRange
+    // =========================================================================
+
+    @Test
+    @DisplayName("listRange returns the bounded range ascending, without baselines, with the command kind")
+    void listRangeReturnsBoundedEnrichedRange(VertxTestContext ctx) {
+        insertInstance()
+                .compose(instanceId -> pool.preparedQuery("INSERT INTO workflow_commands (workflow_id, seq, kind,"
+                                + " state, recorded_at, available_at) VALUES ($1, 1, 'SIGNAL', 'COMPLETE', now(),"
+                                + " now()) RETURNING id")
+                        .execute(Tuple.of(instanceId.value()))
+                        .map(rows -> rows.iterator().next().getLong("id"))
+                        .compose(commandId -> pool.withTransaction(tx -> historyRepository
+                                        .append(entry(instanceId, 1L, WorkflowEntryType.START), tx)
+                                        .compose(v -> historyRepository.appendDecision(
+                                                decision(instanceId, WorkflowEntryType.DECISION, "[]", null, commandId),
+                                                tx))
+                                        .compose(v -> historyRepository.appendDecision(
+                                                decision(
+                                                        instanceId,
+                                                        WorkflowEntryType.STATE_BASELINE,
+                                                        null,
+                                                        "{\"a\":1}",
+                                                        commandId),
+                                                tx))
+                                        .compose(v -> historyRepository.append(
+                                                entry(instanceId, 4L, WorkflowEntryType.COMPLETED), tx))
+                                        .compose(v -> historyRepository.appendDecision(
+                                                decision(instanceId, WorkflowEntryType.DECISION, "[]", null, commandId),
+                                                tx)))
+                                .map(v -> commandId))
+                        .compose(commandId -> historyRepository
+                                .listRange(instanceId, 1L, 5L, pool)
+                                .compose(full -> historyRepository
+                                        .listRange(instanceId, 1L, 4L, pool)
+                                        .compose(upToFour -> historyRepository
+                                                .listRange(instanceId, 5L, 5L, pool)
+                                                .map(empty -> new Object[] {commandId, full, upToFour, empty}))))
+                        .onSuccess(result -> ctx.verify(() -> {
+                            @SuppressWarnings("unchecked")
+                            java.util.List<CommittedHistoryEntry> full =
+                                    (java.util.List<CommittedHistoryEntry>) result[1];
+                            @SuppressWarnings("unchecked")
+                            java.util.List<CommittedHistoryEntry> upToFour =
+                                    (java.util.List<CommittedHistoryEntry>) result[2];
+                            @SuppressWarnings("unchecked")
+                            java.util.List<CommittedHistoryEntry> empty =
+                                    (java.util.List<CommittedHistoryEntry>) result[3];
+
+                            assertEquals(
+                                    java.util.List.of(2L, 4L, 5L),
+                                    full.stream().map(e -> e.entry().sequence()).toList());
+                            assertEquals(
+                                    java.util.List.of(
+                                            WorkflowEntryType.DECISION,
+                                            WorkflowEntryType.COMPLETED,
+                                            WorkflowEntryType.DECISION),
+                                    full.stream()
+                                            .map(e -> e.entry().entryType())
+                                            .toList());
+                            assertEquals(
+                                    java.util.Arrays.asList("SIGNAL", null, "SIGNAL"),
+                                    full.stream()
+                                            .map(CommittedHistoryEntry::commandKind)
+                                            .toList());
+                            assertEquals(result[0], full.get(0).entry().commandId());
+                            assertEquals("start", full.get(0).entry().stepId());
+                            assertEquals(
+                                    java.util.List.of(2L, 4L),
+                                    upToFour.stream()
+                                            .map(e -> e.entry().sequence())
+                                            .toList());
+                            assertTrue(empty.isEmpty());
+                            ctx.completeNow();
+                        }))
+                        .onFailure(ctx::failNow))
+                .onFailure(ctx::failNow);
+    }
+
+    private static dev.vertique.workflow.engine.spi.DecisionEntry decision(
+            WorkflowInstanceId id, WorkflowEntryType type, String patch, String state, Long commandId) {
+        return new dev.vertique.workflow.engine.spi.DecisionEntry(
+                id,
+                type,
+                commandId,
                 "start",
                 "outcome",
                 "default",
