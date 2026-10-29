@@ -14,6 +14,8 @@ import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
+import dev.vertique.workflow.registry.store.DefinitionLifecycleChange.ActivationOperation;
+import dev.vertique.workflow.registry.store.DefinitionLifecycleChange.VersionOperation;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
@@ -50,6 +52,11 @@ import java.util.function.Supplier;
  * stored document text for a document row, each checked against the hash of the row. Only then is the durable change
  * committed.
  *
+ * <p>With a {@link dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycleListener} bound, every operation
+ * reports the change it attempted once its future completes, as a change or as a failure; the actor is captured on the
+ * calling thread, before the operation is queued, and the result of the operation is returned unchanged. An accepted
+ * repeat is reported like any other change.
+ *
  * <p>Publishing and reinstating build a plan, so a recording-only node ({@code workflow.executor.enabled=false}) refuses
  * both with {@link WorkflowNodeRoleException}; deprecating, retiring and the activation operations need no build and
  * run on every node.
@@ -63,6 +70,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private final DefinitionApplyQueue queue;
     private final WorkflowCodeDefinitionCatalog catalog;
     private final boolean executorNode;
+    private final DefinitionLifecycleEvents events;
 
     /** Constructs a lifecycle over an empty code catalog, for unit tests only. */
     DefaultWorkflowDefinitionLifecycle(
@@ -83,7 +91,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         this(store, registry, loaders, queue, catalog, Optional.empty());
     }
 
-    @Inject
+    /** Constructs a lifecycle that announces no change. */
     DefaultWorkflowDefinitionLifecycle(
             WorkflowDefinitionRegistryStore store,
             Provider<WorkflowRegistry> registry,
@@ -91,88 +99,94 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             DefinitionApplyQueue queue,
             WorkflowCodeDefinitionCatalog catalog,
             Optional<WorkflowExecutorConfig> executorConfig) {
+        this(store, registry, loaders, queue, catalog, executorConfig, DefinitionLifecycleEvents.disabled());
+    }
+
+    @Inject
+    DefaultWorkflowDefinitionLifecycle(
+            WorkflowDefinitionRegistryStore store,
+            Provider<WorkflowRegistry> registry,
+            Set<PersistedDefinitionLoader> loaders,
+            DefinitionApplyQueue queue,
+            WorkflowCodeDefinitionCatalog catalog,
+            Optional<WorkflowExecutorConfig> executorConfig,
+            DefinitionLifecycleEvents events) {
         this.executorNode = executorConfig.map(WorkflowExecutorConfig::enabled).orElse(true);
         this.store = Objects.requireNonNull(store, "store");
         this.registry = registry;
         this.loaders = loaders;
         this.queue = queue;
         this.catalog = catalog;
+        this.events = events;
     }
 
     @Override
     public Future<Void> publish(DefinitionKey key) {
-        try {
+        return events.around(events.version(VersionOperation.PUBLISH, key), () -> {
             Objects.requireNonNull(key, "key");
             requireExecutorNode("publish");
             return queue.submit(key.definitionId(), () -> publishQueued(key));
-        } catch (RuntimeException e) {
-            return Future.failedFuture(e);
-        }
+        });
     }
 
     @Override
     public Future<Void> deprecate(DefinitionKey key) {
-        try {
+        return events.around(events.version(VersionOperation.DEPRECATE, key), () -> {
             Objects.requireNonNull(key, "key");
             return queue.submit(key.definitionId(), () -> commitDeprecation(key, true));
-        } catch (RuntimeException e) {
-            return Future.failedFuture(e);
-        }
+        });
     }
 
     @Override
     public Future<Void> retire(DefinitionKey key) {
-        try {
+        return events.around(events.version(VersionOperation.RETIRE, key), () -> {
             Objects.requireNonNull(key, "key");
             return queue.submit(key.definitionId(), () -> retireQueued(key));
-        } catch (RuntimeException e) {
-            return Future.failedFuture(e);
-        }
+        });
     }
 
     @Override
     public Future<Void> reinstate(DefinitionKey key) {
-        try {
+        return events.around(events.version(VersionOperation.REINSTATE, key), () -> {
             Objects.requireNonNull(key, "key");
             requireExecutorNode("reinstate");
             return queue.submit(key.definitionId(), () -> reinstateQueued(key));
-        } catch (RuntimeException e) {
-            return Future.failedFuture(e);
-        }
+        });
     }
 
     @Override
     public Future<Void> activate(String scopeKey, String definitionId, String targetScopeKey, long version) {
-        try {
-            DefinitionActivation activation =
-                    new DefinitionActivation(scopeKey, definitionId, targetScopeKey, version, Instant.now());
-            return queue.submit(definitionId, () -> store.putActivation(activation));
-        } catch (RuntimeException e) {
-            return Future.failedFuture(e);
-        }
+        return events.around(
+                events.activation(ActivationOperation.ACTIVATE, scopeKey, definitionId, targetScopeKey, version),
+                () -> {
+                    DefinitionActivation activation =
+                            new DefinitionActivation(scopeKey, definitionId, targetScopeKey, version, Instant.now());
+                    return queue.submit(definitionId, () -> store.putActivation(activation));
+                });
     }
 
     @Override
     public Future<Void> deactivateDefault(String definitionId) {
-        try {
-            new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
-            return removeRecord(WorkflowScopes.DEFAULT, definitionId);
-        } catch (RuntimeException e) {
-            return Future.failedFuture(e);
-        }
+        return events.around(
+                events.activation(
+                        ActivationOperation.DEACTIVATE_DEFAULT, WorkflowScopes.DEFAULT, definitionId, null, null),
+                () -> {
+                    new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
+                    return removeRecord(WorkflowScopes.DEFAULT, definitionId);
+                });
     }
 
     @Override
     public Future<Void> follow(String scopeKey, String definitionId) {
-        try {
-            new DefinitionKey(scopeKey, definitionId, 1);
-            if (WorkflowScopes.DEFAULT.equals(scopeKey))
-                throw new IllegalArgumentException(
-                        "the default scope cannot follow itself; clear its record with deactivateDefault");
-            return removeRecord(scopeKey, definitionId);
-        } catch (RuntimeException e) {
-            return Future.failedFuture(e);
-        }
+        return events.around(
+                events.activation(ActivationOperation.FOLLOW, scopeKey, definitionId, WorkflowScopes.DEFAULT, null),
+                () -> {
+                    new DefinitionKey(scopeKey, definitionId, 1);
+                    if (WorkflowScopes.DEFAULT.equals(scopeKey))
+                        throw new IllegalArgumentException(
+                                "the default scope cannot follow itself; clear its record with deactivateDefault");
+                    return removeRecord(scopeKey, definitionId);
+                });
     }
 
     @Override

@@ -281,9 +281,10 @@ public class InMemoryWorkflowDefinitionRegistryStore
         if (old == null) {
             rows.put(record.key(), withStatus(record, DefinitionStatus.AVAILABLE));
             documents.put(record.key(), document);
-            activateFirstPublication(
+            boolean activated = activateFirstPublication(
                     record.key(), activateDefault, record.provenance().loadedAt());
-            return Future.succeededFuture(ReconcileOutcome.INSERTED);
+            return Future.succeededFuture(
+                    activated ? ReconcileOutcome.INSERTED_AND_ACTIVATED : ReconcileOutcome.INSERTED);
         }
         if (old.kind() != DefinitionKind.DOCUMENT) return Future.succeededFuture(ReconcileOutcome.KIND_CONFLICT);
         if (!old.planHash().equals(record.planHash()) || !document.equals(documents.get(record.key())))
@@ -300,9 +301,10 @@ public class InMemoryWorkflowDefinitionRegistryStore
         WorkflowDefinitionRecord old = rows.get(record.key());
         if (old == null) {
             rows.put(record.key(), withStatus(record, DefinitionStatus.AVAILABLE));
-            activateFirstPublication(
+            boolean activated = activateFirstPublication(
                     record.key(), activateDefault, record.provenance().loadedAt());
-            return Future.succeededFuture(ReconcileOutcome.INSERTED);
+            return Future.succeededFuture(
+                    activated ? ReconcileOutcome.INSERTED_AND_ACTIVATED : ReconcileOutcome.INSERTED);
         }
         if (old.kind() != DefinitionKind.CODE) return Future.succeededFuture(ReconcileOutcome.KIND_CONFLICT);
         if (old.planHash().equals(record.planHash())) {
@@ -567,11 +569,11 @@ public class InMemoryWorkflowDefinitionRegistryStore
         return current != null && current.version() == key.definitionVersion();
     }
 
-    private void activateFirstPublication(DefinitionKey key, boolean activateDefault, Instant at) {
-        if (!activateDefault) return;
+    private boolean activateFirstPublication(DefinitionKey key, boolean activateDefault, Instant at) {
+        if (!activateDefault) return false;
         ActivationSlot slot = new ActivationSlot(WorkflowScopes.DEFAULT, key.definitionId());
         DefinitionActivation current = activations.get(slot);
-        if (current != null && current.version() >= key.definitionVersion()) return;
+        if (current != null && current.version() >= key.definitionVersion()) return false;
         activations.put(
                 slot,
                 new DefinitionActivation(
@@ -580,6 +582,7 @@ public class InMemoryWorkflowDefinitionRegistryStore
                         WorkflowScopes.DEFAULT,
                         key.definitionVersion(),
                         at));
+        return true;
     }
 
     private static WorkflowDefinitionRecord withStatus(WorkflowDefinitionRecord row, DefinitionStatus status) {

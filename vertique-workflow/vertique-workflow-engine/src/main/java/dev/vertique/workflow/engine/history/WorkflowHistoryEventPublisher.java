@@ -434,28 +434,8 @@ public final class WorkflowHistoryEventPublisher {
 
     /** An action of {@code null} announces commits only: no failure is reported and no actor is captured. */
     Attempt attempt(@Nullable WorkflowHistoryFailure.Action action, @Nullable WorkflowInstanceId id) {
-        return new Attempt(action, id, action == null ? unattributed() : captureActor());
+        return new Attempt(action, id, action == null ? CapturedActor.unattributed() : CapturedActor.capture(actors));
     }
-
-    private static Actor unattributed() {
-        return new Actor(new HistoryActor(HistoryActor.Kind.NONE, null, null), null, HistoryAttribution.ABSENT);
-    }
-
-    /** Captures the actor first, before any asynchronous hop; a failed capture falls back to no actor. */
-    private Actor captureActor() {
-        try {
-            CommandActor actor = actors.get();
-            return new Actor(
-                    new HistoryActor(HistoryActor.Kind.valueOf(actor.kind().name()), actor.id(), actor.reason()),
-                    actor.onBehalfOf(),
-                    HistoryAttribution.valueOf(actor.attribution().name()));
-        } catch (RuntimeException failure) {
-            log.warn("The actor of a workflow action could not be captured; it is reported as absent", failure);
-            return unattributed();
-        }
-    }
-
-    private record Actor(HistoryActor actor, @Nullable String onBehalfOf, HistoryAttribution attribution) {}
 
     /** One attempt of an action: its identity, its captured actor and whether its failure was reported. */
     static final class Attempt {
@@ -468,7 +448,9 @@ public final class WorkflowHistoryEventPublisher {
         volatile @Nullable WorkflowInstanceId instanceId;
 
         private Attempt(
-                @Nullable WorkflowHistoryFailure.Action action, @Nullable WorkflowInstanceId id, Actor captured) {
+                @Nullable WorkflowHistoryFailure.Action action,
+                @Nullable WorkflowInstanceId id,
+                CapturedActor captured) {
             this.action = action;
             this.instanceId = id;
             this.actor = captured.actor();

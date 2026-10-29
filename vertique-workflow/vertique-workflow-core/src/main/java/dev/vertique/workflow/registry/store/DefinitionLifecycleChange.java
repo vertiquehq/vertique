@@ -105,7 +105,8 @@ public sealed interface DefinitionLifecycleChange {
      * @param operation      what was done
      * @param scopeKey       the scope whose default changed
      * @param definitionId   the definition
-     * @param targetScopeKey the scope followed, only for {@link ActivationOperation#FOLLOW}; otherwise {@code null}
+     * @param targetScopeKey the scope that owns the version for {@link ActivationOperation#ACTIVATE}, the scope followed for
+     *                       {@link ActivationOperation#FOLLOW}; otherwise {@code null}
      * @param version        the version made the default, or {@code null} when none
      * @param actor          who did it
      * @param onBehalfOf     the subject acted for, or {@code null}

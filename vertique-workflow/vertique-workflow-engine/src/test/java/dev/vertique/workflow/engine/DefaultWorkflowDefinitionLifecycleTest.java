@@ -55,8 +55,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  */
 class DefaultWorkflowDefinitionLifecycleTest {
 
-    private static final DefinitionKey KEY = new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1);
-    private static final String PLAN_HASH = "a".repeat(64);
+    static final DefinitionKey KEY = new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 1);
+    static final String PLAN_HASH = "a".repeat(64);
     private static final String OTHER_HASH = "b".repeat(64);
 
     /** The contract of the definition the stored documents of these tests compile to. */
@@ -879,7 +879,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         return row(status, PLAN_HASH, DefinitionKind.DOCUMENT);
     }
 
-    private static WorkflowDefinitionRecord row(DefinitionStatus status, String planHash, DefinitionKind kind) {
+    static WorkflowDefinitionRecord row(DefinitionStatus status, String planHash, DefinitionKind kind) {
         Instant now = Instant.parse("2026-01-01T00:00:00Z");
         return new WorkflowDefinitionRecord(
                 KEY,
@@ -902,7 +902,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
         return new DefaultWorkflowDefinitionLifecycle(store, () -> registry, loaders, new DefinitionApplyQueue());
     }
 
-    private static PersistedDefinitionLoader publishingLoader() {
+    static PersistedDefinitionLoader publishingLoader() {
         return publishingLoader(new CompletingDefinition());
     }
 
@@ -1171,7 +1171,7 @@ class DefaultWorkflowDefinitionLifecycleTest {
     }
 
     /** Behaves like a registry table for one key: reads reflect the committed status and can be made to fail. */
-    private static final class ActivationStore implements WorkflowDefinitionRegistryStore {
+    static final class ActivationStore implements WorkflowDefinitionRegistryStore {
         final Deque<Future<Void>> completions = new ArrayDeque<>();
         Supplier<Future<Void>> completionOutcome;
         DefinitionStatus status = DefinitionStatus.CANDIDATE;
