@@ -410,8 +410,9 @@ final class ExecutorLoop {
         } catch (Exception | LinkageError | AssertionError e) {
             claimed = Future.failedFuture(e);
         }
-        return claimed.map(result -> {
-                    if (result == null || result.isEmpty()) {
+        return claimed.map(claimResult -> {
+                    Optional<ClaimedCommand> result = Objects.requireNonNullElse(claimResult, Optional.empty());
+                    if (result.isEmpty()) {
                         releasePlans.run();
                         release();
                         return false;
