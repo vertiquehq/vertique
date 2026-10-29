@@ -12,6 +12,7 @@ import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
+import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -82,6 +83,7 @@ public final class WorkflowEngineParts {
     private final ContextHolder contextHolder;
     private final WorkflowActorMapper actorMapper;
     private final Optional<WorkflowHistoryRedactor> historyRedactor;
+    private final WorkflowHistoryEventPublisher historyPublisher;
 
     private WorkflowEngineParts(Builder b) {
         this.txRunner = Objects.requireNonNull(b.txRunner, "txRunner");
@@ -114,6 +116,7 @@ public final class WorkflowEngineParts {
         this.contextHolder = Objects.requireNonNull(b.contextHolder, "contextHolder");
         this.actorMapper = Objects.requireNonNull(b.actorMapper, "actorMapper");
         this.historyRedactor = Objects.requireNonNull(b.historyRedactor, "historyRedactor");
+        this.historyPublisher = Objects.requireNonNull(b.historyPublisher, "historyPublisher");
     }
 
     /**
@@ -287,6 +290,14 @@ public final class WorkflowEngineParts {
     }
 
     /**
+     * The publisher that tells the history listeners what a committed transaction wrote and which actions failed; a
+     * {@linkplain WorkflowHistoryEventPublisher#disabled() disabled} one by default, which announces nothing.
+     */
+    public WorkflowHistoryEventPublisher historyPublisher() {
+        return historyPublisher;
+    }
+
+    /**
      * The producer of the payload schemas a new task's decision snapshot stores; empty by default, in which case the
      * tasks it creates carry no schemas and the executor alone validates their completions.
      */
@@ -334,6 +345,7 @@ public final class WorkflowEngineParts {
         private ContextHolder contextHolder = new DefaultContextHolder();
         private WorkflowActorMapper actorMapper = new DefaultWorkflowActorMapper();
         private Optional<WorkflowHistoryRedactor> historyRedactor = Optional.empty();
+        private WorkflowHistoryEventPublisher historyPublisher = WorkflowHistoryEventPublisher.disabled();
 
         private Builder() {}
 
@@ -509,6 +521,12 @@ public final class WorkflowEngineParts {
         /** Sets the redactor of the values the instance history must not hold; empty for none. */
         public Builder historyRedactor(Optional<WorkflowHistoryRedactor> historyRedactor) {
             this.historyRedactor = Objects.requireNonNull(historyRedactor, "historyRedactor");
+            return this;
+        }
+
+        /** Sets the publisher of history announcements; the default announces nothing. */
+        public Builder historyPublisher(WorkflowHistoryEventPublisher historyPublisher) {
+            this.historyPublisher = Objects.requireNonNull(historyPublisher, "historyPublisher");
             return this;
         }
 

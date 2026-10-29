@@ -19,6 +19,7 @@ import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.executor.StartPayloadValidation;
 import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.history.DecisionLog;
+import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandActor;
@@ -48,6 +49,7 @@ import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.exception.WorkflowSignalLimitException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
 import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
+import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
@@ -97,6 +99,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -274,6 +277,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** Routes the intents of a segment; told which command a segment executes so that it can attribute them. */
     private final RecorderRouter recorderRouter;
 
+    /** Announces the history a committed transaction wrote, and the actions that failed, to the history listeners. */
+    private final WorkflowHistoryEventPublisher historyPublisher;
+
     @Inject
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -304,8 +310,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             Provider<WorkflowExecutorControl> executorControl,
             Optional<WorkflowRecordingConfig> recording,
             CommandActors actors,
-            RecorderRouter recorderRouter) {
+            RecorderRouter recorderRouter,
+            WorkflowHistoryEventPublisher historyPublisher) {
         WorkflowRecordingConfig recordingConfig = recording.orElseGet(WorkflowRecordingConfig::defaults);
+        this.historyPublisher = historyPublisher;
         this.actors = actors;
         this.recorderRouter = recorderRouter;
         this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
@@ -406,7 +414,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 Optional.empty(),
                 key -> Optional.empty(),
                 definitionReads,
-                CommandActors.ambient());
+                CommandActors.ambient(),
+                WorkflowHistoryEventPublisher.disabled());
     }
 
     /**
@@ -493,7 +502,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             Optional<WorkflowPlanSchemaProducer> schemaProducer,
             Function<DefinitionKey, Optional<DefinitionFailure>> failingMarks,
             @Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
-            CommandActors actors) {
+            CommandActors actors,
+            WorkflowHistoryEventPublisher historyPublisher) {
+        this.historyPublisher = historyPublisher;
         this.actors = actors;
         this.recorderRouter = recorders;
         this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
@@ -842,10 +853,15 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         }
 
         String startScope = cmd.startScope() == null ? WorkflowScopes.DEFAULT : cmd.startScope();
-        return dedup.findStart(startScope, cmd.definitionId(), cmd.idempotencyKey(), tx)
-                .compose(existing -> existing.isPresent()
-                        ? replayedStart(cmd, existing.get(), tx)
-                        : firstStart(cmd, startScope, tx));
+        // A replay, or a start that lost the dedup claim, answers with an instance whose history is not this
+        // transaction's; only the winner's creation is announced.
+        AtomicBoolean created = new AtomicBoolean();
+        return historyPublisher.aroundCreating(
+                WorkflowHistoryFailure.Action.START, tx, created::get, () -> dedup.findStart(
+                                startScope, cmd.definitionId(), cmd.idempotencyKey(), tx)
+                        .compose(existing -> existing.isPresent()
+                                ? replayedStart(cmd, existing.get(), tx)
+                                : firstStart(cmd, startScope, created, tx)));
     }
 
     /**
@@ -931,7 +947,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * <p>A start through a store that cannot read on the caller's transaction fails: the node keeps no copy of the
      * definition table to select from.
      */
-    private Future<WorkflowInstanceId> firstStart(StartCommand cmd, String startScope, SqlClient tx) {
+    private Future<WorkflowInstanceId> firstStart(
+            StartCommand cmd, String startScope, AtomicBoolean created, SqlClient tx) {
         WorkflowInvalidPayloadException oversized = oversizedKey(cmd);
         if (oversized == null) {
             oversized = oversizedSubject(cmd.subjectRef());
@@ -946,12 +963,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         }
         return definitionReads
                 .selectionRead(startScope, cmd.definitionId(), tx)
-                .compose(read -> firstStartFromRows(cmd, startScope, read, tx));
+                .compose(read -> firstStartFromRows(cmd, startScope, read, created, tx));
     }
 
     /** Runs the version the selection read chose; no plan is loaded and no payload class is read. */
     private Future<WorkflowInstanceId> firstStartFromRows(
-            StartCommand cmd, String startScope, StartSelection read, SqlClient tx) {
+            StartCommand cmd, String startScope, StartSelection read, AtomicBoolean created, SqlClient tx) {
         StartVersion chosen;
         try {
             chosen = StartVersionSelection.select(
@@ -981,6 +998,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 startScope,
                 new Selected(key.scopeKey(), key.definitionId(), key.definitionVersion(), chosen.planHash()),
                 cmd.payload(),
+                created,
                 tx);
     }
 
@@ -993,7 +1011,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * uncontended.
      */
     private Future<WorkflowInstanceId> claimAndCreate(
-            StartCommand cmd, String startScope, Selected selected, Object payload, SqlClient tx) {
+            StartCommand cmd,
+            String startScope,
+            Selected selected,
+            Object payload,
+            AtomicBoolean created,
+            SqlClient tx) {
         String fingerprint = "definitionVersion=" + selected.version();
 
         UUID newId = UUID.randomUUID();
@@ -1008,6 +1031,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         return replayedStart(cmd, result.workflowId(), tx);
                     }
                     // Winner: proceed with instance creation.
+                    created.set(true);
                     return doCreateInstance(cmd, startScope, selected, payload, proposedId, tx);
                 });
     }
@@ -1200,6 +1224,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     String message,
                     SqlClient tx) {
                 return emitInstanceFailed(instance, historySequence, reasonCode, message, tx);
+            }
+
+            @Override
+            public <T> Future<T> announcing(WorkflowInstanceId instance, SqlClient tx, Supplier<Future<T>> work) {
+                return historyPublisher.aroundLocked(null, instance, tx, work);
             }
         };
     }
@@ -1992,6 +2021,33 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @Nullable String branchId,
             @Nullable DurableMetadata carrier,
             SqlClient tx) {
+        return historyPublisher.around(
+                WorkflowHistoryFailure.Action.SIGNAL,
+                id,
+                tx,
+                () -> recordSignalUnannounced(
+                        id,
+                        callerContractName,
+                        signalName,
+                        payload,
+                        signalDedupKey,
+                        forkStepId,
+                        branchId,
+                        carrier,
+                        tx));
+    }
+
+    /** The recording of {@link #recordSignal}, inside the announcement of the history it writes. */
+    private Future<Void> recordSignalUnannounced(
+            WorkflowInstanceId id,
+            @Nullable String callerContractName,
+            String signalName,
+            Object payload,
+            String signalDedupKey,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            @Nullable DurableMetadata carrier,
+            SqlClient tx) {
         String oversized = oversizedName(signalName, forkStepId, branchId);
         if (oversized != null) {
             return Future.failedFuture(new WorkflowInvalidPayloadException(
@@ -2205,7 +2261,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         }
         // The reason is stored in the history, the instance and the events: bound it once, here.
         String reason = boundedReason(callerReason);
+        return historyPublisher.around(
+                WorkflowHistoryFailure.Action.CANCEL, id, tx, () -> cancelUnannounced(id, reason, tx));
+    }
 
+    /** The cancellation of {@link #cancel(WorkflowInstanceId, String, SqlClient)}, inside the announcement of its history. */
+    private Future<Void> cancelUnannounced(WorkflowInstanceId id, String reason, SqlClient tx) {
         // Non-locking read: same lock-order rationale as signal(). The optimistic UPDATE catches
         // concurrent writes; using findByIdForUpdate would invert the timers-before-instances
         // invariant and cause deadlocks under cancel-vs-fire races.
@@ -2463,6 +2524,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         if (invalidClient != null) {
             return invalidClient;
         }
+        return historyPublisher.around(WorkflowHistoryFailure.Action.RETRY, id, tx, () -> retryUnannounced(id, tx));
+    }
+
+    /** The retry of {@link #retry(WorkflowInstanceId, SqlClient)}, inside the announcement of its history. */
+    private Future<Void> retryUnannounced(WorkflowInstanceId id, SqlClient tx) {
         return underExecutionLock(id, tx, () -> instances.findById(id, tx))
                 .compose((Optional<WorkflowInstance> found) -> {
                     if (found.isEmpty()) {
@@ -2554,7 +2620,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
 
-        return migrationExecutor.record(id, null, targetVersion, tx);
+        return historyPublisher.around(
+                WorkflowHistoryFailure.Action.MIGRATE,
+                id,
+                tx,
+                () -> migrationExecutor.record(id, null, targetVersion, tx));
     }
 
     /**
@@ -2576,7 +2646,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
         Objects.requireNonNull(targetScope, "targetScope");
-        return migrationExecutor.record(id, targetScope, targetVersion, tx);
+        return historyPublisher.around(
+                WorkflowHistoryFailure.Action.MIGRATE,
+                id,
+                tx,
+                () -> migrationExecutor.record(id, targetScope, targetVersion, tx));
     }
 
     // --- State machine driver — extracted to WorkflowTransitionDriver (slice C5) ---
@@ -2620,7 +2694,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
 
-        return taskLifecycle.taskCompleted(cmd, tx);
+        return aroundTask(
+                WorkflowHistoryFailure.Action.TASK_COMPLETE,
+                cmd.taskId(),
+                tx,
+                () -> taskLifecycle.taskCompleted(cmd, tx));
     }
 
     /**
@@ -2645,7 +2723,36 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
 
-        return taskLifecycle.taskReassigned(cmd, tx);
+        return aroundTask(
+                WorkflowHistoryFailure.Action.TASK_REASSIGN,
+                cmd.taskId(),
+                tx,
+                () -> taskLifecycle.taskReassigned(cmd, tx));
+    }
+
+    /**
+     * Runs a task action inside the announcement of the history it writes to the instance that owns the task. The
+     * owner is read only when a history listener is bound; a task that cannot be read leaves the action to refuse it,
+     * and only its failure is then reported.
+     */
+    private <T> Future<T> aroundTask(
+            WorkflowHistoryFailure.Action action, UUID taskId, SqlClient tx, Supplier<Future<T>> work) {
+        if (!historyPublisher.hasListeners()) {
+            return work.get();
+        }
+        return taskOwner(taskId, tx).compose(owner -> historyPublisher.around(action, owner, tx, work));
+    }
+
+    /** The instance that owns the task, or null when the task cannot be read. */
+    private Future<WorkflowInstanceId> taskOwner(UUID taskId, SqlClient tx) {
+        try {
+            return taskStore
+                    .findById(taskId, tx)
+                    .map(task -> task.map(TaskRecord::workflowId).orElse(null))
+                    .recover(failure -> Future.succeededFuture(null));
+        } catch (RuntimeException failure) {
+            return Future.succeededFuture(null);
+        }
     }
 
     // --- Internal helpers ---
