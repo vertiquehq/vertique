@@ -672,69 +672,6 @@ class WorkflowHistoryEventPublisherTest {
     }
 
     @Test
-    @DisplayName("an assertion or linkage error from a listener stops no other listener and alters no result")
-    void errorsFromListenersAreContained() {
-        // Given listeners that throw an AssertionError and a LinkageError, before a recording one
-        WorkflowHistoryListener assertion = new WorkflowHistoryListener() {
-            @Override
-            public void onHistoryCommitted(WorkflowHistoryCommit commit) {
-                throw new AssertionError("listener assertion");
-            }
-
-            @Override
-            public void onHistoryFailed(WorkflowHistoryFailure failure) {
-                throw new AssertionError("listener assertion");
-            }
-        };
-        WorkflowHistoryListener linkage = new WorkflowHistoryListener() {
-            @Override
-            public void onHistoryCommitted(WorkflowHistoryCommit commit) {
-                throw new NoClassDefFoundError("missing");
-            }
-
-            @Override
-            public void onHistoryFailed(WorkflowHistoryFailure failure) {
-                throw new NoClassDefFoundError("missing");
-            }
-        };
-        sequences(0, 1);
-        when(history.listRange(ID, 0L, 1L, PAGE, readClient))
-                .thenReturn(Future.succeededFuture(List.of(committed(1, WorkflowEntryType.START))));
-        WorkflowHistoryEventPublisher publisher = publisher(assertion, linkage, recorder);
-
-        // When an action commits and another fails
-        Future<String> result = publisher.around(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("ok"));
-        completion.complete();
-        Future<String> failed =
-                publisher.around(Action.CANCEL, ID, tx, () -> Future.failedFuture(new RuntimeException()));
-
-        // Then the recording listener got both and the results are the actions' own
-        assertThat(result.result()).isEqualTo("ok");
-        assertThat(failed.failed()).isTrue();
-        assertThat(commits).hasSize(1);
-        assertThat(failures).hasSize(1);
-    }
-
-    @Test
-    @DisplayName("an actor capture that throws an error falls back to no actor")
-    void actorCaptureErrorFallsBack() {
-        // Given an actor capture that throws an AssertionError
-        when(history.nextSequence(ID, tx)).thenReturn(Future.succeededFuture(1L));
-        WorkflowHistoryEventPublisher publisher = publisher(
-                () -> {
-                    throw new AssertionError("capture");
-                },
-                recorder);
-
-        // When the work fails
-        publisher.around(Action.SIGNAL, ID, tx, () -> Future.failedFuture(new RuntimeException("no")));
-
-        // Then it is reported with no actor
-        assertThat(failures).hasSize(1);
-        assertThat(failures.get(0).attribution()).isEqualTo(HistoryAttribution.ABSENT);
-    }
-
-    @Test
     @DisplayName("a work that throws synchronously or fails frees the instance for a later call")
     void failedWorkLeavesTheRegistration() {
         // Given a call whose work throws synchronously, and one whose work fails

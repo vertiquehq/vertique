@@ -292,8 +292,8 @@ and never call them, and they sit outside this module's maturity promise.
   handed to every listener as `WorkflowHistoryCommit`s in sequence order; a range larger than one page arrives as several
   consecutive commits. Nothing is read when the work wrote nothing.
 - **Delivery.** At most once, after the commit, one listener after another, on the thread that completes the read. A listener that
-  throws an `Exception`, `LinkageError`, `AssertionError` or `StackOverflowError` is logged with its stack and the others still run;
-  the same errors from the actor capture are contained and the actor is reported as absent. A read, mapping or settlement failure is
+  throws an `Exception` is logged with its stack and the others still run (an `Error` propagates);
+  an `Exception` from the actor capture is contained and the actor is reported as absent. A read, mapping or settlement failure is
   logged by its exception class only, never by its message, and never reaches the action, whose result is always returned unchanged
   (see the residual risk below).
 - **Order.** Commits of one instance are read on independent pooled connections, so two successive commits can reach a listener out

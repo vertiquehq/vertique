@@ -54,7 +54,7 @@ public record CapturedActor(HistoryActor actor, @Nullable String onBehalfOf, His
     public static CapturedActor capture(Supplier<CommandActor> actors) {
         try {
             return of(actors.get());
-        } catch (Exception | LinkageError | AssertionError | StackOverflowError failure) {
+        } catch (Exception failure) {
             // the exception message can carry identity text, so only its class is logged
             log.warn(
                     "The actor of a workflow action could not be captured ({}); it is reported as absent",

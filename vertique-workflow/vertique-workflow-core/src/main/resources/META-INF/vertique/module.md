@@ -560,7 +560,7 @@ static WorkflowHistoryListener auditTrail(AuditSink sink) {
 - **At most once.** If the process stops between the commit and the notification, the event is not delivered; the instance history
   stays the source of truth. A history read that fails after the commit is logged and the commit is not delivered. Use
   `WorkflowInstanceHistoryService` to catch up, or an outbox where an event must not be lost.
-- **Isolated.** An `Exception`, `LinkageError`, `AssertionError` or `StackOverflowError` a listener throws is logged and swallowed.
+- **Isolated.** An `Exception` a listener throws is logged and swallowed; an `Error` is a programming error and propagates.
   It reaches neither the engine, the caller nor the other listeners.
 - **Order.** Commits of one instance are read on independent connections, so two successive commits can be delivered out of order.
   Every event carries its `sequence`; a consumer that needs the order sorts by it.

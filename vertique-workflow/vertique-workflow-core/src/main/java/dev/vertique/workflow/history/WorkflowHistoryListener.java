@@ -26,8 +26,8 @@ public interface WorkflowHistoryListener {
 
     /**
      * Receives the history events one committed transaction wrote for an instance.
-     * An {@link Exception}, {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError} thrown by this
-     * callback is caught, logged, and swallowed; it does not affect the enclosing operation or the other listeners.
+     * Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation or the other listeners.
      *
      * @param commit the committed events
      */
@@ -35,8 +35,8 @@ public interface WorkflowHistoryListener {
 
     /**
      * Receives an action that failed, so none of its entries were committed.
-     * An {@link Exception}, {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError} thrown by this
-     * callback is caught, logged, and swallowed; it does not affect the enclosing operation or the other listeners.
+     * Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation or the other listeners.
      *
      * @param failure the failed action
      */

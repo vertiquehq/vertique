@@ -11,9 +11,8 @@ import java.util.function.Consumer;
  * INTERNAL: calls observer-style listeners in isolation, so that nothing a listener throws reaches the action it
  * observes or stops the listeners after it.
  *
- * <p>The containment is the one the other observer dispatchers use: an {@link Exception}, a {@link LinkageError}, an
- * {@link AssertionError} and a {@link StackOverflowError} are handed to the failure callback, and any other
- * {@link Error} propagates.
+ * <p>An {@link Exception} is handed to the failure callback. An {@link Error} is a programming or VM failure and
+ * propagates.
  */
 public final class ListenerDispatch {
 
@@ -33,7 +32,7 @@ public final class ListenerDispatch {
         for (L listener : listeners) {
             try {
                 call.accept(listener);
-            } catch (Exception | LinkageError | AssertionError | StackOverflowError thrown) {
+            } catch (Exception thrown) {
                 onFailure.accept(listener, thrown);
             }
         }
