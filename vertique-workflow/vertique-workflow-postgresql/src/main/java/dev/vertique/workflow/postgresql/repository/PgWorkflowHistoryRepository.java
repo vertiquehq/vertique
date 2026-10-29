@@ -7,9 +7,11 @@ import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
 import dev.vertique.db.postgresql.PgTableNames;
+import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.engine.spi.DecisionEntry;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonArray;
@@ -23,6 +25,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -36,6 +39,12 @@ import java.util.List;
  */
 @Singleton
 public final class PgWorkflowHistoryRepository extends PgSqlRepository implements WorkflowHistoryRepository<SqlClient> {
+
+    /** The entry types a range read returns: every type this node knows except the state baseline. */
+    private static final String[] RANGE_ENTRY_TYPES = Arrays.stream(WorkflowEntryType.values())
+            .filter(type -> type != WorkflowEntryType.STATE_BASELINE)
+            .map(Enum::name)
+            .toArray(String[]::new);
 
     /** Name of the migration instance whose schema mapping places the workflow tables. */
     private static final String INSTANCE_NAME = "workflow";
@@ -55,6 +64,7 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
     private final String sqlListByInstance;
     private final String sqlListRecentByInstance;
     private final String sqlListPage;
+    private final String sqlListRange;
 
     // --- Constructor ---
 
@@ -125,6 +135,22 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
                 + " step_id, outcome, definition_scope_key, definition_id, definition_version, plan_hash,"
                 + " state_version_before, state_version_after, patch_json FROM " + history
                 + " WHERE workflow_id = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT $3";
+
+        // The range read serves the history listeners after a commit: the page columns, the baselines and the entry
+        // types
+        // this node does not know left out, and the kind of the command an entry names (null for an entry that names
+        // none). Only the entry types whose events read the payload select it, and the state patch is never selected,
+        // so a large range does not carry the payloads and patches of its entries.
+        this.sqlListRange = "SELECT h.workflow_id, h.sequence, h.entry_type,"
+                + " CASE WHEN h.entry_type IN ('TASK_CREATED', 'TASK_COMPLETED', 'TASK_REASSIGNED', 'TASK_CANCELLED')"
+                + " THEN h.payload_json END AS payload_json, h.recorded_at,"
+                + " h.entry_version, h.actor_kind, h.actor_id, h.actor_reason, h.on_behalf_of, h.attribution_status,"
+                + " h.executor_id, h.command_id, h.step_id, h.outcome, h.definition_scope_key, h.definition_id,"
+                + " h.definition_version, h.plan_hash, h.state_version_before, h.state_version_after,"
+                + " NULL::jsonb AS patch_json, c.kind AS command_kind FROM " + history + " h LEFT JOIN " + commands
+                + " c ON c.id = h.command_id AND c.workflow_id = h.workflow_id"
+                + " WHERE h.workflow_id = $1 AND h.sequence > $2 AND h.sequence <= $3 AND h.entry_type = ANY($4)"
+                + " ORDER BY h.sequence ASC LIMIT $5";
     }
 
     // --- Write operations ---
@@ -299,5 +325,33 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
                     return entries;
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history listPage")));
+    }
+
+    /**
+     * Returns up to {@code limit} enriched entries of an instance with {@code after < sequence <= upTo}, ascending,
+     * without {@code STATE_BASELINE} entries and entries of a type this node does not know, each with the kind of the
+     * command it names. The payload is read only for the task entry types and the state patch never.
+     *
+     * @param id    the workflow instance id
+     * @param after the sequence the range starts after (exclusive)
+     * @param upTo  the last sequence of the range (inclusive)
+     * @param limit the most entries to return
+     * @param tx    the SQL client or transaction to read with
+     * @return a {@link Future} containing the entries of the page
+     */
+    @Override
+    public Future<List<CommittedHistoryEntry>> listRange(
+            WorkflowInstanceId id, long after, long upTo, int limit, SqlClient tx) {
+        return tx.preparedQuery(sqlListRange)
+                .execute(Tuple.of(id.value(), after, upTo, RANGE_ENTRY_TYPES, limit))
+                .map(rs -> {
+                    List<CommittedHistoryEntry> entries = new ArrayList<>();
+                    var mapper = RowMappers.enrichedWorkflowHistoryEntry();
+                    for (var row : rs) {
+                        entries.add(new CommittedHistoryEntry(mapper.map(row), row.getString("command_kind")));
+                    }
+                    return entries;
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history listRange")));
     }
 }

@@ -200,4 +200,21 @@ public interface WorkflowSegments {
             WorkflowInstanceId instance, long historySequence, String reasonCode, String message, SqlClient tx) {
         return Future.succeededFuture();
     }
+
+    /**
+     * Runs the work the executor does for a claimed command once it holds the instance's execution lock, so that the
+     * history entries it writes are announced when the transaction commits. The work covers the fence, the command's
+     * segment and the settlement.
+     *
+     * <p>The default only runs the work.
+     *
+     * @param instance the instance the command belongs to, whose execution lock the transaction holds
+     * @param tx       the segment's transaction handle
+     * @param work     the work
+     * @param <T>      the result of the work
+     * @return the future of the work, unchanged
+     */
+    default <T> Future<T> announcing(WorkflowInstanceId instance, SqlClient tx, Supplier<Future<T>> work) {
+        return work.get();
+    }
 }

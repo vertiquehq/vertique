@@ -201,7 +201,8 @@ public final class WorkflowEngineFactory {
                 parts.schemaProducer(),
                 planCache.marks()::find,
                 transactionalReads(parts.definitionStore()),
-                new CommandActors(parts.contextHolder(), parts.actorMapper(), parts.executorObservers()));
+                new CommandActors(parts.contextHolder(), parts.actorMapper(), parts.executorObservers()),
+                parts.historyPublisher());
         executorHolder[0] = new WorkflowExecutor(
                 parts.vertx(),
                 parts.executorConfig(),

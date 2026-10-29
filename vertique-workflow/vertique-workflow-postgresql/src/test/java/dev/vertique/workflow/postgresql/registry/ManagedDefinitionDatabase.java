@@ -61,6 +61,7 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycleListener;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
@@ -321,7 +322,8 @@ public final class ManagedDefinitionDatabase {
                 WorkflowDefinitionParserProbe.ParserModule.class,
                 TypeCatalogModule.class,
                 WorkflowSchemaModule.class,
-                SchemaBindings.class
+                SchemaBindings.class,
+                DefinitionEventsModule.class
             })
     public interface AppComponent extends VertiqueApplicationComponent {
 
@@ -370,6 +372,9 @@ public final class ManagedDefinitionDatabase {
         WorkflowDefinitionRegistryStore definitionRegistryStore();
 
         WorkflowDefinitionsConfig workflowDefinitionsConfig();
+
+        /** What the registry reported to its lifecycle listener since the graph started. */
+        RecordingDefinitionListener definitionEvents();
 
         Pool pool();
     }
@@ -779,6 +784,17 @@ public final class ManagedDefinitionDatabase {
                 return type.cast(value);
             }
             return io.vertx.core.json.Json.decodeValue(io.vertx.core.json.Json.encode(value), type);
+        }
+    }
+
+    /** Binds the recording listener, so that every graph of these tests hears the registry's changes. */
+    @Module
+    static class DefinitionEventsModule {
+
+        @Provides
+        @IntoSet
+        static WorkflowDefinitionLifecycleListener definitionEvents(RecordingDefinitionListener recorder) {
+            return recorder;
         }
     }
 

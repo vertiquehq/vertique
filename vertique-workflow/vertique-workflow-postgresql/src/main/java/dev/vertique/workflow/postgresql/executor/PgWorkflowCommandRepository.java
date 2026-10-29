@@ -13,6 +13,7 @@ import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.executor.CommandErrors;
 import dev.vertique.workflow.engine.executor.Deferral;
 import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
+import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.engine.spi.CommandHead;
@@ -26,6 +27,7 @@ import dev.vertique.workflow.engine.spi.SettledCommand;
 import dev.vertique.workflow.engine.spi.TimerCommandSpec;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.history.PendingCommand;
+import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.postgresql.timer.WorkflowTimerCarriers;
@@ -56,6 +58,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.IntToLongFunction;
+import java.util.function.Supplier;
 
 /**
  * PostgreSQL implementation of {@link WorkflowCommandRepository} over {@code workflow_commands} and
@@ -150,6 +153,7 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     private final String blockedByDeadline;
     private final String parkedBefore;
     private final @Nullable DurableContextPropagator propagator;
+    private final Supplier<WorkflowHistoryEventPublisher> historyPublisher;
 
     /**
      * Creates a repository whose tables are not schema-qualified, so they resolve through the connection's default
@@ -207,6 +211,31 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
             DbSchemas schemas,
             WorkflowRecordingConfig recording,
             @Nullable DurableContextPropagator propagator) {
+        this(pool, exceptionMapper, schemas, recording, propagator, WorkflowHistoryEventPublisher::disabled);
+    }
+
+    /**
+     * Creates a repository that also announces the history its own transactions write: the claim of a command, its
+     * deferral and the disposition of its failure.
+     *
+     * @param pool             the connection pool the reads borrow from
+     * @param exceptionMapper  the mapper used to translate SQL errors into typed exceptions
+     * @param schemas          the schema placement; an empty mapping leaves table names unqualified
+     * @param recording        the recording configuration, whose lock timeout bounds {@link #lockInstance}
+     * @param propagator       the propagator that captures the recording caller's durable context, or {@code null} to
+     *                         store no context
+     * @param historyPublisher the publisher that announces the history these transactions write, read on every use
+     *                         because the publisher itself reaches this repository to take execution locks
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment identifier
+     */
+    public PgWorkflowCommandRepository(
+            Pool pool,
+            PgDbExceptionMapper exceptionMapper,
+            DbSchemas schemas,
+            WorkflowRecordingConfig recording,
+            @Nullable DurableContextPropagator propagator,
+            Supplier<WorkflowHistoryEventPublisher> historyPublisher) {
+        this.historyPublisher = historyPublisher;
         this.propagator = propagator;
         this.pool = pool;
         this.exceptionMapper = exceptionMapper;
@@ -298,7 +327,16 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
         // An entry that names a command (by its column or by the command id in its payload) takes the actor that
         // recorded that command, and a command recorded before actors were logged counts as recorded with no identity;
         // any other entry takes the fallback.
+        // An entry that names a command only in its payload takes that command as its command id; it never takes the
+        // command the segment executes, because an entry written under another command's scope (a parked signal
+        // applied during the segment) would be given the wrong one. An entry that records no definition takes the one
+        // the segment's instance is pinned to ($8 to $10), which is null for a segment that migrates the instance: its
+        // pin changes part-way, so its entries keep what their writer recorded.
         this.attributeEntriesToCommands = "UPDATE " + history + " h SET"
+                + " command_id = COALESCE(h.command_id, o.id),"
+                + " definition_scope_key = COALESCE(h.definition_scope_key, $8::text),"
+                + " definition_id = COALESCE(h.definition_id, $9::text),"
+                + " definition_version = COALESCE(h.definition_version, $10::bigint),"
                 + " actor_kind = CASE WHEN o.id IS NULL THEN $3 ELSE COALESCE(o.actor_kind, 'NONE') END,"
                 + " actor_id = CASE WHEN o.id IS NULL THEN $4 ELSE o.actor_id END,"
                 + " actor_reason = CASE WHEN o.id IS NULL THEN $5 ELSE o.actor_reason END,"
@@ -691,8 +729,27 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands defer")));
     }
 
+    /**
+     * Runs the writes of a transaction that holds the instance's execution lock inside the announcement of the history
+     * they write. An action of {@code null} announces commits only.
+     */
+    private <T> Future<T> announcing(
+            @Nullable WorkflowHistoryFailure.Action action,
+            WorkflowInstanceId instance,
+            SqlClient conn,
+            Supplier<Future<T>> work) {
+        return historyPublisher.get().aroundLocked(action, instance, conn, work);
+    }
+
     /** The deferral of a command that was locked and found claimable and still pinned as observed. */
     private Future<Integer> deferLocked(CommandHead head, Row looked, SqlClient conn) {
+        // only the first deferral writes a history entry; a later one writes none and runs no extra statement
+        return looked.getInteger("deferral_count") == 0
+                ? announcing(null, head.workflowId(), conn, () -> writeDeferral(head, looked, conn))
+                : writeDeferral(head, looked, conn);
+    }
+
+    private Future<Integer> writeDeferral(CommandHead head, Row looked, SqlClient conn) {
         int before = looked.getInteger("deferral_count");
         String kind = looked.getString("kind");
         String reason = CommandErrors.notRunnable(kind);
@@ -740,40 +797,51 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                                 Boolean.TRUE.equals(looked.getBoolean("branch_signal")),
                                 false))
                 : Optional.empty();
+        // Only the two branches that write history are announced; an ordinary claim writes none.
         if (met.isPresent()) {
-            EndedInstanceOutcomes.Outcome outcome = met.get();
-            String state = outcome.settlement().name();
-            Future<?> reservation = outcome.reservation() == EndedInstanceOutcomes.Reservation.CANCEL
-                    ? conn.preparedQuery(cancelReservedTask).execute(Tuple.of(id))
-                    : Future.succeededFuture();
-            return reservation
-                    .compose(ignored -> conn.preparedQuery(settleEnded).execute(Tuple.of(id, outcome.reason(), state)))
-                    .compose(ignored -> "TIMER".equals(kind)
-                            ? conn.preparedQuery(cancelTimerRowOfCommand).execute(Tuple.of(id))
-                            : Future.succeededFuture())
-                    .compose(ignored ->
-                            appendCommandHistory(conn, head, entryType(outcome.settlement()), outcome.reason(), state))
-                    .map(ignored -> new ClaimedCommand(
-                            id,
-                            head.workflowId(),
-                            kind,
-                            null,
-                            attempts,
-                            ClaimedCommand.Result.SETTLED_INSTANCE_ENDED,
-                            lapsed));
+            return announcing(null, head.workflowId(), conn, () -> {
+                EndedInstanceOutcomes.Outcome outcome = met.get();
+                String state = outcome.settlement().name();
+                Future<?> reservation = outcome.reservation() == EndedInstanceOutcomes.Reservation.CANCEL
+                        ? conn.preparedQuery(cancelReservedTask).execute(Tuple.of(id))
+                        : Future.succeededFuture();
+                return reservation
+                        .compose(ignored ->
+                                conn.preparedQuery(settleEnded).execute(Tuple.of(id, outcome.reason(), state)))
+                        .compose(ignored -> "TIMER".equals(kind)
+                                ? conn.preparedQuery(cancelTimerRowOfCommand).execute(Tuple.of(id))
+                                : Future.succeededFuture())
+                        .compose(ignored -> appendCommandHistory(
+                                conn, head, entryType(outcome.settlement()), outcome.reason(), state))
+                        .map(ignored -> new ClaimedCommand(
+                                id,
+                                head.workflowId(),
+                                kind,
+                                null,
+                                attempts,
+                                ClaimedCommand.Result.SETTLED_INSTANCE_ENDED,
+                                lapsed));
+            });
         }
         if (attempts >= maxAttempts) {
-            String reason = CommandErrors.attemptsExhausted(kind, attempts, maxAttempts);
-            Future<Void> written = conn.preparedQuery(deadLetter)
-                    .execute(Tuple.of(id, reason))
-                    .compose(ignored ->
-                            appendCommandHistory(conn, head, "COMMAND_DEAD_LETTERED", reason, "DEAD_LETTERED"));
-            if ("START".equals(kind)) {
-                written = written.compose(ignored -> failInstanceOf(
-                        conn, head.workflowId(), id, CommandErrors.Reason.ATTEMPTS_EXHAUSTED.name(), reason, failures));
-            }
-            return written.map(ignored -> new ClaimedCommand(
-                    id, head.workflowId(), kind, null, attempts, ClaimedCommand.Result.DEAD_LETTERED, lapsed));
+            return announcing(null, head.workflowId(), conn, () -> {
+                String reason = CommandErrors.attemptsExhausted(kind, attempts, maxAttempts);
+                Future<Void> written = conn.preparedQuery(deadLetter)
+                        .execute(Tuple.of(id, reason))
+                        .compose(ignored ->
+                                appendCommandHistory(conn, head, "COMMAND_DEAD_LETTERED", reason, "DEAD_LETTERED"));
+                if ("START".equals(kind)) {
+                    written = written.compose(ignored -> failInstanceOf(
+                            conn,
+                            head.workflowId(),
+                            id,
+                            CommandErrors.Reason.ATTEMPTS_EXHAUSTED.name(),
+                            reason,
+                            failures));
+                }
+                return written.map(ignored -> new ClaimedCommand(
+                        id, head.workflowId(), kind, null, attempts, ClaimedCommand.Result.DEAD_LETTERED, lapsed));
+            });
         }
         return conn.preparedQuery(claimTake)
                 .execute(Tuple.of(id, leaseSeconds, claimedBy))
@@ -1238,7 +1306,29 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     public Future<Void> attributeSegmentHistory(
             WorkflowInstanceId instance, long fromSequence, CommandActor fallback, SqlClient tx) {
         return tx.preparedQuery(attributeEntriesToCommands)
-                .execute(withActor(Tuple.of(instance.value(), fromSequence), fallback))
+                .execute(withActor(Tuple.of(instance.value(), fromSequence), fallback)
+                        .addValue(null)
+                        .addValue(null)
+                        .addValue(null))
+                .<Void>mapEmpty()
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history attribute")));
+    }
+
+    @Override
+    public Future<Void> attributeSegmentHistory(
+            WorkflowInstanceId instance,
+            long fromSequence,
+            CommandActor fallback,
+            SegmentCommand command,
+            DefinitionKey pinned,
+            SqlClient tx) {
+        // a migration repins part-way, so no single definition describes its entries
+        boolean pinsEntries = !"MIGRATION".equals(command.kind());
+        return tx.preparedQuery(attributeEntriesToCommands)
+                .execute(withActor(Tuple.of(instance.value(), fromSequence), fallback)
+                        .addValue(pinsEntries ? pinned.scopeKey() : null)
+                        .addValue(pinsEntries ? pinned.definitionId() : null)
+                        .addValue(pinsEntries ? pinned.definitionVersion() : null))
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history attribute")));
     }
@@ -1610,50 +1700,54 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                             if (!locked) {
                                 return Future.succeededFuture(DispositionResult.BUSY);
                             }
-                            return conn.preparedQuery(lockForFailure)
-                                    .execute(Tuple.of(claim.commandId(), claim.token()))
-                                    .compose(rows -> {
-                                        if (rows.size() == 0) {
-                                            return Future.succeededFuture(DispositionResult.CLAIM_LOST);
-                                        }
-                                        Future<?> reopened = "COMPLETION".equals(claim.kind())
-                                                ? conn.preparedQuery(reopenReservedTask)
-                                                        .execute(Tuple.of(claim.commandId()))
-                                                : Future.succeededFuture();
-                                        if (rejectsInsteadOfFailing(claim.kind(), reasonCode)) {
-                                            return reopened.compose(ignored -> conn.preparedQuery(rejectCommand)
-                                                            .execute(Tuple.of(
+                            return announcing(
+                                    WorkflowHistoryFailure.Action.FAILURE_DISPOSITION,
+                                    claim.workflowId(),
+                                    conn,
+                                    () -> conn.preparedQuery(lockForFailure)
+                                            .execute(Tuple.of(claim.commandId(), claim.token()))
+                                            .compose(rows -> {
+                                                if (rows.size() == 0) {
+                                                    return Future.succeededFuture(DispositionResult.CLAIM_LOST);
+                                                }
+                                                Future<?> reopened = "COMPLETION".equals(claim.kind())
+                                                        ? conn.preparedQuery(reopenReservedTask)
+                                                                .execute(Tuple.of(claim.commandId()))
+                                                        : Future.succeededFuture();
+                                                if (rejectsInsteadOfFailing(claim.kind(), reasonCode)) {
+                                                    return reopened.compose(ignored -> conn.preparedQuery(rejectCommand)
+                                                                    .execute(Tuple.of(
+                                                                            claim.commandId(),
+                                                                            claim.token(),
+                                                                            "REJECTED",
+                                                                            lastError)))
+                                                            .compose(ignored -> appendHistory(
+                                                                    conn,
+                                                                    claim.workflowId(),
                                                                     claim.commandId(),
-                                                                    claim.token(),
-                                                                    "REJECTED",
-                                                                    lastError)))
-                                                    .compose(ignored -> appendHistory(
-                                                            conn,
-                                                            claim.workflowId(),
-                                                            claim.commandId(),
-                                                            "COMMAND_REJECTED",
-                                                            new JsonObject()
-                                                                    .put("commandId", claim.commandId())
-                                                                    .put("kind", claim.kind())
-                                                                    .put("reason", lastError),
-                                                            "REJECTED"))
-                                                    .map(ignored -> DispositionResult.REJECTED);
-                                        }
-                                        return reopened.compose(ignored -> conn.preparedQuery(failCommandRow)
-                                                        .execute(Tuple.of(claim.commandId(), lastError)))
-                                                .compose(ignored -> "TIMER".equals(claim.kind())
-                                                        ? conn.preparedQuery(failTimerRow)
-                                                                .execute(Tuple.of(claim.commandId(), lastError))
-                                                        : Future.succeededFuture())
-                                                .compose(ignored -> failInstanceOf(
-                                                        conn,
-                                                        claim.workflowId(),
-                                                        claim.commandId(),
-                                                        reasonCode,
-                                                        lastError,
-                                                        failures))
-                                                .map(ignored -> DispositionResult.APPLIED);
-                                    });
+                                                                    "COMMAND_REJECTED",
+                                                                    new JsonObject()
+                                                                            .put("commandId", claim.commandId())
+                                                                            .put("kind", claim.kind())
+                                                                            .put("reason", lastError),
+                                                                    "REJECTED"))
+                                                            .map(ignored -> DispositionResult.REJECTED);
+                                                }
+                                                return reopened.compose(ignored -> conn.preparedQuery(failCommandRow)
+                                                                .execute(Tuple.of(claim.commandId(), lastError)))
+                                                        .compose(ignored -> "TIMER".equals(claim.kind())
+                                                                ? conn.preparedQuery(failTimerRow)
+                                                                        .execute(Tuple.of(claim.commandId(), lastError))
+                                                                : Future.succeededFuture())
+                                                        .compose(ignored -> failInstanceOf(
+                                                                conn,
+                                                                claim.workflowId(),
+                                                                claim.commandId(),
+                                                                reasonCode,
+                                                                lastError,
+                                                                failures))
+                                                        .map(ignored -> DispositionResult.APPLIED);
+                                            }));
                         }))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_commands failCommand")));
     }

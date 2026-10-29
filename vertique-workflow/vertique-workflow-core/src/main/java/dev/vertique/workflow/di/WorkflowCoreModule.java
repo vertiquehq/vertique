@@ -13,6 +13,7 @@ import dev.vertique.workflow.actor.WorkflowActorMapper;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.history.WorkflowHistoryListener;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.RaceSafetyTargetContributor;
@@ -24,6 +25,7 @@ import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycleListener;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
@@ -176,6 +178,28 @@ public abstract class WorkflowCoreModule {
      */
     @Multibinds
     abstract Set<WorkflowContributor> contributors();
+
+    /**
+     * Declares the empty {@code Set<WorkflowHistoryListener>} multibinding.
+     *
+     * <p>Application modules observe committed instance history by contributing
+     * {@code @Provides @IntoSet WorkflowHistoryListener}.
+     *
+     * @return the (initially empty) set of history listeners
+     */
+    @Multibinds
+    abstract Set<WorkflowHistoryListener> historyListeners();
+
+    /**
+     * Declares the empty {@code Set<WorkflowDefinitionLifecycleListener>} multibinding.
+     *
+     * <p>Application modules observe definition registry changes by contributing
+     * {@code @Provides @IntoSet WorkflowDefinitionLifecycleListener}.
+     *
+     * @return the (initially empty) set of definition lifecycle listeners
+     */
+    @Multibinds
+    abstract Set<WorkflowDefinitionLifecycleListener> definitionLifecycleListeners();
 
     /**
      * INTERNAL framework seam — the framework implementation behind a contract this module

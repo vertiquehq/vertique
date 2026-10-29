@@ -63,11 +63,12 @@ public interface WorkflowDefinitionRegistryStore {
      * inserted as an available definition. For an existing document definition with a matching plan hash,
      * provenance is refreshed; hash drift or a kind mismatch is reported by the outcome.
      *
-     * <p>When {@code activateDefault} is true and, only then, the outcome is {@code INSERTED}, the same transaction
-     * and the same definition id lock also write the default scope's activation record of the id to this version,
-     * unless that record already names a higher version. A failure of either write rolls back both, so the version
-     * is never available without the activation its first publication owed. Any other outcome writes no
-     * activation record.
+     * <p>When {@code activateDefault} is true and, only then, an insert also writes, in the same transaction and under
+     * the same definition id lock, the default scope's activation record of the id to this version, unless that
+     * record already names a higher version. A failure of either write rolls back both, so the version is never
+     * available without the activation its first publication owed. The outcome is {@code INSERTED_AND_ACTIVATED}
+     * when the record was written and {@code INSERTED} when the insert left the record as it was. Any other
+     * outcome writes no activation record.
      *
      * @param record metadata and provenance for the document definition
      * @param document source text associated with the definition
@@ -99,11 +100,12 @@ public interface WorkflowDefinitionRegistryStore {
      * caller to force a replacement. A row of the same key that is a document definition is reported as
      * {@code KIND_CONFLICT}. The status of an existing row is never changed.
      *
-     * <p>When {@code activateDefault} is true and, only then, the outcome is {@code INSERTED}, the same transaction
-     * and the same definition id lock also write the default scope's activation record of the id to this version,
-     * unless that record already names a higher version. A failure of either write rolls back both, so the version
-     * is never available without the activation its first publication owed. Any other outcome writes no
-     * activation record.
+     * <p>When {@code activateDefault} is true and, only then, an insert also writes, in the same transaction and under
+     * the same definition id lock, the default scope's activation record of the id to this version, unless that
+     * record already names a higher version. A failure of either write rolls back both, so the version is never
+     * available without the activation its first publication owed. The outcome is {@code INSERTED_AND_ACTIVATED}
+     * when the record was written and {@code INSERTED} when the insert left the record as it was. Any other
+     * outcome writes no activation record.
      *
      * @param record metadata and provenance for the code definition
      * @param activateDefault whether a first publication also becomes the default scope's current version

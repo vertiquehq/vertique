@@ -62,4 +62,9 @@ public final class HoldingSegments implements WorkflowSegments {
             WorkflowInstanceId instance, long historySequence, String reasonCode, String message, SqlClient tx) {
         return delegate.get().instanceFailed(instance, historySequence, reasonCode, message, tx);
     }
+
+    @Override
+    public <T> Future<T> announcing(WorkflowInstanceId instance, SqlClient tx, Supplier<Future<T>> work) {
+        return delegate.get().announcing(instance, tx, work);
+    }
 }

@@ -173,28 +173,35 @@ final class SegmentRunner {
             if (!locked) {
                 return Future.succeededFuture(Step.BUSY);
             }
-            return commands.fence(claim, tx).compose(fenced -> {
-                if (fenced.isEmpty()) {
-                    return Future.succeededFuture(Step.RELEASE);
-                }
-                if (failing != null && "START".equals(claim.kind())) {
-                    // a new start never runs a version this node evaluated as failing; the failure is deterministic
-                    return Future.failedFuture(new WorkflowDefinitionFailingException(
-                            new DefinitionKey(head.definitionScopeKey(), head.definitionId(), head.definitionVersion()),
-                            failing));
-                }
-                return segments.run(head, claim, fenced.get(), tx, config.maxStepsPerSegment())
-                        .compose(outcome -> switch (outcome) {
-                            case APPLIED ->
-                                settled(commands.complete(claim.commandId(), claim.token(), tx), Step.COMPLETED);
-                            case STALE -> settled(commands.reject(claim.commandId(), claim.token(), tx), Step.REJECTED);
-                            case PIN_MISMATCH -> Future.succeededFuture(Step.RELEASE);
-                            case PARKED -> Future.succeededFuture(Step.PARKED);
-                            case SETTLED_REJECTED -> Future.succeededFuture(Step.REJECTED);
-                            case SETTLED_STALE -> Future.succeededFuture(Step.STALE);
-                            case SETTLED_CANCELLED -> Future.succeededFuture(Step.CANCELLED);
-                        });
-            });
+            // The lock is held, so no other transaction writes to the instance while the history this segment writes
+            // is announced; a failed segment is an internal retry and is not reported.
+            return segments.announcing(claim.workflowId(), tx, () -> fenceAndRun(head, claim, failing, tx));
+        });
+    }
+
+    private Future<Step> fenceAndRun(
+            CommandHead head, ClaimedCommand claim, @Nullable DefinitionFailure failing, SqlClient tx) {
+        return commands.fence(claim, tx).compose(fenced -> {
+            if (fenced.isEmpty()) {
+                return Future.succeededFuture(Step.RELEASE);
+            }
+            if (failing != null && "START".equals(claim.kind())) {
+                // a new start never runs a version this node evaluated as failing; the failure is deterministic
+                return Future.failedFuture(new WorkflowDefinitionFailingException(
+                        new DefinitionKey(head.definitionScopeKey(), head.definitionId(), head.definitionVersion()),
+                        failing));
+            }
+            return segments.run(head, claim, fenced.get(), tx, config.maxStepsPerSegment())
+                    .compose(outcome -> switch (outcome) {
+                        case APPLIED ->
+                            settled(commands.complete(claim.commandId(), claim.token(), tx), Step.COMPLETED);
+                        case STALE -> settled(commands.reject(claim.commandId(), claim.token(), tx), Step.REJECTED);
+                        case PIN_MISMATCH -> Future.succeededFuture(Step.RELEASE);
+                        case PARKED -> Future.succeededFuture(Step.PARKED);
+                        case SETTLED_REJECTED -> Future.succeededFuture(Step.REJECTED);
+                        case SETTLED_STALE -> Future.succeededFuture(Step.STALE);
+                        case SETTLED_CANCELLED -> Future.succeededFuture(Step.CANCELLED);
+                    });
         });
     }
 

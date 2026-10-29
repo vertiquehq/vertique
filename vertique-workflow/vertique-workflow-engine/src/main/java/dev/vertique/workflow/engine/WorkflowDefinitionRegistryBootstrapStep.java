@@ -107,6 +107,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     private final Provider<PlanCache> planCache;
     private final boolean buildDefaultScopeDocuments;
     private final boolean executorNode;
+    private final DefinitionLifecycleEvents events;
 
     @Inject
     WorkflowDefinitionRegistryBootstrapStep(
@@ -119,7 +120,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             Optional<WorkflowPlanSchemaProducer> schemaProducer,
             Provider<PlanCache> planCache,
             Optional<WorkflowDefinitionsConfig> config,
-            Optional<WorkflowExecutorConfig> executorConfig) {
+            Optional<WorkflowExecutorConfig> executorConfig,
+            DefinitionLifecycleEvents events) {
+        this.events = events;
         this.executorNode = executorConfig.map(WorkflowExecutorConfig::enabled).orElse(true);
         this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
         this.planCache = planCache;
@@ -238,7 +241,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         null);
                 return store.find(origin.key()).compose(previous -> work(() -> bindDocument(origin, source, previous))
                         .compose(bound -> store.upsertDocument(bound, origin.document(), origin.activateOnDeploy())
-                                .compose(outcome -> reconcileResult(bound, previous, outcome))
+                                .compose(outcome -> reconcileResult(bound, previous, outcome)
+                                        .onSuccess(done -> events.bootstrapped(bound.key(), outcome)))
                                 .compose(done -> fillSchemas(bound, previous))));
             }));
         }
@@ -313,7 +317,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                                     bound,
                                     definition.definition() == null
                                             || definition.definition().activateOnDeploy())
-                            .compose(outcome -> reconcileResult(bound, previous, outcome))
+                            .compose(outcome -> reconcileResult(bound, previous, outcome)
+                                    .onSuccess(done -> events.bootstrapped(bound.key(), outcome)))
                             .compose(done -> fillSchemas(bound, previous));
                 });
             }));
@@ -423,7 +428,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         boolean code = source.kind() == DefinitionKind.CODE;
         String subject = code ? "code" : "static DOCUMENT";
         switch (outcome) {
-            case INSERTED, UNCHANGED -> {
+            case INSERTED, INSERTED_AND_ACTIVATED, UNCHANGED -> {
                 return Future.succeededFuture();
             }
             case REHASHED -> {

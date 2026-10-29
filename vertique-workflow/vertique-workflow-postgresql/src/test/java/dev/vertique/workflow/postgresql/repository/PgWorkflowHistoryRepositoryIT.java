@@ -11,6 +11,7 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.state.WorkflowEntryType;
@@ -25,6 +26,7 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
+import io.vertx.sqlclient.Tuple;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -216,12 +218,173 @@ public class PgWorkflowHistoryRepositoryIT {
                 .onFailure(ctx::failNow);
     }
 
+    @Test
+    @DisplayName("listRange leaves out an entry whose type this node does not know and returns the rest")
+    void listRangeSkipsAnUnknownEntryType(VertxTestContext ctx) {
+        insertInstance()
+                .compose(instanceId -> pool.withTransaction(tx -> historyRepository
+                                .append(entry(instanceId, 1L, WorkflowEntryType.START), tx)
+                                .compose(v -> tx.preparedQuery("INSERT INTO workflow_history (workflow_id, sequence,"
+                                                + " entry_type, payload_json, recorded_at) VALUES ($1, 2,"
+                                                + " 'ENTRY_FROM_A_NEWER_NODE', '{}'::jsonb, now())")
+                                        .execute(Tuple.of(instanceId.value())))
+                                .compose(v -> historyRepository.append(
+                                        entry(instanceId, 3L, WorkflowEntryType.COMPLETED), tx)))
+                        .compose(v -> historyRepository.listRange(instanceId, 0L, 3L, 1000, pool)))
+                .onSuccess(range -> ctx.verify(() -> {
+                    assertEquals(
+                            java.util.List.of(1L, 3L),
+                            range.stream().map(e -> e.entry().sequence()).toList());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
     private static dev.vertique.workflow.engine.spi.DecisionEntry decision(
             WorkflowInstanceId id, WorkflowEntryType type, String patch, String state) {
+        return decision(id, type, patch, state, null);
+    }
+
+    // =========================================================================
+    // listRange
+    // =========================================================================
+
+    @Test
+    @DisplayName("listRange returns the bounded range ascending, without baselines, with the command kind")
+    void listRangeReturnsBoundedEnrichedRange(VertxTestContext ctx) {
+        insertInstance()
+                .compose(instanceId -> pool.preparedQuery("INSERT INTO workflow_commands (workflow_id, seq, kind,"
+                                + " state, recorded_at, available_at) VALUES ($1, 1, 'SIGNAL', 'COMPLETE', now(),"
+                                + " now()) RETURNING id")
+                        .execute(Tuple.of(instanceId.value()))
+                        .map(rows -> rows.iterator().next().getLong("id"))
+                        .compose(commandId -> pool.withTransaction(tx -> historyRepository
+                                        .append(entry(instanceId, 1L, WorkflowEntryType.START), tx)
+                                        .compose(v -> historyRepository.appendDecision(
+                                                decision(instanceId, WorkflowEntryType.DECISION, "[]", null, commandId),
+                                                tx))
+                                        .compose(v -> historyRepository.appendDecision(
+                                                decision(
+                                                        instanceId,
+                                                        WorkflowEntryType.STATE_BASELINE,
+                                                        null,
+                                                        "{\"a\":1}",
+                                                        commandId),
+                                                tx))
+                                        .compose(v -> historyRepository.append(
+                                                entry(instanceId, 4L, WorkflowEntryType.COMPLETED), tx))
+                                        .compose(v -> historyRepository.appendDecision(
+                                                decision(instanceId, WorkflowEntryType.DECISION, "[]", null, commandId),
+                                                tx)))
+                                .map(v -> commandId))
+                        .compose(commandId -> historyRepository
+                                .listRange(instanceId, 1L, 5L, 1000, pool)
+                                .compose(full -> historyRepository
+                                        .listRange(instanceId, 1L, 4L, 1000, pool)
+                                        .compose(upToFour -> historyRepository
+                                                .listRange(instanceId, 5L, 5L, 1000, pool)
+                                                .map(empty -> new Object[] {commandId, full, upToFour, empty}))))
+                        .onSuccess(result -> ctx.verify(() -> {
+                            @SuppressWarnings("unchecked")
+                            java.util.List<CommittedHistoryEntry> full =
+                                    (java.util.List<CommittedHistoryEntry>) result[1];
+                            @SuppressWarnings("unchecked")
+                            java.util.List<CommittedHistoryEntry> upToFour =
+                                    (java.util.List<CommittedHistoryEntry>) result[2];
+                            @SuppressWarnings("unchecked")
+                            java.util.List<CommittedHistoryEntry> empty =
+                                    (java.util.List<CommittedHistoryEntry>) result[3];
+
+                            assertEquals(
+                                    java.util.List.of(2L, 4L, 5L),
+                                    full.stream().map(e -> e.entry().sequence()).toList());
+                            assertEquals(
+                                    java.util.List.of(
+                                            WorkflowEntryType.DECISION,
+                                            WorkflowEntryType.COMPLETED,
+                                            WorkflowEntryType.DECISION),
+                                    full.stream()
+                                            .map(e -> e.entry().entryType())
+                                            .toList());
+                            assertEquals(
+                                    java.util.Arrays.asList("SIGNAL", null, "SIGNAL"),
+                                    full.stream()
+                                            .map(CommittedHistoryEntry::commandKind)
+                                            .toList());
+                            assertEquals(result[0], full.get(0).entry().commandId());
+                            assertEquals("start", full.get(0).entry().stepId());
+                            assertEquals(
+                                    java.util.List.of(2L, 4L),
+                                    upToFour.stream()
+                                            .map(e -> e.entry().sequence())
+                                            .toList());
+                            assertTrue(empty.isEmpty());
+                            ctx.completeNow();
+                        }))
+                        .onFailure(ctx::failNow))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("listRange returns at most the limit, and the next page starts after the last sequence read")
+    void listRangeReadsInPages(VertxTestContext ctx) {
+        insertInstance()
+                .compose(instanceId -> pool.withTransaction(tx -> historyRepository
+                                .append(entry(instanceId, 1L, WorkflowEntryType.START), tx)
+                                .compose(v -> historyRepository.append(
+                                        entry(instanceId, 2L, WorkflowEntryType.SIDE_EFFECT_RECORDED), tx))
+                                .compose(v -> historyRepository.append(
+                                        entry(instanceId, 3L, WorkflowEntryType.COMPLETED), tx)))
+                        .compose(v -> historyRepository.listRange(instanceId, 0L, 3L, 2, pool))
+                        .compose(first -> historyRepository
+                                .listRange(
+                                        instanceId,
+                                        first.get(first.size() - 1).entry().sequence(),
+                                        3L,
+                                        2,
+                                        pool)
+                                .map(second -> java.util.List.of(first, second))))
+                .onSuccess(pages -> ctx.verify(() -> {
+                    assertEquals(
+                            java.util.List.of(1L, 2L),
+                            pages.get(0).stream().map(e -> e.entry().sequence()).toList());
+                    assertEquals(
+                            java.util.List.of(3L),
+                            pages.get(1).stream().map(e -> e.entry().sequence()).toList());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("listRange selects the payload only for the task entry types and never the state patch")
+    void listRangeSelectsOnlyWhatTheEventsRead(VertxTestContext ctx) {
+        insertInstance()
+                .compose(instanceId -> pool.withTransaction(tx -> tx.preparedQuery(
+                                        "INSERT INTO workflow_history (workflow_id, sequence, entry_type, payload_json,"
+                                                + " recorded_at, patch_json) VALUES ($1, 1, 'TASK_CREATED',"
+                                                + " '{\"taskId\":\"t\"}'::jsonb, now(), '[1]'::jsonb), ($1, 2, 'SIGNAL_RECEIVED',"
+                                                + " '{\"secret\":\"s\"}'::jsonb, now(), '[2]'::jsonb), ($1, 3,"
+                                                + " 'TASK_CANCELLED', '{\"taskId\":\"t\"}'::jsonb, now(), NULL)")
+                                .execute(Tuple.of(instanceId.value())))
+                        .compose(v -> historyRepository.listRange(instanceId, 0L, 3L, 1000, pool)))
+                .onSuccess(range -> ctx.verify(() -> {
+                    assertEquals(3, range.size());
+                    assertTrue(range.get(0).entry().payloadJson().contains("taskId"));
+                    assertEquals(null, range.get(1).entry().payloadJson());
+                    assertTrue(range.get(2).entry().payloadJson().contains("taskId"));
+                    range.forEach(e -> assertEquals(null, e.entry().patchJson()));
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    private static dev.vertique.workflow.engine.spi.DecisionEntry decision(
+            WorkflowInstanceId id, WorkflowEntryType type, String patch, String state, Long commandId) {
         return new dev.vertique.workflow.engine.spi.DecisionEntry(
                 id,
                 type,
-                null,
+                commandId,
                 "start",
                 "outcome",
                 "default",

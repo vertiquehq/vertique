@@ -222,7 +222,7 @@ public enum WorkflowEntryType {
     /** A parked signal was applied to its step. */
     SIGNAL_APPLIED,
 
-    /** A task decision was recorded. */
+    /** The decision-log entry for an engine step that changes the instance row: what the engine decided at that step. */
     DECISION,
 
     /** A baseline snapshot of the instance state was recorded. */

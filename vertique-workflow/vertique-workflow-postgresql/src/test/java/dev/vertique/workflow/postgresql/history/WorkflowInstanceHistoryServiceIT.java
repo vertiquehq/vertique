@@ -104,16 +104,20 @@ public class WorkflowInstanceHistoryServiceIT {
             assertThat(all.getFirst().sequence()).isEqualTo(1L);
             assertThat(all.getLast().sequence()).isEqualTo(all.size());
 
-            // And the commands and the decisions that followed them carry their actors in order
+            // And the commands and the decisions that followed them carry their commands and actors in order
             HistoryAssert.of(all)
                     .ofTypes(WorkflowEntryType.COMMAND_RECEIVED, WorkflowEntryType.DECISION)
                     .hasSteps(
-                            step(WorkflowEntryType.COMMAND_RECEIVED, null, "NONE ABSENT", null),
+                            step(WorkflowEntryType.COMMAND_RECEIVED, start, "NONE ABSENT", null),
                             step(WorkflowEntryType.DECISION, start, "NONE ABSENT", "wait-task"),
-                            step(WorkflowEntryType.COMMAND_RECEIVED, null, "USER/u-1 VERIFIED", null),
+                            step(WorkflowEntryType.COMMAND_RECEIVED, completion, "USER/u-1 VERIFIED", null),
                             step(WorkflowEntryType.DECISION, completion, "USER/u-1 VERIFIED", "task-decided"),
                             step(WorkflowEntryType.DECISION, completion, "USER/u-1 VERIFIED", "wait-signal"),
-                            step(WorkflowEntryType.COMMAND_RECEIVED, null, "SERVICE/relay-svc for u-2 VERIFIED", null),
+                            step(
+                                    WorkflowEntryType.COMMAND_RECEIVED,
+                                    signal,
+                                    "SERVICE/relay-svc for u-2 VERIFIED",
+                                    null),
                             step(
                                     WorkflowEntryType.DECISION,
                                     signal,

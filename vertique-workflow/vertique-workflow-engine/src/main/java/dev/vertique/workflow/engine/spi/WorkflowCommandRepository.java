@@ -871,6 +871,34 @@ public interface WorkflowCommandRepository<TX> {
     }
 
     /**
+     * Logs who is behind the history entries an executor segment wrote since {@code fromSequence}, as
+     * {@code attributeSegmentHistory} without a command does, and records on the entries what the segment knows about
+     * them: an entry that names a command only in its payload takes that command as its command id, and an entry that
+     * records no definition takes the definition the instance is pinned to. An entry never takes the command the
+     * segment executes, because it may have been written under the scope of another command, such as a parked signal
+     * applied during the segment. A segment that migrates the instance gives no definition at all: its pin changes
+     * part-way, so its entries keep what their writer recorded. An entry that already records a value keeps it. The
+     * default ignores both.
+     *
+     * @param instance     the instance
+     * @param fromSequence the first sequence to attribute
+     * @param fallback     the actor of the command the segment executes
+     * @param command      the command the segment executes
+     * @param pinned       the definition the command's instance was pinned to when the segment began
+     * @param tx           the segment's transaction, which holds the instance's execution lock
+     * @return a {@link Future} that completes when the entries are attributed
+     */
+    default Future<Void> attributeSegmentHistory(
+            WorkflowInstanceId instance,
+            long fromSequence,
+            CommandActor fallback,
+            SegmentCommand command,
+            DefinitionKey pinned,
+            TX tx) {
+        return attributeSegmentHistory(instance, fromSequence, fallback, tx);
+    }
+
+    /**
      * Consumes the mark of an instance that existed before the decision log and has not logged its full state: answers
      * whether the instance still owed its baseline and clears the mark, so that a later call answers {@code false}. The
      * caller logs the baseline in the same transaction. A repository that keeps no mark inherits {@code false}.

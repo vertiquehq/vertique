@@ -468,6 +468,38 @@ overrides `applyTransactionOptions(SqlConnection, TransactionOptions)` reads it 
 `withConnection(fn)` runs on a pooled connection with **no** transaction, translating failures the
 same way. Use it for read paths and for `stream(...)`.
 
+#### Transaction completion
+
+`TransactionCompletion.onSettled(conn, onCommit, onFailure)` runs work strictly after a transaction
+settles. Call it from inside the transaction work with the connection the work received; it works for
+a transaction opened by `.execute(...)`, by `Pool.withTransaction`, or by the application.
+
+```java
+repository.transaction().execute(conn ->
+    writeRows(conn).onSuccess(v -> TransactionCompletion.onSettled(
+        conn,
+        () -> notifyListeners(),                    // after the commit
+        cause -> log.debug("not committed", cause)))); // rolled back, or the commit failed
+```
+
+- **Exactly one callback runs** once the transaction settles. Registrations are independent and
+  unordered. A rollback to a savepoint does not settle the outer transaction.
+- **`onFailure` carries the raw settlement failure**: an explicit rollback reports
+  `TransactionRollbackException`, a failed commit (for example a deferred constraint) reports the
+  database error, and a connection lost during the commit may leave the outcome unknown. It does not
+  carry the application's own failure; capture that separately.
+- **Fails fast.** A handle that is not a connection (for example the pool), a connection with no
+  active transaction, and a transaction that has already settled throw `IllegalStateException`;
+  nothing is delivered as though committed.
+- **Threading.** Callbacks run on the transaction's Vert.x context, are never offloaded, must not
+  block, and run before the transaction's own result future completes. Exceptions a callback throws
+  are caught, logged, and swallowed; they do not affect the enclosing operation.
+- **Not a durability mechanism.** If the process stops after the commit, the callback never runs.
+  Use an outbox for work that must not be lost.
+- **No SQL recovery inside the transaction.** The PostgreSQL client fails the whole transaction on
+  any failed statement, even one a savepoint would recover, so work the callback needs from the
+  database belongs after the commit, on its own connection.
+
 ### `RowMapper<T>` and `Rows`
 
 ```java

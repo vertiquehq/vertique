@@ -405,7 +405,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     requireScopeRules(rows, record);
                     return insert(tx, record, document, DefinitionStatus.AVAILABLE)
                             .compose(inserted -> activateFirstPublication(tx, record.key(), activateDefault))
-                            .map(ReconcileOutcome.INSERTED);
+                            .map(PgWorkflowDefinitionRegistryStore::inserted);
                 }
                 Row old = current.orElseThrow();
                 if (!"DOCUMENT".equals(old.getString("kind")))
@@ -440,7 +440,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     requireScopeRules(rows, record);
                     return insertCode(tx, record, DefinitionStatus.AVAILABLE)
                             .compose(inserted -> activateFirstPublication(tx, key, activateDefault))
-                            .map(ReconcileOutcome.INSERTED);
+                            .map(PgWorkflowDefinitionRegistryStore::inserted);
                 }
                 Row old = current.orElseThrow();
                 if (!"CODE".equals(old.getString("kind")))
@@ -750,15 +750,20 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
      * Makes a version that was just inserted the default scope's current version when it is higher than the version the
      * default scope's record already names, or when there is no record. It runs on the transaction of the insert, under
      * the lock of the id, so a failure rolls back the insert with it, and a record committed meanwhile is compared
-     * after the lock was granted.
+     * after the lock was granted. It answers whether the activation record was written, which is what tells an insert
+     * that became the default from one that left a higher default as it was.
      */
-    private Future<Void> activateFirstPublication(SqlConnection tx, DefinitionKey key, boolean activateDefault) {
-        if (!activateDefault) return Future.succeededFuture();
+    private Future<Boolean> activateFirstPublication(SqlConnection tx, DefinitionKey key, boolean activateDefault) {
+        if (!activateDefault) return Future.succeededFuture(false);
         if (!WorkflowScopes.DEFAULT.equals(key.scopeKey()))
             throw new IllegalStateException("only a version of the default scope can become its current version");
         return tx.preparedQuery(sqlActivateDefault)
                 .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
-                .mapEmpty();
+                .map(result -> result.rowCount() > 0);
+    }
+
+    private static ReconcileOutcome inserted(boolean activated) {
+        return activated ? ReconcileOutcome.INSERTED_AND_ACTIVATED : ReconcileOutcome.INSERTED;
     }
 
     /**
