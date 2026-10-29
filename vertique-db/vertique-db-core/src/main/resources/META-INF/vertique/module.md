@@ -482,8 +482,9 @@ repository.transaction().execute(conn ->
         cause -> log.debug("not committed", cause)))); // rolled back, or the commit failed
 ```
 
-- **Exactly one callback runs** once the transaction settles. Registrations are independent and
-  unordered. A rollback to a savepoint does not settle the outer transaction.
+- **Exactly one callback runs** once the transaction settles: `onCommit` after the commit is
+  durable and visible to other sessions, `onFailure` when it did not commit. Registrations are
+  independent and unordered. A rollback to a savepoint does not settle the outer transaction.
 - **`onFailure` carries the raw settlement failure**: an explicit rollback reports
   `TransactionRollbackException`, a failed commit (for example a deferred constraint) reports the
   database error, and a connection lost during the commit may leave the outcome unknown. It does not
@@ -492,13 +493,15 @@ repository.transaction().execute(conn ->
   active transaction, and a transaction that has already settled throw `IllegalStateException`;
   nothing is delivered as though committed.
 - **Threading.** Callbacks run on the transaction's Vert.x context, are never offloaded, must not
-  block, and run before the transaction's own result future completes. Exceptions a callback throws
-  are caught, logged, and swallowed; they do not affect the enclosing operation.
+  block, and run before the transaction's own result future completes. Anything a callback throws
+  (an `Error` included) is caught, logged at warn, and swallowed; it does not affect the enclosing
+  operation or the other registrations.
 - **Not a durability mechanism.** If the process stops after the commit, the callback never runs.
   Use an outbox for work that must not be lost.
-- **No SQL recovery inside the transaction.** The PostgreSQL client fails the whole transaction on
-  any failed statement, even one a savepoint would recover, so work the callback needs from the
-  database belongs after the commit, on its own connection.
+- **A failed statement fails the whole transaction.** The PostgreSQL client aborts the transaction
+  on any failed SQL statement, even when the work recovers from it and rolls back to a savepoint:
+  the commit never happens, `onFailure` runs, and the transaction's own result fails. The callback
+  runs after the settlement, so work it needs from the database belongs on its own connection.
 
 ### `RowMapper<T>` and `Rows`
 
