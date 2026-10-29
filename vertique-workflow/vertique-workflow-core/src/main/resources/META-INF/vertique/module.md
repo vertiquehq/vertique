@@ -201,10 +201,13 @@ Future<List<PendingCommand>> openCommands(WorkflowInstanceId id);
 - **Paging.** `entries` returns entries in ascending sequence order after `afterSequence` (exclusive; `0` for the first page). `limit` must be 1 to 500; anything else throws `IllegalArgumentException` before anything is read. Page by passing the last sequence read.
 - **Open commands.** `openCommands` lists the commands that are `PENDING`, `DEFERRED`, `CLAIMED`, `PARKED` or `DEAD`, in sequence order, as `PendingCommand`. `lastError` is the reason code plus the sanitized message stored when the command failed (never raw exception text); the service returns it as stored.
 - **The entry.** `WorkflowHistoryEntry` keeps its five original components and gains trailing nullable ones: `entryVersion` (boxed `Integer`; the stored format version: 2 for `DECISION` and `STATE_BASELINE` entries, 1 for every other entry), `actor` (`HistoryActor`), `onBehalfOf`, `attributionStatus` (`VERIFIED`, `ABSENT` or `DEGRADED`), `executorId`, `commandId`, `stepId`, `outcome`, `definitionKey`, `planHash`, `stateVersionBefore`, `stateVersionAfter` and `patchJson` (a JSON array; `[]` for no change). The five-argument constructor stays and reports `entryVersion` 1 with every other new component null. An entry that was never attributed has a null `actor`; work that ran with no identity is recorded as `HistoryActor.Kind.NONE`, a kind that exists only in the history and never on `WorkflowActor`.
-- **Command and definition on the entry.** An entry that the executor writes in a command's segment records that command in `commandId`
-  and the definition the instance is pinned to in `definitionKey`, also when the step that wrote it did not set them. An entry that
-  already records a value keeps it, and a migration logs the target version itself. An entry written outside a segment can still
-  have a null `commandId` or `definitionKey`.
+- **Command and definition on the entry.** An entry records the command it names in `commandId`: its own column, or the `commandId` of
+  its payload where the writer put it there. An entry that names no command keeps a null `commandId`; the engine does not give it the
+  command of the segment it was written in, because it may belong to another command, such as a parked signal applied during the
+  segment. An entry that the executor writes in a command's segment and that records no definition takes the definition the instance
+  was pinned to when the segment began, except in a `MIGRATION` segment, whose pin changes part-way: there every entry keeps the
+  definition its writer recorded, which is null for most and the target for the entry that logs the migration. An entry that already
+  records a value keeps it. An entry written outside a segment can also have a null `commandId` or `definitionKey`.
 - **`query()` stays narrow.** The history in the `WorkflowView` that `WorkflowOperations.query` returns carries the five original components and the stored `entryVersion`; every other new component is null there. Only this service returns the enriched entry.
 - **Reading is not authorized here.** Entries name actors and carry state patches, and open commands carry stored failure text. The framework performs no authorization on these reads; the application authorizes them before exposing them.
 - **No lock.** The service reads on a pooled connection outside any caller transaction and takes no execution lock.
@@ -557,13 +560,16 @@ static WorkflowHistoryListener auditTrail(AuditSink sink) {
 - **At most once.** If the process stops between the commit and the notification, the event is not delivered; the instance history
   stays the source of truth. A history read that fails after the commit is logged and the commit is not delivered. Use
   `WorkflowInstanceHistoryService` to catch up, or an outbox where an event must not be lost.
-- **Isolated.** An exception a listener throws is logged and swallowed. It reaches neither the engine, the caller nor the other
-  listeners.
+- **Isolated.** An `Exception`, `LinkageError`, `AssertionError` or `StackOverflowError` a listener throws is logged and swallowed.
+  It reaches neither the engine, the caller nor the other listeners.
+- **Order.** Commits of one instance are read on independent connections, so two successive commits can be delivered out of order.
+  Every event carries its `sequence`; a consumer that needs the order sorts by it.
 - **One commit, one `WorkflowHistoryCommit` per instance.** `events()` holds the entries the transaction wrote for `instanceId()`,
-  ascending by sequence, and is never empty. A transaction that touches several instances produces one commit for each. A start that
-  only replays an existing instance, and a call that wrote nothing, produce none.
+  ascending by sequence, and is never empty. A transaction that touches several instances produces one commit for each; a very large
+  commit is delivered as several consecutive ones, still in sequence order. A start that only replays an existing instance, and a
+  call that wrote nothing, produce none.
 - **Nothing sensitive.** An event carries no payload, state, patch or failure message. Task events read only the task id, the
-  decision name and the assignments, and a decision node's choice reads only the chosen step id, cut at 40 characters.
+  decision name and the assignments, each cut at 255 characters, and a decision node's choice reads only the chosen step id, cut at 40 characters.
 - **Each event knows its own provenance.** `WorkflowHistoryEvent.EntryInfo` holds the instance, sequence, step, the command id and
   `CommandKind` (`START`, `SIGNAL`, `COMPLETION`, `RETRY`, `MIGRATION` or `TIMER`), the `HistoryActor`, `onBehalfOf`, a
   `HistoryAttribution` and the recording time. One commit can mix actors and definition pins: a parked signal applied by another
