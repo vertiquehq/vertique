@@ -142,9 +142,8 @@ public final class InboundExecutionContextScope {
      * runs {@code action} inside it, and closes the scope once {@code action}'s returned
      * {@link Future} completes — on both success and failure.
      *
-     * <p>This is the shared shape duplicated at three call sites before its extraction
-     * ({@code WorkflowContextBinder.withBound}, {@code BranchTransitionEngine.driveBranchTransitions},
-     * {@code PgWorkflowBranchRecoveryService.withBranchDurableBound}): install, invoke {@code action}
+     * <p>This is the shared shape duplicated at two call sites before its extraction
+     * ({@code WorkflowContextBinder.withBound}, {@code BranchTransitionEngine.driveBranchTransitions}): install, invoke {@code action}
      * inside the same {@code try} block that performed the install, and close on
      * {@link Future#eventually(Supplier)} so the binding survives the async chain. {@code action} is
      * called synchronously, inside the {@code try} — a synchronous {@link RuntimeException} thrown by
@@ -153,10 +152,9 @@ public final class InboundExecutionContextScope {
      * CORE-001 sync-throw lesson: an uncaught synchronous throw would leak the installed durable
      * binding into the caller's context).
      *
-     * <p>Only {@link RuntimeException} is caught here — matching the posture of all three call sites
+     * <p>Only {@link RuntimeException} is caught here — matching the posture of both call sites
      * this method replaces ({@code WorkflowContextBinder.withBound},
-     * {@code BranchTransitionEngine.driveBranchTransitions},
-     * {@code PgWorkflowBranchRecoveryService.withBranchDurableBound}), each of which catches only
+     * {@code BranchTransitionEngine.driveBranchTransitions}), each of which catches only
      * {@code RuntimeException} around its drive/action call. An {@link Error} is deliberately not
      * caught: on an {@code Error} the scope is left open and the throwable propagates unconverted,
      * on the assumption that the JVM may be in an unrecoverable state where attempting further work

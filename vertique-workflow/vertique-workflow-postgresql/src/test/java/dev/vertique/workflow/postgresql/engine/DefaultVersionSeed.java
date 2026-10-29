@@ -41,7 +41,7 @@ final class DefaultVersionSeed {
             String... definitionIds) {
         Instant now = Instant.now();
         Set<String> wanted = Set.of(definitionIds);
-        registry.allRegistered().stream()
+        registry.codeDefinitions().stream()
                 .filter(runtime -> WorkflowScopes.DEFAULT.equals(runtime.definitionScopeKey()))
                 .filter(runtime ->
                         wanted.isEmpty() || wanted.contains(runtime.plan().definitionId()))

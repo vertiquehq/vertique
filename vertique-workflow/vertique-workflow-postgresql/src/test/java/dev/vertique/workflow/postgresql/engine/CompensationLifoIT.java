@@ -41,6 +41,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -75,6 +76,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class CompensationLifoIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -231,7 +234,8 @@ public class CompensationLifoIT {
     @BeforeEach
     void truncate(VertxTestContext ctx) {
         capturedIntents.clear();
-        pool.query(
+        WorkflowTestTables.truncating(
+                        pool,
                         "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
@@ -266,12 +270,16 @@ public class CompensationLifoIT {
                 null);
 
         engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose(id -> {
                     // After start: engine is at dispatch-a (SERVICE intent recorded), then enters wait-a.
                     // Deliver sig-a to advance to dispatch-b, then wait-b.
                     return engine.signal(id, "sig-a", new SigA("a"), "dedup-sig-a")
-                            .compose(v -> engine.signal(id, "sig-b", new SigB("b"), "dedup-sig-b"))
-                            .map(v -> id);
+                            .compose(v -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                            .compose(r -> engine.signal(id, "sig-b", new SigB("b"), "dedup-sig-b"))
+                            .compose(v -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                            .map(r -> id);
                 })
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
@@ -380,8 +388,11 @@ public class CompensationLifoIT {
         // forward intent (step-a.run) is recorded, and the state is WAITING at wait-b.
 
         engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose(id -> engine.signal(id, "sig-a", new SigA("a2"), "dedup-sig-a-2")
-                        .map(v -> id))
+                        .compose(v -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                        .map(r -> id))
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "start + sig-a must succeed");

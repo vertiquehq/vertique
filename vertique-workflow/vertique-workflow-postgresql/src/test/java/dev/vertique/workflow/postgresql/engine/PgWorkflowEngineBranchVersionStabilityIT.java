@@ -45,6 +45,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
@@ -77,6 +78,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineBranchVersionStabilityIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_vsa_test")
@@ -203,9 +206,11 @@ public class PgWorkflowEngineBranchVersionStabilityIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -229,7 +234,12 @@ public class PgWorkflowEngineBranchVersionStabilityIT {
                 null,
                 null,
                 null);
-        return engine.start(cmd).toCompletionStage().toCompletableFuture().join();
+        return engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(r -> started))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
     }
 
     private UUID findBranchATask(WorkflowInstanceId workflowId) {
@@ -268,18 +278,64 @@ public class PgWorkflowEngineBranchVersionStabilityIT {
 
     @Test
     @DisplayName("branch task creation fail-fasts when requireVersionStability=true and parent has no subject ref")
-    void branchTaskCreationFailsFastWithoutSubjectRef(VertxTestContext ctx) {
-        try {
-            startWithSubjectVersion("no-ref", null);
-            ctx.failNow("expected WorkflowSubjectVersionUnavailableException, got success");
-            return;
-        } catch (CompletionException e) {
-            Throwable cause = e.getCause();
-            assertTrue(
-                    cause instanceof WorkflowSubjectVersionUnavailableException,
-                    "expected WorkflowSubjectVersionUnavailableException, got: " + cause);
-            ctx.completeNow();
+    void branchTaskCreationFailsFastWithoutSubjectRef(VertxTestContext ctx) throws Exception {
+        // The start only records; the first segment creates the branch tasks and fails fast
+        WorkflowInstanceId workflowId = recordStartWithoutSubject("no-ref");
+
+        // The executor claimed the command, its segment rolled back, and the failure settled the start and its instance
+        awaitCommandState(workflowId, "FAILED");
+        assertEquals(
+                "FAILED",
+                pool.preparedQuery("SELECT status FROM workflow_instances WHERE id = $1")
+                        .execute(Tuple.of(workflowId.value()))
+                        .map(rs -> rs.iterator().next().getString("status"))
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .join(),
+                "the failed first segment must fail the instance");
+        assertEquals(
+                0L,
+                pool.preparedQuery("SELECT count(*) FROM workflow_tasks WHERE workflow_id = $1")
+                        .execute(Tuple.of(workflowId.value()))
+                        .map(rs -> rs.iterator().next().getLong(0))
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .join(),
+                "no branch task may be created");
+        ctx.completeNow();
+    }
+
+    private WorkflowInstanceId recordStartWithoutSubject(String id) {
+        return engine.start(new StartCommand(
+                        DEFINITION.definitionId(),
+                        DEFINITION.contract().getName(),
+                        new StartReview(id),
+                        "idem-vsa-" + id,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+    }
+
+    private void awaitCommandState(WorkflowInstanceId workflowId, String state) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            String current = pool.preparedQuery("SELECT state FROM workflow_commands WHERE workflow_id = $1")
+                    .execute(Tuple.of(workflowId.value()))
+                    .map(rs -> rs.iterator().next().getString("state"))
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .join();
+            if (state.equals(current)) {
+                return;
+            }
+            Thread.sleep(50);
         }
+        throw new AssertionError("The command did not reach " + state);
     }
 
     @Test
@@ -291,6 +347,9 @@ public class PgWorkflowEngineBranchVersionStabilityIT {
         TaskCompletionCommand cmd = new TaskCompletionCommand(
                 taskId, "approve", null, "idem-match-1", new WorkflowActor.User("alice"), "v3");
         TaskMutationResult result = pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                .compose(applied -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> applied))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();

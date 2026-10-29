@@ -67,10 +67,7 @@ class OutboxSideEffectRecorderTest {
 
     @BeforeEach
     void setUp() {
-        // Validator passed as null because the recorder doesn't dereference it (it's only an
-        // injection-side-effect dependency that forces Dagger to construct the startup validator
-        // before the recorder; in this unit test the Dagger graph isn't involved).
-        recorder = new OutboxSideEffectRecorder(outboxService, targetResolver, null);
+        recorder = new OutboxSideEffectRecorder(outboxService, targetResolver);
     }
 
     @Test

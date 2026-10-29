@@ -5,8 +5,6 @@ package dev.vertique.workflow.postgresql.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -38,6 +36,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -53,15 +52,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Integration test for plan-hash drift detection in {@link WorkflowEngineHandle}.
  *
  * <p>Verifies that when a workflow instance was started with plan version v1 and a SECOND engine is
- * constructed with a DIFFERENT plan registered under the same {@code definitionId + version}, any
- * mutating operation (signal, retry) via the second engine is rejected with
- * {@link WorkflowPlanHashDriftException} — rather than silently resuming on the new plan content.
+ * constructed with a DIFFERENT plan registered under the same {@code definitionId + version}, a signal sent through
+ * the second engine is only recorded (recording reads no plan) and the engine whose plan matches the stored hash
+ * applies it — a node whose plan drifted never runs it. Operations that need the plan on the calling node are
+ * refused with {@link WorkflowPlanHashDriftException} — rather than silently resuming on the new plan content.
  *
  * <p>Read-only operations (query) must still succeed because they do not need the plan.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PlanHashDriftIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -230,7 +232,8 @@ public class PlanHashDriftIT {
 
     @BeforeEach
     void truncate(VertxTestContext ctx) {
-        pool.query(
+        WorkflowTestTables.truncating(
+                        pool,
                         "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
@@ -246,16 +249,14 @@ public class PlanHashDriftIT {
     // --- Tests ---
 
     /**
-     * Engine A starts an instance (pinned to plan A's hash). Engine B signals it. The signal must
-     * fail with {@link WorkflowPlanHashDriftException} because the registered plan hash (plan B)
-     * differs from the stored hash (plan A).
-     *
-     * <p>The exception must carry the correct {@code definitionId}, {@code version},
-     * {@code instanceId}, and differing {@code storedHash} / {@code currentHash} values.
+     * Engine A starts an instance (pinned to plan A's hash). Engine B, whose registered plan hash (plan B) differs
+     * from the stored one, signals it. Recording a signal reads no plan, so the call succeeds and records one command;
+     * a node whose plan drifted never runs it (an executor defers a command whose pinned hash its plan lacks), and
+     * engine A, whose plan matches the stored hash, applies it.
      */
     @Test
-    @DisplayName("signal via engine with drifted plan hash fails with WorkflowPlanHashDriftException")
-    void signalWithDriftedPlanHashFails(VertxTestContext ctx) {
+    @DisplayName("signal via engine with drifted plan hash is recorded and applied by the engine with the stored plan")
+    void signalWithDriftedPlanHashIsRecordedAndAppliedByTheMatchingEngine(VertxTestContext ctx) {
         String idempotencyKey = "drift-signal-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
                 "hash-drift",
@@ -269,26 +270,23 @@ public class PlanHashDriftIT {
                 null);
 
         engineA.start(cmd)
+                .compose(started -> engineA.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> {
                     String dedupKey = "dedup-" + UUID.randomUUID();
-                    // Engine B attempts to signal with its drifted plan.
-                    return engineB.signal(id, "wait-a", new SigA("x"), dedupKey).map(v -> id);
+                    // Engine B signals with its drifted plan: recorded, not applied by B.
+                    return engineB.signal(id, "wait-a", new SigA("x"), dedupKey)
+                            .compose(recorded -> engineA.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                            .compose(idle -> engineA.query(id));
                 })
                 .onComplete(ar -> ctx.verify(() -> {
-                    assertTrue(ar.failed(), "engineB.signal must fail due to plan hash drift");
-                    assertInstanceOf(
-                            WorkflowPlanHashDriftException.class,
-                            ar.cause(),
-                            "cause must be WorkflowPlanHashDriftException, got: " + ar.cause());
-
-                    WorkflowPlanHashDriftException ex = (WorkflowPlanHashDriftException) ar.cause();
-                    assertEquals("hash-drift", ex.definitionId(), "definitionId must be 'hash-drift'");
-                    assertEquals(1L, ex.version(), "version must be 1");
-                    assertNotNull(ex.instanceId(), "instanceId must not be null");
-                    assertNotNull(ex.storedHash(), "storedHash must not be null");
-                    assertNotNull(ex.currentHash(), "currentHash must not be null");
-                    assertNotEquals(ex.storedHash(), ex.currentHash(), "storedHash and currentHash must differ");
-
+                    assertTrue(
+                            ar.succeeded(), "engineB.signal must be recorded and applied by engine A: " + ar.cause());
+                    assertEquals(
+                            dev.vertique.workflow.state.WorkflowStatus.COMPLETED,
+                            ar.result().instance().status(),
+                            "engine A, whose plan matches the stored hash, must apply the recorded signal");
                     ctx.completeNow();
                 }));
     }
@@ -313,6 +311,9 @@ public class PlanHashDriftIT {
                 null);
 
         engineA.start(cmd)
+                .compose(started -> engineA.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> engineB.query(id).map(view -> new Object[] {id, view}))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "engineB.query must succeed (plan-independent): " + ar.cause());

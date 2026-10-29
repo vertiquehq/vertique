@@ -7,6 +7,7 @@ import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.engine.testsupport.ScopedDefinitions;
 import dev.vertique.workflow.migration.MigrationContext;
 import dev.vertique.workflow.migration.MigrationResult;
 import dev.vertique.workflow.migration.WorkflowMigrationHandler;
@@ -126,22 +127,31 @@ final class ScopedApprovalFixture {
     }
 
     /**
-     * Contributes every definition of the fixture: the default graphs through {@code register(definition)} and
-     * the {@code acme} graphs through {@code register(scopeKey, definition)}.
+     * Contributes the default graphs of the fixture through {@code register(definition)}. The {@code acme} graphs are
+     * stored versions of another scope, see {@link #publishAcme}.
      *
      * @return the contributor
      */
     static WorkflowContributor contributor() {
         return registry -> {
             registry.register(approval(DEFAULT_PREFIX, "clerk", false));
-            registry.register(ACME, approval(ACME_PREFIX, "finance", true));
             registry.register(fork(DEFAULT_PREFIX, "notify-default"));
-            registry.register(ACME, fork(ACME_PREFIX, "notify-acme"));
             registry.register(migrationV1());
-            registry.register(ACME, migrationV1());
             registry.register(migrationV2(DEFAULT_PREFIX, false));
-            registry.register(ACME, migrationV2(ACME_PREFIX, true));
         };
+    }
+
+    /**
+     * Publishes the {@code acme} graphs of the fixture as stored versions of that scope. The registry holds code only,
+     * so the plans of another scope reach the node through a plan source; publish after the engine was built.
+     *
+     * @param scoped the stored versions of the registry of the engine under test
+     */
+    static void publishAcme(ScopedDefinitions scoped) {
+        scoped.publish(ACME, approval(ACME_PREFIX, "finance", true));
+        scoped.publish(ACME, fork(ACME_PREFIX, "notify-acme"));
+        scoped.publish(ACME, migrationV1());
+        scoped.publish(ACME, migrationV2(ACME_PREFIX, true));
     }
 
     /** Migrates version 1 of {@link #MIGRATION_ID} to version 2 in the default scope, continuing at step {@code review}. */

@@ -111,7 +111,7 @@ class SchemaAcceptedBindsTest {
         Map<String, Class<?>> decisions = new LinkedHashMap<>();
         decisions.put("decide", fixture.type());
         registry.register(Definitions.withStartAndDecisions(ID, 1L, Void.class, decisions));
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
         ObjectMapper mapper = PayloadSchemaTestProfiles.builtIn()
                 .profile(JsonProfileId.of("vertique"))
                 .mapper();
@@ -148,7 +148,7 @@ class SchemaAcceptedBindsTest {
     }
 
     private static void assertSchemaAcceptsBinderRejects(
-            WorkflowPayloadSchemas schemas, ObjectMapper mapper, Fixture fixture, JsonObject payload) {
+            AwaitedSchemas schemas, ObjectMapper mapper, Fixture fixture, JsonObject payload) {
         assertThat(schemas.validateDecision(
                                 new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1L), "review", "decide", payload)
                         .valid())

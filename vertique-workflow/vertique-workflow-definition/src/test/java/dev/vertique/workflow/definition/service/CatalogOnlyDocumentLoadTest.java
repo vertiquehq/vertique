@@ -17,6 +17,7 @@ import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.di.WorkflowCoreModule;
+import dev.vertique.workflow.engine.testsupport.InMemoryDefinitionRegistryModule;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -25,6 +26,7 @@ import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowType;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
@@ -107,13 +109,18 @@ class CatalogOnlyDocumentLoadTest {
 
     @Singleton
     @Component(
-            modules = {WorkflowDefinitionModule.class, WorkflowCoreModule.class, CatalogModule.class, MapperModule.class
+            modules = {
+                WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
+                WorkflowCoreModule.class,
+                CatalogModule.class,
+                MapperModule.class
             })
     interface DocumentLoadComponent {
 
         WorkflowDefinitionService workflowDefinitionService();
 
-        WorkflowDefinitionStore workflowDefinitionStore();
+        WorkflowDefinitionRegistryStore workflowDefinitionRegistryStore();
 
         DocumentDefinitionLoader documentDefinitionLoader();
     }
@@ -195,13 +202,12 @@ class CatalogOnlyDocumentLoadTest {
 
         for (String definitionId : List.of("acme-a", "acme-b")) {
             DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
-            assertThat(component
-                            .workflowDefinitionStore()
-                            .get(key)
-                            .orElseThrow()
-                            .compiled()
-                            .definition()
-                            .stateType())
+            WorkflowDefinitionRegistryStore rows = component.workflowDefinitionRegistryStore();
+            WorkflowDefinitionRecord record =
+                    ServiceTestHelpers.await(rows.find(key)).orElseThrow();
+            WorkflowDefinitionDocument text =
+                    ServiceTestHelpers.await(rows.findDocument(key)).orElseThrow();
+            assertThat(component.documentDefinitionLoader().load(record, text).stateType())
                     .isEqualTo(AcmeState.class);
         }
     }

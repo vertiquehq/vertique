@@ -55,10 +55,13 @@ import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
+import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.schema.WorkflowSchemaModule;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
@@ -142,6 +145,7 @@ public class DocumentDefinitionFanOutIT {
 
     static Pool pool;
     static WorkflowOperations engine;
+    static dev.vertique.workflow.ops.WorkflowExecutionProbe probe;
     static TransactionalWorkflowOperations<SqlClient> txEngine;
     static WorkflowDefinitionService definitionService;
     static VertiqueApplicationHandle<?> application;
@@ -392,6 +396,7 @@ public class DocumentDefinitionFanOutIT {
                 VertxModule.class,
                 ConfigParsingModule.class,
                 WorkflowDefinitionsConfigModule.class,
+                dev.vertique.workflow.di.WorkflowExecutorConfigModule.class,
                 DeployerModule.class,
                 CoreLifecycleStepsModule.class,
                 WorkflowDefinitionModule.class,
@@ -400,7 +405,9 @@ public class DocumentDefinitionFanOutIT {
                 WorkflowPostgresqlModule.class,
                 FanOutDefinitionSourceModule.class,
                 FanOutCallbackModule.class,
-                FanOutInfrastructureModule.class
+                FanOutInfrastructureModule.class,
+                WorkflowSchemaModule.class,
+                ManagedDefinitionDatabase.SchemaBindings.class
             })
     interface FanOutTestComponent extends VertiqueApplicationComponent {
 
@@ -420,6 +427,13 @@ public class DocumentDefinitionFanOutIT {
          * @return workflow operations
          */
         WorkflowOperations workflowOperations();
+
+        /**
+         * Returns the probe that waits until the executor has run what was recorded.
+         *
+         * @return the execution probe
+         */
+        dev.vertique.workflow.ops.WorkflowExecutionProbe executionProbe();
 
         /**
          * Returns the transactional workflow operations, required for branch-aware signal delivery.
@@ -462,7 +476,12 @@ public class DocumentDefinitionFanOutIT {
                 .build();
 
         FanOutTestComponent component = DaggerDocumentDefinitionFanOutIT_FanOutTestComponent.builder()
-                .vertxModule(new VertxModule(vertx, new JsonObject()))
+                .vertxModule(new VertxModule(
+                        vertx,
+                        new JsonObject()
+                                .put(
+                                        "workflow",
+                                        new JsonObject().put("executor", new JsonObject().put("pollIntervalMs", 100)))))
                 .fanOutInfrastructureModule(new FanOutInfrastructureModule(pool))
                 .build();
 
@@ -474,6 +493,7 @@ public class DocumentDefinitionFanOutIT {
                     }
                     application = started.result();
                     engine = component.workflowOperations();
+                    probe = component.executionProbe();
                     txEngine = component.transactionalWorkflowOperations();
                     definitionService = component.workflowDefinitionService();
                     ctx.completeNow();
@@ -483,9 +503,11 @@ public class DocumentDefinitionFanOutIT {
     /** Truncates all workflow tables before each test so tests are isolated. */
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -538,6 +560,9 @@ public class DocumentDefinitionFanOutIT {
         io.vertx.core.internal.ContextInternal dup =
                 ((io.vertx.core.internal.ContextInternal) vertxRef.getOrCreateContext()).duplicate();
         dup.runOnContext(unused -> engine.start(cmd)
+                // The start only records: the executor runs the fork before the branches can be counted
+                .compose(started -> probe.awaitIdle(started, java.time.Duration.ofSeconds(10))
+                        .map(idle -> started))
                 .compose(id ->
                         // After start: all three branches are parked at their wait-signal nodes.
                         // The parent instance is RUNNING (waitType=JOIN) — it has not reached a
@@ -563,7 +588,8 @@ public class DocumentDefinitionFanOutIT {
                                                     "reserve-order",
                                                     "inventory",
                                                     tx))
-                                            .compose(v -> engine.query(id2))
+                                            .compose(v -> probe.awaitIdle(id2, java.time.Duration.ofSeconds(10)))
+                                            .compose(idle -> engine.query(id2))
                                             .compose(afterFirst -> {
                                                 assertEquals(
                                                         WorkflowStatus.RUNNING,
@@ -582,7 +608,8 @@ public class DocumentDefinitionFanOutIT {
                                                 "reserve-order",
                                                 "payment",
                                                 tx))
-                                        .compose(v -> engine.query(id2))
+                                        .compose(v -> probe.awaitIdle(id2, java.time.Duration.ofSeconds(10)))
+                                        .compose(idle -> engine.query(id2))
                                         .compose(afterSecond -> {
                                             assertEquals(
                                                     WorkflowStatus.RUNNING,
@@ -600,7 +627,8 @@ public class DocumentDefinitionFanOutIT {
                                                 "fraud",
                                                 tx))
                                         .map(v -> id2))
-                                .compose(id2 -> engine.query(id2)))
+                                .compose(id2 -> probe.awaitIdle(id2, java.time.Duration.ofSeconds(10))
+                                        .compose(idle -> engine.query(id2))))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "fan-out saga must succeed end-to-end, got: " + ar.cause());
                     WorkflowView view = ar.result();

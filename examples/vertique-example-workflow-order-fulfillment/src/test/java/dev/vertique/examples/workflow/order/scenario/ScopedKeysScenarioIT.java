@@ -30,6 +30,7 @@ import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
+import io.vertx.sqlclient.Tuple;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -71,7 +72,9 @@ class ScopedKeysScenarioIT {
             loadPublishAndActivateAcme(first);
             await(first.graph().definitionService().activate(QA, ORDER_FULFILLMENT, DEFAULT, 2));
             orderInDefault = await(orderClient(first, DEFAULT).start(order("order-default")));
+            first.awaitIdle(orderInDefault);
             orderInQa = await(orderClient(first, QA).start(order("order-qa")));
+            first.awaitIdle(orderInQa);
             acmeEarly = startPurchase(first, ACME, "p-acme", "PO-1");
             globexEarly = startPurchase(first, GLOBEX, "p-globex", "PO-1");
             assertEquals(orderPin(DEFAULT, 1), first.pin(orderInDefault));
@@ -83,11 +86,13 @@ class ScopedKeysScenarioIT {
         // When the component restarts
         try (ScenarioNode second = deploy(vertx)) {
             // Then every instance started before the restart resumes on its own pin and completes
-            finish(orderClient(second, DEFAULT), orderInDefault, "order-default");
-            finish(orderClient(second, QA), orderInQa, "order-qa");
+            finish(second, orderClient(second, DEFAULT), orderInDefault, "order-default");
+            finish(second, orderClient(second, QA), orderInQa, "order-qa");
             approveFinance(second, acmeEarly);
             await(purchaseClient(second, ACME).audited(acmeEarly, new PoAudited("dave"), "audit-early"));
+            second.awaitIdle(acmeEarly);
             await(purchaseClient(second, GLOBEX).approved(globexEarly, new PoApproved("erin"), "approve-early"));
+            second.awaitIdle(globexEarly);
             for (WorkflowInstanceId instance :
                     new WorkflowInstanceId[] {orderInDefault, orderInQa, acmeEarly, globexEarly}) {
                 assertEquals("COMPLETED", second.status(instance));
@@ -113,37 +118,45 @@ class ScopedKeysScenarioIT {
 
             // When Acme's instance, pinned to the variant that waits for the audit, is sent the approval
             approveFinance(second, acme);
-            Throwable approvalToAcme =
+            Throwable approvalRefused =
                     failureOf(purchaseClient(second, ACME).approved(acme, new PoApproved("frank"), "a-1"));
 
-            // Then the signal fails naming the pinned version and the instance is unchanged
-            assertRejectedNamingVersionOne(approvalToAcme, "po.approved");
+            // Then recording refuses the signal naming the pinned version, records nothing, and the instance is
+            // unchanged
+            assertRefusedNamingVersionOne(approvalRefused, second, acme, "po.approved");
             assertEquals("WAITING", second.status(acme));
 
             // When the instance is sent the audit that its pin waits for
             await(purchaseClient(second, ACME).audited(acme, new PoAudited("gail"), "a-2"));
+            second.awaitIdle(acme);
 
             // Then it is delivered
             assertEquals("COMPLETED", second.status(acme));
 
             // When globex's instance, pinned to the default scope's version, is sent the audit and then the approval
-            Throwable auditToGlobex =
+            Throwable auditRefused =
                     failureOf(purchaseClient(second, GLOBEX).audited(globex, new PoAudited("hugo"), "g-1"));
-            assertRejectedNamingVersionOne(auditToGlobex, "po.audited");
+            assertRefusedNamingVersionOne(auditRefused, second, globex, "po.audited");
             assertEquals("WAITING", second.status(globex));
             await(purchaseClient(second, GLOBEX).approved(globex, new PoApproved("ines"), "g-2"));
+            second.awaitIdle(globex);
 
             // Then the approval is delivered
             assertEquals("COMPLETED", second.status(globex));
         }
     }
 
-    private static void assertRejectedNamingVersionOne(Throwable failure, String signal) {
-        assertNotNull(failure, "the signal must be refused");
-        assertInstanceOf(WorkflowSignalRejectedException.class, failure);
-        String message = failure.getMessage();
-        assertTrue(message.contains("'purchase-approval' v1"), message);
-        assertTrue(message.contains("does not wait for signal '" + signal + "'"), message);
+    private static void assertRefusedNamingVersionOne(
+            Throwable refusal, ScenarioNode node, WorkflowInstanceId instance, String signal) {
+        assertInstanceOf(WorkflowSignalRejectedException.class, refusal);
+        assertTrue(refusal.getMessage().contains("'purchase-approval' v1"), refusal.getMessage());
+        assertTrue(refusal.getMessage().contains("signal '" + signal + "'"), refusal.getMessage());
+        long recorded = await(node.pool()
+                .preparedQuery("SELECT count(*) AS total FROM workflow_commands WHERE workflow_id = $1"
+                        + " AND kind = 'SIGNAL' AND target_json->>'name' = $2")
+                .execute(Tuple.of(instance.value(), signal))
+                .map(rows -> rows.iterator().next().getLong("total")));
+        assertEquals(0L, recorded, "a refused signal records no command");
     }
 
     private static ScenarioNode deploy(Vertx vertx) {

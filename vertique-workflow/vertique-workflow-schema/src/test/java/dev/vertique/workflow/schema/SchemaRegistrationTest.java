@@ -143,7 +143,7 @@ class SchemaRegistrationTest {
                 .isEqualTo("object");
 
         // And: any object payload is accepted by the cached schema
-        var schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        var schemas = AwaitedSchemas.of(registry, cache);
         assertThat(schemas.validateDecision(
                                 new DefinitionKey(WorkflowScopes.DEFAULT, "map-saga", 1L),
                                 "review",

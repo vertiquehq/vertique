@@ -16,16 +16,12 @@ package dev.vertique.workflow.ops;
  *       {@code WorkflowIdempotencyConflictException}), never as {@link #STALE_NOOP}.</li>
  *   <li>{@code taskReassigned}: returns {@link #APPLIED} or {@link #LOST_TO_RACE}.
  *       {@link #STALE_NOOP} is never returned (would be an SPI contract violation).</li>
- *   <li>{@code taskDueFired}: returns {@link #APPLIED} or {@link #STALE_NOOP}.
- *       {@code taskDueFired} is the <em>only</em> method that may return {@link #STALE_NOOP} —
- *       it does so when the workflow has legitimately moved past the due-date wait by the time
- *       the timer fires.</li>
  * </ul>
  *
  * <p>Public {@code TaskService} translation contract: {@link #APPLIED} and {@link #LOST_TO_RACE}
  * both translate to a successful {@code Future<Void>}; the public service never observes
- * {@link #STALE_NOOP} (only {@code taskDueFired} returns it, and that is invoked from inside the
- * timer-firing executor, not from the public service).
+ * {@link #STALE_NOOP} (it is produced only inside the workflow executor, when a due date or reminder
+ * fires on a task the workflow has moved past, never by the public service).
  */
 public enum TaskMutationResult {
 
@@ -36,7 +32,7 @@ public enum TaskMutationResult {
      * The due-date timer fired but the task is no longer in a state that accepts expiration: the
      * workflow has legitimately moved past this wait (the task is no longer {@code OPEN}, the
      * instance is no longer {@code WAITING/TASK}, or the wait-slot keys do not match the firing
-     * timer). Returned <em>only</em> by {@code taskDueFired}; <em>never</em> by
+     * timer). Produced <em>only</em> when a due date fires inside the workflow executor; <em>never</em> by
      * {@code taskCompleted} (which surfaces no-wait paths as typed exceptions) or
      * {@code taskReassigned} (which has no stale-no-wait path).
      */

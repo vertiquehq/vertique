@@ -14,9 +14,9 @@ import java.util.UUID;
  * Immutable snapshot of a workflow timer row from the {@code workflow_timers} table.
  *
  * <p>Each timer is associated with exactly one workflow instance and step. The timer is
- * scheduled when the engine enters a timer-wait or signal-with-timeout step. When the timer
- * fires, the {@code vertique-workflow-delayed} module invokes the engine's
- * {@link dev.vertique.workflow.ops.TransactionalTimerCallbacks} to resume the workflow.
+ * scheduled when the engine enters a timer-wait or signal-with-timeout step. It is linked to a
+ * timer command; when the command comes due, the workflow executor fires the timer and resumes the
+ * workflow.
  *
  * <p>The {@link #purpose()} and {@link #taskId()} fields are paired: task-scoped purposes
  * ({@link TimerPurpose#TASK_DUE}, {@link TimerPurpose#TASK_REMINDER}) require a non-null
@@ -25,12 +25,8 @@ import java.util.UUID;
  * enforces this at construction time.
  *
  * <p>The {@link #metadata()} field carries durable propagation context in wire-format key/value
- * pairs (FR-CTX-178). It is set at timer-create time by
- * {@link dev.vertique.workflow.delayed.recorder.WorkflowTimerSideEffectRecorder} via
- * {@code DurableContextPropagator.mergeCaptured(..., DELAYED_JOB)} and is the recovery-state
- * copy of the durable metadata: if the underlying delayed-job execution is lost and the timer
- * is re-enqueued by the recovery sweep, this field is copied into the replacement
- * {@code job_executions.metadata} row so the durable context survives the re-enqueue hop.
+ * pairs (FR-CTX-178). It is captured when the timer is scheduled, and the executor binds it when
+ * the timer's command runs, so the durable context survives the wait.
  *
  * @param timerId              stable UUID identifying this timer; primary key in
  *     {@code workflow_timers}
@@ -38,9 +34,6 @@ import java.util.UUID;
  * @param stepId               the plan step id that created this timer
  * @param fireAt               the UTC instant at which the timer is scheduled to fire
  * @param status               current lifecycle status of the timer
- * @param delayedJobExecutionId the delayed-job execution id used to schedule and (if needed)
- *     cancel the underlying delayed job; never null — the timer row is not inserted until the
- *     delayed job is successfully scheduled
  * @param scheduledAt          UTC timestamp when the timer row was inserted
  * @param firedAt              UTC timestamp when the timer was successfully fired; null unless
  *     {@code status == FIRED}
@@ -65,6 +58,8 @@ import java.util.UUID;
  *     was captured at timer-create time. The {@code {"context": {...}}} carrier shape is
  *     persisted in {@code workflow_timers.metadata JSONB} via {@link DurableMetadata#toCarrier()}
  *     and read back via {@link DurableMetadata#fromCarrier(io.vertx.core.json.JsonObject)}.
+ * @param commandId the id of the command this timer row is linked to; null for timers that are not
+ *     linked to a command
  */
 public record TimerRecord(
         UUID timerId,
@@ -72,7 +67,6 @@ public record TimerRecord(
         String stepId,
         Instant fireAt,
         TimerStatus status,
-        UUID delayedJobExecutionId,
         Instant scheduledAt,
         @Nullable Instant firedAt,
         @Nullable Instant cancelledAt,
@@ -83,7 +77,65 @@ public record TimerRecord(
         @Nullable UUID branchTokenId,
         @Nullable String forkStepId,
         @Nullable String branchId,
-        DurableMetadata metadata) {
+        DurableMetadata metadata,
+        @Nullable Long commandId) {
+
+    /**
+     * Creates a timer record that is not linked to a command.
+     *
+     * @param timerId the timer id
+     * @param workflowId the owning instance
+     * @param stepId the creating step
+     * @param fireAt the scheduled fire instant
+     * @param status the lifecycle status
+     * @param scheduledAt the insert timestamp
+     * @param firedAt the fire timestamp, or null
+     * @param cancelledAt the cancel timestamp, or null
+     * @param failedAt the failure timestamp, or null
+     * @param failureReason the failure description, or null
+     * @param purpose the timer purpose
+     * @param taskId the task id, or null
+     * @param branchTokenId the branch token id, or null
+     * @param forkStepId the fork step id, or null
+     * @param branchId the branch id, or null
+     * @param metadata the durable metadata
+     */
+    public TimerRecord(
+            UUID timerId,
+            WorkflowInstanceId workflowId,
+            String stepId,
+            Instant fireAt,
+            TimerStatus status,
+            Instant scheduledAt,
+            @Nullable Instant firedAt,
+            @Nullable Instant cancelledAt,
+            @Nullable Instant failedAt,
+            @Nullable String failureReason,
+            TimerPurpose purpose,
+            @Nullable UUID taskId,
+            @Nullable UUID branchTokenId,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            DurableMetadata metadata) {
+        this(
+                timerId,
+                workflowId,
+                stepId,
+                fireAt,
+                status,
+                scheduledAt,
+                firedAt,
+                cancelledAt,
+                failedAt,
+                failureReason,
+                purpose,
+                taskId,
+                branchTokenId,
+                forkStepId,
+                branchId,
+                metadata,
+                null);
+    }
 
     /**
      * Validates {@code purpose} is non-null and that the {@code taskId}-purpose pairing rules

@@ -7,6 +7,8 @@ import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException;
+import dev.vertique.workflow.exception.WorkflowNodeRoleException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.plan.CompensationNode;
@@ -23,6 +25,8 @@ import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
+import io.vertx.core.Future;
+import jakarta.inject.Provider;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -51,38 +55,31 @@ import java.util.stream.Collectors;
  * it also runs every contributed {@link WorkflowDefinitionValidator} against the candidate
  * definition.
  *
- * <p>Any number of definition ids and versions may name one contract. A version must name the
- * same contract as every earlier version of its id in the same scope, and every signal its plan
- * waits for must be declared on that contract. Another scope may hold the same id under another
- * contract.
+ * <p>The registry holds the code definitions the application registers while it starts, and no other plan. A
+ * document plan, packaged or published, is built from its stored row into the engine's plan cache, which this
+ * registry reaches through a bound {@link DocumentPlanSource}; the registry keeps no reference to it.
  *
- * <p>All versions of one scope and id use one state class. When a scope-owned definition and the default
- * scope's definition of the same id name the same contract and different state classes, the scope-owned
- * state class must extend the default's, as a {@link WorkflowStateCompatibility} decides; the rule is
- * checked when the second of the two registers. Without a comparison, differing state classes are
- * refused. Definitions of different contracts are never compared.
+ * <p>Any number of definition ids and versions may name one contract. A code version must name the same contract
+ * as every earlier version of its id, and every signal its plan waits for must be declared on that contract. All
+ * versions of one id use one state class.
  *
  * <p>Internal storage, each map keyed by the scope and the definition id:
  * <ul>
  *   <li>{@code byDefinition} — {@link ConcurrentHashMap} keyed by scope and definitionId, inner
  *       {@link ConcurrentSkipListMap} keyed by version; allows efficient lookup of the highest
- *       version via {@code lastEntry()}, and answers {@link #contractOf(String, String)} from the
- *       first version it holds.</li>
+ *       version via {@code lastEntry()}, and answers the contract rule from the first version it holds.</li>
  *   <li>{@code sources} — the registered definition objects per scope, id and version.</li>
- *   <li>{@code knownClasses} — the definition id and contract each registered definition class selected,
- *       kept after the version retires; the source of {@link #definitionClass(Class)}.</li>
- *   <li>{@code deprecated} — set of version numbers per scope and definitionId that are marked
- *       deprecated; always a subset of the registered versions and mutated only under
- *       {@code writeLock}.</li>
+ *   <li>{@code knownClasses} — the definition id and contract each registered definition class selected;
+ *       the source of {@link #definitionClass(Class)}.</li>
+ *   <li>{@code bindings} — the type names each registered plan's hash used.</li>
  * </ul>
  *
  * <p>Thread-safety contract:
  * <ul>
- *   <li>{@link #register(WorkflowDefinition)} and {@link #register(String, WorkflowDefinition)} are
- *       safe to call at any time after construction. Multiple callers can invoke them concurrently;
- *       the underlying publication is serialized by {@code writeLock}.</li>
+ *   <li>{@link #register(WorkflowDefinition)} is safe to call from several threads while the application
+ *       starts; the underlying publication is serialized by {@code writeLock}.</li>
  *   <li>Reads ({@link #resolve(DefinitionKey)}, {@link #find(DefinitionKey)},
- *       {@link #allRegistered}) are non-blocking relative to each other (they hold only
+ *       {@link #codeDefinitions}) are non-blocking relative to each other (they hold only
  *       {@code readLock}) but block briefly when a concurrent {@code register()} is in its
  *       publish phase.</li>
  *   <li>A failed {@code register()} rolls back atomically — concurrent readers never observe
@@ -142,26 +139,6 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     private final HashMap<ScopedId, HashMap<Long, Map<String, String>>> bindings = new HashMap<>();
 
     /**
-     * Keyed by (scope, definitionId) → versions marked deprecated. Only registered versions are ever
-     * present; guarded by {@link #rwLock} together with {@link #byDefinition}.
-     */
-    private final ConcurrentHashMap<ScopedId, Set<Long>> deprecated = new ConcurrentHashMap<>();
-
-    /**
-     * Keyed by (scope, definitionId) → versions registered through {@link #register(WorkflowDefinition)}, which is
-     * how the deployed code and the packaged documents register. Guarded by {@link #rwLock} together with
-     * {@link #byDefinition}; only registered versions are present.
-     */
-    private final HashMap<ScopedId, Set<Long>> deployed = new HashMap<>();
-
-    /**
-     * Keyed by (scope, definitionId) → versions registered through {@link #registerFailing}, whose state class
-     * was not compared with the default scope's. A later default version is not compared with them either.
-     * Guarded by {@link #rwLock} together with {@link #byDefinition}; only registered versions are present.
-     */
-    private final HashMap<ScopedId, Set<Long>> failing = new HashMap<>();
-
-    /**
      * Serializes the multi-step publish phase of {@link #register}.
      * Reads take {@code readLock()}; the publish phase of register takes {@code writeLock()}.
      */
@@ -170,14 +147,23 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /** Optional fork/join semantic validator; null when none is wired (legacy callers). */
     private final WorkflowPlanValidator forkJoinValidator;
 
-    /** Contributed registration-time definition validators; unordered and immutable. */
-    private final Set<WorkflowDefinitionValidator> definitionValidators;
+    /** Resolves the contributed registration-time definition validators for each plan build; unordered. */
+    private final Provider<Set<WorkflowDefinitionValidator>> definitionValidators;
 
     /** The type-name index shared with the engine, the schema module and the document compiler. */
     private final WorkflowTypeNames typeNames;
 
     /** Decides whether a scope-owned state class extends the default scope's; empty refuses differing classes. */
     private final Optional<WorkflowStateCompatibility> stateCompatibility;
+
+    /** Where the plans of document keys that this registry does not hold come from; null until the engine binds one. */
+    private volatile DocumentPlanSource documentPlanSource;
+
+    /** Set once the engine's startup has ended; {@link #register(WorkflowDefinition)} is refused from then on. */
+    private volatile boolean sealed;
+
+    /** Set when the node is recording-only; {@link #load(DefinitionKey)} is refused from then on. */
+    private volatile boolean recordingOnly;
 
     /**
      * Creates a new empty {@code DefaultWorkflowRegistry} with no fork/join validator.
@@ -269,11 +255,42 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             Set<WorkflowDefinitionValidator> definitionValidators,
             WorkflowTypeNames typeNames,
             Optional<WorkflowStateCompatibility> stateCompatibility) {
-        Objects.requireNonNull(definitionValidators, "definitionValidators");
+        this(forkJoinValidator, fixedValidators(definitionValidators), typeNames, stateCompatibility);
+    }
+
+    /**
+     * INTERNAL framework seam — the framework implementation behind a contract this module
+     * documents; not an application contract and outside the maturity promise.
+     *
+     * <p>Creates a new empty {@code DefaultWorkflowRegistry} that resolves its contributed definition
+     * validators from {@code definitionValidators} each time it builds a plan, instead of holding
+     * them from construction. Validators that themselves depend on the registry graph (recorders,
+     * handlers) are therefore constructed on the first plan build, not while the registry is
+     * constructed, which keeps the dependency graph acyclic.
+     *
+     * @param forkJoinValidator validator to invoke on each registered plan; may be null only in
+     *     test contexts that intentionally skip fork/join semantic checks
+     * @param definitionValidators resolves the validators to invoke on each candidate definition;
+     *     must not be {@code null}
+     * @param typeNames the shared type-name index; must not be {@code null}
+     * @param stateCompatibility the state comparison; must not be {@code null}, may be empty
+     */
+    public DefaultWorkflowRegistry(
+            WorkflowPlanValidator forkJoinValidator,
+            Provider<Set<WorkflowDefinitionValidator>> definitionValidators,
+            WorkflowTypeNames typeNames,
+            Optional<WorkflowStateCompatibility> stateCompatibility) {
         this.forkJoinValidator = forkJoinValidator;
-        this.definitionValidators = Set.copyOf(definitionValidators);
+        this.definitionValidators = Objects.requireNonNull(definitionValidators, "definitionValidators");
         this.typeNames = Objects.requireNonNull(typeNames, "typeNames");
         this.stateCompatibility = Objects.requireNonNull(stateCompatibility, "stateCompatibility");
+    }
+
+    private static Provider<Set<WorkflowDefinitionValidator>> fixedValidators(
+            Set<WorkflowDefinitionValidator> definitionValidators) {
+        Objects.requireNonNull(definitionValidators, "definitionValidators");
+        Set<WorkflowDefinitionValidator> copy = Set.copyOf(definitionValidators);
+        return () -> copy;
     }
 
     /**
@@ -289,19 +306,11 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     // --- WorkflowRegistry ---
 
     /**
-     * Registers a workflow definition in the default scope; see {@link #register(String, WorkflowDefinition)}.
-     *
-     * @param def the workflow definition to register
-     * @throws WorkflowDefinitionException if the plan is invalid or a duplicate
-     */
-    @Override
-    public void register(WorkflowDefinition<?, ?> def) {
-        register(WorkflowScopes.DEFAULT, def, true);
-    }
-
-    /**
-     * Registers a workflow definition in a scope, builds its plan via the DSL, and stores the resulting
+     * Registers a code definition in the default scope, builds its plan via the DSL, and stores the resulting
      * {@link RuntimeWorkflow}.
+     *
+     * <p>Registration is a startup operation: it is accepted while the registry is constructed and the engine starts,
+     * and refused with {@link IllegalStateException} once the engine has {@linkplain #seal() sealed} the registry.
      *
      * <p>Validation steps (performed before the write-lock is acquired, using only immutable
      * local values):
@@ -322,79 +331,52 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      *
      * <p>Publish phase (inside {@code writeLock}):
      * <ol>
-     *   <li>Throws if {@code (scopeKey, definitionId, definitionVersion)} is already registered.</li>
-     *   <li>Throws if an earlier version of the same definition id in the same scope names another
-     *       contract; any number of definition ids and versions may name one contract, and another
-     *       scope may hold the id under another contract.</li>
-     *   <li>Throws if an earlier version of the same definition id in the same scope has another state
-     *       class.</li>
-     *   <li>Throws if the scope is not the default scope, the default scope holds the same id under the same
-     *       contract with another state class, and the scope's state class does not extend the default's;
-     *       registering the default definition second applies the same rule to each scope-owned
-     *       definition of the id. The refusal names the scope-owned key and the first incompatible
-     *       property path. Without a state comparison, differing state classes are refused.</li>
-     *   <li>Stores the {@link RuntimeWorkflow} keyed by {@code (scopeKey, definitionId,
-     *       definitionVersion)} — no half-committed state is visible to concurrent readers.</li>
+     *   <li>Throws if {@code (definitionId, definitionVersion)} is already registered.</li>
+     *   <li>Throws if an earlier version of the same definition id names another contract; any number of
+     *       definition ids and versions may name one contract.</li>
+     *   <li>Throws if an earlier version of the same definition id has another state class.</li>
+     *   <li>Stores the {@link RuntimeWorkflow} keyed by {@code (definitionId, definitionVersion)} — no
+     *       half-committed state is visible to concurrent readers.</li>
      * </ol>
      *
      * <p>Every refusal names the scope, the definition id and the version.
      *
-     * @param scopeKey the scope that owns the definition
      * @param def the workflow definition to register
-     * @throws WorkflowDefinitionException if the plan is invalid, the scope key is not a valid scope key, or
-     *     the key is a duplicate
+     * @throws WorkflowDefinitionException if the plan is invalid or a duplicate
+     * @throws IllegalStateException if the registry is sealed; the message names the definition
      */
     @Override
-    public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
-        register(scopeKey, def, false);
+    public void register(WorkflowDefinition<?, ?> def) {
+        if (sealed) {
+            throw new IllegalStateException("Definition '" + def.definitionId() + "' version "
+                    + def.definitionVersion()
+                    + " cannot be registered after startup; code definitions are registered while the application"
+                    + " starts");
+        }
+        registerCode(def);
     }
 
     /**
-     * {@inheritDoc}
+     * Ends the registration window: {@link #register(WorkflowDefinition)} throws {@link IllegalStateException} from
+     * now on, and {@link #adoptNameBinding} changes nothing. Calling it again has no effect.
      *
-     * <p>The plan rules of {@link #register(String, WorkflowDefinition)} apply. The state class and every
-     * signal and decision payload class that {@code nameBinding} holds are named in the plan, and so in its
-     * hash, by the bound name; any other class is named by its current logical name.
+     * <p>INTERNAL: called only by the engine's bootstrap when startup ends; applications never call it.
      */
-    @Override
-    public void register(String scopeKey, WorkflowDefinition<?, ?> def, Map<String, String> nameBinding) {
-        Objects.requireNonNull(nameBinding, "nameBinding");
-        register(scopeKey, def, false, DefaultWorkflowTypeNames.bound(typeNames, nameBinding), true);
+    public void seal() {
+        sealed = true;
     }
 
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Every rule of {@link #register(String, WorkflowDefinition)} applies except the comparison of the scope's
-     * state class with the default scope's: the per-scope contract and state class rules, the signal declarations
-     * and the plan validation still refuse the definition.
-     */
-    @Override
-    public void registerFailing(String scopeKey, WorkflowDefinition<?, ?> def) {
-        register(scopeKey, def, false, typeNames, false);
-    }
-
-    private void register(String scopeKey, WorkflowDefinition<?, ?> def, boolean deployment) {
-        register(scopeKey, def, deployment, typeNames, true);
-    }
-
-    /** A definition built into the plan and runtime that a registration or a rebinding publishes. */
+    /** A definition built into the plan and runtime that a registration or a name binding publishes. */
     private record Compiled(WorkflowBuilder<?> builder, RuntimeWorkflow runtime, Map<String, String> binding) {}
 
     @SuppressWarnings({"rawtypes", "unchecked"})
-    private void register(
-            String scopeKey,
-            WorkflowDefinition<?, ?> def,
-            boolean deployment,
-            WorkflowTypeNames names,
-            boolean compareWithDefault) {
-        Objects.requireNonNull(scopeKey, "scopeKey");
+    private void registerCode(WorkflowDefinition<?, ?> def) {
         // --- Pre-publish validation (no lock needed — produces only immutable local values) ---
 
+        String scopeKey = WorkflowScopes.DEFAULT;
         String definitionId = def.definitionId();
         long definitionVersion = def.definitionVersion();
-        requireValidScope(scopeKey, definitionId, definitionVersion);
-        Compiled compiled = compile(scopeKey, def, names);
+        Compiled compiled = compile(scopeKey, def, typeNames);
         WorkflowBuilder builder = compiled.builder();
         WorkflowPlan plan = compiled.runtime().plan();
         RuntimeWorkflow rw = compiled.runtime();
@@ -406,18 +388,10 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             // Contributed definition validators run last, before the publish phase; an exception
             // propagates unchanged and the definition is never published.
             RegisteredWorkflowDefinition candidate = new RegisteredWorkflowDefinition(plan, builder.startPayloadType());
-            for (WorkflowDefinitionValidator validator : definitionValidators) {
+            for (WorkflowDefinitionValidator validator : definitionValidators.get()) {
                 validator.validate(candidate);
             }
-            publish(
-                    def,
-                    scopeKey,
-                    definitionId,
-                    definitionVersion,
-                    rw,
-                    compiled.binding(),
-                    deployment,
-                    compareWithDefault);
+            publish(def, scopeKey, definitionId, definitionVersion, rw, compiled.binding());
         } catch (RuntimeException | Error e) {
             undoIndexing.run();
             throw e;
@@ -477,22 +451,31 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     }
 
     /**
-     * {@inheritDoc}
+     * Replaces the runtime of a registered code definition with one whose plan was built under the type names its
+     * stored plan hash was first computed with, when that plan has the required hash.
      *
-     * <p>The runtime is built from the definition retained by {@link #registeredDefinition(DefinitionKey)} and
-     * replaces the registered one under the publication lock only when its plan hash equals
-     * {@code requiredPlanHash} and the version still holds that definition. The deprecation mark and the
-     * deployed flag of the version are kept.
+     * <p>INTERNAL: at startup the engine's bootstrap calls it for a code definition that was registered under
+     * current logical names, before the stored name binding of its row was known, so that the node serves the plan
+     * hash the row holds and a class that gained a logical name since does not change it. Nothing changes when the
+     * hash differs, when the definition is not registered, or once the registry is {@linkplain #seal() sealed}.
+     * Applications never call it.
+     *
+     * <p>The registration validators are not run again: a plan hash equal to {@code requiredPlanHash} means the plan
+     * is the one that already passed registration, and only the name binding differs.
+     *
+     * @param key the default-scope key of the registered code definition
+     * @param nameBinding the binary name of a state or payload class mapped to the name to use for it
+     * @param requiredPlanHash the plan hash the rebuilt plan must have
+     * @return the runtime now registered, or empty when nothing was replaced
      */
-    @Override
-    public Optional<RuntimeWorkflow> rebind(
+    public Optional<RuntimeWorkflow> adoptNameBinding(
             DefinitionKey key, Map<String, String> nameBinding, String requiredPlanHash) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(nameBinding, "nameBinding");
         Objects.requireNonNull(requiredPlanHash, "requiredPlanHash");
-        Optional<WorkflowDefinition<?, ?>> retained = registeredDefinition(key);
-        if (retained.isEmpty()) return Optional.empty();
-        WorkflowDefinition<?, ?> def = retained.orElseThrow();
+        if (sealed) return Optional.empty();
+        WorkflowDefinition<?, ?> def = retainedDefinition(key);
+        if (def == null) return Optional.empty();
         Compiled compiled = compile(key.scopeKey(), def, DefaultWorkflowTypeNames.bound(typeNames, nameBinding));
         if (!requiredPlanHash.equals(compiled.runtime().plan().planHash())) return Optional.empty();
         ScopedId scopedId = new ScopedId(key.scopeKey(), key.definitionId());
@@ -513,17 +496,52 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Read under the same lock as the registration, so it is empty for a version that is not registered.
-     */
-    @Override
-    public Map<String, String> nameBinding(DefinitionKey key) {
+    private WorkflowDefinition<?, ?> retainedDefinition(DefinitionKey key) {
         rwLock.readLock().lock();
         try {
-            var registered = bindings.get(new ScopedId(key.scopeKey(), key.definitionId()));
-            return registered == null ? Map.of() : registered.getOrDefault(key.definitionVersion(), Map.of());
+            var registered = sources.get(new ScopedId(key.scopeKey(), key.definitionId()));
+            return registered == null ? null : registered.get(key.definitionVersion());
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * A code definition as the application registered it.
+     *
+     * @param runtime the registered runtime
+     * @param definition the definition object that was registered
+     * @param nameBinding the binary name of the state class and of every signal and decision payload class of the
+     *     plan, mapped to the name its plan hash used
+     */
+    public record CodeRegistration(
+            RuntimeWorkflow runtime, WorkflowDefinition<?, ?> definition, Map<String, String> nameBinding) {}
+
+    /**
+     * Returns the code definitions with the definition objects and name bindings they were registered with.
+     *
+     * <p>INTERNAL: the engine's bootstrap records the code in the definition store with it; applications never call
+     * it. {@link #codeDefinitions()} lists the same runtimes.
+     *
+     * @return immutable snapshot of the registrations, ordered by definition id and version; never null
+     */
+    public List<CodeRegistration> codeRegistrations() {
+        rwLock.readLock().lock();
+        try {
+            List<CodeRegistration> result = new ArrayList<>();
+            for (var entry : byDefinition.entrySet()) {
+                for (var version : entry.getValue().entrySet()) {
+                    WorkflowDefinition<?, ?> definition =
+                            sources.get(entry.getKey()).get(version.getKey());
+                    Map<String, String> binding = bindings.get(entry.getKey()).get(version.getKey());
+                    result.add(new CodeRegistration(version.getValue(), definition, binding));
+                }
+            }
+            result.sort(Comparator.comparing((CodeRegistration registration) ->
+                            registration.runtime().plan().definitionId())
+                    .thenComparingLong(
+                            registration -> registration.runtime().plan().definitionVersion()));
+            return List.copyOf(result);
         } finally {
             rwLock.readLock().unlock();
         }
@@ -558,14 +576,11 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             String definitionId,
             long definitionVersion,
             RuntimeWorkflow rw,
-            Map<String, String> nameBinding,
-            boolean deployment,
-            boolean compareWithDefault) {
+            Map<String, String> nameBinding) {
         ScopedId scopedId = new ScopedId(scopeKey, definitionId);
         rwLock.writeLock().lock();
         try {
-            // Reject exact duplicates, and a version whose contract differs from the earlier versions of its
-            // scope and id
+            // Reject exact duplicates, and a version whose contract differs from the earlier versions of its id
             ConcurrentSkipListMap<Long, RuntimeWorkflow> registered = byDefinition.get(scopedId);
             if (registered != null && !registered.isEmpty()) {
                 if (registered.containsKey(definitionVersion)) {
@@ -591,7 +606,6 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                             + " type");
                 }
             }
-            if (compareWithDefault) requireStateExtension(scopeKey, definitionId, definitionVersion, rw);
             byDefinition
                     .computeIfAbsent(scopedId, k -> new ConcurrentSkipListMap<>())
                     .put(definitionVersion, rw);
@@ -603,50 +617,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                             new KnownClass(definitionVersion, def.contract()),
                             (known, added) -> added.version() > known.version() ? added : known);
             bindings.computeIfAbsent(scopedId, k -> new HashMap<>()).put(definitionVersion, nameBinding);
-            if (!compareWithDefault)
-                failing.computeIfAbsent(scopedId, k -> new HashSet<>()).add(definitionVersion);
-            if (deployment)
-                deployed.computeIfAbsent(scopedId, k -> new HashSet<>()).add(definitionVersion);
         } finally {
             rwLock.writeLock().unlock();
         }
-    }
-
-    /**
-     * Applies the scope-versus-default state rule to a candidate whose scope-and-id rules passed: a scope-owned
-     * candidate is compared with the default scope's definition of the id, a default candidate with each
-     * scope-owned definition of the id. Only definitions of one contract are compared. Called under the write
-     * lock.
-     */
-    private void requireStateExtension(
-            String scopeKey, String definitionId, long definitionVersion, RuntimeWorkflow rw) {
-        if (WorkflowScopes.DEFAULT.equals(scopeKey)) {
-            for (var entry : byDefinition.entrySet()) {
-                ScopedId other = entry.getKey();
-                if (!other.definitionId().equals(definitionId)
-                        || WorkflowScopes.DEFAULT.equals(other.scopeKey())
-                        || entry.getValue().isEmpty()) {
-                    continue;
-                }
-                Set<Long> failingVersions = failing.getOrDefault(other, Set.of());
-                var scopeOwned = entry.getValue().entrySet().stream()
-                        .filter(version -> !failingVersions.contains(version.getKey()))
-                        .findFirst();
-                if (scopeOwned.isEmpty()) continue;
-                requireExtension(
-                        rw,
-                        scopeOwned.orElseThrow().getValue(),
-                        other.scopeKey(),
-                        definitionId,
-                        scopeOwned.orElseThrow().getKey());
-            }
-            return;
-        }
-        var defaults = byDefinition.get(new ScopedId(WorkflowScopes.DEFAULT, definitionId));
-        if (defaults == null || defaults.isEmpty()) {
-            return;
-        }
-        requireExtension(defaults.firstEntry().getValue(), rw, scopeKey, definitionId, definitionVersion);
     }
 
     /**
@@ -659,8 +632,18 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             String scopeKey,
             String definitionId,
             long scopeOwnedVersion) {
-        if (!defaultRw.contractName().equals(scopeOwned.contractName())
-                || defaultRw.stateType().equals(scopeOwned.stateType())) {
+        requireExtension(
+                defaultRw.contractName(), defaultRw.stateType(), scopeOwned, scopeKey, definitionId, scopeOwnedVersion);
+    }
+
+    private void requireExtension(
+            String defaultContractName,
+            Class<?> defaultStateType,
+            RuntimeWorkflow scopeOwned,
+            String scopeKey,
+            String definitionId,
+            long scopeOwnedVersion) {
+        if (!defaultContractName.equals(scopeOwned.contractName()) || defaultStateType.equals(scopeOwned.stateType())) {
             return;
         }
         String subject = "definition " + describe(scopeKey, definitionId, scopeOwnedVersion)
@@ -672,7 +655,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                     + " differing state types are refused");
         }
         Optional<String> incompatible =
-                stateCompatibility.orElseThrow().firstIncompatibility(defaultRw.stateType(), scopeOwned.stateType());
+                stateCompatibility.orElseThrow().firstIncompatibility(defaultStateType, scopeOwned.stateType());
         if (incompatible.isPresent()) {
             throw new WorkflowDefinitionException(subject + "; the state type must extend the default scope's, but"
                     + " property '" + incompatible.orElseThrow() + "' is removed or has another type");
@@ -972,8 +955,11 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /**
      * {@inheritDoc}
      *
-     * @throws WorkflowVersionPinUnavailableException if the scope does not hold the version; the message
-     *     names the scope, the definition id and the version
+     * <p>A key the registry does not hold is answered from the bound {@link DocumentPlanSource} if its plan is
+     * resident there now; nothing is loaded.
+     *
+     * @throws WorkflowDefinitionNotFoundException (a {@link WorkflowVersionPinUnavailableException}) if neither the
+     *     registry nor the source holds the version; the message names the scope, the definition id and the version
      */
     @Override
     public RuntimeWorkflow resolve(DefinitionKey key) {
@@ -983,15 +969,227 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     private RuntimeWorkflow resolve(String scopeKey, String definitionId, long version) {
         RuntimeWorkflow rw = lookup(scopeKey, definitionId, version);
         if (rw == null) {
-            throw new WorkflowVersionPinUnavailableException(scopeKey, definitionId, version, null);
+            rw = resident(new DefinitionKey(scopeKey, definitionId, version)).orElse(null);
+        }
+        if (rw == null) {
+            throw new WorkflowDefinitionNotFoundException(new DefinitionKey(scopeKey, definitionId, version));
         }
         return rw;
     }
 
-    /** {@inheritDoc} */
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A key the registry does not hold is answered from the bound {@link DocumentPlanSource} only if its plan is
+     * resident there now; nothing is loaded, built or read.
+     */
     @Override
     public Optional<RuntimeWorkflow> find(DefinitionKey key) {
-        return Optional.ofNullable(lookup(key.scopeKey(), key.definitionId(), key.definitionVersion()));
+        RuntimeWorkflow held = lookup(key.scopeKey(), key.definitionId(), key.definitionVersion());
+        return held != null ? Optional.of(held) : resident(key);
+    }
+
+    private Optional<RuntimeWorkflow> resident(DefinitionKey key) {
+        DocumentPlanSource source = documentPlanSource;
+        return source == null ? Optional.empty() : source.resident(key);
+    }
+
+    /**
+     * Marks this registry as the registry of a recording-only node: {@link #load(DefinitionKey)} is refused from
+     * then on.
+     *
+     * <p>INTERNAL: called only when the registry is assembled for a node configured with
+     * {@code workflow.executor.enabled=false}; applications never call it.
+     */
+    public void markRecordingOnly() {
+        this.recordingOnly = true;
+    }
+
+    /**
+     * Binds the source of the plans of document keys that this registry does not hold.
+     *
+     * <p>INTERNAL: called only by the engine when it wires its plan cache; applications never call it. The source
+     * is set once per engine, and a later call replaces it.
+     *
+     * @param source the source that {@link #load(DefinitionKey)}, {@link #find(DefinitionKey)} and
+     *     {@link #resolve(DefinitionKey)} consult for keys the registry does not hold
+     */
+    public void bindDocumentPlanSource(DocumentPlanSource source) {
+        this.documentPlanSource = Objects.requireNonNull(source, "source");
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A key the registry holds, which is every code definition and every document registered at startup, is
+     * answered here. Any other key is handed to the bound {@link DocumentPlanSource}; without one the future fails
+     * with {@link WorkflowDefinitionNotFoundException}. On a recording-only node, which holds no workflow code and
+     * builds no plan, the future fails with {@link WorkflowNodeRoleException}.
+     */
+    @Override
+    public Future<RuntimeWorkflow> load(DefinitionKey key) {
+        Objects.requireNonNull(key, "key");
+        if (recordingOnly) {
+            return Future.failedFuture(new WorkflowNodeRoleException("load"));
+        }
+        RuntimeWorkflow held = lookup(key.scopeKey(), key.definitionId(), key.definitionVersion());
+        if (held != null) {
+            return Future.succeededFuture(held);
+        }
+        DocumentPlanSource source = documentPlanSource;
+        if (source == null) {
+            return Future.failedFuture(new WorkflowDefinitionNotFoundException(key));
+        }
+        try {
+            return source.load(key);
+        } catch (RuntimeException e) {
+            return Future.failedFuture(e);
+        }
+    }
+
+    /**
+     * Builds the runtime of a definition under the registration rules that concern the definition alone, and
+     * publishes nothing.
+     *
+     * <p>INTERNAL: the engine's plan cache builds the plan of a stored document with it. The plan graph, signal and
+     * callback checks and every contributed {@link WorkflowDefinitionValidator} run as they do for
+     * {@link #register(WorkflowDefinition)}; the comparisons with the versions already registered do not, because nothing
+     * is registered. The classes of the definition enter the shared type-name index, which only adds
+     * names, and stay there when the build succeeds.
+     *
+     * @param scopeKey the scope that owns the definition
+     * @param def the definition to build
+     * @param nameBinding the binary name of a state or payload class mapped to the name its plan hash used; empty
+     *     names every class by its current logical name
+     * @return the runtime of the definition; it is not registered
+     * @throws WorkflowDefinitionException if the plan is invalid or a validator refuses it
+     */
+    public RuntimeWorkflow build(String scopeKey, WorkflowDefinition<?, ?> def, Map<String, String> nameBinding) {
+        Objects.requireNonNull(scopeKey, "scopeKey");
+        Objects.requireNonNull(def, "def");
+        Objects.requireNonNull(nameBinding, "nameBinding");
+        requireValidScope(scopeKey, def.definitionId(), def.definitionVersion());
+        WorkflowTypeNames names =
+                nameBinding.isEmpty() ? typeNames : DefaultWorkflowTypeNames.bound(typeNames, nameBinding);
+        Compiled compiled = compile(scopeKey, def, names);
+        Runnable undoIndexing = indexCandidate(def, compiled.builder());
+        try {
+            RegisteredWorkflowDefinition candidate = new RegisteredWorkflowDefinition(
+                    compiled.runtime().plan(), compiled.builder().startPayloadType());
+            for (WorkflowDefinitionValidator validator : definitionValidators.get()) {
+                validator.validate(candidate);
+            }
+            return compiled.runtime();
+        } catch (RuntimeException | Error e) {
+            undoIndexing.run();
+            throw e;
+        }
+    }
+
+    /**
+     * The result of comparing a scope-owned plan with the default scope's definition of its id.
+     *
+     * @param defaultStateTypeName the logical state type name of the default scope's definition the plan was compared
+     *     with, or {@code null} when the default scope holds none
+     * @param accepted {@code true} when the plan's state type is the default scope's or extends it, as a
+     *     {@link WorkflowStateCompatibility} decides
+     */
+    public record StateComparison(
+            @jakarta.annotation.Nullable String defaultStateTypeName, boolean accepted) {}
+
+    /**
+     * Compares the state type of a scope-owned plan with the default scope's definition of the same id.
+     *
+     * <p>INTERNAL: the engine's plan cache evaluates the plans it builds with it; applications never call it.
+     *
+     * @param scopeOwned the plan of a version of a scope other than the default one
+     * @return the comparison; accepted when the default scope holds no definition of the id
+     */
+    public StateComparison compareWithDefault(RuntimeWorkflow scopeOwned) {
+        Objects.requireNonNull(scopeOwned, "scopeOwned");
+        rwLock.readLock().lock();
+        try {
+            var defaults = byDefinition.get(
+                    new ScopedId(WorkflowScopes.DEFAULT, scopeOwned.plan().definitionId()));
+            if (defaults == null || defaults.isEmpty()) {
+                return new StateComparison(null, true);
+            }
+            RuntimeWorkflow defaultRw = defaults.firstEntry().getValue();
+            try {
+                requireExtension(
+                        defaultRw,
+                        scopeOwned,
+                        scopeOwned.definitionScopeKey(),
+                        scopeOwned.plan().definitionId(),
+                        scopeOwned.plan().definitionVersion());
+                return new StateComparison(defaultRw.plan().stateTypeName(), true);
+            } catch (WorkflowDefinitionException refused) {
+                return new StateComparison(defaultRw.plan().stateTypeName(), false);
+            }
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Compares the state type of a scope-owned plan with the default scope's current definition as its stored row
+     * names it, which holds for a document of the default scope although none is registered.
+     *
+     * <p>INTERNAL: the engine reads the default scope's current row and passes its names; applications never call
+     * it. A state type name that no class resolves cannot be compared and is refused, so the comparison fails closed.
+     *
+     * @param scopeOwned the plan of a version of a scope other than the default one
+     * @param defaultContractName the logical contract name of the default scope's current row
+     * @param defaultStateTypeName the logical state type name of the default scope's current row
+     * @return the comparison, which names {@code defaultStateTypeName}
+     */
+    public StateComparison compareWithDefault(
+            RuntimeWorkflow scopeOwned, String defaultContractName, String defaultStateTypeName) {
+        Objects.requireNonNull(scopeOwned, "scopeOwned");
+        Objects.requireNonNull(defaultContractName, "defaultContractName");
+        Objects.requireNonNull(defaultStateTypeName, "defaultStateTypeName");
+        Optional<Class<?>> defaultState = typeNames.find(defaultStateTypeName);
+        if (!defaultContractName.equals(scopeOwned.contractName())) {
+            return new StateComparison(defaultStateTypeName, true);
+        }
+        if (defaultState.isEmpty()) {
+            return new StateComparison(defaultStateTypeName, false);
+        }
+        try {
+            requireExtension(
+                    defaultContractName,
+                    defaultState.orElseThrow(),
+                    scopeOwned,
+                    scopeOwned.definitionScopeKey(),
+                    scopeOwned.plan().definitionId(),
+                    scopeOwned.plan().definitionVersion());
+            return new StateComparison(defaultStateTypeName, true);
+        } catch (WorkflowDefinitionException refused) {
+            return new StateComparison(defaultStateTypeName, false);
+        }
+    }
+
+    /**
+     * The logical state type name of the default scope's definition of the id, which a scope-owned plan is compared
+     * with.
+     *
+     * <p>INTERNAL: the engine's plan cache reads it to see whether an earlier {@linkplain #compareWithDefault
+     * comparison} is still current; applications never call it.
+     *
+     * @param definitionId the definition id
+     * @return the name, or empty when the default scope holds no definition of the id
+     */
+    public Optional<String> defaultStateTypeName(String definitionId) {
+        Objects.requireNonNull(definitionId, "definitionId");
+        rwLock.readLock().lock();
+        try {
+            var defaults = byDefinition.get(new ScopedId(WorkflowScopes.DEFAULT, definitionId));
+            return defaults == null || defaults.isEmpty()
+                    ? Optional.empty()
+                    : Optional.of(defaults.firstEntry().getValue().plan().stateTypeName());
+        } finally {
+            rwLock.readLock().unlock();
+        }
     }
 
     private RuntimeWorkflow lookup(String scopeKey, String definitionId, long version) {
@@ -1007,59 +1205,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /**
      * {@inheritDoc}
      *
-     * <p>Scans the registered scope and id pairs, so it is for listings; the order is by scope key and then by
-     * version.
-     */
-    @Override
-    public List<DefinitionKey> keysFor(String definitionId) {
-        Objects.requireNonNull(definitionId, "definitionId");
-        rwLock.readLock().lock();
-        try {
-            List<DefinitionKey> keys = new ArrayList<>();
-            for (Map.Entry<ScopedId, ConcurrentSkipListMap<Long, RuntimeWorkflow>> entry : byDefinition.entrySet()) {
-                if (!entry.getKey().definitionId().equals(definitionId)) {
-                    continue;
-                }
-                for (Long version : entry.getValue().keySet()) {
-                    keys.add(new DefinitionKey(entry.getKey().scopeKey(), definitionId, version));
-                }
-            }
-            keys.sort(
-                    Comparator.comparing(DefinitionKey::scopeKey).thenComparingLong(DefinitionKey::definitionVersion));
-            return List.copyOf(keys);
-        } finally {
-            rwLock.readLock().unlock();
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Answered from the per-scope and id index that the contract rule of {@link #register(String,
-     * WorkflowDefinition)} reads, in one lookup.
-     */
-    @Override
-    public Optional<String> contractOf(String scopeKey, String definitionId) {
-        rwLock.readLock().lock();
-        try {
-            ConcurrentSkipListMap<Long, RuntimeWorkflow> versions =
-                    byDefinition.get(new ScopedId(scopeKey, definitionId));
-            return versions == null || versions.isEmpty()
-                    ? Optional.empty()
-                    : Optional.of(versions.firstEntry().getValue().contractName());
-        } finally {
-            rwLock.readLock().unlock();
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Answered under the read lock from what the registrations recorded, so it does not follow
-     * {@link #unregister(DefinitionKey)}: a class keeps selecting its definition id after every version it was
-     * registered as has retired, which is what lets a client created from the class outlive a retired
-     * version. A class that was never registered, or whose registration was refused, is unknown. When
-     * several versions of one id share the class, the highest version's contract answers.
+     * <p>Answered under the read lock from what the registrations recorded. A class that was never registered, or
+     * whose registration was refused, is unknown. When several versions of one id share the class, the highest
+     * version's contract answers.
      */
     @Override
     public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
@@ -1083,11 +1231,11 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      * {@inheritDoc}
      *
      * <p>Flattens all per-version inner maps into a single immutable list. The order of entries is
-     * deterministic within each scope and definitionId (ascending version), but the order across
-     * different scopes and definitionIds is not guaranteed.
+     * deterministic within each definitionId (ascending version), but the order across
+     * different definitionIds is not guaranteed.
      */
     @Override
-    public Collection<RuntimeWorkflow> allRegistered() {
+    public Collection<RuntimeWorkflow> codeDefinitions() {
         rwLock.readLock().lock();
         try {
             List<RuntimeWorkflow> result = new ArrayList<>();
@@ -1097,138 +1245,6 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             return List.copyOf(result);
         } finally {
             rwLock.readLock().unlock();
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>The mark is taken under the same write lock as {@link #register} and {@link #unregister},
-     * so a version is never observable as registered-but-unmarked after this method returns.
-     * Marking a version that is not currently registered is a no-op, because a deprecation can race
-     * with the local removal of the same version; marking an already deprecated version is
-     * idempotent. {@link #unregister(DefinitionKey)} clears the mark.
-     */
-    @Override
-    public void markDeprecated(DefinitionKey key) {
-        ScopedId scopedId = new ScopedId(key.scopeKey(), key.definitionId());
-        rwLock.writeLock().lock();
-        try {
-            var versions = byDefinition.get(scopedId);
-            if (versions == null || !versions.containsKey(key.definitionVersion())) return;
-            deprecated
-                    .computeIfAbsent(scopedId, k -> ConcurrentHashMap.newKeySet())
-                    .add(key.definitionVersion());
-        } finally {
-            rwLock.writeLock().unlock();
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>The mark is cleared under the same write lock as {@link #register}, {@link #unregister} and
-     * {@link #markDeprecated}, so no caller observes a half-applied change.
-     */
-    @Override
-    public void unmarkDeprecated(DefinitionKey key) {
-        ScopedId scopedId = new ScopedId(key.scopeKey(), key.definitionId());
-        rwLock.writeLock().lock();
-        try {
-            deprecated.computeIfPresent(scopedId, (k, marked) -> {
-                marked.remove(key.definitionVersion());
-                return marked.isEmpty() ? null : marked;
-            });
-        } finally {
-            rwLock.writeLock().unlock();
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Returns {@code false} for a version that is not currently registered.
-     */
-    @Override
-    public boolean isDeprecated(DefinitionKey key) {
-        rwLock.readLock().lock();
-        try {
-            return deprecated
-                    .getOrDefault(new ScopedId(key.scopeKey(), key.definitionId()), Set.of())
-                    .contains(key.definitionVersion());
-        } finally {
-            rwLock.readLock().unlock();
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>True for a version registered through {@link #register(WorkflowDefinition)}, read under the same lock as
-     * the registration; false for a version registered through {@link #register(String, WorkflowDefinition)}, and
-     * again after {@link #unregister(DefinitionKey)}.
-     */
-    @Override
-    public boolean isDeployed(DefinitionKey key) {
-        rwLock.readLock().lock();
-        try {
-            Set<Long> versions = deployed.get(new ScopedId(key.scopeKey(), key.definitionId()));
-            return versions != null && versions.contains(key.definitionVersion());
-        } finally {
-            rwLock.readLock().unlock();
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Returns the definition object passed to {@link #register}, read under the same lock as the
-     * registration, so it is empty for a version that was never registered and again after
-     * {@link #unregister(DefinitionKey)}.
-     */
-    @Override
-    public Optional<WorkflowDefinition<?, ?>> registeredDefinition(DefinitionKey key) {
-        rwLock.readLock().lock();
-        try {
-            var registered = sources.get(new ScopedId(key.scopeKey(), key.definitionId()));
-            return registered == null ? Optional.empty() : Optional.ofNullable(registered.get(key.definitionVersion()));
-        } finally {
-            rwLock.readLock().unlock();
-        }
-    }
-
-    /** Removes the version and its deprecation mark under the publication lock. */
-    @Override
-    public void unregister(DefinitionKey key) {
-        ScopedId scopedId = new ScopedId(key.scopeKey(), key.definitionId());
-        long version = key.definitionVersion();
-        rwLock.writeLock().lock();
-        try {
-            var versions = byDefinition.get(scopedId);
-            if (versions == null || versions.remove(version) == null) return;
-            if (versions.isEmpty()) byDefinition.remove(scopedId, versions);
-            sources.computeIfPresent(scopedId, (k, registered) -> {
-                registered.remove(version);
-                return registered.isEmpty() ? null : registered;
-            });
-            bindings.computeIfPresent(scopedId, (k, registered) -> {
-                registered.remove(version);
-                return registered.isEmpty() ? null : registered;
-            });
-            deprecated.computeIfPresent(scopedId, (k, marked) -> {
-                marked.remove(version);
-                return marked.isEmpty() ? null : marked;
-            });
-            deployed.computeIfPresent(scopedId, (k, marked) -> {
-                marked.remove(version);
-                return marked.isEmpty() ? null : marked;
-            });
-            failing.computeIfPresent(scopedId, (k, marked) -> {
-                marked.remove(version);
-                return marked.isEmpty() ? null : marked;
-            });
-        } finally {
-            rwLock.writeLock().unlock();
         }
     }
 }

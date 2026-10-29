@@ -4,3 +4,12 @@ Copyright 2026 Koivisto Capital Oy
 This distribution includes the Apache Maven Wrapper scripts, licensed to the
 Apache Software Foundation under the Apache License, Version 2.0. The corresponding
 license text is provided in LICENSES/Apache-2.0.txt.
+
+This distribution depends on Apache Commons Collections, whose NOTICE file requires
+the following attribution:
+
+    Apache Commons Collections
+    Copyright 2001-2019 The Apache Software Foundation
+
+    This product includes software developed at
+    The Apache Software Foundation (http://www.apache.org/).

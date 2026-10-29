@@ -5,18 +5,11 @@ package dev.vertique.workflow.postgresql.registry;
 
 import static dev.vertique.workflow.postgresql.registry.ActivationFixtures.DEFAULT;
 import static dev.vertique.workflow.postgresql.registry.DefinitionScenario.await;
-import static dev.vertique.workflow.postgresql.registry.DefinitionScenario.failureOf;
 import static dev.vertique.workflow.postgresql.registry.DefinitionScenario.source;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
 
-import ch.qos.logback.classic.Level;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
-import dev.vertique.job.JobContext;
-import dev.vertique.job.delayed.DelayedJobOptions;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
@@ -24,12 +17,8 @@ import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
-import dev.vertique.workflow.delayed.job.TimerFirePayload;
-import dev.vertique.workflow.delayed.job.WorkflowTimerFireExecutor;
-import dev.vertique.workflow.delayed.job.WorkflowTimerFireJob;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
-import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
@@ -47,18 +36,14 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
+import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.Row;
-import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Tuple;
 import java.nio.charset.StandardCharsets;
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -68,13 +53,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.slf4j.LoggerFactory;
 
 /**
  * Verifies what a node does with work it cannot run because its deployed code lacks the version in question: a start
- * that resolves to the version, and a signal, branch signal, task completion or query on an instance pinned to it, fail
- * to the caller with a typed error and change nothing; a timer fired there is queued again as a fresh job, without
- * spending an attempt, so that a node with the code fires it; and no node fails an instance because it cannot run
+ * that resolves to the version, and a task completion or query on an instance pinned to it, fail to the caller with a
+ * typed error and change nothing; a signal or branch signal for such an instance is recorded, since recording needs no
+ * code, and applied by a node that has it; a timer command is deferred there, for a node with the
+ * code to run; and no node fails an instance because it cannot run
  * its pin.
  *
  * <p>Two nodes share one database. Node B is deployed with version 1 of a definition only. Node A is started after it
@@ -83,6 +68,8 @@ import org.slf4j.LoggerFactory;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class MixedCodeNodesIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     /** The contract of the code definitions of these tests; it declares the signals they wait for. */
     @WorkflowContract("mixed-code-c")
@@ -96,19 +83,15 @@ public class MixedCodeNodesIT {
             .withDatabaseName("workflow_mixed_code_nodes_it")
             .withMigration("classpath:db/migration/workflow");
 
-    /** How many attempts a timer-fire job is given before the job infrastructure gives up on it. */
-    private static final int MAX_ATTEMPTS = 5;
-
     private static final String MIXED_CONTRACT_NAME =
             MixedContract.class.getAnnotation(WorkflowContract.class).value();
     private static final String OTHER_CONTRACT_NAME =
             OtherContract.class.getAnnotation(WorkflowContract.class).value();
 
     @Test
-    @DisplayName("a start on a node without the current version's code fails typed and creates no instance")
-    void startOnNodeWithoutCurrentVersionCodeFailsTypedAndCreatesNoInstance(Vertx vertx) {
+    @DisplayName("a start on a node without the current version's code is recorded and run by a capable node")
+    void startOnNodeWithoutCurrentVersionCodeIsRecordedAndRunByACapableNode(Vertx vertx) {
         String id = "mixed-code-start";
-        DefinitionKey current = new DefinitionKey(DEFAULT, id, 2);
 
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, id);
@@ -116,34 +99,29 @@ public class MixedCodeNodesIT {
             // Given node B with version 1 only and node A with versions 1 and 2, B having applied the activation
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
-            await(b.app().definitionPropagationPoller().pollNow());
 
             // When a client on B starts the definition with an idempotency key
-            Throwable refused = ActivationFixtures.failureOf(
-                    () -> b.app().workflowOperations().start(start(id, "k1")));
+            WorkflowInstanceId started = await(b.app().workflowOperations().start(start(id, "k1")));
 
-            // Then the start fails typed, naming the scope, the id and the version and nothing else
-            assertThat(refused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
-                assertThat(failure.definitionKey()).isEqualTo(current);
-                assertThat(failure.scopeKey()).isEqualTo(DEFAULT);
-                assertThat(failure.getMessage()).contains(DEFAULT, id, "2").doesNotContain("OrderDocState");
-            });
-
-            // And neither an instance nor a start deduplication row exists for the key
-            assertThat(database.instanceCount(id)).isZero();
-            assertThat(database.dedupCount(id)).isZero();
-
-            // And the same start on A creates an instance pinned to version 2
-            WorkflowInstanceId started = await(a.app().workflowOperations().start(start(id, "k1")));
+            // Then the start is recorded, pinned to version 2, with its deduplication row
             assertThat(versionOf(database, started)).isEqualTo(2);
+            assertThat(database.instanceCount(id)).isEqualTo(1);
+            assertThat(database.dedupCount(id)).isEqualTo(1);
+
+            // And a node with the code runs it, since no node fails an instance because it cannot run its pin
+            awaitInitialExecution(database, started, 0);
+            assertThat(versionOf(database, started)).isEqualTo(2);
+
+            // And the same start repeated on A returns the same instance
+            assertThat(await(a.app().workflowOperations().start(start(id, "k1"))))
+                    .isEqualTo(started);
         }
     }
 
     @Test
-    @DisplayName("a signal through a node without the pinned code fails typed and leaves the instance unchanged")
-    void signalThroughNodeWithoutPinnedCodeFailsTypedAndLeavesInstanceUnchanged(Vertx vertx) {
+    @DisplayName("a signal through a node without the pinned code is recorded and applied by a capable node")
+    void signalThroughNodeWithoutPinnedCodeIsRecordedAndAppliedByACapableNode(Vertx vertx) {
         String id = "mixed-code-signal";
-        DefinitionKey pinned = new DefinitionKey(DEFAULT, id, 2);
 
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, id);
@@ -151,8 +129,8 @@ public class MixedCodeNodesIT {
             // Given a version 2 instance started on A and waiting for a signal, and B with version 1 only
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
-            await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            awaitInitialExecution(database, instance, 0);
             assertThat(versionOf(database, instance)).isEqualTo(2);
             Rows before = Rows.of(database, instance);
             assertThat(before.instance()).contains("WAITING");
@@ -162,28 +140,29 @@ public class MixedCodeNodesIT {
                     .workflowOperations()
                     .signal(instance, "inventory.reserved", new InventoryReservedDoc("r1"), "d1"));
 
-            // Then it fails typed, naming the pinned version
-            assertThat(refused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
-                assertThat(failure.definitionKey()).isEqualTo(pinned);
-            });
+            // Then it is recorded: recording needs no code for the pinned version, and B applies nothing
+            assertThat(refused)
+                    .as("recording through a node without the pinned code")
+                    .isNull();
 
-            // And the instance, its history and its deduplication rows are as they were, with no row for the key
-            assertThat(Rows.of(database, instance)).isEqualTo(before);
-            assertThat(dedupRowsWithKey(database, "d1")).isZero();
+            // And the instance and its history are as they were, with the key recorded for the signal
+            assertThat(Rows.of(database, instance)).isEqualTo(before.withDedup(before.dedup() + 1));
+            assertThat(dedupRowsWithKey(database, "d1")).isEqualTo(1);
 
-            // And the same signal through A, with the same key, advances the instance
+            // And the same signal through A, with the same key, is a duplicate, and A's executor applies the recorded
+            // command and advances the instance
             await(a.app()
                     .workflowOperations()
                     .signal(instance, "inventory.reserved", new InventoryReservedDoc("r1"), "d1"));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             assertThat(database.instanceStatus(instance.value())).isEqualTo("COMPLETED");
         }
     }
 
     @Test
-    @DisplayName("task completion through a node without the pinned code fails typed and a query still reads")
-    void taskCompletionThroughNodeWithoutPinnedCodeFailsTypedAndQueryReads(Vertx vertx) {
+    @DisplayName("task completion through a node without the pinned code is recorded and applied by a capable node")
+    void taskCompletionThroughNodeWithoutPinnedCodeIsRecordedAndAppliedByACapableNode(Vertx vertx) {
         String id = "mixed-code-task";
-        DefinitionKey pinned = new DefinitionKey(DEFAULT, id, 2);
 
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, id);
@@ -191,8 +170,8 @@ public class MixedCodeNodesIT {
             // Given a version 2 instance on A waiting for a human task, and B with version 1 only
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK);
-            await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            awaitInitialExecution(database, instance, 0);
             UUID task = openTask(database, instance);
             Rows before = Rows.of(database, instance);
 
@@ -203,285 +182,28 @@ public class MixedCodeNodesIT {
                     b.app().pool().withTransaction(tx -> b.app().taskCallbacks().taskCompleted(completion, tx)));
             WorkflowView readOnB = await(b.app().workflowOperations().query(instance));
 
-            // Then the completion fails typed, naming the pinned version, and the query reads the stored instance
-            assertThat(completionRefused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
-                assertThat(failure.definitionKey()).isEqualTo(pinned);
-            });
+            // Then it is recorded: recording needs no code for the pinned version, and B applies nothing
+            assertThat(completionRefused)
+                    .as("recording through a node without the pinned code")
+                    .isNull();
             assertThat(readOnB.instance().id()).isEqualTo(instance);
 
-            // And the task stays open and the instance is unchanged
-            assertThat(Rows.of(database, instance)).isEqualTo(before);
+            // And the instance is unchanged, the key is recorded and the task is reserved by the recorded completion
+            Rows recorded = Rows.of(database, instance);
+            assertThat(recorded.instance()).isEqualTo(before.instance());
+            assertThat(recorded.dedup()).isEqualTo(before.dedup() + 1);
             assertThat(before.tasks()).contains("OPEN");
+            assertThat(recorded.tasks()).contains("COMPLETING");
 
-            // And A's query and completion succeed
+            // And the same completion through A, with the same key, is a duplicate, and A's executor applies the
+            // recorded command and advances the instance
             WorkflowView view = await(a.app().workflowOperations().query(instance));
             assertThat(view.instance().status()).isEqualTo(WorkflowStatus.WAITING);
             TaskMutationResult completed = await(
                     a.app().pool().withTransaction(tx -> a.app().taskCallbacks().taskCompleted(completion, tx)));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             assertThat(completed).isEqualTo(TaskMutationResult.APPLIED);
             assertThat(database.instanceStatus(instance.value())).isEqualTo("COMPLETED");
-        }
-    }
-
-    @Test
-    @DisplayName("a timer on a node without the pinned code is re-queued past the attempt limit and fires elsewhere")
-    void timerOnNodeWithoutPinnedCodeIsRequeuedPastMaxAttemptsAndFiresOnCapableNode(Vertx vertx) {
-        String id = "mixed-code-timer";
-
-        try (DefinitionScenario database = new DefinitionScenario(vertx, db);
-                ExecutorLog log = new ExecutorLog()) {
-            own(database, id);
-
-            // Given a version 2 instance on A waiting for a standalone timer, and one fire executor per node
-            Boot b = nodeWithV1Only(database, id);
-            Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TIMER);
-            await(b.app().definitionPropagationPoller().pollNow());
-            WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
-            TimerRow scheduled = onlyTimer(database, instance);
-            assertThat(scheduled.status()).isEqualTo("SCHEDULED");
-            SteppedClock clock = new SteppedClock(scheduled.fireAt());
-            RecordingFireJob bJob = new RecordingFireJob(clock);
-            WorkflowTimerFireExecutor bExecutor = executor(b, bJob, clock);
-            WorkflowTimerFireExecutor aExecutor = executor(a, new RecordingFireJob(clock), clock);
-
-            // When B's executor runs the timer once more often than the attempt limit, with the clock advancing by
-            // each delay it was given
-            List<Integer> warningsAfterRun = new ArrayList<>();
-            for (int run = 1; run <= MAX_ATTEMPTS + 1; run++) {
-                UUID executionBefore = onlyTimer(database, instance).executionId();
-                assertThat(fireOn(bExecutor, scheduled.timerId(), instance))
-                        .as("failure of run %s of the executor on B", run)
-                        .isNull();
-                assertThat(onlyTimer(database, instance).executionId()).isNotEqualTo(executionBefore);
-                warningsAfterRun.add(log.warnings().size());
-                clock.advance(bJob.lastDelay());
-            }
-
-            // Then the job was queued again every time, at a delay that starts at 5 seconds, never shrinks and never
-            // exceeds 5 minutes
-            assertThat(bJob.delays()).hasSize(MAX_ATTEMPTS + 1);
-            assertThat(bJob.delays().getFirst()).isEqualTo(Duration.ofSeconds(5));
-            assertThat(bJob.delays()).isSorted();
-            assertThat(bJob.delays()).allSatisfy(delay -> assertThat(delay).isLessThanOrEqualTo(Duration.ofMinutes(5)));
-
-            // And the row is still scheduled, pointing at the last job, and the instance is waiting and not failed
-            TimerRow requeued = onlyTimer(database, instance);
-            assertThat(requeued.status()).isEqualTo("SCHEDULED");
-            assertThat(requeued.executionId()).isEqualTo(bJob.lastExecutionId());
-            assertThat(database.instanceStatus(instance.value())).isEqualTo("WAITING");
-            assertThat(historyCount(database, instance, "TIMER_FAILED")).isZero();
-
-            // And one warning was logged for the first re-queue and none for the others within the same minute
-            assertThat(warningsAfterRun.subList(0, 5)).containsOnly(1);
-            assertThat(log.warnings()).hasSize(2);
-
-            // When A's executor runs the timer
-            Throwable fired = fireOn(aExecutor, scheduled.timerId(), instance);
-
-            // Then the timer is fired and the instance moved past the timer step
-            assertThat(fired).as("failure of the executor on A").isNull();
-            assertThat(onlyTimer(database, instance).status()).isEqualTo("FIRED");
-            assertThat(database.instanceStatus(instance.value())).isEqualTo("COMPLETED");
-        }
-    }
-
-    @Test
-    @DisplayName(
-            "a task due date firing on a node without the pinned code changes nothing and expires on a capable node")
-    void taskDueDateOnNodeWithoutPinnedCodeChangesNothingAndExpiresOnCapableNode(Vertx vertx) {
-        String id = "mixed-code-due";
-
-        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
-            own(database, id);
-
-            // Given a version 2 instance on A waiting for a task with a due date, and B with version 1 only
-            Boot b = nodeWithV1Only(database, id);
-            Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK_WITH_DUE_DATE);
-            await(b.app().definitionPropagationPoller().pollNow());
-            WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
-            TimerRow due = timerWithPurpose(database, instance, "TASK_DUE");
-            assertThat(due.status()).isEqualTo("SCHEDULED");
-            Rows before = Rows.of(database, instance);
-            assertThat(before.tasks()).contains("OPEN");
-            SteppedClock clock = new SteppedClock(due.fireAt());
-            RecordingFireJob bJob = new RecordingFireJob(clock);
-
-            // When B's executor runs the due-date timer
-            Throwable firedOnB = fireOn(executor(b, bJob, clock), due.timerId(), instance);
-
-            // Then the timer is queued again and stays scheduled, pointing at the new job
-            assertThat(firedOnB).as("failure of the executor on B").isNull();
-            assertThat(bJob.delays()).hasSize(1);
-            TimerRow requeued = timerWithPurpose(database, instance, "TASK_DUE");
-            assertThat(requeued.status()).isEqualTo("SCHEDULED");
-            assertThat(requeued.executionId()).isEqualTo(bJob.lastExecutionId());
-
-            // And the task is still open, not expired, and the instance, its history and its rows are as they were
-            assertThat(Rows.of(database, instance).tasks()).contains("OPEN").doesNotContain("EXPIRED");
-            assertThat(Rows.of(database, instance)).isEqualTo(before);
-            assertThat(database.instanceStatus(instance.value())).isEqualTo("WAITING");
-
-            // When A's executor runs the timer
-            Throwable firedOnA = fireOn(executor(a, new RecordingFireJob(clock), clock), due.timerId(), instance);
-
-            // Then the task expired and the workflow moved on
-            assertThat(firedOnA).as("failure of the executor on A").isNull();
-            assertThat(timerWithPurpose(database, instance, "TASK_DUE").status())
-                    .isEqualTo("FIRED");
-            assertThat(Rows.of(database, instance).tasks()).contains("EXPIRED");
-            assertThat(database.instanceStatus(instance.value())).isEqualTo("COMPLETED");
-        }
-    }
-
-    @Test
-    @DisplayName(
-            "a branch task due date firing on a node without the pinned code changes nothing and expires elsewhere")
-    void branchTaskDueDateOnNodeWithoutPinnedCodeChangesNothingAndExpiresOnCapableNode(Vertx vertx) {
-        String id = "mixed-code-branch-due";
-
-        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
-            own(database, id);
-
-            // Given a version 2 instance on A whose first branch waits for a task with a due date, and B with version 1
-            // only
-            Boot b = nodeWithV1Only(database, id);
-            Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_IN_BRANCHES_FOR_TASK_WITH_DUE_DATE);
-            await(b.app().definitionPropagationPoller().pollNow());
-            WorkflowInstanceId instance = await(onDuplicatedContext(
-                    vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
-            TimerRow due = timerWithPurpose(database, instance, "TASK_DUE");
-            Rows before = Rows.of(database, instance);
-            assertThat(before.tasks()).contains("OPEN");
-            SteppedClock clock = new SteppedClock(due.fireAt());
-            RecordingFireJob bJob = new RecordingFireJob(clock);
-
-            // When B's executor runs the due-date timer
-            Throwable firedOnB = failureOf(onDuplicatedContext(vertx, () -> executor(b, bJob, clock)
-                    .execute(new TimerFirePayload(due.timerId(), instance, null), mock(JobContext.class))));
-
-            // Then the timer is queued again and stays scheduled, and the task, the branches and the instance are
-            // as they were
-            assertThat(firedOnB).as("failure of the executor on B").isNull();
-            assertThat(bJob.delays()).hasSize(1);
-            assertThat(timerWithPurpose(database, instance, "TASK_DUE").status())
-                    .isEqualTo("SCHEDULED");
-            assertThat(Rows.of(database, instance)).isEqualTo(before);
-
-            // When A's executor runs the timer
-            Throwable firedOnA =
-                    failureOf(onDuplicatedContext(vertx, () -> executor(a, new RecordingFireJob(clock), clock)
-                            .execute(new TimerFirePayload(due.timerId(), instance, null), mock(JobContext.class))));
-
-            // Then the task expired and its branch moved on
-            assertThat(firedOnA).as("failure of the executor on A").isNull();
-            assertThat(timerWithPurpose(database, instance, "TASK_DUE").status())
-                    .isEqualTo("FIRED");
-            assertThat(Rows.of(database, instance).tasks()).contains("EXPIRED");
-            assertThat(Rows.of(database, instance).branches()).isNotEqualTo(before.branches());
-        }
-    }
-
-    @Test
-    @DisplayName("a task reminder firing on a node without the pinned code changes nothing and fires on a capable node")
-    void taskReminderOnNodeWithoutPinnedCodeChangesNothingAndFiresOnCapableNode(Vertx vertx) {
-        String id = "mixed-code-reminder";
-
-        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
-            own(database, id);
-
-            // Given a version 2 instance on A waiting for a task with reminders after one and two hours, and B with
-            // version 1 only
-            Boot b = nodeWithV1Only(database, id);
-            Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_TASK_WITH_REMINDERS);
-            await(b.app().definitionPropagationPoller().pollNow());
-            WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
-            List<TimerRow> reminders = reminderTimers(database, instance);
-            assertThat(reminders).hasSize(2);
-            TimerRow first = reminders.getFirst();
-            Rows before = Rows.of(database, instance);
-            SteppedClock clock = new SteppedClock(reminders.getLast().fireAt());
-            RecordingFireJob bJob = new RecordingFireJob(clock);
-
-            // When B's executor runs the first reminder more than once
-            Throwable firstRun = fireOn(executor(b, bJob, clock), first.timerId(), instance);
-            Throwable secondRun = fireOn(executor(b, bJob, clock), first.timerId(), instance);
-
-            // Then the timer is queued again each time and stays scheduled
-            assertThat(firstRun).as("first failure of the executor on B").isNull();
-            assertThat(secondRun).as("second failure of the executor on B").isNull();
-            assertThat(bJob.delays()).hasSize(2);
-            assertThat(reminderTimers(database, instance))
-                    .extracting(TimerRow::status)
-                    .containsOnly("SCHEDULED");
-
-            // And the reminder counter, the history, the timers and the other rows are as they were
-            assertThat(Rows.of(database, instance)).isEqualTo(before);
-            assertThat(before.tasks()).endsWith(":OPEN:0");
-
-            // When A's executor runs the first reminder
-            Throwable firedOnA = fireOn(executor(a, new RecordingFireJob(clock), clock), first.timerId(), instance);
-
-            // Then it fired as reminder 1 of 2 and the second reminder is still scheduled
-            assertThat(firedOnA).as("failure of the executor on A").isNull();
-            assertThat(Rows.of(database, instance).tasks()).endsWith(":OPEN:1");
-            assertThat(reminderIndexes(database, instance, "TASK_REMINDER_FIRED"))
-                    .containsExactly("1");
-            assertThat(reminderTimers(database, instance))
-                    .extracting(TimerRow::status)
-                    .containsExactly("FIRED", "SCHEDULED");
-        }
-    }
-
-    @Test
-    @DisplayName("a branch task reminder firing on a node without the pinned code changes nothing and fires elsewhere")
-    void branchTaskReminderOnNodeWithoutPinnedCodeChangesNothingAndFiresOnCapableNode(Vertx vertx) {
-        String id = "mixed-code-branch-reminder";
-
-        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
-            own(database, id);
-
-            // Given a version 2 instance on A whose first branch waits for a task with an hourly reminder, and B with
-            // version 1 only
-            Boot b = nodeWithV1Only(database, id);
-            Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_IN_BRANCHES_FOR_TASK_WITH_REMINDERS);
-            await(b.app().definitionPropagationPoller().pollNow());
-            WorkflowInstanceId instance = await(onDuplicatedContext(
-                    vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
-            TimerRow reminder = timerWithPurpose(database, instance, "TASK_REMINDER");
-            Rows before = Rows.of(database, instance);
-            assertThat(before.tasks()).endsWith(":OPEN:0");
-            SteppedClock clock = new SteppedClock(reminder.fireAt());
-            RecordingFireJob bJob = new RecordingFireJob(clock);
-
-            // When B's executor runs the reminder more than once
-            Throwable firstRun = failureOf(onDuplicatedContext(vertx, () -> executor(b, bJob, clock)
-                    .execute(new TimerFirePayload(reminder.timerId(), instance, null), mock(JobContext.class))));
-            Throwable secondRun = failureOf(onDuplicatedContext(vertx, () -> executor(b, bJob, clock)
-                    .execute(new TimerFirePayload(reminder.timerId(), instance, null), mock(JobContext.class))));
-
-            // Then the timer is queued again each time and stays scheduled
-            assertThat(firstRun).as("first failure of the executor on B").isNull();
-            assertThat(secondRun).as("second failure of the executor on B").isNull();
-            assertThat(bJob.delays()).hasSize(2);
-            assertThat(timerWithPurpose(database, instance, "TASK_REMINDER").status())
-                    .isEqualTo("SCHEDULED");
-
-            // And the reminder counter, the history, the timers, the branches and the task are as they were
-            assertThat(Rows.of(database, instance)).isEqualTo(before);
-
-            // When A's executor runs the reminder
-            Throwable firedOnA = failureOf(onDuplicatedContext(vertx, () -> executor(
-                            a, new RecordingFireJob(clock), clock)
-                    .execute(new TimerFirePayload(reminder.timerId(), instance, null), mock(JobContext.class))));
-
-            // Then it fired as reminder 1, and the next one is scheduled an hour after the first
-            assertThat(firedOnA).as("failure of the executor on A").isNull();
-            assertThat(Rows.of(database, instance).tasks()).endsWith(":OPEN:1");
-            assertThat(reminderIndexes(database, instance, "BRANCH_TASK_REMINDER_FIRED"))
-                    .containsExactly("1");
-            List<TimerRow> reminders = reminderTimers(database, instance);
-            assertThat(reminders).extracting(TimerRow::status).containsExactly("FIRED", "SCHEDULED");
-            assertThat(reminders.getLast().fireAt()).isEqualTo(reminder.fireAt().plus(Duration.ofHours(1)));
         }
     }
 
@@ -496,8 +218,8 @@ public class MixedCodeNodesIT {
             // Given a version 2 instance started on A and B with version 1 only
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
-            await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            awaitInitialExecution(database, instance, 0);
             Rows before = Rows.of(database, instance);
             StartCommand otherContract = new StartCommand(
                     id, OTHER_CONTRACT_NAME, new PlaceOrderDoc("order-k1"), "k1", null, null, null, DEFAULT, null);
@@ -513,16 +235,14 @@ public class MixedCodeNodesIT {
             // and: another contract is an idempotency conflict of kind start, not the existing instance id
             assertThat(otherContractRefused).isInstanceOf(WorkflowIdempotencyConflictException.class);
 
-            // and: once B holds no version of the id at all, the stored contract of the pin still answers the replay
-            b.app().workflowRegistry().unregister(new DefinitionKey(DEFAULT, id, 1));
+            // and: B holds no plan of the pinned version 2, so the stored contract of the pin answers the replay
             assertThat(await(b.app().workflowOperations().start(start(id, "k1"))))
                     .isEqualTo(instance);
             assertThat(ActivationFixtures.failureOf(
                             () -> b.app().workflowOperations().start(otherContract)))
                     .isInstanceOf(WorkflowIdempotencyConflictException.class);
 
-            // and: a later version registered under another contract does not replace the stored one
-            b.app().workflowRegistry().register(MixedCodeFixtures.code(id, 3, Shape.COMPLETES, OtherContract.class));
+            // and: the contract the stored row names is the one that answers, whatever the node holds
             assertThat(await(b.app().workflowOperations().start(start(id, "k1"))))
                     .isEqualTo(instance);
             Throwable storedContractConflict = ActivationFixtures.failureOf(() -> b.app()
@@ -557,8 +277,8 @@ public class MixedCodeNodesIT {
             // Given a version 2 instance started on A, and B with version 1 only
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_FOR_SIGNAL);
-            await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(a.app().workflowOperations().start(start(id, "k1")));
+            awaitInitialExecution(database, instance, 0);
 
             // and: every connection of B's pool but one is held
             List<SqlConnection> held = new ArrayList<>();
@@ -580,10 +300,9 @@ public class MixedCodeNodesIT {
     }
 
     @Test
-    @DisplayName("a branch signal through a node without the pinned code fails typed and leaves the branch unchanged")
-    void branchSignalThroughNodeWithoutPinnedCodeFailsTypedAndLeavesBranchUnchanged(Vertx vertx) {
+    @DisplayName("a branch signal through a node without the pinned code is recorded and applied by a capable node")
+    void branchSignalThroughNodeWithoutPinnedCodeIsRecordedAndAppliedByACapableNode(Vertx vertx) {
         String id = "mixed-code-branch";
-        DefinitionKey pinned = new DefinitionKey(DEFAULT, id, 2);
 
         try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             own(database, id);
@@ -591,9 +310,9 @@ public class MixedCodeNodesIT {
             // Given a version 2 instance on A whose fork has a branch waiting for a signal, and B with version 1 only
             Boot b = nodeWithV1Only(database, id);
             Boot a = nodeWithV1AndV2(database, id, Shape.WAITS_IN_BRANCHES);
-            await(b.app().definitionPropagationPoller().pollNow());
             WorkflowInstanceId instance = await(onDuplicatedContext(
                     vertx, () -> a.app().workflowOperations().start(start(id, "k1"))));
+            awaitInitialExecution(database, instance, 2);
             Rows before = Rows.of(database, instance);
             assertThat(before.branches()).contains(MixedCodeFixtures.FIRST_BRANCH);
 
@@ -602,29 +321,33 @@ public class MixedCodeNodesIT {
             Throwable refused = ActivationFixtures.failureOf(
                     () -> onDuplicatedContext(vertx, () -> branchSignal(b, instance, payload, "d3")));
 
-            // Then it fails typed, naming the pinned version
-            assertThat(refused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
-                assertThat(failure.definitionKey()).isEqualTo(pinned);
-            });
+            // Then it is recorded: recording needs no code for the pinned version, and B applies nothing
+            assertThat(refused)
+                    .as("recording through a node without the pinned code")
+                    .isNull();
 
-            // And the branch tokens, the instance and the history are unchanged, and no deduplication row was kept
-            assertThat(Rows.of(database, instance)).isEqualTo(before);
-            assertThat(dedupRowsWithKey(database, "d3")).isZero();
+            // And the branch tokens, the instance and the history are unchanged, with the key recorded for the signal
+            assertThat(Rows.of(database, instance)).isEqualTo(before.withDedup(before.dedup() + 1));
+            assertThat(count(database, "SELECT count(*) AS total FROM workflow_commands WHERE dedup_key = $1", "d3"))
+                    .as("the recorded signal command")
+                    .isEqualTo(1);
 
-            // And the same call through A advances the branch
+            // And the same call through A is a duplicate, and A's executor applies the recorded command and advances
+            // the
+            // branch
             await(onDuplicatedContext(vertx, () -> branchSignal(a, instance, payload, "d3")));
+            await(a.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
             assertThat(Rows.of(database, instance).branches()).isNotEqualTo(before.branches());
         }
     }
 
     @Test
-    @DisplayName("an instance of a failing row without a plan is refused, not failed")
-    void instanceOfFailingRowWithoutAPlanIsRefusedNotFailed(Vertx vertx) {
+    @DisplayName("an instance of a failing row without a plan records its signal and is not failed")
+    void instanceOfFailingRowWithoutAPlanRecordsItsSignalAndIsNotFailed(Vertx vertx) throws InterruptedException {
         String id = FailingScopeRowIT.PURCHASE;
         DefinitionKey key = new DefinitionKey(FailingScopeRowIT.ACME, id, 1);
 
-        try (DefinitionScenario database = new DefinitionScenario(vertx, db);
-                ExecutorLog log = new ExecutorLog()) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
             FailingScopeRowIT.own(database, id);
 
             // Given the first deployment, where acme's document is published and activated, one acme instance waits
@@ -644,54 +367,116 @@ public class MixedCodeNodesIT {
             await(first.app()
                     .workflowOperations()
                     .signal(waitingForTimer, "inventory.reserved", new InventoryReservedDoc("r4"), "d-first"));
-            TimerRow timer = onlyTimer(database, waitingForTimer);
-            assertThat(timer.status()).isEqualTo("SCHEDULED");
+            await(first.app().executionProbe().awaitIdle(waitingForTimer, IDLE_TIMEOUT));
+            assertThat(timerStatus(database, waitingForTimer)).isEqualTo("SCHEDULED");
             first.close();
 
             // And a restart whose catalog no longer lists a class named by the row's binding, so the row is failing
-            // and has no registered plan
+            // and the node holds no plan of it
             Boot second = FailingScopeRowIT.boot(database, vertx, Deployment.sameStateWithoutDecision(id));
-            assertThat(FailingScopeRowIT.listed(second, key).failure().rule()).isEqualTo(Rule.NAME_BINDING_UNRESOLVED);
             assertThat(second.app().workflowRegistry().find(key)).isEmpty();
             Rows before = Rows.of(database, waitingForSignal);
             Rows timerInstanceBefore = Rows.of(database, waitingForTimer);
-            SteppedClock clock = new SteppedClock(timer.fireAt());
-            RecordingFireJob job = new RecordingFireJob(clock);
 
-            // When the restarted node receives a signal for the first instance and runs the timer of the second
+            // When the restarted node receives a signal for the first instance
             Throwable refused = ActivationFixtures.failureOf(() -> second.app()
                     .workflowOperations()
                     .signal(waitingForSignal, "inventory.reserved", new InventoryReservedDoc("r4"), "d4"));
-            Throwable fired = fireOn(executor(second, job, clock), timer.timerId(), waitingForTimer);
 
-            // Then the signal fails typed, naming the row, and writes nothing
-            assertThat(refused).isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> {
-                assertThat(failure.definitionKey()).isEqualTo(key);
-            });
-            assertThat(Rows.of(database, waitingForSignal)).isEqualTo(before);
-            assertThat(dedupRowsWithKey(database, "d4")).isZero();
+            // Then the signal is recorded, since recording needs no plan, and nothing is applied: the instance row is
+            // as it was and its key is kept for the recorded command
+            assertThat(refused)
+                    .as("recording for an instance whose plan this node lacks")
+                    .isNull();
+            assertThat(Rows.of(database, waitingForSignal)).isEqualTo(before.withDedup(before.dedup() + 1));
+            assertThat(dedupRowsWithKey(database, "d4")).isEqualTo(1);
 
-            // And the timer is queued again with a warning, its row still scheduled and pointing at the new job
-            assertThat(fired).as("failure of the executor").isNull();
-            assertThat(job.delays()).hasSize(1);
-            TimerRow requeued = onlyTimer(database, waitingForTimer);
-            assertThat(requeued.status()).isEqualTo("SCHEDULED");
-            assertThat(requeued.executionId()).isEqualTo(job.lastExecutionId());
-            assertThat(log.warnings()).hasSize(1);
+            // And when the timer of the second instance comes due, its command is deferred and its timer row stays
+            // scheduled
+            makeTimersDue(database, waitingForTimer);
+            awaitCommandState(database, waitingForTimer, "TIMER", "DEFERRED");
+            assertThat(timerStatus(database, waitingForTimer)).isEqualTo("SCHEDULED");
+
+            // And the executor that deferred the commands marked the row, since a node evaluates a row when it runs a
+            // command of it
+            assertThat(awaitMark(second, key)).isEqualTo(Rule.NAME_BINDING_UNRESOLVED);
 
             // And neither instance was failed
-            assertThat(Rows.of(database, waitingForTimer)).isEqualTo(timerInstanceBefore);
+            Rows timerInstanceAfter = Rows.of(database, waitingForTimer);
+            assertThat(timerInstanceAfter.instance()).isEqualTo(timerInstanceBefore.instance());
+            assertThat(timerInstanceAfter.tasks()).isEqualTo(timerInstanceBefore.tasks());
+            assertThat(timerInstanceAfter.branches()).isEqualTo(timerInstanceBefore.branches());
             assertThat(database.instanceStatus(waitingForSignal.value())).isEqualTo("WAITING");
             assertThat(database.instanceStatus(waitingForTimer.value())).isEqualTo("WAITING");
         }
     }
 
+    /** Waits for the failing mark of the row, which the executor writes after the deferral has committed. */
+    private static Rule awaitMark(Boot node, DefinitionKey key) throws InterruptedException {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            var failure = FailingScopeRowIT.listed(node, key).failure();
+            if (failure != null) return failure.rule();
+            Thread.sleep(100);
+        }
+        return null;
+    }
+
     // --- Nodes ---
 
-    /** Node B: deployed with version 1 of the definition only. */
+    /**
+     * Node B: deployed with version 1 of the definition only. Its command executor polls so rarely that it never looks
+     * at the commands of node A: an executor without the pinned code defers a command it peeks, and these tests are
+     * about what B's other operations do, with A running the instance.
+     */
     private static Boot nodeWithV1Only(DefinitionScenario database, String id) {
+        JsonObject config = new JsonObject()
+                .put("workflow", new JsonObject().put("executor", new JsonObject().put("pollIntervalMs", 3_600_000L)));
         return database.node(
-                none(), unobserved(), List.of(MixedCodeFixtures.code(id, 1, Shape.COMPLETES, MixedContract.class)));
+                none(),
+                unobserved(),
+                List.of(MixedCodeFixtures.code(id, 1, Shape.COMPLETES, MixedContract.class)),
+                config);
+    }
+
+    /** Makes the scheduled timers of the instance due now, with their commands. */
+    private static void makeTimersDue(DefinitionScenario database, WorkflowInstanceId instance) {
+        database.execute(
+                "UPDATE workflow_commands SET fire_at = clock_timestamp(), available_at = clock_timestamp()"
+                        + " WHERE workflow_id = $1 AND kind = 'TIMER' AND state = 'PENDING'",
+                Tuple.of(instance.value()));
+        database.execute(
+                "UPDATE workflow_timers SET fire_at = clock_timestamp() WHERE workflow_id = $1 AND status = 'SCHEDULED'",
+                Tuple.of(instance.value()));
+    }
+
+    /** Waits until the command of the kind is in the state; a poll cannot tell the state from a stale read. */
+    private static void awaitCommandState(
+            DefinitionScenario database, WorkflowInstanceId instance, String kind, String state) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        String seen = "no command";
+        while (System.nanoTime() < deadline) {
+            var rows = await(database.admin()
+                    .preparedQuery("SELECT state FROM workflow_commands WHERE workflow_id = $1 AND kind = $2")
+                    .execute(Tuple.of(instance.value(), kind)));
+            if (rows.iterator().hasNext()) {
+                seen = rows.iterator().next().getString("state");
+                if (state.equals(seen)) {
+                    return;
+                }
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted while awaiting the " + kind + " command", e);
+            }
+        }
+        throw new AssertionError("The " + kind + " command of " + instance + " is " + seen + ", not " + state);
+    }
+
+    private static String timerStatus(DefinitionScenario database, WorkflowInstanceId instance) {
+        return one(database, "SELECT status FROM workflow_timers WHERE workflow_id = $1", instance.value())
+                .getString("status");
     }
 
     /** Node A: deployed with version 1 and a version 2 that stops where the shape says. */
@@ -700,16 +485,6 @@ public class MixedCodeNodesIT {
                 MixedCodeFixtures.code(id, 1, Shape.COMPLETES, MixedContract.class),
                 MixedCodeFixtures.code(id, 2, version2, MixedContract.class));
         return database.node(none(), unobserved(), code);
-    }
-
-    private static WorkflowTimerFireExecutor executor(Boot node, WorkflowTimerFireJob job, Clock clock) {
-        return new WorkflowTimerFireExecutor(
-                node.app().pool(),
-                node.app().timerStore(),
-                () -> node.app().timerCallbacks(),
-                () -> node.app().taskCallbacks(),
-                () -> job,
-                clock);
     }
 
     /** Delivers the signal to the first branch of the fork, in one transaction on the node. */
@@ -735,11 +510,6 @@ public class MixedCodeNodesIT {
         return promise.future();
     }
 
-    /** Runs the timer on the executor and returns how the run failed, or {@code null} when it succeeded. */
-    private static Throwable fireOn(WorkflowTimerFireExecutor executor, UUID timerId, WorkflowInstanceId instance) {
-        return failureOf(executor.execute(new TimerFirePayload(timerId, instance, null), mock(JobContext.class)));
-    }
-
     // --- Commands and documents ---
 
     private static StartCommand start(String id, String idempotencyKey) {
@@ -756,7 +526,7 @@ public class MixedCodeNodesIT {
     }
 
     private static WorkflowInstanceId startInAcme(Boot node, String orderId) {
-        return await(node.app()
+        WorkflowInstanceId instance = await(node.app()
                 .workflowOperations()
                 .start(FailingScopeRowIT.command(
                         FailingScopeRowIT.ACME,
@@ -765,6 +535,8 @@ public class MixedCodeNodesIT {
                         "start-" + UUID.randomUUID(),
                         null,
                         null)));
+        await(node.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
+        return instance;
     }
 
     /** A document that waits for a signal, then for a timer, then for a finance decision named by its binary name. */
@@ -810,6 +582,11 @@ public class MixedCodeNodesIT {
     /** Everything a refused call must leave as it was, read straight from the tables. */
     private record Rows(String instance, long history, long dedup, String branches, String tasks, String timers) {
 
+        /** The same rows with another number of deduplication rows. */
+        Rows withDedup(long dedup) {
+            return new Rows(instance, history, dedup, branches, tasks, timers);
+        }
+
         static Rows of(DefinitionScenario database, WorkflowInstanceId id) {
             Row instance = one(database, """
                     SELECT definition_version, version, status, current_step_id, wait_type, wait_key, state_json::text AS state
@@ -846,63 +623,6 @@ public class MixedCodeNodesIT {
         }
     }
 
-    /** One timer row, as the tables hold it. */
-    private record TimerRow(UUID timerId, String status, UUID executionId, Instant fireAt) {}
-
-    private static TimerRow onlyTimer(DefinitionScenario database, WorkflowInstanceId instance) {
-        Row row = one(database, """
-                SELECT timer_id, status, delayed_job_execution_id, fire_at
-                FROM workflow_timers WHERE workflow_id = $1
-                """, instance.value());
-        return new TimerRow(
-                row.getUUID("timer_id"),
-                row.getString("status"),
-                row.getUUID("delayed_job_execution_id"),
-                row.getOffsetDateTime("fire_at").toInstant());
-    }
-
-    private static TimerRow timerWithPurpose(DefinitionScenario database, WorkflowInstanceId instance, String purpose) {
-        Row row = one(database, """
-                SELECT timer_id, status, delayed_job_execution_id, fire_at
-                FROM workflow_timers WHERE workflow_id = $1 AND purpose = $2
-                """, instance.value(), purpose);
-        return new TimerRow(
-                row.getUUID("timer_id"),
-                row.getString("status"),
-                row.getUUID("delayed_job_execution_id"),
-                row.getOffsetDateTime("fire_at").toInstant());
-    }
-
-    /** The reminder timers of the instance, earliest first. */
-    private static List<TimerRow> reminderTimers(DefinitionScenario database, WorkflowInstanceId instance) {
-        List<TimerRow> timers = new ArrayList<>();
-        for (Row row : await(database.admin().preparedQuery("""
-                        SELECT timer_id, status, delayed_job_execution_id, fire_at
-                        FROM workflow_timers WHERE workflow_id = $1 AND purpose = 'TASK_REMINDER'
-                        ORDER BY fire_at, timer_id
-                        """).execute(Tuple.of(instance.value())))) {
-            timers.add(new TimerRow(
-                    row.getUUID("timer_id"),
-                    row.getString("status"),
-                    row.getUUID("delayed_job_execution_id"),
-                    row.getOffsetDateTime("fire_at").toInstant()));
-        }
-        return timers;
-    }
-
-    /** The reminder indexes recorded by history entries of the type, in the order they were recorded. */
-    private static List<String> reminderIndexes(
-            DefinitionScenario database, WorkflowInstanceId instance, String entryType) {
-        List<String> indexes = new ArrayList<>();
-        for (Row row : await(database.admin().preparedQuery("""
-                        SELECT payload_json ->> 'reminderIndex' AS item
-                        FROM workflow_history WHERE workflow_id = $1 AND entry_type = $2 ORDER BY sequence
-                        """).execute(Tuple.of(instance.value(), entryType)))) {
-            indexes.add(row.getString("item"));
-        }
-        return indexes;
-    }
-
     private static UUID openTask(DefinitionScenario database, WorkflowInstanceId instance) {
         return one(
                         database,
@@ -918,14 +638,6 @@ public class MixedCodeNodesIT {
 
     private static long dedupRowsWithKey(DefinitionScenario database, String key) {
         return count(database, "SELECT count(*) AS total FROM workflow_dedup WHERE key = $1", key);
-    }
-
-    private static long historyCount(DefinitionScenario database, WorkflowInstanceId instance, String entryType) {
-        return count(
-                database,
-                "SELECT count(*) AS total FROM workflow_history WHERE workflow_id = $1 AND entry_type = $2",
-                instance.value(),
-                entryType);
     }
 
     private static Row one(DefinitionScenario database, String sql, Object... parameters) {
@@ -946,6 +658,64 @@ public class MixedCodeNodesIT {
         return String.join(",", items);
     }
 
+    private record StartSnapshot(
+            String commandState,
+            java.time.OffsetDateTime availableAt,
+            Integer deferralCount,
+            Integer attempts,
+            String lastError,
+            String instanceStatus,
+            long branchCount) {}
+
+    /** Waits for the START command and its setup state; awaitIdle only means no command is currently runnable. */
+    private static void awaitInitialExecution(
+            DefinitionScenario database, WorkflowInstanceId instance, long expectedBranchCount) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        StartSnapshot snapshot = null;
+        while (true) {
+            var rows = await(database.admin().preparedQuery("""
+                            SELECT c.state AS command_state, c.available_at, c.deferral_count, c.attempts, c.last_error,
+                                   i.status AS instance_status,
+                                   count(b.branch_id) AS branch_count
+                            FROM workflow_instances i
+                            LEFT JOIN workflow_commands c ON c.workflow_id = i.id AND c.kind = 'START'
+                            LEFT JOIN workflow_branch_tokens b ON b.workflow_id = i.id
+                            WHERE i.id = $1
+                            GROUP BY c.state, c.available_at, c.deferral_count, c.attempts, c.last_error, i.status
+                            """).execute(Tuple.of(instance.value())));
+            if (rows.iterator().hasNext()) {
+                Row row = rows.iterator().next();
+                snapshot = new StartSnapshot(
+                        row.getString("command_state"),
+                        row.getOffsetDateTime("available_at"),
+                        row.getInteger("deferral_count"),
+                        row.getInteger("attempts"),
+                        row.getString("last_error"),
+                        row.getString("instance_status"),
+                        row.getLong("branch_count"));
+                if ("COMPLETE".equals(snapshot.commandState())
+                        && !"PENDING".equals(snapshot.instanceStatus())
+                        && snapshot.branchCount() >= expectedBranchCount) {
+                    return;
+                }
+                if ("FAILED".equals(snapshot.instanceStatus())
+                        || List.of("DEAD", "REJECTED", "FAILED", "CANCELLED").contains(snapshot.commandState())) {
+                    throw new AssertionError("START did not complete successfully for " + instance + ": " + snapshot);
+                }
+            }
+            if (System.nanoTime() >= deadline) {
+                throw new AssertionError("START setup did not reach its expected state for " + instance + ": "
+                        + (snapshot == null ? "instance or START command row is missing" : snapshot));
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted while awaiting START setup for " + instance, e);
+            }
+        }
+    }
+
     // --- Fixtures ---
 
     private static void own(DefinitionScenario database, String id) {
@@ -960,120 +730,5 @@ public class MixedCodeNodesIT {
 
     private static WorkflowDefinitionSource none() {
         return List::of;
-    }
-
-    /** A clock that only moves when the test says so. */
-    private static final class SteppedClock extends Clock {
-
-        private Instant now;
-
-        private SteppedClock(Instant start) {
-            this.now = start.truncatedTo(ChronoUnit.MICROS);
-        }
-
-        void advance(Duration by) {
-            now = now.plus(by);
-        }
-
-        @Override
-        public ZoneId getZone() {
-            return ZoneOffset.UTC;
-        }
-
-        @Override
-        public Clock withZone(ZoneId zone) {
-            return this;
-        }
-
-        @Override
-        public Instant instant() {
-            return now;
-        }
-    }
-
-    /** A timer-fire job that records what is queued, and the delay from the clock, and hands out fresh ids. */
-    private static final class RecordingFireJob implements WorkflowTimerFireJob {
-
-        private final Clock clock;
-        private final List<Duration> delays = new ArrayList<>();
-        private final List<UUID> executionIds = new ArrayList<>();
-
-        private RecordingFireJob(Clock clock) {
-            this.clock = clock;
-        }
-
-        List<Duration> delays() {
-            return List.copyOf(delays);
-        }
-
-        Duration lastDelay() {
-            return delays.getLast();
-        }
-
-        UUID lastExecutionId() {
-            return executionIds.getLast();
-        }
-
-        @Override
-        public Future<UUID> enqueue(TimerFirePayload payload, DelayedJobOptions options, SqlClient tx) {
-            delays.add(Duration.between(clock.instant(), options.runAt()));
-            UUID executionId = UUID.randomUUID();
-            executionIds.add(executionId);
-            return Future.succeededFuture(executionId);
-        }
-
-        @Override
-        public Future<UUID> enqueue(TimerFirePayload payload) {
-            throw new UnsupportedOperationException("only the transactional enqueue with options is expected");
-        }
-
-        @Override
-        public Future<UUID> enqueue(TimerFirePayload payload, Instant runAt) {
-            throw new UnsupportedOperationException("only the transactional enqueue with options is expected");
-        }
-
-        @Override
-        public Future<UUID> enqueue(TimerFirePayload payload, Duration delay) {
-            throw new UnsupportedOperationException("only the transactional enqueue with options is expected");
-        }
-
-        @Override
-        public Future<UUID> enqueue(TimerFirePayload payload, SqlClient tx) {
-            throw new UnsupportedOperationException("only the transactional enqueue with options is expected");
-        }
-
-        @Override
-        public Future<UUID> enqueue(TimerFirePayload payload, DelayedJobOptions options) {
-            throw new UnsupportedOperationException("only the transactional enqueue with options is expected");
-        }
-    }
-
-    /** Collects what the timer-fire executor logs at warning level or above while it is open. */
-    private static final class ExecutorLog implements AutoCloseable {
-
-        private final ch.qos.logback.classic.Logger logger =
-                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(WorkflowTimerFireExecutor.class.getName());
-        private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        private final Level previousLevel = logger.getLevel();
-
-        private ExecutorLog() {
-            appender.start();
-            logger.setLevel(Level.DEBUG);
-            logger.addAppender(appender);
-        }
-
-        List<String> warnings() {
-            return appender.list.stream()
-                    .filter(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
-                    .map(ILoggingEvent::getFormattedMessage)
-                    .toList();
-        }
-
-        @Override
-        public void close() {
-            logger.detachAppender(appender);
-            logger.setLevel(previousLevel);
-            appender.stop();
-        }
     }
 }

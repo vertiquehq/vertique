@@ -415,8 +415,35 @@ repository.transaction().execute("items archiveBefore", conn -> archive(conn, cu
 | `.isolationLevel(IsolationLevel)` | `READ_COMMITTED`, `REPEATABLE_READ`, or `SERIALIZABLE` |
 | `.serializable()` / `.repeatableRead()` | Shorthands |
 | `.readOnly()` | Issues `SET TRANSACTION READ ONLY` |
+| `.deadline(Duration)` | Bounds the transaction; the duration must be positive (see below) |
 | `.execute(fn)` | Runs with the context `"Transaction failed"` |
 | `.execute(operationName, fn)` | Runs with `operationName` as the translation context |
+
+#### Transaction deadline
+
+`.deadline(Duration)` bounds one transaction on a monotonic clock, measured from the `execute` call
+(a wait for a pooled connection counts). If the work's future has not completed by then, the
+transaction fails with `TransactionDeadlineExceededException` and is rolled back.
+
+```java
+repository.transaction().deadline(Duration.ofSeconds(5)).execute(conn -> doWork(conn));
+```
+
+- **Late work writes nothing.** The lambda receives a guarded connection that refuses every statement
+  executed after the deadline with `TransactionDeadlineExceededException`, so a continuation that
+  resumes late cannot write in this transaction or in the pool's next holder. Bind builders with
+  `.on(conn)` on that connection as usual.
+- **Completed work commits.** Work whose future completed before the deadline commits, even when the
+  commit itself ends after the deadline.
+- **Unavailable calls.** The guarded connection always fails `prepare()`, `begin()` and `close()` with
+  `InvalidDataAccessUsageException`. `Query.stream(...)` prepares its statement, so it is unavailable
+  in a deadline-bounded transaction.
+- **Honest bound.** A statement already running in the database at the deadline finishes or fails
+  first, and the rollback queues behind it, so locks are released only when the database returns it.
+  No database timeout is set and no cancel request is sent.
+- **Not translated, not retried.** The exception reaches the caller unchanged, even through a custom
+  `DbExceptionMapper`, and is not a `TransientDataAccessException`. There is no configuration key.
+- Without `.deadline(...)` nothing changes: no timer, and the lambda receives the pooled connection.
 
 Every statement inside the lambda must be bound to the transactional connection with `.on(conn)`;
 a builder left on the pool silently runs outside the transaction.
@@ -622,6 +649,7 @@ TechnicalException (core.exception)
     │   ├── ConnectionException                 — pool exhaustion, network, SQL state class 08
     │   ├── QueryTimeoutException               — statement exceeded its time limit
     │   └── DeadlockException                   — deadlock detected
+    ├── TransactionDeadlineExceededException    — transaction deadline passed; non-transient
     ├── DataIntegrityViolationException         — constraint violation
     │   ├── UniqueConstraintViolationException  — unique / primary key
     │   └── ForeignKeyViolationException        — foreign key
@@ -895,6 +923,9 @@ compile-time constant or a developer-controlled string, never anything derived f
 | `InvalidDataAccessUsageException: count() expects a single-column result` | `.count()` on a multi-column `SELECT` |
 | `IncorrectResultSizeDataAccessException` from `.one()` / `.returning()` / `.returningOptional()` | The statement matched more than one row; use `.list()` or narrow the `WHERE` |
 | `IllegalStateException: A mapper must be configured via .mapping() …` | A row-mapping terminal called without `.mapping(...)` |
+| `TransactionDeadlineExceededException` | The work did not finish by `.deadline(...)`, or a statement ran on its connection after the deadline; the transaction was rolled back |
+| `InvalidDataAccessUsageException` from `prepare()`, `begin()`, `close()` or `.stream(...)` | Called on the connection of a deadline-bounded transaction, which refuses them |
+| `IllegalArgumentException: deadline must be positive` | `.deadline(...)` given a zero or negative duration |
 | Statement runs outside its transaction | A builder inside `transaction().execute(...)` missing `.on(conn)` |
 | Pool never grows past the first connection | A `PoolConnectHandler` that does not call `conn.close()` |
 | `ConfigurationException` naming `db.schemas` or `db.schemas.<key>` | `db.schemas` has a blank key, or a value that is null, not a string, or blank |

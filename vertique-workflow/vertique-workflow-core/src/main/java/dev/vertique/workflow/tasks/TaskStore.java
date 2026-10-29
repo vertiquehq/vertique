@@ -88,8 +88,9 @@ public interface TaskStore<TX> {
             TX tx);
 
     /**
-     * Transitions the task identified by {@code taskId} from {@link TaskStatus#OPEN} to
-     * {@link TaskStatus#CANCELLED} and records the reason and audit metadata.
+     * Transitions the task identified by {@code taskId} from {@link TaskStatus#OPEN} or {@link TaskStatus#COMPLETING}
+     * to {@link TaskStatus#CANCELLED} and records the reason and audit metadata. A task reserved by a recorded
+     * completion is cancelled with its instance, and with it the completion's reservation.
      *
      * <p>If the task is already in a terminal status, returns the appropriate
      * {@link TaskTransition} constant instead of failing.

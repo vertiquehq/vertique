@@ -24,7 +24,7 @@ import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
-import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
+import dev.vertique.workflow.engine.testsupport.ScopedDefinitions;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.MigrationContext;
@@ -38,6 +38,7 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
@@ -49,8 +50,11 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
+import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -77,6 +81,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith(DatabaseExtension.class)
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class CrossScopeMigrationIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_cross_scope_migrate_test")
@@ -282,7 +288,14 @@ public class CrossScopeMigrationIT {
         }
     }
 
-    private static Harness open(Consumer<WorkflowRegistry> definitions, WorkflowMigrationHandler<?, ?>... handlers) {
+    /**
+     * Opens an engine whose registry holds the given code and whose stored versions of the other scopes are the given
+     * ones; the plans of another scope reach the node through a plan source that is bound once the engine was built.
+     */
+    private static Harness open(
+            Consumer<WorkflowRegistry> code,
+            Consumer<ScopedDefinitions> scoped,
+            WorkflowMigrationHandler<?, ?>... handlers) {
         Vertx vertx = Vertx.vertx();
         DbPoolConfig config = db.toPoolConfig();
         Pool pool = PgBuilder.pool()
@@ -297,7 +310,7 @@ public class CrossScopeMigrationIT {
                 .build();
         Comparison comparison = DaggerCrossScopeMigrationIT_Comparison.create();
         WorkflowRegistry registry = comparison.registry();
-        definitions.accept(registry);
+        code.accept(registry);
         PgDbExceptionMapper mapper = new PgDbExceptionMapper();
         WorkflowEngineHandle engine = PgWorkflowEngineTestSupport.createWithStateCompatibility(
                 pool,
@@ -310,16 +323,18 @@ public class CrossScopeMigrationIT {
                 Clock.systemUTC(),
                 new DefaultWorkflowMigrationRegistry(Set.of(handlers), registry),
                 comparison.compatibility());
+        scoped.accept(ScopedDefinitions.of((DefaultWorkflowRegistry) registry));
         return new Harness(vertx, pool, registry, engine);
     }
 
     @BeforeEach
     void truncateTables() throws Exception {
-        Harness harness = open(registry -> {});
+        Harness harness = open(registry -> {}, scoped -> {});
         try {
-            await(harness.pool()
-                    .query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                            + " workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
+            await(WorkflowTestTables.truncating(
+                            harness.pool(),
+                            "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                    + " workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                     .execute());
         } finally {
             harness.close();
@@ -332,12 +347,36 @@ public class CrossScopeMigrationIT {
         StartCommand start = new StartCommand(
                 ID, "cm-c", new StartPayload("i-1"), "cm-" + UUID.randomUUID(), null, null, 1L, null, null);
         WorkflowInstanceId id = await(harness.engine().start(start));
+        await(harness.engine().executionProbe().awaitIdle(id, IDLE_TIMEOUT));
         ScopedApprovalFixture.stampScope(harness.pool(), id, definitionScope, startScope, planHash);
         return id;
     }
 
     private static WorkflowInstance row(Harness harness, WorkflowInstanceId id) throws Exception {
         return await(harness.engine().query(id)).instance();
+    }
+
+    /** Records a migration, runs it until the instance is idle and returns the settled migration command. */
+    private static Row migrated(Harness harness, WorkflowInstanceId id, String targetScope, long targetVersion)
+            throws Exception {
+        await(harness.engine().migrate(id, targetScope, targetVersion));
+        await(harness.engine().executionProbe().awaitIdle(id, IDLE_TIMEOUT));
+        return await(harness.pool()
+                        .preparedQuery("SELECT state, last_error FROM workflow_commands WHERE workflow_id = $1"
+                                + " AND kind = 'MIGRATION' ORDER BY seq DESC LIMIT 1")
+                        .execute(Tuple.of(id.value())))
+                .iterator()
+                .next();
+    }
+
+    private static long migrationCommands(Harness harness, WorkflowInstanceId id) throws Exception {
+        return await(harness.pool()
+                        .preparedQuery("SELECT count(*) AS total FROM workflow_commands WHERE workflow_id = $1"
+                                + " AND kind = 'MIGRATION'")
+                        .execute(Tuple.of(id.value())))
+                .iterator()
+                .next()
+                .getLong("total");
     }
 
     // --- Tests ---
@@ -362,8 +401,8 @@ public class CrossScopeMigrationIT {
                 registry -> {
                     registry.register(defaultCode(1L));
                     registry.register(defaultCode(2L));
-                    registry.register(ACME, acmeDocument());
                 },
+                scoped -> scoped.publish(ACME, acmeDocument()),
                 defaultToDefault,
                 defaultToAcme,
                 acmeToDefault);
@@ -375,10 +414,11 @@ public class CrossScopeMigrationIT {
             WorkflowInstanceId i2 = waitingPinnedTo(harness, ACME, ACME, acmeHash);
 
             // When: I1 migrates to acme version 1 and I2 migrates to default version 2
-            await(harness.engine().migrate(i1, ACME, 1L));
-            Throwable refusal = failureOf(() -> harness.engine().migrate(i2, DEFAULT, 2L));
+            Row applied = migrated(harness, i1, ACME, 1L);
+            Row rejected = migrated(harness, i2, DEFAULT, 2L);
 
             // Then: I1 is pinned to acme version 1 with the plan hash of the acme definition
+            assertThat(applied.getString("state")).isEqualTo("COMPLETE");
             WorkflowInstance migrated = row(harness, i1);
             assertThat(migrated.definitionScopeKey()).isEqualTo(ACME);
             assertThat(migrated.definitionVersion()).isEqualTo(1L);
@@ -390,9 +430,9 @@ public class CrossScopeMigrationIT {
             assertThat(defaultToAcme.contexts.get(0).targetScope()).isEqualTo(ACME);
             assertThat(defaultToDefault.contexts).isEmpty();
 
-            // and: I2 is refused naming the property that the target lacks, without running its handler
-            assertThat(refusal).isInstanceOf(WorkflowDefinitionException.class);
-            assertThat(refusal.getMessage()).contains("note");
+            // and: I2's migration is rejected without running its handler, and the reason names no property
+            assertThat(rejected.getString("state")).isEqualTo("REJECTED");
+            assertThat(rejected.getString("last_error")).startsWith("MIGRATION_REJECTED: ");
             assertThat(acmeToDefault.contexts).isEmpty();
 
             // and: I2 keeps its pin
@@ -406,7 +446,7 @@ public class CrossScopeMigrationIT {
     }
 
     @Test
-    @DisplayName("a migration to another contract or to a scope that is not visible is refused")
+    @DisplayName("a migration to another contract or to a scope that is not visible is rejected")
     void migrationToOtherContractOrForeignScopeIsRefused() throws Exception {
         // Given: acme holds its own version 1 under contract D, loaded before the default code ships, the default
         // code holds version 1 under contract C, globex holds version 1 under contract C, and handlers from the
@@ -414,10 +454,10 @@ public class CrossScopeMigrationIT {
         Recording<Base, Base> toAcme = baseToBase(DEFAULT, 1L, ACME, 1L);
         Recording<Base, Base> toGlobex = baseToBase(DEFAULT, 1L, GLOBEX, 1L);
         Harness harness = open(
-                registry -> {
-                    registry.register(ACME, new Waiting<>(Base.class, ContractD.class, 1L, id -> new Base(id, 0)));
-                    registry.register(defaultCode(1L));
-                    registry.register(GLOBEX, defaultCode(1L));
+                registry -> registry.register(defaultCode(1L)),
+                scoped -> {
+                    scoped.publish(ACME, new Waiting<>(Base.class, ContractD.class, 1L, id -> new Base(id, 0)));
+                    scoped.publish(GLOBEX, defaultCode(1L));
                 },
                 toAcme,
                 toGlobex);
@@ -426,17 +466,21 @@ public class CrossScopeMigrationIT {
             String defaultHash = harness.planHash(DEFAULT, 1L);
             WorkflowInstanceId id = waitingPinnedTo(harness, DEFAULT, ACME, defaultHash);
 
-            // When: it migrates to the acme definition of contract D, then to the globex definition
-            Throwable otherContract = failureOf(() -> harness.engine().migrate(id, ACME, 1L));
+            // When: it migrates to the acme definition of contract D, and a migration to the globex definition is
+            // recorded
+            Row otherContract = migrated(harness, id, ACME, 1L);
             Throwable foreignScope = failureOf(() -> harness.engine().migrate(id, GLOBEX, 1L));
 
-            // Then: the first is refused for the contract
-            assertThat(otherContract).isInstanceOf(WorkflowDefinitionContractMismatchException.class);
-
-            // and: the second is refused naming globex as not visible from acme
-            assertThat(foreignScope).isInstanceOf(WorkflowDefinitionException.class);
-            assertThat(foreignScope).isNotInstanceOf(WorkflowDefinitionContractMismatchException.class);
-            assertThat(foreignScope.getMessage()).contains(GLOBEX).contains(ACME);
+            // Then: the first is rejected by the executor, and the second is refused when it is recorded, with a
+            // reason that names neither scope
+            assertThat(otherContract.getString("state")).isEqualTo("REJECTED");
+            assertThat(otherContract.getString("last_error")).startsWith("MIGRATION_REJECTED: ");
+            assertThat(foreignScope)
+                    .isInstanceOf(dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException.class);
+            assertThat(foreignScope.getMessage())
+                    .contains("target scope not admitted")
+                    .doesNotContain(GLOBEX, ACME);
+            assertThat(migrationCommands(harness, id)).isEqualTo(1);
 
             // and: no handler ran and the pin is unchanged
             assertThat(toAcme.contexts).isEmpty();
@@ -451,7 +495,7 @@ public class CrossScopeMigrationIT {
     }
 
     @Test
-    @DisplayName("a refused migration names the definition key and no state class name")
+    @DisplayName("a rejected migration names neither a property nor a state class")
     void stateRefusalOfAMigrationNamesNoStateClass() throws Exception {
         // Given: default versions 1 and 2 with state Base, an acme definition with state Added of the same contract,
         // and the handler from acme to default version 2
@@ -461,20 +505,21 @@ public class CrossScopeMigrationIT {
                 registry -> {
                     registry.register(defaultCode(1L));
                     registry.register(defaultCode(2L));
-                    registry.register(ACME, acmeDocument());
                 },
+                scoped -> scoped.publish(ACME, acmeDocument()),
                 acmeToDefault);
         try {
             // and: an instance started in acme and pinned to the acme definition
             WorkflowInstanceId id = waitingPinnedTo(harness, ACME, ACME, harness.planHash(ACME, 1L));
 
             // When: it migrates to the default version 2, whose state does not extend the source's
-            Throwable refusal = failureOf(() -> harness.engine().migrate(id, DEFAULT, 2L));
+            Row rejected = migrated(harness, id, DEFAULT, 2L);
 
-            // Then: the refusal names the instance's definition and the missing property, and no state class
-            assertThat(refusal).isInstanceOf(WorkflowDefinitionException.class);
-            assertThat(refusal.getMessage()).contains(ID).contains("note");
-            assertThat(refusal.getMessage()).doesNotContain("Base", "Added");
+            // Then: the migration is rejected, and the reason names no property and no state class
+            assertThat(rejected.getString("state")).isEqualTo("REJECTED");
+            assertThat(rejected.getString("last_error"))
+                    .startsWith("MIGRATION_REJECTED: ")
+                    .doesNotContain("Base", "Added", "note");
         } finally {
             harness.close();
         }
@@ -484,7 +529,7 @@ public class CrossScopeMigrationIT {
     @DisplayName("a refused migration repeats a long caller-supplied target scope only in bounded form")
     void refusalOfAMigrationBoundsTheTargetScope() throws Exception {
         // Given: an instance started in acme and pinned to the default version 1
-        Harness harness = open(registry -> registry.register(defaultCode(1L)));
+        Harness harness = open(registry -> registry.register(defaultCode(1L)), scoped -> {});
         try {
             WorkflowInstanceId id = waitingPinnedTo(harness, DEFAULT, ACME, harness.planHash(DEFAULT, 1L));
 
@@ -492,7 +537,7 @@ public class CrossScopeMigrationIT {
             String hostile = "line\nforged " + "z".repeat(5000);
             Throwable refusal = failureOf(() -> harness.engine().migrate(id, hostile, 1L));
 
-            // Then: the refusal does not repeat the scope whole, nor any line break of it
+            // Then: the recording is refused, and the refusal does not repeat the scope whole, nor any line break of it
             assertThat(refusal).isInstanceOf(WorkflowDefinitionException.class);
             assertThat(refusal.getMessage()).doesNotContain(hostile, "z".repeat(100), "\n");
             assertThat(refusal.getMessage().length()).isLessThan(1000);

@@ -18,26 +18,16 @@ import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
-import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.plan.CompensationNode;
 import dev.vertique.workflow.plan.CompleteNode;
 import dev.vertique.workflow.plan.ServiceDispatchNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.CallbackId;
-import dev.vertique.workflow.registry.RegisteredDefinitionClass;
-import dev.vertique.workflow.registry.RuntimeWorkflow;
-import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
-import dev.vertique.workflow.registry.WorkflowRegistry;
-import dev.vertique.workflow.registry.store.DefinitionKey;
-import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.registry.RegisteredWorkflowDefinition;
 import io.vertx.core.Future;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
-import java.util.function.BiFunction;
-import java.util.function.Function;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -56,37 +46,45 @@ class WorkflowOutboxComposeValidatorTest {
     // --- SERVICE handler presence check ---
 
     @Test
-    @DisplayName("empty handler set — throws IllegalStateException with documented message")
-    void constructor_emptyHandlerSet_throws() {
-        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(Set.of(), emptyRegistry(), throwingResolver()))
+    @DisplayName("plan that dispatches to a service, empty handler set — throws IllegalStateException")
+    void validate_emptyHandlerSet_throws() {
+        RegisteredWorkflowDefinition candidate = candidate(planWithDispatchTarget("ok.target"));
+        WorkflowOutboxComposeValidator validator = new WorkflowOutboxComposeValidator(Set.of(), okResolver());
+
+        assertThatThrownBy(() -> validator.validate(candidate))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(EXPECTED_HANDLER_MSG)
                 .hasMessageContaining("TransactionalMessagingServiceModule");
     }
 
     @Test
-    @DisplayName("only DELAYED_JOB handler — throws IllegalStateException")
-    void constructor_onlyDelayedJobHandler_throws() {
-        Set<OutboxDestinationHandler> handlers = Set.of(new StubDelayedJobHandler());
+    @DisplayName("plan that dispatches to a service, only DELAYED_JOB handler — throws IllegalStateException")
+    void validate_onlyDelayedJobHandler_throws() {
+        RegisteredWorkflowDefinition candidate = candidate(planWithDispatchTarget("ok.target"));
+        WorkflowOutboxComposeValidator validator =
+                new WorkflowOutboxComposeValidator(Set.of(new StubDelayedJobHandler()), okResolver());
 
-        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(handlers, emptyRegistry(), throwingResolver()))
+        assertThatThrownBy(() -> validator.validate(candidate))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(EXPECTED_HANDLER_MSG);
     }
 
     @Test
-    @DisplayName("SERVICE handler present, no registered plans — constructor succeeds")
-    void constructor_serviceHandlerPresentNoPlans_succeeds() {
-        assertThatCode(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), emptyRegistry(), throwingResolver()))
+    @DisplayName("plan that dispatches to no service, no handler — passes")
+    void validate_noServiceDispatchNoHandler_passes() {
+        RegisteredWorkflowDefinition candidate = candidate(planWithoutService());
+
+        assertThatCode(() -> new WorkflowOutboxComposeValidator(Set.of(), throwingResolver()).validate(candidate))
                 .doesNotThrowAnyException();
     }
 
     @Test
-    @DisplayName("both SERVICE and DELAYED_JOB handlers — constructor succeeds")
-    void constructor_serviceAndDelayedJobHandlers_succeeds() {
+    @DisplayName("both SERVICE and DELAYED_JOB handlers — plan that dispatches to a service passes")
+    void validate_serviceAndDelayedJobHandlers_passes() {
         Set<OutboxDestinationHandler> handlers = Set.of(new StubServiceHandler(), new StubDelayedJobHandler());
+        RegisteredWorkflowDefinition candidate = candidate(planWithDispatchTarget("ok.target"));
 
-        assertThatCode(() -> new WorkflowOutboxComposeValidator(handlers, emptyRegistry(), throwingResolver()))
+        assertThatCode(() -> new WorkflowOutboxComposeValidator(handlers, okResolver()).validate(candidate))
                 .doesNotThrowAnyException();
     }
 
@@ -94,11 +92,11 @@ class WorkflowOutboxComposeValidatorTest {
 
     @Test
     @DisplayName("ServiceDispatchNode with unknown target id — throws IllegalStateException")
-    void constructor_unknownTargetId_throws() {
-        WorkflowRegistry registry = registryWith(planWithDispatchTarget("unknown.target"));
+    void validate_unknownTargetId_throws() {
+        RegisteredWorkflowDefinition candidate = candidate(planWithDispatchTarget("unknown.target"));
         ServiceTargetResolver resolver = throwingResolver();
 
-        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), registry, resolver))
+        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), resolver).validate(candidate))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("compose-test-def")
                 .hasMessageContaining("dispatch-step")
@@ -108,12 +106,12 @@ class WorkflowOutboxComposeValidatorTest {
 
     @Test
     @DisplayName("@OneWay target — throws IllegalStateException")
-    void constructor_oneWayTarget_throws() {
-        WorkflowRegistry registry = registryWith(planWithDispatchTarget("oneway.target"));
+    void validate_oneWayTarget_throws() {
+        RegisteredWorkflowDefinition candidate = candidate(planWithDispatchTarget("oneway.target"));
         ServiceTargetResolver resolver =
                 fixedResolver("oneway.target", buildTarget("oneway.target", true, Void.class, 1));
 
-        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), registry, resolver))
+        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), resolver).validate(candidate))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("oneway.target")
                 .hasMessageContaining("@OneWay");
@@ -121,12 +119,12 @@ class WorkflowOutboxComposeValidatorTest {
 
     @Test
     @DisplayName("non-Future<Void> return type — throws IllegalStateException")
-    void constructor_nonVoidReturnType_throws() {
-        WorkflowRegistry registry = registryWith(planWithDispatchTarget("string.target"));
+    void validate_nonVoidReturnType_throws() {
+        RegisteredWorkflowDefinition candidate = candidate(planWithDispatchTarget("string.target"));
         ServiceTargetResolver resolver =
                 fixedResolver("string.target", buildTarget("string.target", false, String.class, 1));
 
-        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), registry, resolver))
+        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), resolver).validate(candidate))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("string.target")
                 .hasMessageContaining("must return Future<Void>")
@@ -135,12 +133,12 @@ class WorkflowOutboxComposeValidatorTest {
 
     @Test
     @DisplayName("payload param count != 1 — throws IllegalStateException")
-    void constructor_wrongPayloadParamCount_throws() {
-        WorkflowRegistry registry = registryWith(planWithDispatchTarget("twopay.target"));
+    void validate_wrongPayloadParamCount_throws() {
+        RegisteredWorkflowDefinition candidate = candidate(planWithDispatchTarget("twopay.target"));
         ServiceTargetResolver resolver =
                 fixedResolver("twopay.target", buildTarget("twopay.target", false, Void.class, 2));
 
-        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), registry, resolver))
+        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), resolver).validate(candidate))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("twopay.target")
                 .hasMessageContaining("exactly one payload parameter")
@@ -149,12 +147,12 @@ class WorkflowOutboxComposeValidatorTest {
 
     @Test
     @DisplayName("CompensationNode target validated alongside ServiceDispatchNode targets")
-    void constructor_compensationTargetValidated() {
-        WorkflowRegistry registry = registryWith(planWithCompensationTarget("comp.unknown"));
+    void validate_compensationTargetValidated() {
+        RegisteredWorkflowDefinition candidate = candidate(planWithCompensationTarget("comp.unknown"));
         Map<String, ResolvedServiceTarget> targets = Map.of("svc.fwd", buildTarget("svc.fwd", false, Void.class, 1));
         ServiceTargetResolver resolver = mapResolver(targets);
 
-        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), registry, resolver))
+        assertThatThrownBy(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), resolver).validate(candidate))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("comp-step")
                 .hasMessageContaining("comp.unknown");
@@ -162,18 +160,58 @@ class WorkflowOutboxComposeValidatorTest {
 
     @Test
     @DisplayName("happy path — all targets valid → constructor succeeds")
-    void constructor_allTargetsValid_succeeds() {
-        WorkflowRegistry registry = registryWith(planWithDispatchTarget("ok.target"));
+    void validate_allTargetsValid_succeeds() {
+        RegisteredWorkflowDefinition candidate = candidate(planWithDispatchTarget("ok.target"));
         ServiceTargetResolver resolver = fixedResolver("ok.target", buildTarget("ok.target", false, Void.class, 1));
 
-        assertThatCode(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), registry, resolver))
+        assertThatCode(() -> new WorkflowOutboxComposeValidator(serviceHandlers(), resolver).validate(candidate))
                 .doesNotThrowAnyException();
+    }
+
+    // --- Per-plan validation ---
+
+    @Test
+    @DisplayName("each plan is validated alone: an unknown target and a missing SERVICE handler refuse that plan only")
+    void validatesOnePlanAtATime() {
+        // Given a validator built without a registry, a resolver that knows ok.target only, and plans that dispatch to
+        // an unknown target, to a known target, and to no service at all
+        ServiceTargetResolver resolver = fixedResolver("ok.target", buildTarget("ok.target", false, Void.class, 1));
+        WorkflowOutboxComposeValidator withHandler = new WorkflowOutboxComposeValidator(serviceHandlers(), resolver);
+        WorkflowOutboxComposeValidator withoutHandler =
+                new WorkflowOutboxComposeValidator(Set.of(new StubDelayedJobHandler()), resolver);
+        RegisteredWorkflowDefinition unknown = candidate(planWithDispatchTarget("unknown.target"));
+        RegisteredWorkflowDefinition known = candidate(planWithDispatchTarget("ok.target"));
+        RegisteredWorkflowDefinition noService = candidate(planWithoutService());
+
+        // When each plan is validated alone
+        // Then the plan with the unknown target is refused with the offender text
+        assertThatThrownBy(() -> withHandler.validate(unknown))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Workflow definition 'compose-test-def' v1 step 'dispatch-step'"
+                        + " references unknown service target id 'unknown.target'");
+
+        // And the plan with the known target passes
+        assertThatCode(() -> withHandler.validate(known)).doesNotThrowAnyException();
+
+        // And a plan that dispatches to a service is refused when no SERVICE handler is bound
+        assertThatThrownBy(() -> withoutHandler.validate(known))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(EXPECTED_HANDLER_MSG)
+                .hasMessageContaining("TransactionalMessagingServiceModule");
+
+        // And a plan that dispatches to no service passes with or without a SERVICE handler
+        assertThatCode(() -> withHandler.validate(noService)).doesNotThrowAnyException();
+        assertThatCode(() -> withoutHandler.validate(noService)).doesNotThrowAnyException();
     }
 
     // --- Helpers ---
 
     private static Set<OutboxDestinationHandler> serviceHandlers() {
         return Set.of(new StubServiceHandler());
+    }
+
+    private static ServiceTargetResolver okResolver() {
+        return fixedResolver("ok.target", buildTarget("ok.target", false, Void.class, 1));
     }
 
     private static ServiceTargetResolver throwingResolver() {
@@ -265,6 +303,15 @@ class WorkflowOutboxComposeValidatorTest {
                 null);
     }
 
+    private static WorkflowPlan planWithoutService() {
+        return new WorkflowPlan(
+                "no-service-def", 1L, "00000000", "java.lang.String", "done", List.of(new CompleteNode("done")), null);
+    }
+
+    private static RegisteredWorkflowDefinition candidate(WorkflowPlan plan) {
+        return new RegisteredWorkflowDefinition(plan, String.class);
+    }
+
     private static WorkflowPlan planWithCompensationTarget(String compTargetId) {
         return new WorkflowPlan(
                 "compose-test-def",
@@ -277,93 +324,6 @@ class WorkflowOutboxComposeValidatorTest {
                         new CompensationNode("comp-step", "fwd", compTargetId, new CallbackId("cp")),
                         new CompleteNode("done")),
                 null);
-    }
-
-    private static WorkflowRegistry emptyRegistry() {
-        return new StaticRegistry(List.of());
-    }
-
-    private static WorkflowRegistry registryWith(WorkflowPlan plan) {
-        RuntimeWorkflow rw = new RuntimeWorkflow(
-                plan,
-                "test-contract",
-                WorkflowScopes.DEFAULT,
-                String.class,
-                String.class,
-                Function.identity(),
-                Map.of(),
-                emptyCallbacks(),
-                Map.of(),
-                Map.of());
-        return new StaticRegistry(List.of(rw));
-    }
-
-    private static WorkflowCallbackRegistry emptyCallbacks() {
-        return new WorkflowCallbackRegistry() {
-            @Override
-            public <S> Function<S, Object> payloadFactory(CallbackId id) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public <S> BiFunction<S, Object, S> stateUpdater(CallbackId id) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public <S> Function<S, String> decisionResolver(CallbackId id) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public <S> Function<S, String> failMessageFactory(CallbackId id) {
-                throw new UnsupportedOperationException();
-            }
-        };
-    }
-
-    /** Minimal {@link WorkflowRegistry} returning a fixed list from {@link #allRegistered()}. */
-    private static final class StaticRegistry implements WorkflowRegistry {
-        private final Collection<RuntimeWorkflow> all;
-
-        StaticRegistry(Collection<RuntimeWorkflow> all) {
-            this.all = all;
-        }
-
-        @Override
-        public void register(WorkflowDefinition<?, ?> def) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public RuntimeWorkflow resolve(DefinitionKey key) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
-            return Optional.empty();
-        }
-
-        @Override
-        public List<DefinitionKey> keysFor(String definitionId) {
-            return List.of();
-        }
-
-        @Override
-        public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
-            return Optional.empty();
-        }
-
-        @Override
-        public Collection<RuntimeWorkflow> allRegistered() {
-            return all;
-        }
     }
 
     // --- Stub destination handlers ---

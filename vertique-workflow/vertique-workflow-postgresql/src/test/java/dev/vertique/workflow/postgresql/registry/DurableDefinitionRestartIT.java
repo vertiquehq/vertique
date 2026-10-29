@@ -25,7 +25,6 @@ import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootO
 import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
-import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
@@ -89,8 +88,8 @@ public class DurableDefinitionRestartIT {
                             .compose(compiled -> service.list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
                                     .map(records -> {
                                         assertThat(compiled.planHash()).isNotBlank();
-                                        assertThat(first.workflowRegistry().allRegistered())
-                                                .hasSize(1);
+                                        assertThat(first.workflowRegistry().codeDefinitions())
+                                                .isEmpty();
                                         assertThat(records).singleElement().satisfies(record -> {
                                             assertThat(record.key()).isEqualTo(key);
                                             assertThat(record.status()).isEqualTo(DefinitionStatus.AVAILABLE);
@@ -106,17 +105,16 @@ public class DurableDefinitionRestartIT {
                     pools.add(secondPool);
                     BootObservation secondObservation =
                             new BootObservation(definitionId, version, compiled.planHash(), true);
-                    AppComponent second = ManagedDefinitionDatabase.app(vertx, secondPool, secondObservation);
+                    AppComponent second = ManagedDefinitionDatabase.app(
+                            vertx,
+                            secondPool,
+                            ManagedDefinitionDatabase.buildingDefaultScopeDocuments(),
+                            secondObservation,
+                            List::of);
                     return VertiqueApplicationBootstrap.start(
                                     VertiqueRuntime.of(vertx, new JsonObject()), ignored -> second)
                             .compose(secondHandle -> {
                                 handles.add(secondHandle);
-                                assertThat(second.workflowRegistry()
-                                                .resolve(new DefinitionKey(
-                                                        WorkflowScopes.DEFAULT, definitionId, version))
-                                                .plan()
-                                                .planHash())
-                                        .isEqualTo(compiled.planHash());
                                 assertThat(secondObservation.events())
                                         .containsExactly("bootstrap-complete", "bootstrap-verticle-deployed");
                                 return second.definitionService()
@@ -169,12 +167,6 @@ public class DurableDefinitionRestartIT {
                             .compose(loaded ->
                                     first.definitionService().publish(key).map(loaded))
                             .compose(loaded -> {
-                                assertThat(first.workflowRegistry()
-                                                .resolve(new DefinitionKey(
-                                                        WorkflowScopes.DEFAULT, definitionId, version))
-                                                .plan()
-                                                .planHash())
-                                        .isEqualTo(loaded.planHash());
                                 if (failureCase == RestorationFailureCase.DRIFT) {
                                     WorkflowDefinitionPipeline pipeline = first.definitionPipeline();
                                     CompiledDefinition originalCompiled = pipeline.load(
@@ -219,7 +211,11 @@ public class DurableDefinitionRestartIT {
                                                 BootObservation driftObservation = new BootObservation(
                                                         definitionId, version, loaded.planHash(), true);
                                                 AppComponent drift = ManagedDefinitionDatabase.app(
-                                                        vertx, driftPool, driftObservation);
+                                                        vertx,
+                                                        driftPool,
+                                                        ManagedDefinitionDatabase.buildingDefaultScopeDocuments(),
+                                                        driftObservation,
+                                                        List::of);
                                                 return VertiqueApplicationBootstrap.start(
                                                                 VertiqueRuntime.of(vertx, new JsonObject()),
                                                                 ignoredRuntime -> drift)
@@ -257,7 +253,10 @@ public class DurableDefinitionRestartIT {
                                             new BootObservation(definitionId, version, "unused", true);
                                     ManagedDefinitionDatabase.NoLoaderAppComponent noLoader =
                                             ManagedDefinitionDatabase.appWithoutLoader(
-                                                    vertx, loaderPool, loaderObservation);
+                                                    vertx,
+                                                    loaderPool,
+                                                    ManagedDefinitionDatabase.buildingDefaultScopeDocuments(),
+                                                    loaderObservation);
                                     return VertiqueApplicationBootstrap.start(
                                                     VertiqueRuntime.of(vertx, new JsonObject()),
                                                     ignoredRuntime -> noLoader)
@@ -272,8 +271,7 @@ public class DurableDefinitionRestartIT {
                                                                 WorkflowDefinitionLifecycleException.Reason
                                                                         .LOADER_MISSING);
                                                 assertThat(failure.key()).isEqualTo(key);
-                                                assertThat(failure.getMessage())
-                                                        .contains(definitionId, DefinitionKind.DOCUMENT.name());
+                                                assertThat(failure.getMessage()).contains(definitionId, "YAML");
                                                 assertThat(loaderObservation.events())
                                                         .isEmpty();
                                                 return Future.succeededFuture();

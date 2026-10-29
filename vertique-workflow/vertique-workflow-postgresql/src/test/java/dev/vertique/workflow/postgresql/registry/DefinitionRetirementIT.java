@@ -4,7 +4,6 @@
 package dev.vertique.workflow.postgresql.registry;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.application.VertiqueApplicationBootstrap;
 import dev.vertique.application.VertiqueApplicationHandle;
@@ -18,6 +17,7 @@ import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
+import dev.vertique.workflow.definition.service.ActivationStatus;
 import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
@@ -25,7 +25,7 @@ import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.exception.WorkflowPersistenceException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
@@ -56,6 +56,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayDeque;
@@ -70,17 +71,17 @@ import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 
 /**
- * Verifies that retiring a managed definition is refused while it is cooling, pinned by live instances
+ * Verifies that retiring a managed definition is refused while it is pinned by live instances
  * or still executable, and that a successful retirement removes only the registration published for the
  * retired row.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class DefinitionRetirementIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     @WorkflowContract
     public interface PinnedCaseV7 extends OrderDocumentSignals {}
@@ -120,7 +121,7 @@ public class DefinitionRetirementIT {
             .withMigration("classpath:db/migration/workflow");
 
     @Test
-    void refusesPinnedAndCoolingRetirement(Vertx vertx) {
+    void refusesPinnedRetirement(Vertx vertx) {
         String id = "retirement-it-pinned-doc";
         DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 7);
 
@@ -128,7 +129,6 @@ public class DefinitionRetirementIT {
             fixture.ownRows(id);
             Node node = fixture.node();
             AppComponent app = node.app();
-            long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
 
             // Given version 7 loaded, activated and then deprecated through the service
             CompiledDefinitionRef loaded = await(app.definitionService()
@@ -139,38 +139,12 @@ public class DefinitionRetirementIT {
                             source("pinned")));
             await(app.definitionService().publish(key));
             await(app.definitionService().deprecate(key));
-            RuntimeWorkflow runtimeBefore =
-                    app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 7));
+            RuntimeWorkflow runtimeBefore = DefinitionScenario.planOf(app.workflowRegistry(), key);
 
             Stored deprecated = fixture.stored(id, 7);
             assertThat(deprecated.status()).isEqualTo("DEPRECATED");
-
-            // When retirement is requested right after deprecation, while no instance is pinned
-            Throwable justDeprecated = failureOf(app.definitionService().retire(key));
-
-            // Then it fails typed as cooling for that key, and the row stays DEPRECATED and registered
-            assertThat(justDeprecated).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                assertThat(failure.reason()).isEqualTo(Reason.COOLING);
-                assertThat(failure.key()).isEqualTo(key);
-                assertThat(failure.getMessage()).contains(id);
-            });
-            assertThat(fixture.stored(id, 7)).isEqualTo(deprecated);
-            assertThat(app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 7)))
-                    .isSameAs(runtimeBefore);
-            assertThat(app.workflowRegistry().isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 7)))
-                    .isTrue();
-
-            // When the deprecation is aged to just under the cooling window, by the database clock
-            fixture.ageStatus(key, coolingSeconds - 10);
-            Stored almostCooled = fixture.stored(id, 7);
-            Throwable stillCooling = failureOf(app.definitionService().retire(key));
-
-            // Then retirement is still refused as cooling and nothing changes
-            assertThat(stillCooling).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                assertThat(failure.reason()).isEqualTo(Reason.COOLING);
-                assertThat(failure.key()).isEqualTo(key);
-            });
-            assertThat(fixture.stored(id, 7)).isEqualTo(almostCooled);
+            assertThat(DefinitionScenario.planOf(app.workflowRegistry(), key)).isSameAs(runtimeBefore);
+            assertThat(ManagedDefinitionDatabase.currentStatus(app, id, 7)).isEqualTo(ActivationStatus.DEPRECATED);
 
             // Given four live pins (running, waiting, compensating and an archived waiting row) and a completed one
             UUID running = fixture.insertInstance(id, 7, loaded.planHash(), "RUNNING", false);
@@ -179,19 +153,7 @@ public class DefinitionRetirementIT {
             UUID archivedWaiting = fixture.insertInstance(id, 7, loaded.planHash(), "WAITING", true);
             fixture.insertInstance(id, 7, loaded.planHash(), "COMPLETED", false);
 
-            // When retirement is requested while the row is both still cooling and pinned by the four live rows
-            Throwable coolingAndPinned = failureOf(app.definitionService().retire(key));
-
-            // Then the cooling check wins over the pin count, and nothing changes
-            assertThat(coolingAndPinned).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                assertThat(failure.reason()).isEqualTo(Reason.COOLING);
-                assertThat(failure.key()).isEqualTo(key);
-            });
-            assertThat(fixture.stored(id, 7)).isEqualTo(almostCooled);
-
-            // When the deprecation is aged beyond the cooling window while the four pins remain
-            fixture.ageStatus(key, coolingSeconds + 60);
-            Stored cooled = fixture.stored(id, 7);
+            // When retirement is requested right after deprecation, while four live rows pin the version
             Throwable allPinned = failureOf(app.definitionService().retire(key));
 
             // Then retirement fails typed with the key and all four live pins, archived one included
@@ -200,9 +162,8 @@ public class DefinitionRetirementIT {
                 assertThat(failure.key()).isEqualTo(key);
                 assertThat(failure.getMessage()).contains(id).containsPattern("\\b4\\b");
             });
-            assertThat(fixture.stored(id, 7)).isEqualTo(cooled);
-            assertThat(app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 7)))
-                    .isSameAs(runtimeBefore);
+            assertThat(fixture.stored(id, 7)).isEqualTo(deprecated);
+            assertThat(DefinitionScenario.planOf(app.workflowRegistry(), key)).isSameAs(runtimeBefore);
 
             // When the three unarchived pins finish
             fixture.setInstanceStatus(running, "COMPLETED");
@@ -216,9 +177,9 @@ public class DefinitionRetirementIT {
                 assertThat(failure.key()).isEqualTo(key);
                 assertThat(failure.getMessage()).containsPattern("\\b1\\b");
             });
-            assertThat(fixture.stored(id, 7)).isEqualTo(cooled);
+            assertThat(fixture.stored(id, 7)).isEqualTo(deprecated);
 
-            // When the archived pin finishes as well, so no live pin remains and the row is cooled
+            // When the archived pin finishes as well, so no live pin remains
             fixture.setInstanceStatus(archivedWaiting, "EXPIRED");
             await(app.definitionService().retire(key));
 
@@ -228,15 +189,115 @@ public class DefinitionRetirementIT {
             assertThat(retired)
                     .usingRecursiveComparison()
                     .ignoringFields("status", "changedAt")
-                    .isEqualTo(cooled);
+                    .isEqualTo(deprecated);
 
-            // And the runtime and its registered definition are removed from the local registry
-            assertThatThrownBy(() -> app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 7)))
-                    .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-            assertThat(app.workflowRegistry().registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 7)))
-                    .isEmpty();
-            assertThat(app.workflowRegistry().allRegistered())
+            // And the node keeps no registration of it: the registry holds code only
+            assertThat(app.workflowRegistry().codeDefinitions())
                     .noneMatch(runtime -> runtime.plan().definitionId().equals(id));
+        }
+    }
+
+    @Test
+    void retiresAVersionDeprecatedOneSecondAgoWithoutLivePins(Vertx vertx) {
+        String id = "retirement-it-no-cooling-doc";
+        DefinitionKey finishedKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+        DefinitionKey pendingKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
+        DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 3);
+
+        try (Fixture fixture = new Fixture(vertx)) {
+            fixture.ownRows(id);
+            AppComponent app = fixture.node().app();
+
+            // Given versions 1 and 2 deprecated one second ago beside the current version 3
+            CompiledDefinitionRef loaded1 = await(app.definitionService()
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 1, CountCase.class),
+                            DocumentFormat.YAML,
+                            source("no-cooling-v1")));
+            CompiledDefinitionRef loaded2 = await(app.definitionService()
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 2, CountCase.class),
+                            DocumentFormat.YAML,
+                            source("no-cooling-v2")));
+            await(app.definitionService()
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 3, CountCase.class),
+                            DocumentFormat.YAML,
+                            source("no-cooling-v3")));
+            await(app.definitionService().publish(finishedKey));
+            await(app.definitionService().publish(pendingKey));
+            await(app.definitionService().publish(currentKey));
+            await(app.definitionService().deprecate(finishedKey));
+            await(app.definitionService().deprecate(pendingKey));
+            fixture.ageStatus(finishedKey, 1);
+            fixture.ageStatus(pendingKey, 1);
+
+            // And version 1 has only completed instances, and version 2 has one pending instance
+            fixture.insertInstance(id, 1, loaded1.planHash(), "COMPLETED", false);
+            fixture.insertInstance(id, 1, loaded1.planHash(), "COMPLETED", true);
+            fixture.insertInstance(id, 2, loaded2.planHash(), "PENDING", false);
+            Stored pendingBefore = fixture.stored(id, 2);
+
+            // When both versions are retired
+            await(app.definitionService().retire(finishedKey));
+            Throwable pinned = failureOf(app.definitionService().retire(pendingKey));
+
+            // Then version 1 is retired at once, however recently it was deprecated
+            assertThat(fixture.stored(id, 1).status()).isEqualTo("RETIRED");
+
+            // And version 2 is refused for its pinned instance, and stays DEPRECATED
+            assertThat(pinned).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
+                assertThat(failure.reason()).isEqualTo(Reason.PINNED_INSTANCES);
+                assertThat(failure.key()).isEqualTo(pendingKey);
+                assertThat(failure.getMessage()).contains(id).containsPattern("\\b1\\b");
+            });
+            assertThat(fixture.stored(id, 2)).isEqualTo(pendingBefore);
+            assertThat(fixture.stored(id, 3).status()).isEqualTo("AVAILABLE");
+        }
+    }
+
+    @Test
+    void pendingInstanceBlocksRetirementAndIsCountedLive(Vertx vertx) {
+        String id = "retirement-it-pending-pin-doc";
+        DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+
+        try (Fixture fixture = new Fixture(vertx)) {
+            fixture.ownRows(id);
+            AppComponent app = fixture.node().app();
+            PgWorkflowInstanceQueryService instances = new PgWorkflowInstanceQueryService(
+                    new PgWorkflowInstanceRepository(fixture.admin(), new PgDbExceptionMapper()));
+
+            // Given a deprecated version whose only instance is accepted but not yet initialized
+            CompiledDefinitionRef loaded = await(app.definitionService()
+                    .load(
+                            WorkflowScopes.DEFAULT,
+                            document(id, 1, PinnedCaseV7.class),
+                            DocumentFormat.YAML,
+                            source("pending-pin")));
+            await(app.definitionService().publish(key));
+            await(app.definitionService().deprecate(key));
+            UUID pending = fixture.insertInstance(id, 1, loaded.planHash(), "PENDING", false);
+
+            // When the live instances are counted and retirement is requested
+            long count = await(instances.countNonTerminal(id, 1));
+            Throwable refusal = failureOf(app.definitionService().retire(key));
+
+            // Then the pending instance is counted live and pins the version
+            assertThat(count).isEqualTo(1);
+            assertThat(refusal).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
+                assertThat(failure.reason()).isEqualTo(Reason.PINNED_INSTANCES);
+                assertThat(failure.key()).isEqualTo(key);
+            });
+
+            // When the instance finishes
+            fixture.setInstanceStatus(pending, "FAILED");
+            await(app.definitionService().retire(key));
+
+            // Then the version retires
+            assertThat(fixture.stored(id, 1).status()).isEqualTo("RETIRED");
         }
     }
 
@@ -319,8 +380,7 @@ public class DefinitionRetirementIT {
                 assertThat(failure.key()).isEqualTo(activeKey);
             });
             assertThat(fixture.stored(id, 2)).isEqualTo(activeBefore);
-            assertThat(app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
-                    .isNotNull();
+            assertThat(ManagedDefinitionDatabase.currentStatus(app, id, 2)).isEqualTo(ActivationStatus.AVAILABLE);
 
             // When version 3 is published beside version 2, and both are retired
             await(app.definitionService()
@@ -363,7 +423,6 @@ public class DefinitionRetirementIT {
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(id);
             AppComponent app = fixture.node().app();
-            long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
 
             // Given tenant-a's candidate and tenant-b's activated document with the same id and version
             String planHash = seedCandidate(app, "tenant-a", document(id, 1, ScopedPinCaseV1.class), "scoped-a");
@@ -373,9 +432,8 @@ public class DefinitionRetirementIT {
             // And a live instance pinned to tenant-a's definition only
             fixture.insertInstance("tenant-a", id, 1, planHash, "RUNNING", false);
 
-            // When tenant-b's version is deprecated, cooled and retired
+            // When tenant-b's version is deprecated and retired
             await(app.definitionService().deprecate(ownerKey));
-            fixture.ageStatus(ownerKey, coolingSeconds + 60);
             Throwable refusal = failureOf(app.definitionService().retire(ownerKey));
 
             // Then tenant-a's pin neither counts toward nor blocks the retirement of tenant-b's row
@@ -393,14 +451,12 @@ public class DefinitionRetirementIT {
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(id);
             AppComponent app = fixture.node().app();
-            long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
 
-            // Given tenant-a's candidate and tenant-b's activated, then deprecated and cooled, document
+            // Given tenant-a's candidate and tenant-b's activated, then deprecated, document
             String planHash = seedCandidate(app, "tenant-a", document(id, 1, ScopedPinCaseV1.class), "scoped-own-a");
             seedCandidate(app, "tenant-b", document(id, 1, ScopedPinCaseV1.class), "scoped-own-b");
             await(app.definitionService().publish(ownerKey));
             await(app.definitionService().deprecate(ownerKey));
-            fixture.ageStatus(ownerKey, coolingSeconds + 60);
 
             // And one live instance pinned in each scope
             fixture.insertInstance("tenant-a", id, 1, planHash, "RUNNING", false);
@@ -416,399 +472,6 @@ public class DefinitionRetirementIT {
                 assertThat(failure.getMessage()).contains("pinned by 1 non-terminal");
             });
             assertThat(fixture.stored("tenant-b", id, 1).status()).isEqualTo("DEPRECATED");
-        }
-    }
-
-    /** The managed retirement scenarios, one per way a runtime comes to be registered or replaced. */
-    enum Retirement {
-        UNRELATED_CANDIDATE("unrelated candidate", "retirement-it-candidate-doc", 1, CandidateCaseV1.class),
-        LEGITIMATE_DYNAMIC_OWNER("legitimate dynamic owner", "retirement-it-owner-doc", 1, OwnerCaseV1.class),
-        STATIC_DOCUMENT_ORIGIN("static document origin", "retirement-it-static-doc", 1, StaticCaseV1.class),
-        CONTRIBUTED_CODE_ORIGIN(
-                "contributed code origin", "definition-policy-code", 2, fixtureContract("RegistryProbeContract")),
-        FRESH_GLOBAL_DOCUMENT_RESTORE(
-                "fresh global document restore", "retirement-it-restore-doc", 1, RestoreCaseV1.class),
-        COMPLETED_REPLACEMENT_BEFORE_OPERATION(
-                "completed replacement before operation", "retirement-it-replaced-doc", 1, ReplacedCaseV1.class),
-        DIRECT_UNKNOWN_PUBLICATION("direct unknown publication", "retirement-it-unknown-doc", 1, UnknownCaseV1.class);
-
-        private final String label;
-        private final String definitionId;
-        private final long version;
-        private final Class<?> contract;
-
-        Retirement(String label, String definitionId, long version, Class<?> contract) {
-            this.label = label;
-            this.definitionId = definitionId;
-            this.version = version;
-            this.contract = contract;
-        }
-
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
-
-    @ParameterizedTest(name = "{0}")
-    @EnumSource(Retirement.class)
-    void retiresOnlyItsAttributedRegistration(Retirement retirement, Vertx vertx) {
-        String id = retirement.definitionId;
-        long version = retirement.version;
-        Class<?> contract = retirement.contract;
-
-        try (Fixture fixture = new Fixture(vertx)) {
-            fixture.ownRows(id);
-
-            switch (retirement) {
-                case UNRELATED_CANDIDATE -> {
-                    DefinitionKey candidateKey = new DefinitionKey("tenant-a", id, version);
-                    DefinitionKey registeredKey = new DefinitionKey("tenant-b", id, version);
-                    AppComponent app = fixture.node().app();
-
-                    // Given tenant-a's candidate and tenant-b's document with the same id, version and source hash
-                    String candidateHash = seedCandidate(app, "tenant-a", document(id, version, contract), "candidate");
-                    String registeredHash =
-                            seedCandidate(app, "tenant-b", document(id, version, contract), "registered");
-                    assertThat(candidateHash).isEqualTo(registeredHash);
-
-                    // And only tenant-b's document is activated, so it alone owns the registered runtime
-                    await(app.definitionService().publish(registeredKey));
-                    Stored candidateBefore = fixture.stored("tenant-a", id, version);
-                    Stored registeredBefore = fixture.stored("tenant-b", id, version);
-                    assertThat(candidateBefore.status()).isEqualTo("CANDIDATE");
-                    assertThat(registeredBefore.status()).isEqualTo("AVAILABLE");
-                    assertThat(candidateBefore.planHash()).isEqualTo(registeredBefore.planHash());
-                    RuntimeWorkflow runtimeBefore = app.workflowRegistry().resolve(registeredKey);
-                    var definitionBefore = app.workflowRegistry().registeredDefinition(registeredKey);
-                    assertThat(app.workflowRegistry().find(candidateKey)).isEmpty();
-                    assertThat(fixture.instanceCount(id)).isZero();
-
-                    // When tenant-a's unregistered candidate is retired through the service
-                    await(app.definitionService().retire(candidateKey));
-
-                    // Then the candidate row is RETIRED and tenant-b's row is exactly as it was
-                    Stored candidateAfter = fixture.stored("tenant-a", id, version);
-                    assertThat(candidateAfter.status()).isEqualTo("RETIRED");
-                    assertThat(candidateAfter)
-                            .usingRecursiveComparison()
-                            .ignoringFields("status", "changedAt")
-                            .isEqualTo(candidateBefore);
-                    assertThat(fixture.stored("tenant-b", id, version)).isEqualTo(registeredBefore);
-
-                    // And tenant-b's captured runtime, pinned resolution and registered definition are
-                    // untouched
-                    assertThat(app.workflowRegistry().resolve(registeredKey)).isSameAs(runtimeBefore);
-                    assertThat(app.workflowRegistry().find(candidateKey)).isEmpty();
-                    assertThat(app.workflowRegistry().registeredDefinition(registeredKey))
-                            .isEqualTo(definitionBefore);
-                    assertThat(app.workflowRegistry().isDeprecated(registeredKey))
-                            .isFalse();
-                    assertThat(app.workflowRegistry().allRegistered())
-                            .filteredOn(runtime -> runtime.plan().definitionId().equals(id))
-                            .containsExactly(runtimeBefore);
-                }
-                case LEGITIMATE_DYNAMIC_OWNER -> {
-                    DefinitionKey candidateKey = new DefinitionKey("tenant-a", id, version);
-                    DefinitionKey registeredKey = new DefinitionKey("tenant-b", id, version);
-                    AppComponent app = fixture.node().app();
-                    long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
-
-                    // Given tenant-a's candidate and tenant-b's document with the same id, version and source hash
-                    String candidateHash = seedCandidate(app, "tenant-a", document(id, version, contract), "candidate");
-                    String registeredHash =
-                            seedCandidate(app, "tenant-b", document(id, version, contract), "registered");
-                    assertThat(candidateHash).isEqualTo(registeredHash);
-
-                    // And only tenant-b's document is activated, so it alone owns the registered runtime
-                    await(app.definitionService().publish(registeredKey));
-                    Stored candidateBefore = fixture.stored("tenant-a", id, version);
-                    RuntimeWorkflow runtimeBefore = app.workflowRegistry().resolve(registeredKey);
-                    assertThat(candidateBefore.status()).isEqualTo("CANDIDATE");
-
-                    // When tenant-b's registered row is deprecated, cooled by the database clock and retired
-                    await(app.definitionService().deprecate(registeredKey));
-                    fixture.ageStatus(registeredKey, coolingSeconds + 60);
-                    Stored cooledBefore = fixture.stored("tenant-b", id, version);
-                    assertThat(cooledBefore.status()).isEqualTo("DEPRECATED");
-                    await(app.definitionService().retire(registeredKey));
-
-                    // Then the owner's row is RETIRED and the unrelated candidate row is exactly as it was
-                    Stored registeredAfter = fixture.stored("tenant-b", id, version);
-                    assertThat(registeredAfter.status()).isEqualTo("RETIRED");
-                    assertThat(registeredAfter)
-                            .usingRecursiveComparison()
-                            .ignoringFields("status", "changedAt")
-                            .isEqualTo(cooledBefore);
-                    assertThat(fixture.stored("tenant-a", id, version)).isEqualTo(candidateBefore);
-
-                    // And the owner's runtime, pinned resolution and registered definition are gone
-                    assertThatThrownBy(() -> app.workflowRegistry().resolve(registeredKey))
-                            .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-                    assertThat(app.workflowRegistry().registeredDefinition(registeredKey))
-                            .isEmpty();
-                    assertThat(app.workflowRegistry().allRegistered())
-                            .noneMatch(runtime -> runtime.plan().definitionId().equals(id));
-
-                    // When tenant-a's candidate, with the same id, version and contract, is then activated
-                    await(app.definitionService().publish(candidateKey));
-
-                    // Then it is registered as a new runtime, which a surviving registration would have prevented
-                    assertThat(fixture.stored("tenant-a", id, version).status()).isEqualTo("AVAILABLE");
-                    RuntimeWorkflow replacement = app.workflowRegistry().resolve(candidateKey);
-                    assertThat(replacement).isNotSameAs(runtimeBefore);
-                    assertThat(replacement.plan().planHash()).isEqualTo(candidateHash);
-                    assertThat(app.workflowRegistry().registeredDefinition(candidateKey))
-                            .isPresent();
-                    assertThat(app.workflowRegistry().isDeprecated(candidateKey))
-                            .isFalse();
-                }
-                case STATIC_DOCUMENT_ORIGIN -> {
-                    DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
-                    WorkflowDefinitionSource staticSource = () -> List.of(new DefinitionResource(
-                            document(id, version, contract), DocumentFormat.YAML, source("static-origin")));
-
-                    // Given a packaged static document that the definition bootstrap registered globally at startup
-                    AppComponent app = fixture.node(staticSource, false).app();
-                    long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
-                    RuntimeWorkflow runtimeBefore =
-                            app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
-                    assertThat(fixture.stored(id, version).status()).isEqualTo("AVAILABLE");
-                    assertThat(app.workflowRegistry()
-                                    .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isPresent();
-
-                    // When its row is deprecated through the service, cooled by the database clock and retired
-                    await(app.definitionService().deactivateDefault(id));
-                    await(app.definitionService().deprecate(key));
-                    fixture.ageStatus(key, coolingSeconds + 60);
-                    Stored cooledBefore = fixture.stored(id, version);
-                    assertThat(cooledBefore.status()).isEqualTo("DEPRECATED");
-                    await(app.definitionService().retire(key));
-
-                    // Then the row is RETIRED with its hash and source intact
-                    Stored retired = fixture.stored(id, version);
-                    assertThat(retired.status()).isEqualTo("RETIRED");
-                    assertThat(retired)
-                            .usingRecursiveComparison()
-                            .ignoringFields("status", "changedAt")
-                            .isEqualTo(cooledBefore);
-
-                    // And the startup-registered runtime and its registered definition are removed
-                    assertThatThrownBy(() -> app.workflowRegistry()
-                                    .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-                    assertThat(app.workflowRegistry()
-                                    .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isEmpty();
-                    assertThat(app.workflowRegistry().allRegistered())
-                            .doesNotContain(runtimeBefore)
-                            .noneMatch(runtime -> runtime.plan().definitionId().equals(id));
-                }
-                case CONTRIBUTED_CODE_ORIGIN -> {
-                    DefinitionKey codeKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
-                    DefinitionKey documentKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
-                    Class<?> codeContract = fixtureContract("RegistryProbeContract");
-
-                    // Given a code-first definition that an application contributor registered at startup, whose
-                    // global CODE row startup recorded
-                    AppComponent app = fixture.node(List::of, true).app();
-                    long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
-                    RuntimeWorkflow contributed =
-                            app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
-                    var codeDefinition = app.workflowRegistry()
-                            .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
-                    Stored codeRecorded = fixture.stored(id, 1);
-                    assertThat(codeRecorded.sourceType()).isEqualTo("code");
-                    assertThat(codeRecorded.status()).isEqualTo("AVAILABLE");
-
-                    // And a document of version 2 under the same id, published by the managed lifecycle
-                    await(app.definitionService()
-                            .load(
-                                    WorkflowScopes.DEFAULT,
-                                    document(id, version, contract),
-                                    DocumentFormat.YAML,
-                                    source("code-sibling")));
-                    await(app.definitionService().publish(documentKey));
-                    RuntimeWorkflow documentRuntime =
-                            app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
-                    var documentDefinition = app.workflowRegistry()
-                            .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
-                    Stored documentBefore = fixture.stored(id, version);
-                    assertThat(documentBefore.status()).isEqualTo("AVAILABLE");
-
-                    // When the CODE row is deprecated through the service, cooled by the database clock and retired
-                    await(app.definitionService().deactivateDefault(id));
-                    await(app.definitionService().deprecate(codeKey));
-                    fixture.ageStatus(codeKey, coolingSeconds + 60);
-                    Stored cooledBefore = fixture.stored(id, 1);
-                    assertThat(cooledBefore.status()).isEqualTo("DEPRECATED");
-                    await(app.definitionService().retire(codeKey));
-
-                    // Then the CODE row is RETIRED with its hash and provenance intact
-                    Stored retired = fixture.stored(id, 1);
-                    assertThat(retired.status()).isEqualTo("RETIRED");
-                    assertThat(retired)
-                            .usingRecursiveComparison()
-                            .ignoringFields("status", "changedAt")
-                            .isEqualTo(cooledBefore);
-
-                    // And the contributed runtime and its registered definition are removed
-                    assertThatThrownBy(() ->
-                                    app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
-                            .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-                    assertThat(app.workflowRegistry()
-                                    .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
-                            .isEmpty();
-                    assertThat(app.workflowRegistry().allRegistered()).doesNotContain(contributed);
-
-                    // And the document of the same id, which the removal must not take with it, is untouched
-                    assertThat(app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isSameAs(documentRuntime);
-                    assertThat(app.workflowRegistry()
-                                    .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isEqualTo(documentDefinition);
-                    assertThat(codeDefinition).hasValueSatisfying(definition -> assertThat(definition.contract())
-                            .isEqualTo(codeContract));
-                    assertThat(fixture.stored(id, version)).isEqualTo(documentBefore);
-                }
-                case FRESH_GLOBAL_DOCUMENT_RESTORE -> {
-                    DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
-
-                    // Given a global document activated by one application graph, which is then shut down
-                    Node first = fixture.node();
-                    CompiledDefinitionRef loaded = await(first.app()
-                            .definitionService()
-                            .load(
-                                    WorkflowScopes.DEFAULT,
-                                    document(id, version, contract),
-                                    DocumentFormat.YAML,
-                                    source("restore")));
-                    await(first.app().definitionService().publish(key));
-                    first.close();
-
-                    // And a fresh graph on the same database restores it at startup
-                    AppComponent app = fixture.node().app();
-                    long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
-                    RuntimeWorkflow restored =
-                            app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
-                    assertThat(restored.plan().planHash()).isEqualTo(loaded.planHash());
-                    assertThat(fixture.stored(id, version).status()).isEqualTo("AVAILABLE");
-
-                    // When the restored row is deprecated through the service, cooled by the database clock and retired
-                    await(app.definitionService().deprecate(key));
-                    fixture.ageStatus(key, coolingSeconds + 60);
-                    Stored cooledBefore = fixture.stored(id, version);
-                    assertThat(cooledBefore.status()).isEqualTo("DEPRECATED");
-                    await(app.definitionService().retire(key));
-
-                    // Then the row is RETIRED with its hash and source intact
-                    Stored retired = fixture.stored(id, version);
-                    assertThat(retired.status()).isEqualTo("RETIRED");
-                    assertThat(retired)
-                            .usingRecursiveComparison()
-                            .ignoringFields("status", "changedAt")
-                            .isEqualTo(cooledBefore);
-
-                    // And the restored runtime and its registered definition are removed
-                    assertThatThrownBy(() -> app.workflowRegistry()
-                                    .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-                    assertThat(app.workflowRegistry()
-                                    .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isEmpty();
-                    assertThat(app.workflowRegistry().allRegistered()).doesNotContain(restored);
-                }
-                case COMPLETED_REPLACEMENT_BEFORE_OPERATION -> {
-                    DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
-                    byte[] bytes = document(id, version, contract);
-                    AppComponent app = fixture.node().app();
-                    long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
-
-                    // Given a managed publication that was deprecated and cooled by the database clock
-                    CompiledDefinitionRef loaded = await(app.definitionService()
-                            .load(WorkflowScopes.DEFAULT, bytes, DocumentFormat.YAML, source("replaced")));
-                    await(app.definitionService().publish(key));
-                    await(app.definitionService().deprecate(key));
-                    fixture.ageStatus(key, coolingSeconds + 60);
-                    Stored cooledBefore = fixture.stored(id, version);
-                    assertThat(cooledBefore.status()).isEqualTo("DEPRECATED");
-                    RuntimeWorkflow managedRuntime =
-                            app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
-
-                    // And a completed direct replacement: public unregister, then register of the same id and version
-                    app.workflowRegistry().unregister(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
-                    app.workflowRegistry()
-                            .register(app.definitionPipeline()
-                                    .load(new DefinitionResource(bytes, DocumentFormat.YAML, source("replaced")))
-                                    .definition());
-                    RuntimeWorkflow replacement =
-                            app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
-                    assertThat(replacement).isNotSameAs(managedRuntime);
-                    assertThat(replacement.plan().planHash()).isEqualTo(loaded.planHash());
-
-                    // When a managed retirement of that key is requested
-                    Throwable refusal = failureOf(app.definitionService().retire(key));
-
-                    // Then it fails asynchronously as an invalid transition naming the key
-                    assertThat(refusal).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                        assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
-                        assertThat(failure.key()).isEqualTo(key);
-                    });
-
-                    // And no durable transition happened, so the status and its change time are unchanged
-                    assertThat(fixture.stored(id, version)).isEqualTo(cooledBefore);
-
-                    // And the replacement stays registered with its definition
-                    assertThat(app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isSameAs(replacement);
-                    assertThat(app.workflowRegistry()
-                                    .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isPresent();
-                }
-                case DIRECT_UNKNOWN_PUBLICATION -> {
-                    DefinitionKey key = new DefinitionKey(WorkflowScopes.DEFAULT, id, version);
-                    byte[] bytes = document(id, version, contract);
-                    AppComponent app = fixture.node().app();
-                    long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
-
-                    // Given a stored global row that is deprecated and cooled, without any managed publication here
-                    CompiledDefinitionRef loaded = await(app.definitionService()
-                            .load(WorkflowScopes.DEFAULT, bytes, DocumentFormat.YAML, source("unknown")));
-                    fixture.forceStatus(key, DefinitionStatus.DEPRECATED);
-                    fixture.ageStatus(key, coolingSeconds + 60);
-                    Stored cooledBefore = fixture.stored(id, version);
-                    assertThat(cooledBefore.status()).isEqualTo("DEPRECATED");
-
-                    // And a runtime with the same id, version and hash registered directly through the public registry
-                    app.workflowRegistry()
-                            .register(app.definitionPipeline()
-                                    .load(new DefinitionResource(bytes, DocumentFormat.YAML, source("unknown")))
-                                    .definition());
-                    RuntimeWorkflow unknown =
-                            app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version));
-                    assertThat(unknown.plan().planHash()).isEqualTo(loaded.planHash());
-
-                    // When a managed retirement of that key is requested
-                    Throwable refusal = failureOf(app.definitionService().retire(key));
-
-                    // Then it fails asynchronously as an invalid transition naming the key
-                    assertThat(refusal).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                        assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
-                        assertThat(failure.key()).isEqualTo(key);
-                    });
-
-                    // And the row is unchanged, including its status change time
-                    assertThat(fixture.stored(id, version)).isEqualTo(cooledBefore);
-
-                    // And the unknown runtime stays registered with its definition
-                    assertThat(app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isSameAs(unknown);
-                    assertThat(app.workflowRegistry()
-                                    .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
-                            .isPresent();
-                }
-            }
         }
     }
 
@@ -867,7 +530,6 @@ public class DefinitionRetirementIT {
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(pinId, goneId);
             AppComponent nodeA = fixture.node().app();
-            long coolingSeconds = nodeA.workflowDefinitionsConfig().maxStalenessSeconds();
 
             // Given two AVAILABLE definitions, committed through node A before node B starts
             await(nodeA.definitionService()
@@ -889,14 +551,14 @@ public class DefinitionRetirementIT {
             // nothing since it started, as when its propagation is paused
             AppComponent nodeB = fixture.node().app();
             TransactionalWorkflowOperations<SqlClient> staleOps = nodeB.transactionalOperations();
-            assertThat(nodeB.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, pinId, 1)))
+            assertThat(await(nodeB.workflowRegistry().load(new DefinitionKey(WorkflowScopes.DEFAULT, pinId, 1))))
                     .isNotNull();
-            assertThat(nodeB.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, goneId, 1)))
+            assertThat(await(nodeB.workflowRegistry().load(new DefinitionKey(WorkflowScopes.DEFAULT, goneId, 1))))
                     .isNotNull();
 
             // When B admits a start while the version is AVAILABLE and leaves its transaction uncommitted
             Tx admitted = fixture.begin(null);
-            await(staleOps.start(
+            WorkflowInstanceId admittedStart = await(staleOps.start(
                     startCommand(pinId, StalePinCaseV1.class, "stale-pin-start", 1), admitted.connection()));
             fixture.awaitAdvisory(pinId, "ShareLock", true, 1);
 
@@ -908,10 +570,10 @@ public class DefinitionRetirementIT {
             assertThat(deprecation.isComplete()).isFalse();
             assertThat(fixture.stored(pinId, 1).status()).isEqualTo("AVAILABLE");
 
-            // When the start commits, the deprecation finishes and cooling elapses
+            // When the start commits, the deprecation finishes
             admitted.commit();
+            await(nodeB.executionProbe().awaitIdle(admittedStart, IDLE_TIMEOUT));
             await(deprecation);
-            fixture.ageStatus(pinKey, coolingSeconds + 60);
             Throwable pinned = failureOf(nodeA.definitionService().retire(pinKey));
 
             // Then retirement sees the committed pin and fails typed with its count, leaving the row DEPRECATED
@@ -923,13 +585,13 @@ public class DefinitionRetirementIT {
             assertThat(fixture.stored(pinId, 1).status()).isEqualTo("DEPRECATED");
             assertThat(fixture.instanceCount(pinId)).isEqualTo(1);
 
-            // Given the other definition deprecated, cooled and retired by node A while B still resolves it
+            // Given the other definition deprecated and retired by node A while B still resolves it
             await(nodeA.definitionService().deprecate(goneKey));
-            fixture.ageStatus(goneKey, coolingSeconds + 60);
             await(nodeA.definitionService().retire(goneKey));
             Stored retired = fixture.stored(goneId, 1);
             assertThat(retired.status()).isEqualTo("RETIRED");
-            assertThat(nodeB.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, goneId, 1)))
+            assertThat(DefinitionScenario.planOf(
+                            nodeB.workflowRegistry(), new DefinitionKey(WorkflowScopes.DEFAULT, goneId, 1)))
                     .isNotNull();
             long historyBefore = fixture.historyCount();
 
@@ -977,10 +639,9 @@ public class DefinitionRetirementIT {
                     migrateRetiredId,
                     eligibleId);
             AppComponent app = fixture.node().app();
-            long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
             PgWorkflowInstanceRepository repository = fixture.instances();
 
-            // Given a DEPRECATED, cooled version with a FAILED instance; a caller retry (FAILED to RUNNING) is
+            // Given a DEPRECATED version with a FAILED instance; a caller retry (FAILED to RUNNING) is
             // admitted in READ COMMITTED while retirement is requested
             CompiledDefinitionRef retryFirst = await(app.definitionService()
                     .load(
@@ -990,7 +651,6 @@ public class DefinitionRetirementIT {
                             source("retry-first")));
             await(app.definitionService().publish(retryFirstKey));
             await(app.definitionService().deprecate(retryFirstKey));
-            fixture.ageStatus(retryFirstKey, coolingSeconds + 60);
             UUID retryFirstInstance = fixture.insertInstance(retryFirstId, 1, retryFirst.planHash(), "FAILED", false);
             Tx retrying = fixture.begin(null);
             Integer admittedRows = await(repository.updateOptimistic(
@@ -1048,7 +708,7 @@ public class DefinitionRetirementIT {
             assertThat(fixture.instance(retiredRetryInstance).status()).isEqualTo("FAILED");
             assertThat(fixture.instance(retiredRetryInstance).version()).isZero();
 
-            // Given a DEPRECATED, cooled version with a FAILED instance, and a REPEATABLE READ snapshot taken now
+            // Given a DEPRECATED version with a FAILED instance, and a REPEATABLE READ snapshot taken now
             CompiledDefinitionRef retrySnapshot = await(app.definitionService()
                     .load(
                             WorkflowScopes.DEFAULT,
@@ -1057,7 +717,6 @@ public class DefinitionRetirementIT {
                             source("retry-snapshot")));
             await(app.definitionService().publish(retrySnapshotKey));
             await(app.definitionService().deprecate(retrySnapshotKey));
-            fixture.ageStatus(retrySnapshotKey, coolingSeconds + 60);
             UUID snapshotInstance =
                     fixture.insertInstance(retrySnapshotId, 1, retrySnapshot.planHash(), "FAILED", false);
             Tx snapshot = fixture.begin("REPEATABLE READ");
@@ -1088,7 +747,6 @@ public class DefinitionRetirementIT {
                             source("retry-rollback")));
             await(app.definitionService().publish(retryRollbackKey));
             await(app.definitionService().deprecate(retryRollbackKey));
-            fixture.ageStatus(retryRollbackKey, coolingSeconds + 60);
             UUID rollbackInstance =
                     fixture.insertInstance(retryRollbackId, 1, retryRollback.planHash(), "FAILED", false);
             Tx rolledBack = fixture.begin(null);
@@ -1124,13 +782,12 @@ public class DefinitionRetirementIT {
                     migration.connection()));
             fixture.awaitAdvisory(migrateAdmitId, "ShareLock", true, 1);
 
-            // When deprecation queues behind that migration, the migration commits and retirement follows cooling
+            // When deprecation queues behind that migration, the migration commits and retirement follows
             Future<Void> deprecateTarget = app.definitionService().deprecate(migrateAdmitKey);
             fixture.awaitAdvisory(migrateAdmitId, "ExclusiveLock", false, 1);
             assertThat(deprecateTarget.isComplete()).isFalse();
             migration.commit();
             await(deprecateTarget);
-            fixture.ageStatus(migrateAdmitKey, coolingSeconds + 60);
             Throwable pinnedByMigration = failureOf(app.definitionService().retire(migrateAdmitKey));
 
             // Then the migrated instance is a counted pin on version 2 and retirement fails
@@ -1199,7 +856,6 @@ public class DefinitionRetirementIT {
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(startId, migrateId, eligibleId, unmanagedId);
             AppComponent nodeA = fixture.node().app();
-            long coolingSeconds = nodeA.workflowDefinitionsConfig().maxStalenessSeconds();
             PgWorkflowInstanceRepository repository = fixture.instances();
 
             // Given an eligible managed document, activated through the service, and an instance pinned to an
@@ -1237,15 +893,13 @@ public class DefinitionRetirementIT {
             await(nodeA.definitionService().publish(migrateKey));
             AppComponent nodeB = fixture.node().app();
             TransactionalWorkflowOperations<SqlClient> staleOps = nodeB.transactionalOperations();
-            assertThat(nodeB.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, startId, 1)))
+            assertThat(await(nodeB.workflowRegistry().load(new DefinitionKey(WorkflowScopes.DEFAULT, startId, 1))))
                     .isNotNull();
 
-            // And both ids are deprecated, cooled and retired, while node B still resolves the start version
+            // And both ids are deprecated and retired, while node B still resolves the start version
             await(nodeA.definitionService().deprecate(startKey));
-            fixture.ageStatus(startKey, coolingSeconds + 60);
             await(nodeA.definitionService().retire(startKey));
             await(nodeA.definitionService().deprecate(migrateKey));
-            fixture.ageStatus(migrateKey, coolingSeconds + 60);
             await(nodeA.definitionService().retire(migrateKey));
             assertThat(fixture.stored(startId, 1).status()).isEqualTo("RETIRED");
             assertThat(fixture.stored(migrateId, 2).status()).isEqualTo("RETIRED");
@@ -1261,11 +915,12 @@ public class DefinitionRetirementIT {
                     migrateSnapshot.connection()));
             migrateSnapshot.rollback();
 
-            // Then both are refused as an invalid transition naming the stronger-isolation ambiguity
-            assertThat(startRefusal).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
-                assertThat(failure.key().definitionId()).isEqualTo(startId);
-            });
+            // Then the start is refused as not runnable, because its snapshot holds no published row of the version,
+            // and the migration as an invalid transition naming the stronger-isolation ambiguity
+            assertThat(startRefusal)
+                    .isInstanceOfSatisfying(WorkflowVersionNotRunnableException.class, failure -> assertThat(
+                                    failure.definitionKey().definitionId())
+                            .isEqualTo(startId));
             assertThat(migrateRefusal).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
                 assertThat(failure.key().definitionId()).isEqualTo(migrateId);
@@ -1323,7 +978,6 @@ public class DefinitionRetirementIT {
         try (Fixture fixture = new Fixture(vertx)) {
             fixture.ownRows(id);
             AppComponent app = fixture.node().app();
-            long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
             TransactionalWorkflowOperations<SqlClient> ops = app.transactionalOperations();
 
             // Given one AVAILABLE definition and two caller transactions
@@ -1338,8 +992,10 @@ public class DefinitionRetirementIT {
             Tx second = fixture.begin(null);
 
             // When both starts, with distinct instance and idempotency keys, reach their admission barriers
-            await(ops.start(startCommand(id, ConcurrentCaseV1.class, "concurrent-first", 1), first.connection()));
-            await(ops.start(startCommand(id, ConcurrentCaseV1.class, "concurrent-second", 1), second.connection()));
+            WorkflowInstanceId firstStart = await(
+                    ops.start(startCommand(id, ConcurrentCaseV1.class, "concurrent-first", 1), first.connection()));
+            WorkflowInstanceId secondStart = await(
+                    ops.start(startCommand(id, ConcurrentCaseV1.class, "concurrent-second", 1), second.connection()));
 
             // Then both hold the shared id lock at once, before any exclusive request exists
             fixture.awaitAdvisory(id, "ShareLock", true, 2);
@@ -1352,14 +1008,15 @@ public class DefinitionRetirementIT {
             // Then it waits for both starts, including after the first one has committed
             assertThat(deprecation.isComplete()).isFalse();
             first.commit();
+            await(app.executionProbe().awaitIdle(firstStart, IDLE_TIMEOUT));
             fixture.awaitAdvisory(id, "ShareLock", true, 1);
             assertThat(deprecation.isComplete()).isFalse();
             assertThat(fixture.stored(id, 1).status()).isEqualTo("AVAILABLE");
 
-            // When the second start commits, the deprecation finishes and cooling elapses
+            // When the second start commits, the deprecation finishes
             second.commit();
+            await(app.executionProbe().awaitIdle(secondStart, IDLE_TIMEOUT));
             await(deprecation);
-            fixture.ageStatus(key, coolingSeconds + 60);
             Throwable pinned = failureOf(app.definitionService().retire(key));
 
             // Then retirement fails typed, counting both committed live pins
@@ -1394,7 +1051,6 @@ public class DefinitionRetirementIT {
                     "retirement-it-resurrect-zero-doc",
                     "retirement-it-resurrect-fast-doc");
             AppComponent app = fixture.node().app();
-            long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
             PgWorkflowInstanceRepository repository = fixture.instances();
 
             // Given a matching definition row in each status and a FAILED instance pinned to its hash
@@ -1491,7 +1147,7 @@ public class DefinitionRetirementIT {
             assertThat(fastRows).isEqualTo(1);
             assertThat(fixture.instance(waiting).status()).isEqualTo("RUNNING");
 
-            // Given a DEPRECATED, cooled managed version and a FAILED instance retried into COMPENSATING
+            // Given a DEPRECATED managed version and a FAILED instance retried into COMPENSATING
             CompiledDefinitionRef race = await(app.definitionService()
                     .load(
                             WorkflowScopes.DEFAULT,
@@ -1500,7 +1156,6 @@ public class DefinitionRetirementIT {
                             source("resurrect-race")));
             await(app.definitionService().publish(raceKey));
             await(app.definitionService().deprecate(raceKey));
-            fixture.ageStatus(raceKey, coolingSeconds + 60);
             UUID raceInstance = fixture.insertInstance(raceId, 1, race.planHash(), "FAILED", false);
             Tx compensating = fixture.begin(null);
             Integer compensatingRows = await(repository.updateOptimistic(
@@ -1661,6 +1316,7 @@ public class DefinitionRetirementIT {
                 String dedupKey = "autocommit-" + i;
                 WorkflowInstanceId retried = await(pool.withTransaction(
                         connection -> ops.start(startCommand(id, AutocommitCaseV1.class, dedupKey, 1), connection)));
+                await(app.executionProbe().awaitIdle(retried, IDLE_TIMEOUT));
 
                 // Then a real instance is created and the dedup slot resolves to it
                 assertThat(fixture.instanceExists(retried.value())).isTrue();
@@ -1975,7 +1631,6 @@ public class DefinitionRetirementIT {
 
             // And a node started afterwards, whose fresh pool connections inherit that default
             AppComponent app = fixture.node().app();
-            long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
             Row serverDefault = await(app.pool()
                             .query("SHOW default_transaction_isolation")
                             .execute())
@@ -1983,7 +1638,7 @@ public class DefinitionRetirementIT {
                     .next();
             assertThat(serverDefault.getString(0)).isEqualTo("repeatable read");
 
-            // And a DEPRECATED, cooled version with a FAILED instance whose retry holds the shared admission lock
+            // And a DEPRECATED version with a FAILED instance whose retry holds the shared admission lock
             CompiledDefinitionRef loaded = await(app.definitionService()
                     .load(
                             WorkflowScopes.DEFAULT,
@@ -1992,7 +1647,6 @@ public class DefinitionRetirementIT {
                             source("default-isolation")));
             await(app.definitionService().publish(key));
             await(app.definitionService().deprecate(key));
-            fixture.ageStatus(key, coolingSeconds + 60);
             UUID failed = fixture.insertInstance(id, 1, loaded.planHash(), "FAILED", false);
             Tx retry = fixture.begin(null);
             Integer admitted = await(repository.updateOptimistic(
@@ -2043,7 +1697,7 @@ public class DefinitionRetirementIT {
             Stored candidateBefore = fixture.stored("tenant-a", id, 1);
             assertThat(candidateBefore.status()).isEqualTo("CANDIDATE");
             assertThat(registeredBefore.status()).isEqualTo("AVAILABLE");
-            RuntimeWorkflow runtimeBefore = app.workflowRegistry().resolve(registeredKey);
+            RuntimeWorkflow runtimeBefore = DefinitionScenario.planOf(app.workflowRegistry(), registeredKey);
 
             // When tenant-a's candidate is retired through the service
             await(app.definitionService().retire(candidateKey));
@@ -2058,7 +1712,8 @@ public class DefinitionRetirementIT {
 
             // And tenant-b's row, its runtime and the pinned instance are unchanged
             assertThat(fixture.stored("tenant-b", id, 1)).isEqualTo(registeredBefore);
-            assertThat(app.workflowRegistry().resolve(registeredKey)).isSameAs(runtimeBefore);
+            assertThat(DefinitionScenario.planOf(app.workflowRegistry(), registeredKey))
+                    .isSameAs(runtimeBefore);
             assertThat(fixture.instance(pin)).isEqualTo(pinBefore);
         }
     }

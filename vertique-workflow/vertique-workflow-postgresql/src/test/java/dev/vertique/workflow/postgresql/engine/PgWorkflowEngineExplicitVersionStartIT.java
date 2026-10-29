@@ -33,6 +33,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -59,6 +60,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineExplicitVersionStartIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -176,8 +179,10 @@ public class PgWorkflowEngineExplicitVersionStartIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -203,6 +208,8 @@ public class PgWorkflowEngineExplicitVersionStartIT {
                 DEF_ID, PinTestContract.class.getName(), new SimplePayload("p"), ikey, null, null, 1L, null, null);
 
         engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "start+query must succeed: " + ar.cause());
@@ -224,6 +231,8 @@ public class PgWorkflowEngineExplicitVersionStartIT {
                 DEF_ID, PinTestContract.class.getName(), new SimplePayload("p"), ikey, null, null, 2L, null, null);
 
         engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "start+query must succeed: " + ar.cause());
@@ -245,6 +254,8 @@ public class PgWorkflowEngineExplicitVersionStartIT {
                 DEF_ID, PinTestContract.class.getName(), new SimplePayload("p"), ikey, null, null, null, null, null);
 
         engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "start+query must succeed: " + ar.cause());

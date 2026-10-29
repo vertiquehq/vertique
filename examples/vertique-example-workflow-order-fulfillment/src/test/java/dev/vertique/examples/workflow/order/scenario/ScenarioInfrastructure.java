@@ -16,20 +16,21 @@ import dev.vertique.examples.workflow.order.di.StubServicesModule;
 import dev.vertique.inboxoutbox.postgresql.TransactionalMessagingPostgresqlModule;
 import dev.vertique.inboxoutbox.services.TransactionalMessagingServiceModule;
 import dev.vertique.job.cron.dagger.CronPersistenceModule;
-import dev.vertique.job.delayed.dagger.DelayedJobModule;
+import dev.vertique.job.postgresql.JobPostgresqlModule;
+import dev.vertique.json.JsonRuntimeModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.services.DispatchModule;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
-import dev.vertique.workflow.delayed.di.WorkflowDelayedModule;
 import dev.vertique.workflow.di.WorkflowDefinitionsConfigModule;
+import dev.vertique.workflow.di.WorkflowExecutorConfigModule;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
-import dev.vertique.workflow.postgresql.recovery.WorkflowBranchRecoveryModule;
+import dev.vertique.workflow.schema.WorkflowSchemaModule;
 import dev.vertique.workflow.services.di.WorkflowServicesModule;
 import dev.vertique.workflow.tasks.di.WorkflowTasksModule;
 
 /**
  * The modules of the example application without its definition modules, plus the document loader and the opt-in
- * definitions configuration. A scenario node contributes its definitions and type names through
+ * definitions and executor configuration. A scenario node contributes its definitions and type names through
  * {@link ScenarioWiring}.
  */
 @Module(
@@ -46,16 +47,17 @@ import dev.vertique.workflow.tasks.di.WorkflowTasksModule;
             TransactionalMessagingPostgresqlModule.class,
             TransactionalMessagingServiceModule.class,
             WorkflowPostgresqlModule.class,
-            WorkflowBranchRecoveryModule.class,
             WorkflowServicesModule.class,
-            WorkflowDelayedModule.class,
-            DelayedJobModule.class,
             CronPersistenceModule.class,
+            JobPostgresqlModule.class,
             WorkflowTasksModule.class,
             StubServicesModule.class,
             AppModule.class,
             WorkflowDefinitionModule.class,
             WorkflowDefinitionsConfigModule.class,
+            WorkflowExecutorConfigModule.class,
+            WorkflowSchemaModule.class,
+            JsonRuntimeModule.class,
             ScenarioWiring.class
         })
 interface ScenarioInfrastructure {}

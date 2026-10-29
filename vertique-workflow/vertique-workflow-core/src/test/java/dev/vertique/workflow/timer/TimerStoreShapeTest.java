@@ -28,8 +28,6 @@ class TimerStoreShapeTest {
             "markFired",
             "markCancelled",
             "markFailed",
-            "findRecoverableScheduled",
-            "updateExecutionId",
             "findScheduledRemindersForTask",
             "findScheduledByBranchToken");
 

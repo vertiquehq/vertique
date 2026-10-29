@@ -3,12 +3,18 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.executor.ParkedSignals;
+import dev.vertique.workflow.engine.executor.StepLimitExceededException;
+import dev.vertique.workflow.engine.history.DecisionLog;
+import dev.vertique.workflow.engine.spi.TimerCommandSpec;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowSubjectVersionUnavailableException;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.CompensationNode;
 import dev.vertique.workflow.plan.CompleteNode;
 import dev.vertique.workflow.plan.DecisionNode;
@@ -19,8 +25,8 @@ import dev.vertique.workflow.plan.TimerNode;
 import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowEntryType;
@@ -31,7 +37,6 @@ import dev.vertique.workflow.tasks.TaskAssignment;
 import dev.vertique.workflow.tasks.TaskDecisionDescriptor;
 import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
-import dev.vertique.workflow.timer.TimerIntentPayload;
 import dev.vertique.workflow.timer.TimerPurpose;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
@@ -43,9 +48,12 @@ import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * Package-private collaborator owning the core state-machine transition driver.
@@ -96,12 +104,14 @@ final class WorkflowTransitionDriver {
     private final WorkflowInstanceRepository<SqlClient> instances;
     private final WorkflowHistoryRepository<SqlClient> history;
     private final RecorderRouter recorders;
+    private final WorkflowCommandRepository<SqlClient> commands;
     private final TaskStore<SqlClient> taskStore;
     private final WorkflowEventEmitter eventEmitter;
     private final ReminderScheduler reminderScheduler;
     private final CompensationService compensationService;
     private final ForkJoinCoordinator forkJoin;
     private final Clock clock;
+    private final DecisionLog decisions;
 
     /**
      * Lazy back-edge to {@link TimerLifecycleService} for the {@code resolveFireAt} helper used by
@@ -122,12 +132,36 @@ final class WorkflowTransitionDriver {
      */
     private final Provider<TaskLifecycleService> taskPvd;
 
+    /** The application of parked signals at the end of a drive; connected by the signal handler, absent in legacy tests. */
+    private volatile ParkedSignals parkedSignals;
+
+    /**
+     * The step counters of the segments that run with a step cap, keyed by the segment's transaction handle by
+     * identity. A drive on a handle with no counter is not capped.
+     */
+    private final Map<SqlClient, StepCounter> stepCounters = Collections.synchronizedMap(new IdentityHashMap<>());
+
+    /** Counts the nodes one segment executes against its cap. */
+    private static final class StepCounter {
+        private final int cap;
+        private int steps;
+
+        StepCounter(int cap) {
+            this.cap = cap;
+        }
+
+        boolean overrun() {
+            return ++steps > cap;
+        }
+    }
+
     /**
      * Constructs a new transition driver.
      *
      * @param instances the instance repository used for optimistic-concurrency state transitions
      * @param history the history repository used to read prior entries and append lifecycle entries
-     * @param recorders the recorder router used to route side-effect intents (service, timer)
+     * @param recorders the recorder router used to route side-effect intents (service)
+     * @param commands the command repository that records the timers of timed waits
      * @param taskStore the task store used to insert task rows for human-task nodes
      * @param eventEmitter the event emitter used to emit lifecycle events on state transitions
      * @param reminderScheduler the reminder scheduler used to schedule task-reminder timers
@@ -135,6 +169,7 @@ final class WorkflowTransitionDriver {
      * @param forkJoin the fork/join coordinator dispatched to for {@code ForkNode}; injected eagerly
      *     (the coordinator holds the lazy {@code Provider<WorkflowTransitionDriver>} back-edge)
      * @param clock the clock used to timestamp entries and state updates
+     * @param decisions the decision log that records each step the driver takes
      * @param timerPvd lazy provider of the timer-lifecycle service, used for the {@code resolveFireAt}
      *     helper when handling a timer node, a wait-signal node with a timeout, or a human-task node
      *     with a due date; lazy to break the driver↔timer constructor cycle, dereferenced only at
@@ -148,23 +183,27 @@ final class WorkflowTransitionDriver {
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowHistoryRepository<SqlClient> history,
             RecorderRouter recorders,
+            WorkflowCommandRepository<SqlClient> commands,
             TaskStore<SqlClient> taskStore,
             WorkflowEventEmitter eventEmitter,
             ReminderScheduler reminderScheduler,
             CompensationService compensationService,
             ForkJoinCoordinator forkJoin,
             Clock clock,
+            DecisionLog decisions,
             Provider<TimerLifecycleService> timerPvd,
             Provider<TaskLifecycleService> taskPvd) {
         this.instances = instances;
         this.history = history;
         this.recorders = recorders;
+        this.commands = commands;
         this.taskStore = taskStore;
         this.eventEmitter = eventEmitter;
         this.reminderScheduler = reminderScheduler;
         this.compensationService = compensationService;
         this.forkJoin = forkJoin;
         this.clock = clock;
+        this.decisions = decisions;
         this.timerPvd = timerPvd;
         this.taskPvd = taskPvd;
     }
@@ -183,7 +222,78 @@ final class WorkflowTransitionDriver {
      * @return a {@link Future} that completes when the engine reaches a stable state
      */
     Future<Void> driveTransitions(WorkflowInstance inst, RuntimeWorkflow rw, SqlClient tx) {
-        return driveTransitionsStep(inst, rw, tx);
+        return driveTransitionsStep(inst, rw, tx).compose(done -> afterInlineDrive(inst.id(), tx));
+    }
+
+    /**
+     * Applies the parked signals that the waits a drive has just reached accept. It runs at the end of a top-level drive,
+     * after everything the drive wrote, so a parked signal's application never sees a half-written instance; a transaction
+     * whose caller drains itself (an executor segment, or a drain that is running) is left alone.
+     *
+     * @param id the instance the drive moved
+     * @param tx the active transaction
+     * @return a future that completes when the parked signals are applied
+     */
+    Future<Void> afterInlineDrive(WorkflowInstanceId id, SqlClient tx) {
+        ParkedSignals parked = parkedSignals;
+        return parked == null ? Future.succeededFuture() : parked.afterDrive(id, tx);
+    }
+
+    /**
+     * Connects the parked-signal application that the drive calls at the end of a drive.
+     *
+     * @param parked the parked-signal application
+     */
+    void attachParkedSignals(ParkedSignals parked) {
+        this.parkedSignals = parked;
+    }
+
+    /**
+     * Runs a segment's work with a cap on the nodes it executes: every node the driver steps through on the
+     * segment's transaction handle counts, and the node past the cap fails with a {@link StepLimitExceededException}.
+     * The counter is dropped when the work completes.
+     *
+     * @param tx   the segment's transaction handle
+     * @param cap  the most nodes the segment may execute; {@link Integer#MAX_VALUE} for no cap
+     * @param work the segment's work
+     * @param <T>  the result type of the work
+     * @return the future of the work
+     */
+    <T> Future<T> withStepCap(SqlClient tx, int cap, Supplier<Future<T>> work) {
+        if (cap == Integer.MAX_VALUE) {
+            return work.get();
+        }
+        stepCounters.put(tx, new StepCounter(cap));
+        Future<T> result;
+        try {
+            result = work.get();
+        } catch (RuntimeException e) {
+            stepCounters.remove(tx);
+            throw e;
+        }
+        return result.onComplete(ignored -> stepCounters.remove(tx));
+    }
+
+    /**
+     * The nodes the capped segment on this transaction handle has executed so far.
+     *
+     * @param tx the segment's transaction handle
+     * @return the count, {@code 0} when the segment is not capped
+     */
+    int stepsUsed(SqlClient tx) {
+        StepCounter counter = stepCounters.get(tx);
+        return counter == null ? 0 : counter.steps;
+    }
+
+    /**
+     * The most nodes the segment on this transaction handle may execute.
+     *
+     * @param tx the segment's transaction handle
+     * @return the cap, {@link Integer#MAX_VALUE} when the segment is not capped
+     */
+    int stepCap(SqlClient tx) {
+        StepCounter counter = stepCounters.get(tx);
+        return counter == null ? Integer.MAX_VALUE : counter.cap;
     }
 
     /**
@@ -200,6 +310,10 @@ final class WorkflowTransitionDriver {
      * @return a {@link Future} that completes when the engine settles
      */
     Future<Void> driveTransitionsStep(WorkflowInstance inst, RuntimeWorkflow rw, SqlClient tx) {
+        StepCounter counter = stepCounters.get(tx);
+        if (counter != null && counter.overrun()) {
+            return Future.failedFuture(new StepLimitExceededException(counter.cap));
+        }
         WorkflowNode node = rw.nodeById().get(inst.currentStepId());
         if (node == null) {
             return Future.failedFuture(new WorkflowDefinitionException(
@@ -292,7 +406,9 @@ final class WorkflowTransitionDriver {
                                                 "Optimistic concurrency conflict for instance '"
                                                         + inst.id().value() + "' at step '" + sdn.stepId() + "'"));
                                     }
-                                    return driveTransitionsStep(advanced, rw, tx);
+                                    return decisions
+                                            .record(inst, advanced, sdn.stepId(), "intent", tx)
+                                            .compose(logged -> driveTransitionsStep(advanced, rw, tx));
                                 });
                     });
         });
@@ -301,8 +417,8 @@ final class WorkflowTransitionDriver {
     /**
      * Handles a {@link WaitSignalNode}: transitions the instance to {@code WAITING} and returns.
      *
-     * <p>When the node has a {@link WaitSignalNode.TimeoutBranch}, a {@code WORKFLOW_TIMER} intent
-     * is routed first to schedule a durable timer. The timer id is stored in {@code waitAuxId} so
+     * <p>When the node has a {@link WaitSignalNode.TimeoutBranch}, a {@code TIMEOUT} timer command
+     * is recorded first. The timer id is stored in {@code waitAuxId} so
      * the engine can cancel the timer if the expected signal arrives before the deadline.
      *
      * @param inst the current instance
@@ -330,13 +446,13 @@ final class WorkflowTransitionDriver {
                         new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                 + inst.id().value() + "' at WaitSignalNode '" + wsn.stepId() + "'"));
             }
-            return Future.<Void>succeededFuture();
+            return decisions.record(inst, waiting, wsn.stepId(), "wait-signal", tx);
         });
     }
 
     /**
-     * Handles a {@link WaitSignalNode} that has a {@link WaitSignalNode.TimeoutBranch}: schedules a
-     * durable timer via the {@code WORKFLOW_TIMER} recorder, then transitions the instance to
+     * Handles a {@link WaitSignalNode} that has a {@link WaitSignalNode.TimeoutBranch}: records a
+     * {@code TIMEOUT} timer command, then transitions the instance to
      * {@code WAITING} with {@code wait_type=SIGNAL}, {@code wait_key=signalName}, and
      * {@code wait_aux_id=timerId}.
      *
@@ -348,63 +464,55 @@ final class WorkflowTransitionDriver {
      */
     private Future<Void> handleWaitSignalWithTimeout(
             WorkflowInstance inst, WaitSignalNode wsn, RuntimeWorkflow rw, SqlClient tx) {
-        Instant fireAt = timerPvd.get().resolveFireAt(wsn.timeout().timeout(), inst, rw);
+        TimerCommandSpec timer = new TimerCommandSpec(
+                inst.id(),
+                TimerPurpose.SIGNAL_TIMEOUT,
+                wsn.stepId(),
+                null,
+                null,
+                null,
+                null,
+                TimerFireTimes.of(wsn.timeout().timeout(), () -> timerPvd.get()
+                        .resolveFireAt(wsn.timeout().timeout(), inst, rw)),
+                List.of(wsn.signalName()));
 
-        return history.nextSequence(inst.id(), tx).compose(seq -> {
-            WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
-                    IntentKind.WORKFLOW_TIMER,
-                    wsn.stepId(),
-                    new TimerIntentPayload(fireAt, TimerPurpose.SIGNAL_TIMEOUT, null),
-                    Map.of(),
-                    WorkflowSideEffectIntent.Correlation.singlePath(
-                            inst.id(),
-                            seq,
-                            inst.definitionId(),
-                            inst.definitionScopeKey(),
-                            inst.scopeKey(),
-                            wsn.stepId()));
-
-            return recorders.route(intent, tx).compose(recorderResult -> {
-                if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
-                    return Future.failedFuture(new WorkflowDefinitionException(
-                            "WORKFLOW_TIMER recorder must return RecorderResult.Timer; got "
-                                    + recorderResult.getClass().getSimpleName()));
-                }
-                UUID timerId = timerResult.timerId();
-
-                String histPayload = Json.encode(
-                        new TimerScheduledHistoryPayload(wsn.stepId(), timerId, fireAt, TimerPurpose.SIGNAL_TIMEOUT));
-                return history.append(
+        return commands.recordTimer(timer, tx).compose(recorded -> {
+            UUID timerId = recorded.timerId();
+            return history.nextSequence(inst.id(), tx)
+                    .compose(seq -> {
+                        String histPayload = Json.encode(new TimerScheduledHistoryPayload(
+                                wsn.stepId(), timerId, recorded.fireAt(), TimerPurpose.SIGNAL_TIMEOUT));
+                        return history.append(
                                 new WorkflowHistoryEntry(
                                         inst.id(),
                                         seq,
                                         WorkflowEntryType.TIMER_SCHEDULED,
                                         histPayload,
                                         clock.instant()),
-                                tx)
-                        .compose(v -> {
-                            long prevVersion = inst.version();
-                            WorkflowInstance waiting = inst.withVersion(prevVersion + 1)
-                                    .withStatus(WorkflowStatus.WAITING)
-                                    .withCurrentStepId(wsn.stepId())
-                                    .withWait(WaitType.SIGNAL, wsn.signalName(), timerId)
-                                    .withError(null, null)
-                                    .withUpdatedAt(clock.instant());
+                                tx);
+                    })
+                    .compose(v -> {
+                        long prevVersion = inst.version();
+                        WorkflowInstance waiting = inst.withVersion(prevVersion + 1)
+                                .withStatus(WorkflowStatus.WAITING)
+                                .withCurrentStepId(wsn.stepId())
+                                .withWait(WaitType.SIGNAL, wsn.signalName(), timerId)
+                                .withError(null, null)
+                                .withUpdatedAt(clock.instant());
 
-                            return instances
-                                    .updateOptimistic(waiting, prevVersion, tx)
-                                    .compose(rowCount -> {
-                                        if (rowCount == 0) {
-                                            return Future.failedFuture(new WorkflowConflictException(
-                                                    "Optimistic concurrency conflict for instance '"
-                                                            + inst.id().value()
-                                                            + "' at WaitSignalNode '"
-                                                            + wsn.stepId() + "' (timeout branch)"));
-                                        }
-                                        return Future.<Void>succeededFuture();
-                                    });
-                        });
-            });
+                        return instances
+                                .updateOptimistic(waiting, prevVersion, tx)
+                                .compose(rowCount -> {
+                                    if (rowCount == 0) {
+                                        return Future.failedFuture(new WorkflowConflictException(
+                                                "Optimistic concurrency conflict for instance '"
+                                                        + inst.id().value()
+                                                        + "' at WaitSignalNode '"
+                                                        + wsn.stepId() + "' (timeout branch)"));
+                                    }
+                                    return decisions.record(inst, waiting, wsn.stepId(), "wait-signal", tx);
+                                });
+                    });
         });
     }
 
@@ -444,7 +552,9 @@ final class WorkflowTransitionDriver {
                         new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                 + inst.id().value() + "' at DecisionNode '" + dn.stepId() + "'"));
             }
-            return driveTransitionsStep(advanced, rw, tx);
+            return decisions
+                    .record(inst, advanced, dn.stepId(), nextStepId, tx)
+                    .compose(logged -> driveTransitionsStep(advanced, rw, tx));
         });
     }
 
@@ -469,6 +579,7 @@ final class WorkflowTransitionDriver {
                 .updateOptimistic(completed, prevVersion, tx)
                 .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                         rowCount, "instance '" + inst.id().value() + "' at CompleteNode '" + cn.stepId() + "'"))
+                .compose(v -> decisions.record(inst, completed, cn.stepId(), "completed", tx))
                 .compose(v -> history.nextSequence(inst.id(), tx))
                 .compose(seq -> {
                     String histPayload = Json.encode(new CompletedHistoryPayload(cn.stepId()));
@@ -516,10 +627,19 @@ final class WorkflowTransitionDriver {
                 .updateOptimistic(failed, prevVersion, tx)
                 .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                         rowCount, "instance '" + inst.id().value() + "' at FailNode '" + fn.stepId() + "'"))
+                .compose(v -> decisions.record(inst, failed, fn.stepId(), "failed", tx))
                 .compose(v -> history.nextSequence(inst.id(), tx))
                 .compose(seq -> {
-                    String histPayload =
-                            Json.encode(new FailedHistoryPayload(fn.stepId(), fn.errorType(), finalErrorMessage));
+                    String histPayload = Json.encode(new FailedHistoryPayload(
+                            fn.stepId(),
+                            fn.errorType(),
+                            decisions.redactReason(
+                                    new DefinitionKey(
+                                            inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion()),
+                                    finalErrorMessage,
+                                    null,
+                                    inst.stateJson(),
+                                    tx)));
                     return history.append(
                                     new WorkflowHistoryEntry(
                                             inst.id(), seq, WorkflowEntryType.FAILED, histPayload, clock.instant()),
@@ -540,7 +660,7 @@ final class WorkflowTransitionDriver {
     // --- Timer node handler ---
 
     /**
-     * Handles a {@link TimerNode}: schedules a durable timer via the {@code WORKFLOW_TIMER} recorder,
+     * Handles a {@link TimerNode}: records a {@code FIRE} timer command,
      * appends a {@code TIMER_SCHEDULED} history entry with {@link TimerPurpose#STANDALONE}, and
      * transitions the instance to {@code WAITING} with {@code wait_type=TIMER} and
      * {@code wait_key=timerId.toString()}.
@@ -552,63 +672,54 @@ final class WorkflowTransitionDriver {
      * @return a {@link Future} that completes after the WAITING state is persisted
      */
     private Future<Void> handleTimerNode(WorkflowInstance inst, TimerNode tn, RuntimeWorkflow rw, SqlClient tx) {
-        Instant fireAt = timerPvd.get().resolveFireAt(tn.spec(), inst, rw);
+        TimerCommandSpec timer = new TimerCommandSpec(
+                inst.id(),
+                TimerPurpose.STANDALONE,
+                tn.stepId(),
+                null,
+                null,
+                null,
+                null,
+                TimerFireTimes.of(tn.spec(), () -> timerPvd.get().resolveFireAt(tn.spec(), inst, rw)),
+                List.of());
 
-        return history.nextSequence(inst.id(), tx).compose(seq -> {
-            WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
-                    IntentKind.WORKFLOW_TIMER,
-                    tn.stepId(),
-                    new TimerIntentPayload(fireAt, TimerPurpose.STANDALONE, null),
-                    Map.of(),
-                    WorkflowSideEffectIntent.Correlation.singlePath(
-                            inst.id(),
-                            seq,
-                            inst.definitionId(),
-                            inst.definitionScopeKey(),
-                            inst.scopeKey(),
-                            tn.stepId()));
-
-            return recorders.route(intent, tx).compose(recorderResult -> {
-                if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
-                    return Future.failedFuture(new WorkflowDefinitionException(
-                            "WORKFLOW_TIMER recorder must return RecorderResult.Timer; got "
-                                    + recorderResult.getClass().getSimpleName()));
-                }
-                UUID timerId = timerResult.timerId();
-
-                String histPayload = Json.encode(
-                        new TimerScheduledHistoryPayload(tn.stepId(), timerId, fireAt, TimerPurpose.STANDALONE));
-                return history.append(
+        return commands.recordTimer(timer, tx).compose(recorded -> {
+            UUID timerId = recorded.timerId();
+            return history.nextSequence(inst.id(), tx)
+                    .compose(seq -> {
+                        String histPayload = Json.encode(new TimerScheduledHistoryPayload(
+                                tn.stepId(), timerId, recorded.fireAt(), TimerPurpose.STANDALONE));
+                        return history.append(
                                 new WorkflowHistoryEntry(
                                         inst.id(),
                                         seq,
                                         WorkflowEntryType.TIMER_SCHEDULED,
                                         histPayload,
                                         clock.instant()),
-                                tx)
-                        .compose(v -> {
-                            long prevVersion = inst.version();
-                            WorkflowInstance waiting = inst.withVersion(prevVersion + 1)
-                                    .withStatus(WorkflowStatus.WAITING)
-                                    .withCurrentStepId(tn.stepId())
-                                    .withWait(WaitType.TIMER, timerId.toString())
-                                    .withError(null, null)
-                                    .withUpdatedAt(clock.instant());
+                                tx);
+                    })
+                    .compose(v -> {
+                        long prevVersion = inst.version();
+                        WorkflowInstance waiting = inst.withVersion(prevVersion + 1)
+                                .withStatus(WorkflowStatus.WAITING)
+                                .withCurrentStepId(tn.stepId())
+                                .withWait(WaitType.TIMER, timerId.toString())
+                                .withError(null, null)
+                                .withUpdatedAt(clock.instant());
 
-                            return instances
-                                    .updateOptimistic(waiting, prevVersion, tx)
-                                    .compose(rowCount -> {
-                                        if (rowCount == 0) {
-                                            return Future.failedFuture(new WorkflowConflictException(
-                                                    "Optimistic concurrency conflict for instance '"
-                                                            + inst.id().value()
-                                                            + "' at TimerNode '"
-                                                            + tn.stepId() + "'"));
-                                        }
-                                        return Future.<Void>succeededFuture();
-                                    });
-                        });
-            });
+                        return instances
+                                .updateOptimistic(waiting, prevVersion, tx)
+                                .compose(rowCount -> {
+                                    if (rowCount == 0) {
+                                        return Future.failedFuture(new WorkflowConflictException(
+                                                "Optimistic concurrency conflict for instance '"
+                                                        + inst.id().value()
+                                                        + "' at TimerNode '"
+                                                        + tn.stepId() + "'"));
+                                    }
+                                    return decisions.record(inst, waiting, tn.stepId(), "wait-timer", tx);
+                                });
+                    });
         });
     }
 
@@ -636,9 +747,7 @@ final class WorkflowTransitionDriver {
         }
 
         UUID taskId = UUID.randomUUID();
-        List<TaskDecisionDescriptor> descriptors = htn.decisions().stream()
-                .map(d -> new TaskDecisionDescriptor(d.name(), d.payloadTypeName(), d.nextStepId()))
-                .toList();
+        List<TaskDecisionDescriptor> descriptors = taskPvd.get().decisionSnapshot(htn, rw);
 
         // Snapshot subject version for every task regardless of requireVersionStability (audit value).
         String subjectVersionAtCreation =
@@ -650,7 +759,7 @@ final class WorkflowTransitionDriver {
                     + "' reaches stability-required task '" + htn.stepId() + "' without a versioned subject ref"));
         }
 
-        // Optionally schedule a due-date timer (reusing the WORKFLOW_TIMER recorder path).
+        // Optionally record a due-date timer command.
         if (htn.dueDate() != null) {
             return handleHumanTaskNodeWithDueDate(
                     inst, htn, rw, tx, assignment, taskId, descriptors, subjectVersionAtCreation);
@@ -675,8 +784,10 @@ final class WorkflowTransitionDriver {
                             new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                     + inst.id().value() + "' at HumanTaskNode '" + htn.stepId() + "'"));
                 }
-                return taskPvd.get()
-                        .appendTaskCreatedHistory(inst, htn.stepId(), taskId, assignment, null, tx)
+                return decisions
+                        .record(inst, waiting, htn.stepId(), "wait-task", tx)
+                        .compose(logged -> taskPvd.get()
+                                .appendTaskCreatedHistory(inst, htn.stepId(), taskId, assignment, null, tx))
                         // Anchor initial reminders to the same `now` Instant captured at task-row
                         // construction (the row's created_at and updated_at also use this instant),
                         // so OneShotOffsets fire at exactly `created_at + offset` and the first
@@ -688,8 +799,8 @@ final class WorkflowTransitionDriver {
     }
 
     /**
-     * Variant of {@link #handleHumanTaskNode} that also schedules a due-date timer via the
-     * {@code WORKFLOW_TIMER} recorder before inserting the task row.
+     * Variant of {@link #handleHumanTaskNode} that also records a {@code DUE} timer
+     * command before inserting the task row.
      *
      * @param inst                     the current instance
      * @param htn                      the node with a non-null {@code dueDate()} triplet
@@ -711,79 +822,74 @@ final class WorkflowTransitionDriver {
             UUID taskId,
             List<TaskDecisionDescriptor> descriptors,
             @Nullable String subjectVersionAtCreation) {
-        Instant fireAt = timerPvd.get().resolveFireAt(htn.dueDate(), inst, rw);
+        TimerCommandSpec timer = new TimerCommandSpec(
+                inst.id(),
+                TimerPurpose.TASK_DUE,
+                htn.stepId(),
+                taskId,
+                null,
+                null,
+                null,
+                TimerFireTimes.of(htn.dueDate(), () -> timerPvd.get().resolveFireAt(htn.dueDate(), inst, rw)),
+                List.of());
 
-        return history.nextSequence(inst.id(), tx).compose(seq -> {
-            WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
-                    IntentKind.WORKFLOW_TIMER,
-                    htn.stepId(),
-                    new TimerIntentPayload(fireAt, TimerPurpose.TASK_DUE, taskId),
-                    Map.of(),
-                    WorkflowSideEffectIntent.Correlation.singlePath(
-                            inst.id(),
-                            seq,
-                            inst.definitionId(),
-                            inst.definitionScopeKey(),
-                            inst.scopeKey(),
-                            htn.stepId()));
+        return commands.recordTimer(timer, tx).compose(recorded -> {
+            UUID dueDateTimerId = recorded.timerId();
+            Instant fireAt = recorded.fireAt();
+            Instant now = clock.instant();
 
-            return recorders.route(intent, tx).compose(recorderResult -> {
-                if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
-                    return Future.failedFuture(new WorkflowDefinitionException(
-                            "WORKFLOW_TIMER recorder must return RecorderResult.Timer; got "
-                                    + recorderResult.getClass().getSimpleName()));
-                }
-                UUID dueDateTimerId = timerResult.timerId();
-                Instant now = clock.instant();
-
-                String histPayload = Json.encode(
-                        new TimerScheduledHistoryPayload(htn.stepId(), dueDateTimerId, fireAt, TimerPurpose.TASK_DUE));
-                return history.append(
+            return history.nextSequence(inst.id(), tx)
+                    .compose(seq -> {
+                        String histPayload = Json.encode(new TimerScheduledHistoryPayload(
+                                htn.stepId(), dueDateTimerId, fireAt, TimerPurpose.TASK_DUE));
+                        return history.append(
                                 new WorkflowHistoryEntry(
                                         inst.id(), seq, WorkflowEntryType.TIMER_SCHEDULED, histPayload, now),
-                                tx)
-                        .compose(v -> {
-                            TaskRecord record = TaskLifecycleService.buildTaskRecord(
-                                    taskId,
-                                    inst,
-                                    htn,
-                                    assignment,
-                                    descriptors,
-                                    fireAt,
-                                    dueDateTimerId,
-                                    subjectVersionAtCreation,
-                                    now);
-                            return taskStore.insertOpen(record, tx);
-                        })
-                        .compose(v -> {
-                            long prevVersion = inst.version();
-                            WorkflowInstance waiting = inst.withVersion(prevVersion + 1)
-                                    .withStatus(WorkflowStatus.WAITING)
-                                    .withCurrentStepId(htn.stepId())
-                                    .withWait(WaitType.TASK, taskId.toString(), dueDateTimerId)
-                                    .withError(null, null)
-                                    .withUpdatedAt(now);
-                            return instances
-                                    .updateOptimistic(waiting, prevVersion, tx)
-                                    .compose(rowCount -> {
-                                        if (rowCount == 0) {
-                                            return Future.<Void>failedFuture(new WorkflowConflictException(
-                                                    "Optimistic concurrency conflict for instance '"
-                                                            + inst.id().value()
-                                                            + "' at HumanTaskNode '"
-                                                            + htn.stepId() + "' (due-date branch)"));
-                                        }
-                                        return taskPvd.get()
-                                                .appendTaskCreatedHistory(
-                                                        inst, htn.stepId(), taskId, assignment, fireAt, tx)
-                                                // Anchor initial reminders to the same `now` Instant
-                                                // captured at task-row construction time (used as
-                                                // both created_at and updated_at on the task row).
-                                                .compose(v2 -> reminderScheduler.scheduleReminderTimers(
-                                                        inst, htn, taskId, now, tx));
-                                    });
-                        });
-            });
+                                tx);
+                    })
+                    .compose(v -> {
+                        TaskRecord record = TaskLifecycleService.buildTaskRecord(
+                                taskId,
+                                inst,
+                                htn,
+                                assignment,
+                                descriptors,
+                                fireAt,
+                                dueDateTimerId,
+                                subjectVersionAtCreation,
+                                now);
+                        return taskStore.insertOpen(record, tx);
+                    })
+                    .compose(v -> {
+                        long prevVersion = inst.version();
+                        WorkflowInstance waiting = inst.withVersion(prevVersion + 1)
+                                .withStatus(WorkflowStatus.WAITING)
+                                .withCurrentStepId(htn.stepId())
+                                .withWait(WaitType.TASK, taskId.toString(), dueDateTimerId)
+                                .withError(null, null)
+                                .withUpdatedAt(now);
+                        return instances
+                                .updateOptimistic(waiting, prevVersion, tx)
+                                .compose(rowCount -> {
+                                    if (rowCount == 0) {
+                                        return Future.<Void>failedFuture(new WorkflowConflictException(
+                                                "Optimistic concurrency conflict for instance '"
+                                                        + inst.id().value()
+                                                        + "' at HumanTaskNode '"
+                                                        + htn.stepId() + "' (due-date branch)"));
+                                    }
+                                    return decisions
+                                            .record(inst, waiting, htn.stepId(), "wait-task", tx)
+                                            .compose(logged -> taskPvd.get()
+                                                    .appendTaskCreatedHistory(
+                                                            inst, htn.stepId(), taskId, assignment, fireAt, tx))
+                                            // Anchor initial reminders to the same `now` Instant captured at task-row
+                                            // construction time (used as both created_at and updated_at on the task
+                                            // row).
+                                            .compose(v2 -> reminderScheduler.scheduleReminderTimers(
+                                                    inst, htn, taskId, now, tx));
+                                });
+                    });
         });
     }
 }

@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
@@ -96,6 +97,7 @@ final class ForkJoinCoordinator {
     private final dev.vertique.context.DurableContextPropagator propagator;
 
     private final Clock clock;
+    private final DecisionLog decisions;
 
     /**
      * Constructs a new fork/join coordinator.
@@ -116,6 +118,7 @@ final class ForkJoinCoordinator {
      * @param propagator the durable context propagator used to capture branch metadata; may be
      *     {@code null} for legacy test constructors
      * @param clock the clock used to timestamp entries and state updates
+     * @param decisions the decision log that records the dispatch and the decision of a join
      */
     @Inject
     ForkJoinCoordinator(
@@ -129,7 +132,9 @@ final class ForkJoinCoordinator {
             BranchTransitionEngine branchEngine,
             @Nullable BranchCompensationOrchestrator branchCompensation,
             @Nullable dev.vertique.context.DurableContextPropagator propagator,
-            Clock clock) {
+            Clock clock,
+            DecisionLog decisions) {
+        this.decisions = decisions;
         this.driverPvd = driverPvd;
         this.enginePvd = enginePvd;
         this.registry = registry;
@@ -154,27 +159,32 @@ final class ForkJoinCoordinator {
      * @param inst    the parent instance reflecting the current state (post-mutation if any)
      * @param cleared the branch token with wait fields cleared and {@code currentStepId} advanced
      * @param rw      the resolved runtime workflow
+     * @param commandId the id of the executor command whose operation continues the branch
      * @param tx      the active transaction
      * @return a {@link Future} that completes when transitions and (optionally) join evaluation finish
      */
-    Future<Void> driveAndMaybeJoin(WorkflowInstance inst, BranchToken cleared, RuntimeWorkflow rw, SqlClient tx) {
+    Future<Void> driveAndMaybeJoin(
+            WorkflowInstance inst, BranchToken cleared, RuntimeWorkflow rw, long commandId, SqlClient tx) {
         String parentSubjectVersion =
                 inst.subjectRef() == null ? null : inst.subjectRef().version();
         return branchEngine
-                .driveBranchTransitions(
+                .driveExecutorBranchTransitions(
                         cleared,
                         inst.stateJson(),
                         parentSubjectVersion,
                         rw,
                         BranchTransitionEngine.InstanceScope.of(inst),
                         tx,
-                        null)
+                        null,
+                        commandId)
                 .compose(advanced -> {
                     if (isBranchTerminal(advanced.status())) {
                         return evaluateJoinForRecoveredBranch(inst, advanced, rw, tx);
                     }
                     return Future.<Void>succeededFuture();
-                });
+                })
+                // a branch that reached a signal wait applies the parked signals its wait accepts
+                .compose(done -> driverPvd.get().afterInlineDrive(inst.id(), tx));
     }
 
     /**
@@ -213,6 +223,20 @@ final class ForkJoinCoordinator {
                     + rw.plan().definitionId() + "'"));
         }
         return evaluateJoin(inst, fork, joinNode, triggering, rw, tx);
+    }
+
+    /**
+     * Tells whether the join of a fork has not decided yet.
+     *
+     * @param workflowId the owning instance
+     * @param forkStepId the fork step whose join is asked about
+     * @param tx the active transaction
+     * @return a {@link Future} of {@code true} when the join is open
+     */
+    Future<Boolean> isJoinOpen(
+            dev.vertique.workflow.ops.WorkflowInstanceId workflowId, String forkStepId, SqlClient tx) {
+        return joinStates.findOpenForWorkflow(workflowId, tx).map(open -> open.stream()
+                .anyMatch(j -> j.forkStepId().equals(forkStepId)));
     }
 
     /**
@@ -283,9 +307,12 @@ final class ForkJoinCoordinator {
         // workflow-native carrier (FR-CTX-178), distinct from the DELAYED_JOB boundary used by
         // workflow timers.
         dev.vertique.core.context.DurableMetadata branchMetadata = propagator != null
-                ? propagator.mergeCaptured(
-                        dev.vertique.core.context.DurableMetadata.empty(),
-                        dev.vertique.core.context.DispatchBoundary.WORKFLOW)
+                ? propagator
+                        .mergeCaptured(
+                                dev.vertique.core.context.DurableMetadata.empty(),
+                                dev.vertique.core.context.DispatchBoundary.WORKFLOW)
+                        // a branch never carries an identity: no drive of it rebuilds one
+                        .without(WorkflowEngine.IDENTITY_SNAPSHOT_NAMESPACE)
                 : dev.vertique.core.context.DurableMetadata.empty();
         // Build all branch tokens up-front so we can iterate after insert.
         java.util.List<dev.vertique.workflow.state.BranchToken> tokens =
@@ -331,7 +358,7 @@ final class ForkJoinCoordinator {
                                     new WorkflowConflictException("Optimistic concurrency conflict for instance '"
                                             + inst.id().value() + "' at fork '" + fork.stepId() + "'"));
                         }
-                        return Future.<Void>succeededFuture();
+                        return decisions.record(inst, parked, fork.stepId(), "fork-dispatched", tx);
                     });
                 })
                 .compose(v -> driveAllBranchesAndEvaluate(inst, fork, joinNode, tokens, rw, tx));
@@ -884,7 +911,7 @@ final class ForkJoinCoordinator {
                                 "Optimistic concurrency conflict failing instance after join '" + joinNode.stepId()
                                         + "'"));
                     }
-                    return Future.<Void>succeededFuture();
+                    return decisions.record(current, failed, joinNode.stepId(), "join-failed", tx);
                 });
             }
             WorkflowInstance advanced = current.withVersion(prevVersion + 1)
@@ -906,7 +933,9 @@ final class ForkJoinCoordinator {
                             "Optimistic concurrency conflict advancing instance after join '" + joinNode.stepId()
                                     + "'"));
                 }
-                return driverPvd.get().driveTransitionsStep(advanced, advancedPlan, tx);
+                return decisions
+                        .record(current, advanced, joinNode.stepId(), "joined", tx)
+                        .compose(logged -> driverPvd.get().driveTransitionsStep(advanced, advancedPlan, tx));
             });
         });
     }

@@ -10,7 +10,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.application.VertiqueApplicationComponent;
 import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxModule;
-import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.json.JsonMapperProfileRegistry;
 import dev.vertique.core.lifecycle.ApplicationStartupStep;
 import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dev.vertique.core.lifecycle.LifecyclePhase;
@@ -19,6 +19,8 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.deploy.DeployerModule;
 import dev.vertique.deploy.VerticleDeployment;
+import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.json.JsonConfig;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.callbacks.NamedPayloadMapper;
 import dev.vertique.workflow.definition.callbacks.NamedStartStateMapper;
@@ -42,21 +44,16 @@ import dev.vertique.workflow.definition.it.fixture.ShipmentCreatedDoc;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParserProbe;
 import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
 import dev.vertique.workflow.definition.service.ActivationStatus;
-import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
-import dev.vertique.workflow.definition.service.WorkflowDefinitionStore;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.di.WorkflowDefinitionsConfigModule;
+import dev.vertique.workflow.di.WorkflowExecutorConfigModule;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
-import dev.vertique.workflow.engine.WorkflowDefinitionPropagationPoller;
-import dev.vertique.workflow.engine.WorkflowDefinitionRegistryView;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
-import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
@@ -68,15 +65,12 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.schema.WorkflowSchemaModule;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
-import dev.vertique.workflow.timer.TimerIntentPayload;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
-import dev.vertique.workflow.timer.TimerStore;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
 import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
@@ -102,7 +96,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Real PostgreSQL, generated application graph and the full callbacks for the workflow fixture. */
@@ -142,6 +135,37 @@ public final class ManagedDefinitionDatabase {
                         .setPassword(config.password()))
                 .using(vertx)
                 .build();
+    }
+
+    /**
+     * The config with the executor's poll interval shortened to 100 ms unless the config sets it, so tests do not wait
+     * for the production default between a recorded start and its first segment.
+     */
+    static JsonObject withFastExecutor(JsonObject config) {
+        JsonObject copy = config.copy();
+        JsonObject workflow = copy.getJsonObject("workflow");
+        if (workflow == null) {
+            workflow = new JsonObject();
+            copy.put("workflow", workflow);
+        }
+        JsonObject executor = workflow.getJsonObject("executor");
+        if (executor == null) {
+            executor = new JsonObject();
+            workflow.put("executor", executor);
+        }
+        if (!executor.containsKey("pollIntervalMs")) {
+            executor.put("pollIntervalMs", 100);
+        }
+        return copy;
+    }
+
+    /** The config that makes startup build every live default-scope document, so that one that does not build fails it. */
+    static JsonObject buildingDefaultScopeDocuments() {
+        return new JsonObject()
+                .put(
+                        "workflow",
+                        new JsonObject()
+                                .put("definitions", new JsonObject().put("buildDefaultScopeDocumentsAtStartup", true)));
     }
 
     public static byte[] yamlFixture() {
@@ -218,7 +242,7 @@ public final class ManagedDefinitionDatabase {
             boolean includeLargeUnicodeMapper,
             WorkflowDefinitionParserProbe parserProbe) {
         return DaggerManagedDefinitionDatabase_AppComponent.builder()
-                .vertxModule(new VertxModule(vertx, config))
+                .vertxModule(new VertxModule(vertx, withFastExecutor(config)))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
                 .bootObservationModule(new BootObservationModule(observation))
                 .definitionSourceModule(new DefinitionSourceModule(source))
@@ -253,7 +277,7 @@ public final class ManagedDefinitionDatabase {
             List<WorkflowDefinition<?, ?>> codeDefinitions,
             List<WorkflowTypeCatalogEntry> extraCatalogEntries) {
         return DaggerManagedDefinitionDatabase_AppComponent.builder()
-                .vertxModule(new VertxModule(vertx, config))
+                .vertxModule(new VertxModule(vertx, withFastExecutor(config)))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
                 .bootObservationModule(new BootObservationModule(observation))
                 .definitionSourceModule(new DefinitionSourceModule(source))
@@ -265,8 +289,13 @@ public final class ManagedDefinitionDatabase {
     }
 
     static NoLoaderAppComponent appWithoutLoader(Vertx vertx, Pool pool, BootObservation observation) {
+        return appWithoutLoader(vertx, pool, new JsonObject(), observation);
+    }
+
+    static NoLoaderAppComponent appWithoutLoader(
+            Vertx vertx, Pool pool, JsonObject config, BootObservation observation) {
         return DaggerManagedDefinitionDatabase_NoLoaderAppComponent.builder()
-                .vertxModule(new VertxModule(vertx, new JsonObject()))
+                .vertxModule(new VertxModule(vertx, withFastExecutor(config)))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
                 .noLoaderBootObservationModule(new NoLoaderBootObservationModule(observation))
                 .build();
@@ -278,6 +307,7 @@ public final class ManagedDefinitionDatabase {
                 VertxModule.class,
                 ConfigParsingModule.class,
                 WorkflowDefinitionsConfigModule.class,
+                WorkflowExecutorConfigModule.class,
                 DeployerModule.class,
                 CoreLifecycleStepsModule.class,
                 WorkflowPostgresqlModule.class,
@@ -289,7 +319,9 @@ public final class ManagedDefinitionDatabase {
                 PostgresInfrastructureModule.class,
                 BootObservationModule.class,
                 WorkflowDefinitionParserProbe.ParserModule.class,
-                TypeCatalogModule.class
+                TypeCatalogModule.class,
+                WorkflowSchemaModule.class,
+                SchemaBindings.class
             })
     public interface AppComponent extends VertiqueApplicationComponent {
 
@@ -319,12 +351,15 @@ public final class ManagedDefinitionDatabase {
 
         dev.vertique.workflow.ops.WorkflowOperations workflowOperations();
 
+        dev.vertique.workflow.ops.WorkflowExecutionProbe executionProbe();
+
+        /** The verticle deployments of the graph, among them the workflow executor. */
+        Set<VerticleDeployment> verticleDeployments();
+
         dev.vertique.workflow.ops.TransactionalWorkflowOperations<io.vertx.sqlclient.SqlClient>
                 transactionalOperations();
 
         dev.vertique.workflow.ops.TransactionalTaskCallbacks<io.vertx.sqlclient.SqlClient> taskCallbacks();
-
-        dev.vertique.workflow.ops.TransactionalTimerCallbacks<io.vertx.sqlclient.SqlClient> timerCallbacks();
 
         dev.vertique.workflow.timer.TimerStore<io.vertx.sqlclient.SqlClient> timerStore();
 
@@ -334,17 +369,31 @@ public final class ManagedDefinitionDatabase {
 
         WorkflowDefinitionRegistryStore definitionRegistryStore();
 
-        WorkflowDefinitionStore workflowDefinitionStore();
-
         WorkflowDefinitionsConfig workflowDefinitionsConfig();
 
-        /** The committed records this node has applied to its registry, and its count of rows that fail to apply. */
-        WorkflowDefinitionRegistryView definitionRegistryView();
-
-        /** The periodic reconciliation, triggered by the tests directly instead of by waiting for its timer. */
-        WorkflowDefinitionPropagationPoller definitionPropagationPoller();
-
         Pool pool();
+    }
+
+    /**
+     * The status the definition table holds for a version of the default scope, as the management surface reports it.
+     *
+     * @param app the application graph whose store is read
+     * @param definitionId the definition id
+     * @param version the version
+     * @return the status, or {@code null} when the table holds no row of the version
+     */
+    public static ActivationStatus currentStatus(AppComponent app, String definitionId, long version) {
+        try {
+            return app.definitionRegistryStore()
+                    .find(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version))
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .get(10, java.util.concurrent.TimeUnit.SECONDS)
+                    .map(row -> ActivationStatus.valueOf(row.status().name()))
+                    .orElse(null);
+        } catch (Exception failure) {
+            throw new AssertionError("could not read the definition row", failure);
+        }
     }
 
     /**
@@ -532,11 +581,14 @@ public final class ManagedDefinitionDatabase {
                 VertxModule.class,
                 ConfigParsingModule.class,
                 WorkflowDefinitionsConfigModule.class,
+                WorkflowExecutorConfigModule.class,
                 DeployerModule.class,
                 CoreLifecycleStepsModule.class,
                 WorkflowPostgresqlModule.class,
                 PostgresInfrastructureModule.class,
-                NoLoaderBootObservationModule.class
+                NoLoaderBootObservationModule.class,
+                WorkflowSchemaModule.class,
+                SchemaBindings.class
             })
     interface NoLoaderAppComponent extends VertiqueApplicationComponent {
 
@@ -554,7 +606,29 @@ public final class ManagedDefinitionDatabase {
 
         WorkflowRegistry workflowRegistry();
 
+        /** The verticle deployments of the graph, among them the workflow executor. */
+        Set<VerticleDeployment> verticleDeployments();
+
         Pool pool();
+    }
+
+    /**
+     * The JSON bindings that {@code WorkflowSchemaModule} reads, without the process codec that the JSON runtime module
+     * installs. A graph that runs the executor lists it next to the schema module.
+     */
+    @Module
+    public abstract static class SchemaBindings {
+
+        @Provides
+        @Singleton
+        static JsonMapperProfileRegistry profileRegistry() {
+            return new DefaultJsonMapperProfileRegistry(Set.of());
+        }
+
+        @Provides
+        static JsonConfig jsonConfig() {
+            return JsonConfig.defaults();
+        }
     }
 
     @Module
@@ -588,48 +662,6 @@ public final class ManagedDefinitionDatabase {
         @Singleton
         static PgDbExceptionMapper pgDbExceptionMapper() {
             return new PgDbExceptionMapper();
-        }
-
-        /**
-         * Records a timer intent as a scheduled timer row with a random execution id and enqueues no job, so tests
-         * decide when and where a timer fires.
-         */
-        @Provides
-        @IntoSet
-        @WorkflowRecorders
-        @Singleton
-        static WorkflowSideEffectRecorder<SqlClient> timerRecorder(TimerStore<SqlClient> timerStore, Clock clock) {
-            return new WorkflowSideEffectRecorder<>() {
-                @Override
-                public IntentKind kind() {
-                    return IntentKind.WORKFLOW_TIMER;
-                }
-
-                @Override
-                public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient transaction) {
-                    TimerIntentPayload payload = (TimerIntentPayload) intent.payload();
-                    UUID timerId = UUID.randomUUID();
-                    TimerRecord row = new TimerRecord(
-                            timerId,
-                            intent.correlation().workflowId(),
-                            intent.targetId(),
-                            payload.fireAt(),
-                            TimerStatus.SCHEDULED,
-                            UUID.randomUUID(),
-                            clock.instant(),
-                            null,
-                            null,
-                            null,
-                            null,
-                            payload.purpose(),
-                            payload.taskId(),
-                            intent.correlation().branchTokenId(),
-                            intent.correlation().forkStepId(),
-                            intent.correlation().branchId(),
-                            DurableMetadata.empty());
-                    return timerStore.insertScheduled(row, transaction).map(ignored -> RecorderResult.ofTimer(timerId));
-                }
-            };
         }
 
         /** Accepts an emitted workflow event and keeps nothing, so that plans with task reminders boot and run. */
@@ -768,12 +800,8 @@ public final class ManagedDefinitionDatabase {
         @Provides
         @IntoSet
         static ApplicationStartupStep observeRestoredRegistry(
-                WorkflowRegistry registry,
-                BootObservation observation,
-                Pool pool,
-                WorkflowDefinitionService service,
-                WorkflowDefinitionStore cache) {
-            return new RegistryReadyStep(registry, observation, pool, service, cache);
+                WorkflowRegistry registry, BootObservation observation, Pool pool, WorkflowDefinitionService service) {
+            return new RegistryReadyStep(registry, observation, pool, service);
         }
 
         @Provides
@@ -856,27 +884,23 @@ public final class ManagedDefinitionDatabase {
             return metadataObservation;
         }
 
-        void definitionIsPublished(WorkflowRegistry registry) {
+        /**
+         * Checks that the pinned version of the observation, when it asks for one, loads with the expected plan hash.
+         * A document is not registered, so the plan is read through the registry's {@code load}, which builds it from
+         * its row when the node does not hold it.
+         */
+        Future<Void> definitionIsPublished(WorkflowRegistry registry) {
             if (!enabled || !verifyPinnedDefinition) {
-                return;
+                return Future.succeededFuture();
             }
-            // The version is published under the scope of its owner, which the observation does not name
-            String actualHash = registry.keysFor(definitionId).stream()
-                    .filter(key -> key.definitionVersion() == definitionVersion)
-                    .map(key -> registry.resolve(key).plan().planHash())
-                    .findFirst()
-                    .orElseThrow(
-                            () -> new WorkflowVersionPinUnavailableException(definitionId, definitionVersion, null));
-            if (!expectedPlanHash.equals(actualHash)) {
-                throw new IllegalStateException("Restored workflow plan hash differs from the expected publication");
-            }
+            return registry.load(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, definitionVersion))
+                    .compose(plan -> expectedPlanHash.equals(plan.plan().planHash())
+                            ? Future.<Void>succeededFuture()
+                            : Future.<Void>failedFuture(new IllegalStateException(
+                                    "Restored workflow plan hash differs from the expected publication")));
         }
 
-        Future<Void> observeMetadataBeforeDeployment(
-                Pool pool,
-                WorkflowDefinitionService service,
-                WorkflowDefinitionStore cache,
-                WorkflowRegistry registry) {
+        Future<Void> observeMetadataBeforeDeployment(Pool pool, WorkflowDefinitionService service) {
             if (expectedDefinitions.isEmpty()) return Future.succeededFuture();
             return pool.preparedQuery("""
                             SELECT scope_key, definition_id, definition_version, kind, plan_hash, status,
@@ -899,21 +923,10 @@ public final class ManagedDefinitionDatabase {
                                         .sorted(Comparator.comparingLong(
                                                 record -> record.key().definitionVersion()))
                                         .toList();
-                                List<CompiledDefinitionRef> compiled = cache.list().stream()
-                                        .filter(ref -> ref.definitionId().equals(definitionId))
-                                        .sorted(Comparator.comparingLong(CompiledDefinitionRef::definitionVersion))
-                                        .toList();
-                                List<RuntimeWorkflow> registered = registry.allRegistered().stream()
-                                        .filter(runtime ->
-                                                runtime.plan().definitionId().equals(definitionId))
-                                        .toList();
-                                MetadataObservation snapshot = new MetadataObservation(
-                                        List.copyOf(durable),
-                                        List.copyOf(scopedServiceRows),
-                                        List.copyOf(compiled),
-                                        registered.size());
+                                MetadataObservation snapshot =
+                                        new MetadataObservation(List.copyOf(durable), List.copyOf(scopedServiceRows));
                                 metadataObservation = snapshot;
-                                verifyMetadata(snapshot, registry, definitionId, expectedDefinitions);
+                                verifyMetadata(snapshot, expectedDefinitions);
                                 events.add("metadata-observed-before-deployment");
                                 return (Void) null;
                             }));
@@ -944,56 +957,30 @@ public final class ManagedDefinitionDatabase {
                     null);
         }
 
-        private static void verifyMetadata(
-                MetadataObservation observation,
-                WorkflowRegistry registry,
-                String definitionId,
-                List<ExpectedDefinition> expected) {
+        private static void verifyMetadata(MetadataObservation observation, List<ExpectedDefinition> expected) {
             require(
                     observation.durable().size() == expected.size(),
                     "durable definition rows differ from input versions");
             require(observation.service().size() == expected.size(), "service metadata differs from input versions");
-            require(observation.compiled().size() == expected.size(), "compiled cache differs from input versions");
-            require(
-                    observation.registeredCount() == expected.size(),
-                    "compiled registry contains duplicate or missing versions");
 
             Map<Long, WorkflowDefinitionRecord> durableByVersion =
                     byVersion(observation.durable(), record -> record.key().definitionVersion(), "durable metadata");
             Map<Long, WorkflowDefinitionRecord> serviceByVersion =
                     byVersion(observation.service(), record -> record.key().definitionVersion(), "service metadata");
-            Map<Long, CompiledDefinitionRef> cacheByVersion =
-                    byVersion(observation.compiled(), CompiledDefinitionRef::definitionVersion, "compiled cache");
-            Map<Long, Long> registryVersions = new HashMap<>();
-            for (RuntimeWorkflow runtime : registry.allRegistered()) {
-                if (runtime.plan().definitionId().equals(definitionId)) {
-                    registryVersions.merge(runtime.plan().definitionVersion(), 1L, Long::sum);
-                }
-            }
-            require(registryVersions.size() == expected.size(), "compiled registry has missing or duplicate versions");
-            require(
-                    registryVersions.values().stream().allMatch(count -> count == 1L),
-                    "compiled registry has duplicate versions");
 
             String previousHash = null;
             for (ExpectedDefinition item : expected) {
                 long version = item.version();
                 WorkflowDefinitionRecord durable = durableByVersion.get(version);
                 WorkflowDefinitionRecord service = serviceByVersion.get(version);
-                CompiledDefinitionRef compiled = cacheByVersion.get(version);
                 require(durable != null, "missing durable metadata for version " + version);
                 require(service != null, "missing service metadata for version " + version);
-                require(compiled != null, "missing compiled cache entry for version " + version);
                 require(
                         WorkflowScopes.DEFAULT.equals(durable.key().scopeKey()),
                         "startup metadata is not in the default scope");
                 require(durable.kind() == DefinitionKind.DOCUMENT, "startup row is not DOCUMENT");
                 require(durable.status() == item.status(), "durable status differs for version " + version);
                 require(service.status() == item.status(), "service status differs for version " + version);
-                require(
-                        compiled.status()
-                                == ActivationStatus.valueOf(item.status().name()),
-                        "cache status differs for version " + version);
                 require(
                         item.documentFormat().equals(durable.documentFormat()),
                         "durable format differs for version " + version);
@@ -1002,7 +989,6 @@ public final class ManagedDefinitionDatabase {
                         "service format differs for version " + version);
                 require(durable.planHash().matches("[0-9a-f]{64}"), "durable hash is missing for version " + version);
                 require(durable.planHash().equals(service.planHash()), "service hash differs for version " + version);
-                require(durable.planHash().equals(compiled.planHash()), "cache hash differs for version " + version);
                 require(
                         item.metadata().sourceType().equals(durable.provenance().sourceType()),
                         "durable source type differs for version " + version);
@@ -1022,25 +1008,6 @@ public final class ManagedDefinitionDatabase {
                 require(
                         item.metadata().loadedAt().equals(durable.provenance().loadedAt()),
                         "durable load time differs for version " + version);
-                require(
-                        item.metadata().sourceType().equals(compiled.source().sourceType()),
-                        "cache source type differs for version " + version);
-                require(
-                        item.metadata().uri().equals(compiled.source().uri()),
-                        "cache source URI differs for version " + version);
-                require(
-                        item.metadata().revision().equals(compiled.source().revision()),
-                        "cache source revision differs for version " + version);
-                require(
-                        item.metadata().author().equals(compiled.source().author()),
-                        "cache source author differs for version " + version);
-                require(
-                        Objects.equals(
-                                item.metadata().uploadId(), compiled.source().uploadId()),
-                        "cache upload id differs for version " + version);
-                require(
-                        item.metadata().loadedAt().equals(compiled.source().loadedAt()),
-                        "cache load time differs for version " + version);
                 if (previousHash != null)
                     require(!previousHash.equals(durable.planHash()), "versions unexpectedly share a plan hash");
                 previousHash = durable.planHash();
@@ -1064,18 +1031,10 @@ public final class ManagedDefinitionDatabase {
     public record ExpectedDefinition(
             long version, DefinitionStatus status, String documentFormat, SourceMetadata metadata) {}
 
-    public record MetadataObservation(
-            List<WorkflowDefinitionRecord> durable,
-            List<WorkflowDefinitionRecord> service,
-            List<CompiledDefinitionRef> compiled,
-            int registeredCount) {}
+    public record MetadataObservation(List<WorkflowDefinitionRecord> durable, List<WorkflowDefinitionRecord> service) {}
 
     private record RegistryReadyStep(
-            WorkflowRegistry registry,
-            BootObservation observation,
-            Pool pool,
-            WorkflowDefinitionService service,
-            WorkflowDefinitionStore cache)
+            WorkflowRegistry registry, BootObservation observation, Pool pool, WorkflowDefinitionService service)
             implements ApplicationStartupStep {
 
         @Override
@@ -1095,13 +1054,9 @@ public final class ManagedDefinitionDatabase {
 
         @Override
         public Future<Void> start() {
-            try {
-                observation.definitionIsPublished(registry);
-            } catch (RuntimeException | AssertionError failure) {
-                return Future.failedFuture(failure);
-            }
             return observation
-                    .observeMetadataBeforeDeployment(pool, service, cache, registry)
+                    .definitionIsPublished(registry)
+                    .compose(published -> observation.observeMetadataBeforeDeployment(pool, service))
                     .map(ignored -> {
                         if (observation.enabled) observation.events.add("bootstrap-complete");
                         return (Void) null;
@@ -1129,13 +1084,10 @@ public final class ManagedDefinitionDatabase {
 
         @Override
         public Future<Void> start() {
-            try {
-                observation.definitionIsPublished(registry);
+            return observation.definitionIsPublished(registry).map(published -> {
                 if (observation.enabled) observation.events.add("bootstrap-complete");
-                return Future.succeededFuture();
-            } catch (RuntimeException | AssertionError failure) {
-                return Future.failedFuture(failure);
-            }
+                return (Void) null;
+            });
         }
     }
 
@@ -1151,15 +1103,16 @@ public final class ManagedDefinitionDatabase {
 
         @Override
         public void start(Promise<Void> startPromise) {
-            try {
-                observation.definitionIsPublished(registry);
+            observation.definitionIsPublished(registry).onComplete(published -> {
+                if (published.failed()) {
+                    startPromise.fail(published.cause());
+                    return;
+                }
                 if (observation.enabled) {
                     observation.events.add("bootstrap-verticle-deployed");
                 }
                 startPromise.complete();
-            } catch (RuntimeException | AssertionError failure) {
-                startPromise.fail(failure);
-            }
+            });
         }
     }
 }

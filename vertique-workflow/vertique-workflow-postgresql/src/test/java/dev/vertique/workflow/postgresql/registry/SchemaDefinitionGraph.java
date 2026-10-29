@@ -72,9 +72,21 @@ final class SchemaDefinitionGraph {
             List<WorkflowDefinition<?, ?>> codeDefinitions,
             List<WorkflowTypeCatalogEntry> catalogEntries,
             StartStateMapperContributor extraMapper) {
+        return build(vertx, pool, new JsonObject(), testClass, codeDefinitions, catalogEntries, extraMapper);
+    }
+
+    /** Builds the graph like {@link #build(Vertx, Pool, Class, List, List, StartStateMapperContributor)} with the given application config. */
+    static AppComponent build(
+            Vertx vertx,
+            Pool pool,
+            JsonObject config,
+            Class<?> testClass,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            List<WorkflowTypeCatalogEntry> catalogEntries,
+            StartStateMapperContributor extraMapper) {
         WorkflowDefinitionSource none = List::of;
         return DaggerSchemaDefinitionGraph_SchemaApp.builder()
-                .vertxModule(new VertxModule(vertx, new JsonObject()))
+                .vertxModule(new VertxModule(vertx, config))
                 .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
                 .bootObservationModule(
                         new BootObservationModule(new BootObservation("schema-unused", 1, "unused", false)))

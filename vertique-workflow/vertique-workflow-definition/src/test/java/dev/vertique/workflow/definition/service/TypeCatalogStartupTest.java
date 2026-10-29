@@ -19,12 +19,12 @@ import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.di.WorkflowCoreModule;
+import dev.vertique.workflow.engine.testsupport.InMemoryDefinitionRegistryModule;
 import dev.vertique.workflow.exception.WorkflowTypeNameConflictException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
-import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowType;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
@@ -230,6 +230,7 @@ class TypeCatalogStartupTest {
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 AcmeMapperModule.class,
                 AcmeStateCatalogModule.class,
@@ -238,12 +239,15 @@ class TypeCatalogStartupTest {
     interface CataloguedPackagedStateComponent {
 
         WorkflowRegistry workflowRegistry();
+
+        DocumentDefinitionLoader documentDefinitionLoader();
     }
 
     @Singleton
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 FirstOrderCatalogModule.class,
                 SecondOrderCatalogModule.class
@@ -254,7 +258,13 @@ class TypeCatalogStartupTest {
     }
 
     @Singleton
-    @Component(modules = {WorkflowDefinitionModule.class, WorkflowCoreModule.class, SharedNameCatalogModule.class})
+    @Component(
+            modules = {
+                WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
+                WorkflowCoreModule.class,
+                SharedNameCatalogModule.class
+            })
     interface SharedNameComponent {
 
         WorkflowRegistry workflowRegistry();
@@ -266,6 +276,7 @@ class TypeCatalogStartupTest {
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 LegacyMapperModule.class,
                 LegacyPackagedSourceModule.class
@@ -274,6 +285,8 @@ class TypeCatalogStartupTest {
 
         WorkflowRegistry workflowRegistry();
 
+        DocumentDefinitionLoader documentDefinitionLoader();
+
         WorkflowDefinitionService workflowDefinitionService();
     }
 
@@ -281,6 +294,7 @@ class TypeCatalogStartupTest {
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 LegacyMapperModule.class,
                 LegacyContractAndStateCatalogModule.class
@@ -302,8 +316,10 @@ class TypeCatalogStartupTest {
             CataloguedPackagedStateComponent component =
                     DaggerTypeCatalogStartupTest_CataloguedPackagedStateComponent.create();
 
-            RuntimeWorkflow registered =
-                    component.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "acme", 1L));
+            // The contributors run when the registry is built
+            component.workflowRegistry();
+            RuntimeWorkflow registered = ServiceTestHelpers.buildPackaged(
+                    component.workflowRegistry(), component.documentDefinitionLoader(), "acme", 1L);
 
             assertThat(registered.plan().definitionId()).isEqualTo("acme");
             assertThat(registered.plan().definitionVersion()).isEqualTo(1);
@@ -349,8 +365,9 @@ class TypeCatalogStartupTest {
         void packagedBinaryNameRegistersAndItsClassesJoinTheIndex() {
             PackagedBinaryNameComponent component = DaggerTypeCatalogStartupTest_PackagedBinaryNameComponent.create();
 
-            RuntimeWorkflow registered =
-                    component.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "legacy", 1L));
+            component.workflowRegistry();
+            RuntimeWorkflow registered = ServiceTestHelpers.buildPackaged(
+                    component.workflowRegistry(), component.documentDefinitionLoader(), "legacy", 1L);
             assertThat(registered.startPayloadType()).isEqualTo(LegacyPlain.class);
             assertThat(registered.stateType()).isEqualTo(LegacyState.class);
 

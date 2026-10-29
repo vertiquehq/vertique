@@ -5,7 +5,6 @@ package dev.vertique.workflow.postgresql.timer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -15,6 +14,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.timer.TimerPurpose;
 import dev.vertique.workflow.timer.TimerRecord;
@@ -45,9 +45,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Verifies: insert + lockForFiring round-trip; {@code markFired}, {@code markCancelled}, and
  * {@code markFailed} return {@link TimerStatusTransition#APPLIED} on first call and the
- * appropriate {@code LOST_TO_*} constant on a second conflicting call; {@code
- * findRecoverableScheduled} returns only past-fire-at SCHEDULED rows ordered by {@code fire_at};
- * {@code updateExecutionId} updates without changing status; CASCADE delete on the parent
+ * appropriate {@code LOST_TO_*} constant on a second conflicting call; CASCADE delete on the parent
  * {@code workflow_instances} row removes the timer row.
  *
  * <p>Each test is self-contained and truncates all relevant tables in {@link #truncateTables}.
@@ -83,8 +81,10 @@ public class PgTimerStoreIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup,"
-                        + " workflow_instances RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup,"
+                                + " workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> {
                     if (ar.failed()) {
@@ -137,7 +137,6 @@ public class PgTimerStoreIT {
                 "timer-step",
                 fireAt,
                 TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
                 Instant.now(),
                 null,
                 null,
@@ -149,6 +148,61 @@ public class PgTimerStoreIT {
                 null, // forkStepId
                 null,
                 DurableMetadata.empty()); // branchId
+    }
+
+    /**
+     * Inserts a {@code TIMER} command in the given state for the timer, the way a segment records it.
+     *
+     * @param workflowId the owning instance
+     * @param seq        the command's position in the instance's queue
+     * @param timerId    the timer the command fires
+     * @param state      the command's state
+     * @return a future of the command's row id
+     */
+    private io.vertx.core.Future<Long> insertCommand(
+            WorkflowInstanceId workflowId, long seq, UUID timerId, String state) {
+        return pool.preparedQuery("INSERT INTO workflow_commands (workflow_id, seq, kind, timer_kind, timer_id, state,"
+                        + " recorded_at, available_at, fire_at) VALUES ($1, $2, 'TIMER', 'FIRE', $3, $4, now(), now(),"
+                        + " now() - interval '1 minute') RETURNING id")
+                .execute(Tuple.of(workflowId.value(), seq, timerId, state))
+                .map(rows -> rows.iterator().next().getLong("id"));
+    }
+
+    /**
+     * Builds a scheduled timer that names no delayed-job execution and is linked to the command.
+     *
+     * @param timerId    the timer id
+     * @param workflowId the owning instance
+     * @param fireAt     the scheduled fire time
+     * @param commandId  the command that fires the timer
+     * @return the record
+     */
+    private static TimerRecord commandRecord(
+            UUID timerId, WorkflowInstanceId workflowId, Instant fireAt, long commandId) {
+        return new TimerRecord(
+                timerId,
+                workflowId,
+                "timer-step",
+                fireAt,
+                TimerStatus.SCHEDULED,
+                Instant.now(),
+                null,
+                null,
+                null,
+                null,
+                TimerPurpose.STANDALONE,
+                null,
+                null,
+                null,
+                null,
+                DurableMetadata.empty(),
+                commandId);
+    }
+
+    private io.vertx.core.Future<String> commandState(long commandId) {
+        return pool.preparedQuery("SELECT state FROM workflow_commands WHERE id = $1")
+                .execute(Tuple.of(commandId))
+                .map(rows -> rows.iterator().next().getString("state"));
     }
 
     // =========================================================================
@@ -173,7 +227,6 @@ public class PgTimerStoreIT {
                     assertEquals(workflowId, stored.workflowId());
                     assertEquals("timer-step", stored.stepId());
                     assertEquals(TimerStatus.SCHEDULED, stored.status());
-                    assertEquals(record.delayedJobExecutionId(), stored.delayedJobExecutionId());
                     assertNull(stored.firedAt());
                     assertNull(stored.cancelledAt());
                     assertNull(stored.failedAt());
@@ -297,122 +350,90 @@ public class PgTimerStoreIT {
     }
 
     // =========================================================================
-    // findRecoverableScheduled
+    // Timers linked to commands
     // =========================================================================
 
     @Test
-    @DisplayName("findRecoverableScheduled returns only SCHEDULED rows past fire_at ordered ASC; limit honored")
-    void findRecoverableScheduledFiltersAndOrders(VertxTestContext ctx) {
-        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
-        Instant past1 = Instant.now().minusSeconds(120);
-        Instant past2 = Instant.now().minusSeconds(60);
-        Instant future = Instant.now().plusSeconds(3600);
-
-        UUID scheduledPast1 = UUID.randomUUID();
-        UUID scheduledPast2 = UUID.randomUUID();
-        UUID scheduledFuture = UUID.randomUUID();
-        UUID firedId = UUID.randomUUID();
-
-        seedInstance(workflowId)
-                .compose(v -> pool.withTransaction(tx -> store.insertScheduled(
-                                scheduledRecord(scheduledPast1, workflowId, past1), tx)
-                        .compose(x -> store.insertScheduled(scheduledRecord(scheduledPast2, workflowId, past2), tx))
-                        .compose(x -> store.insertScheduled(scheduledRecord(scheduledFuture, workflowId, future), tx))
-                        .compose(x -> store.insertScheduled(scheduledRecord(firedId, workflowId, past1), tx))))
-                // Mark one past row as FIRED so it should be excluded
-                .compose(v -> pool.withTransaction(tx -> store.markFired(firedId, Instant.now(), tx)))
-                // Query: cutoff = now (future row excluded), limit = 1 (only earliest returned)
-                .compose(v -> pool.withTransaction(tx -> store.findRecoverableScheduled(Instant.now(), 1, tx)))
-                .onSuccess(results -> ctx.verify(() -> {
-                    assertEquals(1, results.size(), "limit=1 must return only the earliest SCHEDULED row");
-                    assertEquals(scheduledPast1, results.get(0).timerId(), "earliest fire_at row must come first");
-                    assertEquals(TimerStatus.SCHEDULED, results.get(0).status());
-                    ctx.completeNow();
-                }))
-                .onFailure(ctx::failNow);
-    }
-
-    @Test
-    @DisplayName("findRecoverableScheduled excludes FIRED, CANCELLED, and FAILED rows")
-    void findRecoverableScheduledExcludesTerminalRows(VertxTestContext ctx) {
-        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
-        Instant past = Instant.now().minusSeconds(60);
-
-        UUID scheduledId = UUID.randomUUID();
-        UUID firedId = UUID.randomUUID();
-        UUID cancelledId = UUID.randomUUID();
-        UUID failedId = UUID.randomUUID();
-
-        seedInstance(workflowId)
-                .compose(v -> pool.withTransaction(
-                        tx -> store.insertScheduled(scheduledRecord(scheduledId, workflowId, past), tx)
-                                .compose(x -> store.insertScheduled(scheduledRecord(firedId, workflowId, past), tx))
-                                .compose(x -> store.insertScheduled(scheduledRecord(cancelledId, workflowId, past), tx))
-                                .compose(x -> store.insertScheduled(scheduledRecord(failedId, workflowId, past), tx))))
-                .compose(v -> pool.withTransaction(tx -> store.markFired(firedId, Instant.now(), tx)))
-                .compose(v -> pool.withTransaction(tx -> store.markCancelled(cancelledId, Instant.now(), tx)))
-                .compose(v -> pool.withTransaction(tx -> store.markFailed(failedId, Instant.now(), "oops", tx)))
-                .compose(v -> pool.withTransaction(tx -> store.findRecoverableScheduled(Instant.now(), 100, tx)))
-                .onSuccess(results -> ctx.verify(() -> {
-                    List<UUID> ids = results.stream().map(TimerRecord::timerId).toList();
-                    assertEquals(1, ids.size(), "only the SCHEDULED row must be returned");
-                    assertEquals(scheduledId, ids.get(0), "the surviving SCHEDULED timer must be returned");
-                    ctx.completeNow();
-                }))
-                .onFailure(ctx::failNow);
-    }
-
-    // =========================================================================
-    // updateExecutionId
-    // =========================================================================
-
-    @Test
-    @DisplayName("updateExecutionId replaces delayed_job_execution_id without changing status")
-    void updateExecutionIdReplacesIdWithoutChangingStatus(VertxTestContext ctx) {
+    @DisplayName("a timer linked to a command round-trips without a delayed-job execution")
+    void commandLinkedTimerRoundTrips(VertxTestContext ctx) {
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
         UUID timerId = UUID.randomUUID();
-        TimerRecord record = scheduledRecord(timerId, workflowId, Instant.now().plusSeconds(60));
-        UUID newExecutionId = UUID.randomUUID();
 
         seedInstance(workflowId)
-                .compose(v -> pool.withTransaction(tx -> store.insertScheduled(record, tx)))
-                .compose(v -> pool.withTransaction(tx -> store.updateExecutionId(timerId, newExecutionId, tx)))
-                .compose(v -> pool.withTransaction(tx -> store.lockForFiring(timerId, tx)))
-                .onSuccess(opt -> ctx.verify(() -> {
-                    assertTrue(opt.isPresent(), "timer must still be present after updateExecutionId");
-                    TimerRecord updated = opt.get();
-                    assertEquals(newExecutionId, updated.delayedJobExecutionId(), "execution id must be updated");
-                    assertEquals(TimerStatus.SCHEDULED, updated.status(), "status must remain SCHEDULED");
+                .compose(v -> insertCommand(workflowId, 1, timerId, "PENDING"))
+                .compose(commandId -> pool.withTransaction(tx -> store.insertScheduled(
+                                commandRecord(timerId, workflowId, Instant.now().plusSeconds(60), commandId), tx))
+                        .map(v -> commandId))
+                .compose(commandId -> pool.withTransaction(tx -> store.lockForFiring(timerId, tx))
+                        .map(locked -> new Object[] {commandId, locked}))
+                .onSuccess(result -> ctx.verify(() -> {
+                    @SuppressWarnings("unchecked")
+                    java.util.Optional<TimerRecord> locked = (java.util.Optional<TimerRecord>) result[1];
+                    assertTrue(locked.isPresent());
+                    assertEquals(result[0], locked.get().commandId(), "the link to the command is read back");
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);
     }
 
     @Test
-    @DisplayName("updateExecutionId on a CANCELLED timer fails with WorkflowConflictException — zero-row guard")
-    void updateExecutionIdFailsOnNonScheduledTimer(VertxTestContext ctx) {
-        // The recovery verticle re-enqueues a fresh delayed_jobs row for an orphaned timer and
-        // then calls updateExecutionId(...). If a concurrent cancel transitions the timer out of
-        // SCHEDULED first, the UPDATE matches 0 rows and the impl must fail the future so the
-        // surrounding tx (including the just-enqueued delayed_jobs row) rolls back. This guards
-        // against stranding a delayed job whose timer row will never reach SCHEDULED again.
+    @DisplayName("markCancelled cancels the command linked to the timer, and leaves a settled command alone")
+    void markCancelledCancelsTheLinkedCommand(VertxTestContext ctx) {
         WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
-        UUID timerId = UUID.randomUUID();
-        TimerRecord record = scheduledRecord(timerId, workflowId, Instant.now().plusSeconds(60));
-        UUID newExecutionId = UUID.randomUUID();
+        UUID pendingTimer = UUID.randomUUID();
+        UUID claimedTimer = UUID.randomUUID();
+        UUID settledTimer = UUID.randomUUID();
 
         seedInstance(workflowId)
-                .compose(v -> pool.withTransaction(tx -> store.insertScheduled(record, tx)))
-                .compose(v -> pool.withTransaction(tx -> store.markCancelled(timerId, Instant.now(), tx)))
-                .compose(v -> pool.withTransaction(tx -> store.updateExecutionId(timerId, newExecutionId, tx)))
-                .onComplete(ar -> ctx.verify(() -> {
-                    assertTrue(ar.failed(), "updateExecutionId on a non-SCHEDULED timer must fail");
-                    assertInstanceOf(
-                            dev.vertique.workflow.exception.WorkflowConflictException.class,
-                            ar.cause(),
-                            "expected WorkflowConflictException, got: " + ar.cause());
+                .compose(v -> insertCommand(workflowId, 1, pendingTimer, "PENDING"))
+                .compose(pending -> insertCommand(workflowId, 2, claimedTimer, "CLAIMED")
+                        .compose(claimed -> insertCommand(workflowId, 3, settledTimer, "COMPLETE")
+                                .map(settled -> new long[] {pending, claimed, settled})))
+                .compose(commands -> pool.withTransaction(tx -> store.insertScheduled(
+                                        commandRecord(pendingTimer, workflowId, Instant.now(), commands[0]), tx)
+                                .compose(x -> store.insertScheduled(
+                                        commandRecord(claimedTimer, workflowId, Instant.now(), commands[1]), tx))
+                                .compose(x -> store.insertScheduled(
+                                        commandRecord(settledTimer, workflowId, Instant.now(), commands[2]), tx)))
+                        .map(v -> commands))
+                .compose(commands -> pool.withTransaction(tx -> store.markCancelled(pendingTimer, Instant.now(), tx))
+                        .compose(first ->
+                                pool.withTransaction(tx -> store.markCancelled(claimedTimer, Instant.now(), tx)))
+                        .compose(second ->
+                                pool.withTransaction(tx -> store.markCancelled(settledTimer, Instant.now(), tx)))
+                        .compose(third -> commandState(commands[0]))
+                        .compose(pendingState -> commandState(commands[1])
+                                .compose(claimedState -> commandState(commands[2])
+                                        .map(settledState -> List.of(pendingState, claimedState, settledState)))))
+                .onSuccess(states -> ctx.verify(() -> {
+                    assertEquals(
+                            List.of("CANCELLED", "CANCELLED", "COMPLETE"),
+                            states,
+                            "unsettled commands are cancelled with their timers; a settled one is left as it is");
                     ctx.completeNow();
-                }));
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("markCancelled of a timer that is not scheduled leaves its command alone")
+    void markCancelledOfAFiredTimerLeavesItsCommand(VertxTestContext ctx) {
+        WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+        UUID timerId = UUID.randomUUID();
+
+        seedInstance(workflowId)
+                .compose(v -> insertCommand(workflowId, 1, timerId, "CLAIMED"))
+                .compose(commandId -> pool.withTransaction(tx -> store.insertScheduled(
+                                        commandRecord(timerId, workflowId, Instant.now(), commandId), tx)
+                                .compose(x -> store.markFired(timerId, Instant.now(), tx))
+                                .compose(x -> store.markCancelled(timerId, Instant.now(), tx)))
+                        .compose(transition -> commandState(commandId).map(state -> List.of(transition, state))))
+                .onSuccess(result -> ctx.verify(() -> {
+                    assertEquals(TimerStatusTransition.LOST_TO_FIRED, result.get(0));
+                    assertEquals("CLAIMED", result.get(1), "the command of a fired timer is the firing segment's own");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
     }
 
     // =========================================================================

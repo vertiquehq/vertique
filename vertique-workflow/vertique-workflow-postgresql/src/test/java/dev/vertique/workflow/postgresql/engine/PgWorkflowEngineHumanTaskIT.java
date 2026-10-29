@@ -4,12 +4,12 @@
 package dev.vertique.workflow.postgresql.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -20,7 +20,6 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
-import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowStaleAssignmentException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
@@ -34,17 +33,10 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.tasks.TaskAssignment;
-import dev.vertique.workflow.timer.TimerIntentPayload;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -54,10 +46,11 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
+import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -85,6 +78,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineHumanTaskIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     // --- Testcontainers setup ---
 
     static final PostgresContainer db = new PostgresContainer()
@@ -96,6 +91,7 @@ public class PgWorkflowEngineHumanTaskIT {
     static PgWorkflowInstanceRepository instanceRepo;
     static PgWorkflowHistoryRepository historyRepo;
     static PgTimerStore timerStore;
+    /** The due-date timer that the start of the last started instance recorded, or {@code null} when it recorded none. */
     static final AtomicReference<UUID> lastTimerId = new AtomicReference<>();
 
     // --- Domain types ---
@@ -374,55 +370,6 @@ public class PgWorkflowEngineHumanTaskIT {
         PgWorkflowDedupRepository dedupRepo = new PgWorkflowDedupRepository(pool, exMapper);
         timerStore = new PgTimerStore(exMapper);
 
-        WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient> fakeTimerRecorder =
-                new WorkflowSideEffectRecorder<>() {
-                    @Override
-                    public IntentKind kind() {
-                        return IntentKind.WORKFLOW_TIMER;
-                    }
-
-                    @Override
-                    public Future<RecorderResult> record(
-                            WorkflowSideEffectIntent intent, io.vertx.sqlclient.SqlClient tx) {
-                        UUID timerId = UUID.randomUUID();
-                        lastTimerId.set(timerId);
-                        Object payload = intent.payload();
-                        Instant fireAt;
-                        TimerPurpose purpose;
-                        UUID taskId;
-                        if (payload instanceof TimerIntentPayload tip) {
-                            fireAt = tip.fireAt();
-                            purpose = tip.purpose();
-                            taskId = tip.taskId();
-                        } else {
-                            fireAt = payload instanceof Instant fa
-                                    ? fa
-                                    : Instant.now().plusSeconds(3600);
-                            purpose = TimerPurpose.STANDALONE;
-                            taskId = null;
-                        }
-                        TimerRecord record = new TimerRecord(
-                                timerId,
-                                (WorkflowInstanceId) intent.correlation().workflowId(),
-                                intent.targetId(),
-                                fireAt,
-                                TimerStatus.SCHEDULED,
-                                UUID.randomUUID(),
-                                Instant.now(),
-                                null,
-                                null,
-                                null,
-                                null,
-                                purpose,
-                                taskId,
-                                null, // branchTokenId
-                                null, // forkStepId
-                                null,
-                                DurableMetadata.empty()); // branchId
-                        return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-                    }
-                };
-
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
         registry.register(REVIEW_DEF);
         registry.register(REVIEW_DUE_DEF);
@@ -436,7 +383,7 @@ public class PgWorkflowEngineHumanTaskIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(fakeTimerRecorder),
+                Set.of(),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -449,8 +396,10 @@ public class PgWorkflowEngineHumanTaskIT {
     void truncateTables(VertxTestContext ctx) {
         lastTimerId.set(null);
         RESOLVER_CALL_COUNT.set(0);
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
-                        + " workflow_instances RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
+                                + " workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -482,7 +431,14 @@ public class PgWorkflowEngineHumanTaskIT {
                 null,
                 null,
                 null);
-        return engine.start(cmd);
+        return engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(idle -> id))
+                .compose(id -> TimerCommandRows.allTimerIds(pool, id).map(timerIds -> {
+                    // the due-date timer is the only timer these workflows record
+                    lastTimerId.set(timerIds.isEmpty() ? null : timerIds.getFirst());
+                    return id;
+                }));
     }
 
     /**
@@ -516,6 +472,21 @@ public class PgWorkflowEngineHumanTaskIT {
             assertEquals(WaitType.TASK, inst.waitType(), "instance must be WAITING on TASK");
             return UUID.fromString(inst.waitKey());
         });
+    }
+
+    /**
+     * Reads the settled outcome of the workflow's only recorded completion: the command's state and sanitized reason
+     * and the status of the task it reserved.
+     *
+     * @param workflowId the workflow instance id to inspect
+     * @return a {@link Future} containing the row with {@code state}, {@code last_error} and {@code task_status}
+     */
+    private Future<Row> completionOutcome(WorkflowInstanceId workflowId) {
+        return pool.preparedQuery("SELECT c.state, c.last_error, t.status AS task_status FROM workflow_commands c"
+                        + " JOIN workflow_tasks t ON t.task_id = c.task_id"
+                        + " WHERE c.workflow_id = $1 AND c.kind = 'COMPLETION'")
+                .execute(Tuple.of(workflowId.value()))
+                .map(rows -> rows.iterator().next());
     }
 
     /**
@@ -636,6 +607,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                             new WorkflowActor.User("alice"),
                                             null);
                                     return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                            .compose(applied -> engine.executionProbe()
+                                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                    .map(idle -> applied))
                                             .compose(result -> {
                                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
 
@@ -729,6 +703,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                         new WorkflowActor.User("alice"),
                                         null),
                                 tx))
+                        .compose(applied -> engine.executionProbe()
+                                .awaitIdle(wfA, IDLE_TIMEOUT)
+                                .map(idle -> applied))
                         .compose(r -> readTaskJsonbColumn(taskIdA, "completed_by"))
                         .map(json -> {
                             ctx.verify(() -> {
@@ -748,6 +725,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                         new WorkflowActor.Service("scheduler-1"),
                                         null),
                                 tx))
+                        .compose(applied -> engine.executionProbe()
+                                .awaitIdle(wfB, IDLE_TIMEOUT)
+                                .map(idle -> applied))
                         .compose(r -> readTaskJsonbColumn(taskIdB, "completed_by"))
                         .map(json -> {
                             ctx.verify(() -> {
@@ -767,6 +747,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                         new WorkflowActor.System("auto-complete"),
                                         null),
                                 tx))
+                        .compose(applied -> engine.executionProbe()
+                                .awaitIdle(wfC, IDLE_TIMEOUT)
+                                .map(idle -> applied))
                         .compose(r -> readTaskJsonbColumn(taskIdC, "completed_by"))
                         .map(json -> {
                             ctx.verify(() -> {
@@ -791,12 +774,12 @@ public class PgWorkflowEngineHumanTaskIT {
 
     /**
      * Calling {@code taskCompleted} twice with the same command succeeds both times;
-     * the second call returns {@link TaskMutationResult#LOST_TO_RACE} (idempotent retry —
-     * dedup row already exists with a matching fingerprint, so the original completion
-     * already advanced the workflow) and only one {@code TASK_COMPLETED} history entry exists.
+     * the second call returns the earlier result, {@link TaskMutationResult#APPLIED} (idempotent retry —
+     * the dedup row already exists with a matching fingerprint, so the original completion
+     * was already recorded) and only one {@code TASK_COMPLETED} history entry exists.
      */
     @Test
-    @DisplayName("idempotent completion: second call with same key+fingerprint returns LOST_TO_RACE")
+    @DisplayName("idempotent completion: second call with same key+fingerprint returns the earlier result")
     void idempotentCompletion(VertxTestContext ctx) {
         TaskState state = TaskState.of("idem-complete-" + UUID.randomUUID());
         String idemKey = "idem-comp-" + UUID.randomUUID();
@@ -807,15 +790,21 @@ public class PgWorkflowEngineHumanTaskIT {
                             taskId, "approve", "approved-payload", idemKey, new WorkflowActor.User("alice"), null);
 
                     return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(firstResult -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, firstResult));
-                                return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx));
+                                return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                        .compose(applied -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> applied));
                             })
                             .compose(secondResult -> {
                                 ctx.verify(() -> assertEquals(
-                                        TaskMutationResult.LOST_TO_RACE,
+                                        TaskMutationResult.APPLIED,
                                         secondResult,
-                                        "second call with same key+fingerprint must be LOST_TO_RACE"));
+                                        "second call with same key+fingerprint must return the earlier result"));
                                 return countHistoryEntries(workflowId, WorkflowEntryType.TASK_COMPLETED);
                             })
                             .map(count -> {
@@ -855,6 +844,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                 taskId, "reject", "p", idemKey, new WorkflowActor.User("alice"), null);
 
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd1, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> pool.withTransaction(tx -> engine.taskCompleted(cmd2, tx)))
                                 .map(r -> {
                                     ctx.verify(() -> ctx.failNow(
@@ -888,6 +880,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                 taskId, "approve", "payload-two", idemKey, new WorkflowActor.User("alice"), null);
 
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd1, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> pool.withTransaction(tx -> engine.taskCompleted(cmd2, tx)))
                                 .map(r -> {
                                     ctx.verify(() -> ctx.failNow(
@@ -917,6 +912,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                 taskId, "approve", "p", idemKey, new WorkflowActor.User("bob"), null);
 
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd1, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> pool.withTransaction(tx -> engine.taskCompleted(cmd2, tx)))
                                 .map(r -> {
                                     ctx.verify(() -> ctx.failNow(
@@ -1125,6 +1123,9 @@ public class PgWorkflowEngineHumanTaskIT {
 
                     return pool.withTransaction(tx -> engine.taskReassigned(reassignCmd, tx))
                             .compose(r -> pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx)))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(r -> Future.all(
                                     readTaskJsonbColumn(taskId, "reassigned_by"),
                                     readTaskJsonbColumn(taskId, "completed_by")))
@@ -1158,19 +1159,19 @@ public class PgWorkflowEngineHumanTaskIT {
     // =========================================================================
 
     /**
-     * Verifies the due-date path: task row and timer row both exist after start; backdating the
-     * timer and calling {@code timerFired} expires the task, advances the workflow, and writes a
-     * {@code TASK_EXPIRED} history entry.
+     * Verifies the due-date path: task row and timer row both exist after start; when the due date
+     * passes, the executor fires the due-date command, which expires the task, advances the
+     * workflow, and writes a {@code TASK_EXPIRED} history entry.
      */
     @Test
-    @DisplayName("due-date: timerFired expires the task and advances workflow to escalate")
+    @DisplayName("due-date: the due-date command expires the task and advances workflow to escalate")
     void dueDateTimerFired(VertxTestContext ctx) {
         TaskState state = TaskState.of("due-date-" + UUID.randomUUID());
 
         startWorkflow("human-task-due-date-test", state)
                 .compose(workflowId -> {
                     UUID timerId = lastTimerId.get();
-                    assertNotNull(timerId, "due-date timerId must be set by fakeTimerRecorder");
+                    assertNotNull(timerId, "the start must record the due-date timer");
 
                     // Read the instance to get the taskId from waitKey
                     return pool.withTransaction(tx -> instanceRepo.findById(workflowId, tx))
@@ -1181,18 +1182,14 @@ public class PgWorkflowEngineHumanTaskIT {
                                     assertEquals(timerId, optInst.get().waitAuxId(), "waitAuxId must be the timer id");
                                 });
 
-                                // Backdate the timer's fire_at to the past
-                                return pool.preparedQuery(
-                                                "UPDATE workflow_timers SET fire_at = NOW() - INTERVAL '1 minute'"
-                                                        + " WHERE timer_id = $1")
-                                        .execute(Tuple.of(timerId));
+                                // The due date passes: the executor fires the due-date command
+                                return TimerCommandRows.makeDue(pool, timerId);
                             })
-                            .compose(v -> pool.withTransaction(tx -> engine.timerFired(workflowId, timerId, tx)))
-                            .compose(firingResult -> {
+                            .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                            .compose(idle -> TimerCommandRows.commandState(pool, timerId))
+                            .compose(commandState -> {
                                 ctx.verify(() -> assertEquals(
-                                        dev.vertique.workflow.ops.TimerFiringResult.APPLIED,
-                                        firingResult,
-                                        "timerFired must return APPLIED"));
+                                        "COMPLETE", commandState, "the due-date command must fire and complete"));
                                 return pool.withTransaction(tx -> instanceRepo.findById(workflowId, tx));
                             })
                             .compose(optUpdated -> {
@@ -1324,6 +1321,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                                 new WorkflowActor.User("alice"),
                                                 null),
                                         tx))
+                        .compose(applied -> engine.executionProbe()
+                                .awaitIdle(wfApprove, IDLE_TIMEOUT)
+                                .map(idle -> applied))
                         .compose(r -> pool.withTransaction(tx -> instanceRepo.findById(wfApprove, tx)))
                         .map(optInst -> {
                             ctx.verify(() -> {
@@ -1345,6 +1345,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                                 new WorkflowActor.User("alice"),
                                                 null),
                                         tx))
+                        .compose(applied -> engine.executionProbe()
+                                .awaitIdle(wfReject, IDLE_TIMEOUT)
+                                .map(idle -> applied))
                         .compose(r -> pool.withTransaction(tx -> instanceRepo.findById(wfReject, tx)))
                         .map(optInst -> {
                             ctx.verify(() -> {
@@ -1376,7 +1379,7 @@ public class PgWorkflowEngineHumanTaskIT {
 
         /**
          * Decision declared with {@code Void.class}: completing with {@code null} payload succeeds;
-         * completing with a non-null payload fails with {@link WorkflowInvalidPayloadException}.
+         * completing with a non-null payload is recorded and then rejected by the executor, which reopens the task.
          */
         @Nested
         @DisplayName("Void decision")
@@ -1390,14 +1393,17 @@ public class PgWorkflowEngineHumanTaskIT {
                 startWorkflow("human-task-void-decision-test", state)
                         .compose(workflowId -> readTaskId(workflowId)
                                 .compose(taskId -> pool.withTransaction(tx -> engine.taskCompleted(
-                                        new TaskCompletionCommand(
-                                                taskId,
-                                                "approve",
-                                                null,
-                                                "idem-void-null-" + UUID.randomUUID(),
-                                                new WorkflowActor.User("alice"),
-                                                null),
-                                        tx))))
+                                                new TaskCompletionCommand(
+                                                        taskId,
+                                                        "approve",
+                                                        null,
+                                                        "idem-void-null-" + UUID.randomUUID(),
+                                                        new WorkflowActor.User("alice"),
+                                                        null),
+                                                tx))
+                                        .compose(applied -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> applied))))
                         .onSuccess(result -> ctx.verify(() -> {
                             assertEquals(TaskMutationResult.APPLIED, result);
                             ctx.completeNow();
@@ -1406,7 +1412,8 @@ public class PgWorkflowEngineHumanTaskIT {
             }
 
             @Test
-            @DisplayName("Void decision with non-null payload fails with WorkflowInvalidPayloadException")
+            @DisplayName(
+                    "Void decision with non-null payload is recorded, rejected by the executor and the task reopens")
             void voidDecisionNonNullPayloadFails(VertxTestContext ctx) {
                 TaskState state = TaskState.of("void-nonnull-" + UUID.randomUUID());
 
@@ -1420,29 +1427,34 @@ public class PgWorkflowEngineHumanTaskIT {
                                                 "idem-void-nonnull-" + UUID.randomUUID(),
                                                 new WorkflowActor.User("alice"),
                                                 null),
-                                        tx))))
-                        .onSuccess(r -> ctx.verify(() -> ctx.failNow(
-                                new AssertionError("Must have failed with WorkflowInvalidPayloadException"))))
-                        .onFailure(t -> ctx.verify(() -> {
-                            assertInstanceOf(
-                                    WorkflowInvalidPayloadException.class,
-                                    t,
-                                    "must fail with WorkflowInvalidPayloadException for Void decision with non-null payload");
+                                        tx)))
+                                .compose(recorded -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .compose(idle -> completionOutcome(workflowId))
+                                        .map(outcome -> Map.entry(recorded, outcome))))
+                        .onSuccess(result -> ctx.verify(() -> {
+                            assertEquals(TaskMutationResult.APPLIED, result.getKey(), "the completion is recorded");
+                            Row outcome = result.getValue();
+                            assertEquals("REJECTED", outcome.getString("state"));
+                            assertTrue(outcome.getString("last_error").startsWith("DETERMINISTIC_FAILURE"));
+                            assertFalse(outcome.getString("last_error").contains("unexpected-payload"));
+                            assertEquals("OPEN", outcome.getString("task_status"));
                             ctx.completeNow();
-                        }));
+                        }))
+                        .onFailure(ctx::failNow);
             }
         }
 
         /**
-         * Decision declared with {@code String.class}: completing with {@code null} payload fails;
-         * completing with a non-null payload succeeds.
+         * Decision declared with {@code String.class}: completing with {@code null} payload is recorded and then
+         * rejected by the executor, which reopens the task; completing with a non-null payload succeeds.
          */
         @Nested
         @DisplayName("String decision")
         class StringDecision {
 
             @Test
-            @DisplayName("String decision with null payload fails with WorkflowInvalidPayloadException")
+            @DisplayName("String decision with null payload is recorded, rejected by the executor and the task reopens")
             void stringDecisionNullPayloadFails(VertxTestContext ctx) {
                 TaskState state = TaskState.of("str-null-" + UUID.randomUUID());
 
@@ -1456,16 +1468,20 @@ public class PgWorkflowEngineHumanTaskIT {
                                                 "idem-str-null-" + UUID.randomUUID(),
                                                 new WorkflowActor.User("alice"),
                                                 null),
-                                        tx))))
-                        .onSuccess(r -> ctx.verify(() -> ctx.failNow(
-                                new AssertionError("Must have failed with WorkflowInvalidPayloadException"))))
-                        .onFailure(t -> ctx.verify(() -> {
-                            assertInstanceOf(
-                                    WorkflowInvalidPayloadException.class,
-                                    t,
-                                    "must fail with WorkflowInvalidPayloadException for String decision with null payload");
+                                        tx)))
+                                .compose(recorded -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .compose(idle -> completionOutcome(workflowId))
+                                        .map(outcome -> Map.entry(recorded, outcome))))
+                        .onSuccess(result -> ctx.verify(() -> {
+                            assertEquals(TaskMutationResult.APPLIED, result.getKey(), "the completion is recorded");
+                            Row outcome = result.getValue();
+                            assertEquals("REJECTED", outcome.getString("state"));
+                            assertTrue(outcome.getString("last_error").startsWith("DETERMINISTIC_FAILURE"));
+                            assertEquals("OPEN", outcome.getString("task_status"));
                             ctx.completeNow();
-                        }));
+                        }))
+                        .onFailure(ctx::failNow);
             }
 
             @Test
@@ -1476,14 +1492,17 @@ public class PgWorkflowEngineHumanTaskIT {
                 startWorkflow("human-task-string-decision-test", state)
                         .compose(workflowId -> readTaskId(workflowId)
                                 .compose(taskId -> pool.withTransaction(tx -> engine.taskCompleted(
-                                        new TaskCompletionCommand(
-                                                taskId,
-                                                "approve",
-                                                "valid-payload",
-                                                "idem-str-nonnull-" + UUID.randomUUID(),
-                                                new WorkflowActor.User("alice"),
-                                                null),
-                                        tx))))
+                                                new TaskCompletionCommand(
+                                                        taskId,
+                                                        "approve",
+                                                        "valid-payload",
+                                                        "idem-str-nonnull-" + UUID.randomUUID(),
+                                                        new WorkflowActor.User("alice"),
+                                                        null),
+                                                tx))
+                                        .compose(applied -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> applied))))
                         .onSuccess(result -> ctx.verify(() -> {
                             assertEquals(TaskMutationResult.APPLIED, result);
                             ctx.completeNow();
@@ -1551,17 +1570,16 @@ public class PgWorkflowEngineHumanTaskIT {
     }
 
     // =========================================================================
-    // Stale taskDueFired
+    // Stale due date
     // =========================================================================
 
     /**
-     * Completing the task first and then calling {@code taskDueFired} directly returns
-     * {@link TaskMutationResult#STALE_NOOP} with no {@code TASK_EXPIRED} history entry and no
-     * workflow transition.
+     * Completing the task first cancels its due date: the timer and its command are cancelled, and a due date that
+     * comes due afterwards produces no {@code TASK_EXPIRED} history entry and no workflow transition.
      */
     @Test
-    @DisplayName("stale taskDueFired: completing task before due-date fires returns STALE_NOOP")
-    void staleTaskDueFired(VertxTestContext ctx) {
+    @DisplayName("stale due date: completing the task before the due date cancels it")
+    void staleDueDate(VertxTestContext ctx) {
         TaskState state = TaskState.of("stale-due-" + UUID.randomUUID());
 
         startWorkflow("human-task-due-date-test", state)
@@ -1580,16 +1598,24 @@ public class PgWorkflowEngineHumanTaskIT {
                                 null);
 
                         return pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> {
                                     ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, r));
-                                    // Now invoke taskDueFired directly
-                                    return pool.withTransaction(tx -> engine.taskDueFired(workflowId, taskId, tx));
+                                    // The due date is cancelled with the task, and stays so when its time comes
+                                    return TimerCommandRows.status(pool, timerId);
                                 })
-                                .compose(staleResult -> {
+                                .compose(timerStatus -> {
                                     ctx.verify(() -> assertEquals(
-                                            TaskMutationResult.STALE_NOOP,
-                                            staleResult,
-                                            "taskDueFired on completed task must return STALE_NOOP"));
+                                            "CANCELLED", timerStatus, "completing the task cancels its due date"));
+                                    return TimerCommandRows.makeDue(pool, timerId);
+                                })
+                                .compose(due -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                                .compose(idle -> TimerCommandRows.status(pool, timerId))
+                                .compose(timerStatus -> {
+                                    ctx.verify(() -> assertEquals(
+                                            "CANCELLED", timerStatus, "a cancelled due date is not fired when due"));
                                     return countHistoryEntries(workflowId, WorkflowEntryType.TASK_EXPIRED);
                                 })
                                 .map(count -> {
@@ -1671,6 +1697,9 @@ public class PgWorkflowEngineHumanTaskIT {
             startWorkflow("human-task-review-test", state)
                     .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
                                     tx -> engine.taskCompleted(complete(taskId, ORIGINAL), tx))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
                                 return Future.all(readTaskStatus(taskId), readInstanceStatus(workflowId));
@@ -1738,6 +1767,9 @@ public class PgWorkflowEngineHumanTaskIT {
                                 // a fresh completion rather than a replay.
                                 TaskCompletionCommand corrected = complete(taskId, REASSIGNED_TO, idemKey);
                                 return pool.withTransaction(tx -> engine.taskCompleted(corrected, tx))
+                                        .compose(applied -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> applied))
                                         .compose(result -> {
                                             ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
                                             return readInstanceStatus(workflowId);
@@ -1765,6 +1797,9 @@ public class PgWorkflowEngineHumanTaskIT {
                     .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
                                     tx -> engine.taskReassigned(reassign(taskId, REASSIGNED_TO, null), tx))
                             .compose(r -> pool.withTransaction(tx -> engine.taskCompleted(complete(taskId, null), tx)))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(result -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
                                 return readInstanceStatus(workflowId);
@@ -1890,15 +1925,21 @@ public class PgWorkflowEngineHumanTaskIT {
             startWorkflow("human-task-review-test", state)
                     .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
                                     tx -> engine.taskCompleted(complete(taskId, ORIGINAL, idemKey), tx))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(first -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, first));
                                 // Same key, decision, payload and actor; only the precondition differs.
                                 return pool.withTransaction(
-                                        tx -> engine.taskCompleted(complete(taskId, OTHER, idemKey), tx));
+                                                tx -> engine.taskCompleted(complete(taskId, OTHER, idemKey), tx))
+                                        .compose(replayed -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> replayed));
                             })
                             .compose(replay -> {
                                 ctx.verify(() -> assertEquals(
-                                        TaskMutationResult.LOST_TO_RACE,
+                                        TaskMutationResult.APPLIED,
                                         replay,
                                         "retry must resolve through dedup despite the wrong expectedAssignment"));
                                 return Future.all(
@@ -1932,6 +1973,9 @@ public class PgWorkflowEngineHumanTaskIT {
             startWorkflow("human-task-review-test", state)
                     .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
                                     tx -> engine.taskCompleted(complete(taskId, null), tx))
+                            .compose(applied -> engine.executionProbe()
+                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                    .map(idle -> applied))
                             .compose(done -> {
                                 ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, done));
                                 // OTHER deliberately mismatches the row; the terminal state must win.

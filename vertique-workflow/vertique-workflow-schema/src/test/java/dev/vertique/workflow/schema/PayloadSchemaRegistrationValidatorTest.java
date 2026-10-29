@@ -153,7 +153,7 @@ class PayloadSchemaRegistrationValidatorTest {
         // When: the definition registers and is described
         registry.register(Definitions.withStartAndDecision(
                 "order-saga", 1L, Payloads.PlaceOrder.class, Payloads.OrderApproval.class));
-        Optional<WorkflowDefinitionDescriptor> described = new DefaultWorkflowPayloadSchemas(registry, cache, names)
+        Optional<WorkflowDefinitionDescriptor> described = AwaitedSchemas.of(registry, cache, names)
                 .describe(new DefinitionKey(WorkflowScopes.DEFAULT, "order-saga", 1L));
 
         // Then: the plan names the decision payload by its logical name, never by its binary class name

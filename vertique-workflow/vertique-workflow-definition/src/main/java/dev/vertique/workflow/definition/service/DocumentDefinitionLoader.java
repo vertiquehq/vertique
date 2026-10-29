@@ -4,12 +4,10 @@
 package dev.vertique.workflow.definition.service;
 
 import dev.vertique.workflow.definition.parser.DocumentFormat;
-import dev.vertique.workflow.definition.pipeline.CompiledDefinition;
 import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
-import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DocumentOrigin;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
@@ -24,39 +22,35 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** Internal source compiler and cache adapter for durable YAML/JSON definitions. */
+/** Internal source compiler for durable YAML/JSON definitions. */
 @Singleton
 public final class DocumentDefinitionLoader implements PersistedDefinitionLoader {
     private final WorkflowDefinitionPipeline pipeline;
     private final WorkflowDefinitionBootstrap bootstrap;
-    private final WorkflowDefinitionStore cache;
     private final WorkflowDefinitionsConfig config;
     private final WorkflowTypeNames typeNames;
 
     /**
-     * Creates a loader with an empty type-name index, so every state class is hashed and cached under
+     * Creates a loader with an empty type-name index, so every state class is hashed under
      * its binary name. For callers that do not use logical type names.
      *
      * @param pipeline the pipeline that compiles a stored document
      * @param bootstrap the bootstrap that reports the packaged document origins
-     * @param cache the definition store that caches restored definitions
      * @param config the typed definition policy, when one is configured
      */
     public DocumentDefinitionLoader(
             WorkflowDefinitionPipeline pipeline,
             WorkflowDefinitionBootstrap bootstrap,
-            WorkflowDefinitionStore cache,
             Optional<WorkflowDefinitionsConfig> config) {
-        this(pipeline, bootstrap, cache, config, new DefaultWorkflowTypeNames());
+        this(pipeline, bootstrap, config, new DefaultWorkflowTypeNames());
     }
 
     /**
-     * Creates a loader that hashes and caches a restored definition under the logical name of its
+     * Creates a loader that hashes a restored definition under the logical name of its
      * state class, as the registry does when it registers the definition.
      *
      * @param pipeline the pipeline that compiles a stored document
      * @param bootstrap the bootstrap that reports the packaged document origins
-     * @param cache the definition store that caches restored definitions
      * @param config the typed definition policy, when one is configured
      * @param typeNames the type-name index that names the state class
      */
@@ -64,12 +58,10 @@ public final class DocumentDefinitionLoader implements PersistedDefinitionLoader
     public DocumentDefinitionLoader(
             WorkflowDefinitionPipeline pipeline,
             WorkflowDefinitionBootstrap bootstrap,
-            WorkflowDefinitionStore cache,
             Optional<WorkflowDefinitionsConfig> config,
             WorkflowTypeNames typeNames) {
         this.pipeline = pipeline;
         this.bootstrap = bootstrap;
-        this.cache = cache;
         this.config = config.orElseGet(WorkflowDefinitionsConfig::defaults);
         this.typeNames = typeNames;
     }
@@ -114,24 +106,5 @@ public final class DocumentDefinitionLoader implements PersistedDefinitionLoader
         return builder.build(
                         definition.definitionId(), definition.definitionVersion(), names.nameOf(definition.stateType()))
                 .planHash();
-    }
-
-    @Override
-    public void onRestored(WorkflowDefinitionRecord record, WorkflowDefinition<?, ?> definition) {
-        if (cache.get(record.key()).isEmpty())
-            cache.storeCandidate(
-                    record.key(),
-                    new CompiledDefinition(
-                            definition,
-                            record.planHash(),
-                            DefaultWorkflowDefinitionService.source(record.provenance()),
-                            typeNames.nameOf(definition.stateType()),
-                            typeNames.contractNameOf(definition.contract())));
-        cache.metadata(record);
-    }
-
-    @Override
-    public void onMetadata(WorkflowDefinitionRecord record) {
-        if (record.kind() == DefinitionKind.DOCUMENT && supports(record.documentFormat())) cache.metadata(record);
     }
 }

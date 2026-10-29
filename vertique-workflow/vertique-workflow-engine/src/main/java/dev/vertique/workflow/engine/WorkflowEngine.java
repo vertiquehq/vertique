@@ -6,12 +6,32 @@ package dev.vertique.workflow.engine;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.db.IsolationLevel;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMaps;
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
+import dev.vertique.workflow.dedup.WorkflowDedupScopes;
+import dev.vertique.workflow.engine.executor.ClaimLostException;
+import dev.vertique.workflow.engine.executor.CommandActors;
+import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
+import dev.vertique.workflow.engine.executor.StartPayloadValidation;
+import dev.vertique.workflow.engine.executor.WorkflowSegments;
+import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.CommandActor;
+import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
+import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.SettledCommand;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
+import dev.vertique.workflow.engine.spi.TaskReservations;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads.StartSelection;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads.StartVersion;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -20,33 +40,32 @@ import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
-import dev.vertique.workflow.exception.WorkflowDefinitionFailingException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
+import dev.vertique.workflow.exception.WorkflowSignalLimitException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
 import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
-import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.plan.WorkflowPlan;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
-import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
@@ -59,21 +78,27 @@ import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerRecord;
+import dev.vertique.workflow.timer.TimerStatusTransition;
 import dev.vertique.workflow.timer.TimerStore;
 import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
+import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -134,6 +159,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private final WorkflowEventEmitter eventEmitter;
     /** Leaf collaborator for appending generic workflow lifecycle history entries. */
     private final WorkflowHistoryRecorder historyRecorder;
+    /** The decision log whose first-claim baseline, start baseline and segment scope the engine writes. */
+    private final DecisionLog decisions;
     /** Leaf collaborator for scheduling and cancelling {@link dev.vertique.workflow.timer.TimerPurpose#TASK_REMINDER} timers. */
     private final ReminderScheduler reminderScheduler;
     /**
@@ -167,7 +194,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * Collaborator owning the human-task lifecycle callback paths (PRD-WF-006, Slice C7). The
      * facade's {@code TransactionalTaskCallbacks} entrypoints
-     * ({@code taskCompleted}/{@code taskDueFired}/{@code taskReassigned}/{@code taskReminderFired})
+     * ({@code taskCompleted}/{@code taskReassigned})
      * delegate their bodies to this service. It drives the state machine forward after a task
      * mutation via the {@link WorkflowTransitionDriver} and {@link ForkJoinCoordinator}; the driver
      * reaches its task-creation helpers ({@code resolveAssignment}, {@code appendTaskCreatedHistory},
@@ -177,11 +204,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private final TaskLifecycleService taskLifecycle;
 
     /**
-     * Collaborator owning the timer-fire callback paths (PRD-WF-006, Slice C8). The facade's
-     * {@code TransactionalTimerCallbacks} entrypoints ({@code timerFired}/{@code timerFiringFailed})
-     * delegate their bodies to this service. It drives the state machine forward after a timer fires
-     * via the {@link WorkflowTransitionDriver} and {@link ForkJoinCoordinator}, and dispatches the
-     * single-path {@code TASK} due-date wait to {@link TaskLifecycleService} (so it injects the task
+     * Collaborator owning the timer-fire paths (PRD-WF-006, Slice C8). The executor runs a recorded
+     * timer command through it. It drives the state machine forward after a timer fires
+     * via the {@link WorkflowTransitionDriver} and {@link ForkJoinCoordinator}, and runs the
+     * task due-date and reminder fires of {@link TaskLifecycleService} (so it injects the task
      * service eagerly). The driver reaches the timer helper {@code resolveFireAt} through a lazy
      * {@code Provider<TimerLifecycleService>} that breaks the driver↔timer constructor cycle.
      */
@@ -215,11 +241,38 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private final PayloadConstraintCheck payloadConstraintCheck;
 
-    /** This node's view of the activation records, which chooses the version of a start without one. */
-    private final DefinitionActivations activations;
+    /**
+     * The reads of definition rows on the caller's transaction that a start selects its version from; {@code null} when
+     * the store cannot read on a caller's transaction, which fails a start that has no replay to answer.
+     */
+    private final @Nullable TransactionalDefinitionReads<SqlClient> definitionReads;
 
-    /** This node's own evaluation of the scope rows that newly deployed code conflicts with. */
-    private final FailingDefinitions failing;
+    /** Checks a start payload against the stored start schema of the selected version, within the recording bounds. */
+    private final StartPayloadValidation startPayloadValidation;
+
+    /** Waits until the recorded commands of an instance, or of every instance, have run. */
+    private final WorkflowExecutionProbe executionProbe;
+
+    /**
+     * Takes the execution lock of an instance inside the caller's transaction, before the first workflow change of
+     * every instance-changing entry point.
+     */
+    private final WorkflowCommandRepository<SqlClient> commands;
+
+    /** The control of this engine's executor; a supplier because the executor is built from this engine's segments. */
+    private final Supplier<WorkflowExecutorControl> executorControl;
+
+    /** The size and depth bounds a signal's payload and explicit carrier must meet to be recorded. */
+    private final RecordTimePayloadValidator recordValidator;
+
+    /** The most signals an instance may hold open. */
+    private final int maxOpenSignals;
+
+    /** Takes the actor a recorded command is logged with from the identity of the caller that records it. */
+    private final CommandActors actors;
+
+    /** Routes the intents of a segment; told which command a segment executes so that it can attribute them. */
+    private final RecorderRouter recorderRouter;
 
     @Inject
     WorkflowEngine(
@@ -245,10 +298,23 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             DurableContextPropagator propagator,
             WorkflowContextBinder contextBinder,
             PayloadConstraintCheck payloadConstraintCheck,
-            DefinitionActivations activations,
-            FailingDefinitions failing) {
-        this.activations = activations;
-        this.failing = failing;
+            Optional<TransactionalDefinitionReads<SqlClient>> definitionReads,
+            WorkflowExecutionProbe executionProbe,
+            WorkflowCommandRepository<SqlClient> commands,
+            Provider<WorkflowExecutorControl> executorControl,
+            Optional<WorkflowRecordingConfig> recording,
+            CommandActors actors,
+            RecorderRouter recorderRouter) {
+        WorkflowRecordingConfig recordingConfig = recording.orElseGet(WorkflowRecordingConfig::defaults);
+        this.actors = actors;
+        this.recorderRouter = recorderRouter;
+        this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
+        this.startPayloadValidation = new StartPayloadValidation(recordValidator);
+        this.maxOpenSignals = recordingConfig.maxOpenSignalsPerInstance();
+        this.executionProbe = executionProbe;
+        this.commands = commands;
+        this.executorControl = executorControl::get;
+        this.definitionReads = definitionReads.orElse(null);
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -261,6 +327,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.branchEngine = branchEngine;
         this.eventEmitter = eventEmitter;
         this.historyRecorder = historyRecorder;
+        this.decisions = historyRecorder.decisions();
         this.reminderScheduler = reminderScheduler;
         this.forkJoin = forkJoin;
         this.driver = driver;
@@ -274,8 +341,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Assembles the engine like the constructor that takes the type-name index, using the index of
-     * the registry when it is a {@code DefaultWorkflowRegistry} and an empty index otherwise.
+     * Assembles the engine with the default recording bounds; see the constructor that takes them.
      */
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -299,7 +365,14 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             ReminderScheduler reminderScheduler,
             CompensationService compensationService,
             @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
-            PayloadConstraintCheck payloadConstraintCheck) {
+            PayloadConstraintCheck payloadConstraintCheck,
+            WorkflowTypeNames typeNames,
+            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
+            WorkflowExecutionProbe executionProbe,
+            WorkflowCommandRepository<SqlClient> commands,
+            TaskReservations<SqlClient> reservations,
+            Supplier<WorkflowExecutorControl> executorControl,
+            @Nullable TransactionalDefinitionReads<SqlClient> definitionReads) {
         this(
                 txRunner,
                 registry,
@@ -323,10 +396,17 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 compensationService,
                 inboundExecScope,
                 payloadConstraintCheck,
-                WorkflowEngineFactory.registryTypeNames(registry),
-                new DefinitionActivations(),
+                typeNames,
+                stateCompatibility,
+                executionProbe,
+                commands,
+                executorControl,
+                WorkflowRecordingConfig.defaults(),
+                reservations,
                 Optional.empty(),
-                new FailingDefinitions());
+                key -> Optional.empty(),
+                definitionReads,
+                CommandActors.ambient());
     }
 
     /**
@@ -354,10 +434,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * <p>The {@code inboundExecScope} parameter is the substrate lifecycle helper backing the
      * binder-row {@link WorkflowContextBinder} (factory initializer parity, see
-     * {@link WorkflowEngineFactory#create(WorkflowTransactionRunner, WorkflowRegistry,
-     * WorkflowInstanceRepository, WorkflowHistoryRepository, WorkflowDedupRepository,
-     * BranchTokenRepository, JoinStateRepository, TimerStore, TaskStore, Clock, java.util.Set,
-     * java.util.Set, Optional, DurableContextPropagator, java.util.Set)}): production Dagger wiring
+     * {@link WorkflowEngineFactory#create(WorkflowEngineParts)}): production Dagger wiring
      * runs every registered {@code InboundContextInitializer} (e.g. correlation seeding) on a bound
      * drive, and this constructor lets the factory assembly seam do the same. The factory builds
      * exactly one {@link dev.vertique.context.InboundExecutionContextScope} from the propagator and
@@ -373,9 +450,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * task-lifecycle service built below.
      *
      * <p>The {@code typeNames} parameter is the type-name index a decision payload's declared type
-     * name resolves through; the factory passes the one index the registry fills. The {@code activations}
-     * parameter is this engine's view of the activation records, which the factory builds empty. The
-     * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes.
+     * name resolves through; the factory passes the one index the registry fills. The
+     * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes. The {@code executionProbe} parameter is the probe the handle exposes. The {@code commands} parameter is the
+     * command repository whose execution lock every instance-changing entry point takes. The {@code reservations}
+     * parameter reserves a task for a recorded completion; the {@code schemaProducer} parameter, when present, supplies
+     * the payload schemas a new task's decision snapshot stores. The {@code failingMarks} parameter reads this node's
+     * evaluation of a version of a scope other than the default one, which a migration into it is refused for.
      *
      * <p>Package-visible (not {@code private}) so the factory in the same package can invoke it; it
      * is not part of any production API.
@@ -404,12 +484,26 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
             PayloadConstraintCheck payloadConstraintCheck,
             WorkflowTypeNames typeNames,
-            DefinitionActivations activations,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
-            FailingDefinitions failing) {
+            WorkflowExecutionProbe executionProbe,
+            WorkflowCommandRepository<SqlClient> commands,
+            Supplier<WorkflowExecutorControl> executorControl,
+            WorkflowRecordingConfig recordingConfig,
+            TaskReservations<SqlClient> reservations,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer,
+            Function<DefinitionKey, Optional<DefinitionFailure>> failingMarks,
+            @Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
+            CommandActors actors) {
+        this.actors = actors;
+        this.recorderRouter = recorders;
+        this.recordValidator = new RecordTimePayloadValidator(recordingConfig);
+        this.startPayloadValidation = new StartPayloadValidation(recordValidator);
+        this.definitionReads = definitionReads;
+        this.maxOpenSignals = recordingConfig.maxOpenSignalsPerInstance();
+        this.executionProbe = executionProbe;
+        this.commands = commands;
+        this.executorControl = executorControl;
         this.payloadConstraintCheck = payloadConstraintCheck;
-        this.activations = activations;
-        this.failing = failing;
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -422,6 +516,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.branchEngine = branchEngine;
         this.eventEmitter = eventEmitter;
         this.historyRecorder = historyRecorder;
+        this.decisions = historyRecorder.decisions();
         this.reminderScheduler = reminderScheduler;
         this.propagator = propagator;
         // Hand-build the binder from the (possibly-null) propagator. WorkflowContextBinder requires
@@ -457,17 +552,20 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 branchEngine,
                 branchCompensation,
                 propagator,
-                clock);
+                clock,
+                decisions);
         this.driver = new WorkflowTransitionDriver(
                 instances,
                 history,
                 recorders,
+                commands,
                 taskStore,
                 eventEmitter,
                 reminderScheduler,
                 compensationService,
                 this.forkJoin,
                 clock,
+                decisions,
                 () -> timerLifecycleHolder[0],
                 () -> taskLifecycleHolder[0]);
         driverHolder[0] = this.driver;
@@ -491,7 +589,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 () -> timerLifecycleHolder[0],
                 builtContextBinder,
                 payloadConstraintCheck,
-                typeNames);
+                typeNames,
+                commands,
+                reservations,
+                historyRecorder,
+                Optional.of(recordingConfig),
+                schemaProducer,
+                actors);
         taskLifecycleHolder[0] = this.taskLifecycle;
         // TimerLifecycleService needs the driver, coordinator, and task service eagerly; all three
         // are now built. The driver reaches resolveFireAt through the lazy Provider above
@@ -502,12 +606,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 history,
                 branchTokens,
                 timerStore,
-                eventEmitter,
                 this.forkJoin,
                 this.driver,
                 this.taskLifecycle,
                 clock,
-                builtContextBinder);
+                builtContextBinder,
+                commands,
+                historyRecorder);
         timerLifecycleHolder[0] = this.timerLifecycle;
         // SignalHandler needs the driver, coordinator, and timer service eagerly; all are now built.
         // Nothing references the handler, so it is a plain leaf in the construction order.
@@ -521,7 +626,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 this.forkJoin,
                 this.driver,
                 this.timerLifecycle,
-                clock);
+                clock,
+                commands,
+                builtContextBinder,
+                historyRecorder,
+                recorderRouter);
         // MigrationExecutor needs the driver eagerly (built above) plus the optional migration
         // registry; nothing references it back, so it is a plain leaf in the construction order.
         this.migrationExecutor = new MigrationExecutor(
@@ -534,7 +643,23 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 clock,
                 builtContextBinder,
                 stateCompatibility,
-                failing);
+                failingMarks,
+                commands,
+                definitionReads,
+                actors,
+                decisions);
+    }
+
+    // --- WorkflowEngineHandle ---
+
+    @Override
+    public WorkflowExecutionProbe executionProbe() {
+        return executionProbe;
+    }
+
+    @Override
+    public WorkflowExecutorControl executor() {
+        return executorControl.get();
     }
 
     // --- WorkflowOperations ---
@@ -613,11 +738,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
-     * <p>Opens a new database transaction and re-executes the current step of a {@code FAILED}
-     * instance.
+     * <p>Opens a new database transaction and records a retry, as
+     * {@link #retry(WorkflowInstanceId, SqlClient)} does.
      *
      * @param id the workflow instance id; must not be null
-     * @return a {@link Future} that completes when the retry attempt has been initiated
+     * @return a {@link Future} that completes when the retry is recorded
      */
     @Override
     public Future<Void> retry(WorkflowInstanceId id) {
@@ -645,9 +770,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * {@inheritDoc}
      *
      * <p>Reads like {@link #query(WorkflowInstanceId)}, after comparing {@code contractName} with the
-     * contract of the definition version the instance is pinned to. A node that holds no code for that
-     * version fails the future with
-     * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException}. A different contract
+     * contract that the definition row of the version the instance is pinned to stores, read in the query's
+     * transaction, so the check needs no plan and no code on any node. A pinned row that no longer exists fails the
+     * future with {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException}. A different contract
      * fails the future with
      * {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException} before the
      * history is read.
@@ -670,34 +795,27 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     }
                     WorkflowInstance inst = optInst.get();
                     if (callerContractName != null) {
-                        // A contract can only be compared with the pinned plan; a node without the code
-                        // cannot vouch for the caller's contract and refuses.
-                        RuntimeWorkflow pinned;
-                        try {
-                            pinned = PinnedPlans.resolve(registry, inst);
-                        } catch (Exception e) {
-                            return Future.<WorkflowView>failedFuture(e);
-                        }
-                        WorkflowDefinitionContractMismatchException refusal =
-                                ContractMismatch.refusal(inst, pinned, callerContractName, "query");
-                        if (refusal != null) {
-                            return Future.<WorkflowView>failedFuture(refusal);
-                        }
+                        // The contract is compared with the one the pinned definition's row stores, read in this
+                        // transaction, so no plan is resolved or built on any node.
+                        DefinitionKey pin = new DefinitionKey(
+                                inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion());
+                        Future<Optional<String>> row = definitionReads != null
+                                ? definitionReads.pinnedContract(pin, tx)
+                                : instances.findDefinitionContract(pin, tx);
+                        return row.compose(stored -> {
+                            if (stored.isEmpty()) {
+                                return Future.<WorkflowView>failedFuture(
+                                        new WorkflowVersionNotRunnableException(pin, inst.id()));
+                            }
+                            WorkflowDefinitionContractMismatchException refusal =
+                                    ContractMismatch.refusal(inst, pin, stored.get(), callerContractName, "query");
+                            return refusal != null
+                                    ? Future.<WorkflowView>failedFuture(refusal)
+                                    : history.listByInstance(id, tx).map(entries -> new WorkflowView(inst, entries));
+                        });
                     }
                     return history.listByInstance(id, tx).map(entries -> new WorkflowView(inst, entries));
                 }));
-    }
-
-    /**
-     * The key of an explicit start version in a scope. An id, scope or version that no key can hold names no
-     * registered version.
-     */
-    private static DefinitionKey requestedKey(String scopeKey, String definitionId, long version) {
-        try {
-            return new DefinitionKey(scopeKey, definitionId, version);
-        } catch (IllegalArgumentException e) {
-            throw new WorkflowVersionPinUnavailableException(scopeKey, definitionId, version, null);
-        }
     }
 
     // --- TransactionalWorkflowOperations ---
@@ -707,9 +825,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * <p>Looks for a start dedup row of the start scope, the definition id and the idempotency key first; a
      * replay returns the existing instance before any version is resolved. A first start resolves the
-     * definition, compares the command's contract with the resolved definition's contract, atomically claims
-     * the start dedup slot and, when it wins, coerces the payload, derives the initial state, persists the
-     * instance and history, and drives initial transitions. A null start scope is the default scope.
+     * definition from one read of the database on the caller's transaction, compares the command's contract with the
+     * resolved definition's contract, validates the start payload against the stored start schema, takes the new instance's execution lock, atomically claims the start dedup slot and, when it
+     * wins, records the instance as {@code PENDING} with a {@code START} command and returns. The executor derives the
+     * initial state and drives the first steps afterwards. A null start scope is the default scope.
      *
      * @param cmd the start command; must not be null
      * @param tx the active SQL transaction; must not be null
@@ -736,10 +855,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * the existing instance. A start that names a version, and possibly a target scope, must name the definition
      * the existing instance is pinned to; any other pin fails as an idempotency conflict. A replay never changes
      * a pin. When this node has no plan for the pin, the contract the durable registry stores for the pinned
-     * definition stands in for it, read through the given transaction. With a durable registry and no stored row the
-     * start fails with {@link WorkflowVersionNotRunnableException}. An engine without a durable registry uses the
-     * contract of another registered version of the same id in the scope, and fails the same way when there is
-     * none, because it cannot compare the contracts.
+     * definition stands in for it, read through the given transaction. With no stored row the start fails with
+     * {@link WorkflowVersionNotRunnableException}.
      */
     private Future<WorkflowInstanceId> replayedStart(StartCommand cmd, WorkflowInstanceId existing, SqlClient tx) {
         return instances.findById(existing, tx).compose(found -> {
@@ -751,17 +868,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowInstance pinned = found.get();
             // The pinned version's own plan names the contract. On a node without that plan, the contract stored for
             // the pinned definition does, read through the start transaction so that no second connection is taken;
-            // with a durable registry and no stored row the node refuses. Only an engine without a durable registry
-            // falls back to another registered version of the same id in the scope. A node that knows none of them
-            // cannot vouch for the caller's contract and refuses, like a contract-checked query does.
+            // with no stored row the node cannot vouch for the caller's contract and refuses, like a
+            // contract-checked query does.
             DefinitionKey pin =
                     new DefinitionKey(pinned.definitionScopeKey(), pinned.definitionId(), pinned.definitionVersion());
             Optional<String> local = registry.find(pin).map(RuntimeWorkflow::contractName);
-            Future<Optional<String>> contractOfPin = local.isPresent()
-                    ? Future.succeededFuture(local)
-                    : activations.hasDurableRegistry()
-                            ? instances.findDefinitionContract(pin, tx)
-                            : Future.succeededFuture(registry.contractOf(pin.scopeKey(), pin.definitionId()));
+            Future<Optional<String>> contractOfPin =
+                    local.isPresent() ? Future.succeededFuture(local) : instances.findDefinitionContract(pin, tx);
             return contractOfPin.compose(pinnedContract -> checkReplay(cmd, existing, pinned, pin, pinnedContract));
         });
     }
@@ -810,125 +923,149 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 : "definitionVersion=" + version + ",definitionScope=" + scopeKey;
     }
 
-    /** Resolves the definition for a start with no dedup row, claims the slot and creates the instance. */
+    /**
+     * Records a start with no dedup row. The version, its contract and its status are read from the database on the
+     * caller's transaction; the payload is checked against the stored schema; and only then the lock, the dedup claim,
+     * pin admission and the insert follow.
+     *
+     * <p>A start through a store that cannot read on the caller's transaction fails: the node keeps no copy of the
+     * definition table to select from.
+     */
     private Future<WorkflowInstanceId> firstStart(StartCommand cmd, String startScope, SqlClient tx) {
-        RuntimeWorkflow rw;
+        WorkflowInvalidPayloadException oversized = oversizedKey(cmd);
+        if (oversized == null) {
+            oversized = oversizedSubject(cmd.subjectRef());
+        }
+        if (oversized != null) {
+            return Future.failedFuture(oversized);
+        }
+        if (definitionReads == null) {
+            return Future.failedFuture(new IllegalStateException(
+                    "A start selects its version from the definition rows on the caller's transaction, but the"
+                            + " definition store of this engine cannot read on it"));
+        }
+        return definitionReads
+                .selectionRead(startScope, cmd.definitionId(), tx)
+                .compose(read -> firstStartFromRows(cmd, startScope, read, tx));
+    }
+
+    /** Runs the version the selection read chose; no plan is loaded and no payload class is read. */
+    private Future<WorkflowInstanceId> firstStartFromRows(
+            StartCommand cmd, String startScope, StartSelection read, SqlClient tx) {
+        StartVersion chosen;
         try {
-            requireNotFailing(cmd, startScope);
-            rw = resolveForStart(cmd, startScope);
-            DefinitionKey resolved = new DefinitionKey(
-                    rw.definitionScopeKey(), rw.plan().definitionId(), rw.plan().definitionVersion());
+            chosen = StartVersionSelection.select(
+                    read,
+                    startScope,
+                    cmd.definitionId(),
+                    cmd.contractName(),
+                    cmd.requestedDefinitionVersion(),
+                    cmd.requestedTargetScope());
             // A deprecated version admits no new work, whether it was named or an activation record selected it;
-            // refuse before any dedup claim or write.
-            if (registry.isDeprecated(resolved)) {
-                return Future.failedFuture(deprecatedRefusal(resolved));
+            // refuse before any dedup claim or write. A failing mark refuses nothing: the executor fails the start.
+            if (chosen.status() == DefinitionStatus.DEPRECATED) {
+                return Future.failedFuture(deprecatedRefusal(chosen.key()));
             }
-            if (!cmd.contractName().equals(rw.contractName())) {
-                return Future.failedFuture(startContractRefusal(cmd, rw, resolved));
+            if (!cmd.contractName().equals(chosen.contractName())) {
+                return Future.failedFuture(startContractRefusal(cmd, chosen.contractName(), chosen.key()));
             }
-        } catch (Exception e) {
+            // The payload is checked against the stored schema, within the size and depth bounds, before any lock is
+            // taken or row written. Deserializing and constraint checks are the executor's.
+            startPayloadValidation.validate(cmd.payload(), chosen.startSchema(), chosen.key());
+        } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
+        DefinitionKey key = chosen.key();
+        return claimAndCreate(
+                cmd,
+                startScope,
+                new Selected(key.scopeKey(), key.definitionId(), key.definitionVersion(), chosen.planHash()),
+                cmd.payload(),
+                tx);
+    }
 
-        long resolvedVersion = rw.plan().definitionVersion();
-        String fingerprint = "definitionVersion=" + resolvedVersion;
+    /** The definition version a start pins: where it lives, what it is called and the hash of its plan. */
+    private record Selected(String scopeKey, String definitionId, long version, String planHash) {}
+
+    /**
+     * Takes the new instance's execution lock, claims the dedup slot and, when this start wins, records the instance.
+     * The lock comes before the claim, the first write; nobody else knows the id yet, so the acquisition is
+     * uncontended.
+     */
+    private Future<WorkflowInstanceId> claimAndCreate(
+            StartCommand cmd, String startScope, Selected selected, Object payload, SqlClient tx) {
+        String fingerprint = "definitionVersion=" + selected.version();
 
         UUID newId = UUID.randomUUID();
         WorkflowInstanceId proposedId = new WorkflowInstanceId(newId);
 
-        return dedup.claimOrResolveStart(
-                        startScope, rw.plan().definitionId(), cmd.idempotencyKey(), proposedId, fingerprint, tx)
+        return commands.lockInstance(proposedId, tx)
+                .compose(locked -> dedup.claimOrResolveStart(
+                        startScope, selected.definitionId(), cmd.idempotencyKey(), proposedId, fingerprint, tx))
                 .compose((StartDedupResult result) -> {
                     if (!result.didInsert()) {
                         // Loser: a concurrent start claimed the slot first. Apply the replay rules to its instance.
                         return replayedStart(cmd, result.workflowId(), tx);
                     }
                     // Winner: proceed with instance creation.
-                    return doCreateInstance(cmd, startScope, rw, proposedId, tx);
+                    return doCreateInstance(cmd, startScope, selected, payload, proposedId, tx);
                 });
     }
 
-    /**
-     * Refuses a start that selects a version this node evaluated as failing, for a version that was named and for one
-     * an activation record selects. It runs before the version is resolved from the registry, because a failing row
-     * whose name binding no longer resolves has no registered plan to resolve. Only the start scope's own versions can
-     * fail, and they apply to the client when they implement its contract. A named target scope that is neither the
-     * start scope nor the default scope is refused as missing, before any mark is read.
-     *
-     * @throws WorkflowDefinitionFailingException when the selected version is failing
-     */
-    private void requireNotFailing(StartCommand cmd, String startScope) {
-        if (failing.isEmpty() || WorkflowScopes.DEFAULT.equals(startScope)) return;
-        String id = cmd.definitionId();
-        boolean owns = ownsId(registry, startScope, id, cmd.contractName())
-                || failing.holds(startScope, id, cmd.contractName());
-        Long version = cmd.requestedDefinitionVersion();
-        DefinitionKey selected;
-        if (version != null) {
-            String targetScope = cmd.requestedTargetScope();
-            // A scope the client cannot see is answered as the later resolution answers it, so that the mark of
-            // another tenant's row is never observable.
-            if (targetScope != null && !targetScope.equals(startScope) && !targetScope.equals(WorkflowScopes.DEFAULT))
-                throw new WorkflowDefinitionMissingException(id, targetScope);
-            selected = new DefinitionKey(
-                    targetScope != null ? targetScope : owns ? startScope : WorkflowScopes.DEFAULT, id, version);
-        } else {
-            Optional<DefinitionActivation> own = owns ? activations.recordOf(startScope, id) : Optional.empty();
-            if (own.isEmpty()) return;
-            selected =
-                    new DefinitionKey(own.get().targetScopeKey(), id, own.get().version());
+    /** The longest subject type, id or version a start accepts, in characters: the widths of the instance's columns. */
+    private static final int MAX_SUBJECT_TYPE_LENGTH = 64;
+
+    private static final int MAX_SUBJECT_ID_LENGTH = 255;
+    private static final int MAX_SUBJECT_VERSION_LENGTH = 64;
+
+    /** The longest idempotency key or business key a start accepts, in characters: the width of their columns. */
+    private static final int MAX_KEY_LENGTH = 255;
+
+    /** Names the key of the start that is too long, as a refusal, without repeating it; {@code null} when both fit. */
+    private static @Nullable WorkflowInvalidPayloadException oversizedKey(StartCommand cmd) {
+        String part = cmd.idempotencyKey().length() > MAX_KEY_LENGTH
+                ? "idempotency key"
+                : cmd.businessKey() != null && cmd.businessKey().length() > MAX_KEY_LENGTH ? "business key" : null;
+        if (part == null) {
+            return null;
         }
-        Optional<DefinitionFailure> failure = failing.find(selected);
-        if (failure.isPresent()) throw new WorkflowDefinitionFailingException(selected, failure.get());
+        return new WorkflowInvalidPayloadException(
+                "Start is refused: the " + part + " exceeds " + MAX_KEY_LENGTH + " characters",
+                List.of(ViolationDetail.unlocated("the " + part + " is too long", "payload")));
     }
 
-    /**
-     * Resolves the definition version a first start runs. An explicit version in a named scope resolves exactly
-     * that key, and only the start scope and the default scope can be named. An explicit version without a scope
-     * resolves from the start scope when it holds a version of the id that implements the client's contract, and
-     * from the default scope otherwise. A start without a version runs what the activation records select for the
-     * client's contract: the start scope's record, else the default scope's record, else the highest startable
-     * version of the default scope. It fails with
-     * {@link dev.vertique.workflow.exception.WorkflowNoCurrentVersionException} when none of them applies, and with
-     * {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException} when the selected key has no plan
-     * in this node's registry, before any row is written.
-     */
-    private RuntimeWorkflow resolveForStart(StartCommand cmd, String startScope) {
-        Long version = cmd.requestedDefinitionVersion();
-        if (version == null) {
-            return activations.resolve(registry, startScope, cmd.definitionId(), cmd.contractName());
+    /** Names the first part of the subject that is too long, as a refusal; {@code null} when the subject is within bounds. */
+    private static @Nullable WorkflowInvalidPayloadException oversizedSubject(@Nullable WorkflowSubjectRef subject) {
+        if (subject == null) {
+            return null;
         }
-        String targetScope = cmd.requestedTargetScope();
-        if (targetScope != null) {
-            if (!targetScope.equals(startScope) && !targetScope.equals(WorkflowScopes.DEFAULT)) {
-                throw new WorkflowDefinitionMissingException(cmd.definitionId(), targetScope);
-            }
-            return PinnedPlans.resolve(registry, requestedKey(targetScope, cmd.definitionId(), version));
+        String part = null;
+        int limit = 0;
+        if (subject.type().length() > MAX_SUBJECT_TYPE_LENGTH) {
+            part = "type";
+            limit = MAX_SUBJECT_TYPE_LENGTH;
+        } else if (subject.id().length() > MAX_SUBJECT_ID_LENGTH) {
+            part = "id";
+            limit = MAX_SUBJECT_ID_LENGTH;
+        } else if (subject.version() != null && subject.version().length() > MAX_SUBJECT_VERSION_LENGTH) {
+            part = "version";
+            limit = MAX_SUBJECT_VERSION_LENGTH;
         }
-        String owner = ownsId(registry, startScope, cmd.definitionId(), cmd.contractName())
-                ? startScope
-                : WorkflowScopes.DEFAULT;
-        return PinnedPlans.resolve(registry, requestedKey(owner, cmd.definitionId(), version));
-    }
-
-    /**
-     * Whether the start scope's own definitions of the id apply to a client of the contract: a scope other than the
-     * default one holds a registered version of the id (available or deprecated) that implements that contract.
-     */
-    static boolean ownsId(WorkflowRegistry registry, String startScope, String definitionId, String contractName) {
-        return !WorkflowScopes.DEFAULT.equals(startScope)
-                && registry.contractOf(startScope, definitionId)
-                        .filter(contractName::equals)
-                        .isPresent();
+        if (part == null) {
+            return null;
+        }
+        return new WorkflowInvalidPayloadException(
+                "Start is refused: the subject " + part + " exceeds " + limit + " characters",
+                List.of(ViolationDetail.unlocated("the subject " + part + " is too long", "payload")));
     }
 
     /** The refusal for a start through a client of another contract than the resolved definition's. */
     private static WorkflowDefinitionContractMismatchException startContractRefusal(
-            StartCommand cmd, RuntimeWorkflow rw, DefinitionKey resolved) {
+            StartCommand cmd, String implementedContract, DefinitionKey resolved) {
         return new WorkflowDefinitionContractMismatchException(
                 resolved,
                 "Definition '" + resolved.definitionId() + "' v" + resolved.definitionVersion()
-                        + " implements contract '" + rw.contractName() + "'; a client of contract '"
+                        + " implements contract '" + implementedContract + "'; a client of contract '"
                         + EchoedNames.bounded(cmd.contractName()) + "' cannot start it");
     }
 
@@ -948,67 +1085,354 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Creates the workflow instance row, persists the START history entry, and drives initial
-     * transitions. Called only by the dedup winner in {@link #start(StartCommand, SqlClient)}.
+     * Records a new instance: validates and coerces the start payload as before, inserts the instance as
+     * {@code PENDING} with its pin, business key and durable carrier, and records the {@code START} command with the
+     * payload. No initial state is computed, no subject is resolved and nothing is driven here: the executor does that
+     * when it runs the command. Called only by the dedup winner in {@link #start(StartCommand, SqlClient)}, under the
+     * new instance's execution lock.
      *
      * @param cmd the start command
      * @param startScope the resolved start scope stamped on the instance
-     * @param rw the resolved runtime workflow
+     * @param selected the definition version the instance is pinned to
+     * @param coercedPayload the start payload, validated against the version's stored schema or bound to its declared
+     *     start type
      * @param id the instance id to use
      * @param tx the active transaction
-     * @return a {@link Future} resolving to the new instance id after transitions complete
+     * @return a {@link Future} resolving to the new instance id once the instance and its command are recorded
      */
     private Future<WorkflowInstanceId> doCreateInstance(
-            StartCommand cmd, String startScope, RuntimeWorkflow rw, WorkflowInstanceId id, SqlClient tx) {
-        // Validate and coerce the payload to the declared start payload type.
-        Object coercedPayload;
+            StartCommand cmd,
+            String startScope,
+            Selected selected,
+            Object coercedPayload,
+            WorkflowInstanceId id,
+            SqlClient tx) {
+        String payloadJson;
         try {
-            coercedPayload = WorkflowPayloads.validateAndCoerceStartPayload(cmd.payload(), rw.startPayloadType());
-            payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.START_REJECTION);
-        } catch (WorkflowInvalidPayloadException e) {
-            if (e.getCause() != null) {
-                log.debug("Start payload rejected", e.getCause());
-            }
+            payloadJson = coercedPayload == null ? null : Json.encode(coercedPayload);
+        } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
-
-        // Derive initial state via the init function.
-        Object initialState;
-        try {
-            initialState = rw.initialState().apply(coercedPayload);
-        } catch (Exception e) {
-            return Future.failedFuture(new WorkflowDefinitionException(
-                    "initialState function threw for definition '" + EchoedNames.bounded(cmd.definitionId()) + "'", e));
-        }
-        String stateJson = Json.encode(initialState);
-
-        // Resolve subject ref: caller-supplied wins; fall back to plan resolver if configured.
-        WorkflowSubjectRef subjectRef;
-        try {
-            subjectRef = resolveSubjectRef(cmd, rw.plan(), initialState, rw.callbacks());
-        } catch (WorkflowDefinitionException e) {
-            return Future.failedFuture(e);
-        }
+        String targetJson = cmd.subjectRef() == null ? null : Json.encode(SubjectTarget.of(cmd.subjectRef()));
 
         Instant now = clock.instant();
 
-        // FR-WF-CTX-010/012 (PRD-WF-007 AC-1): capture-only — no new durable scope is installed
-        // around the start drive; the ambient context bound by the caller IS the capture. An empty
-        // capture persists as NULL (never an empty DurableMetadata document, per FR-WF-CTX-010). A
-        // null propagator (legacy test construction without durable-context wiring, mirroring
-        // BranchTransitionEngine's tolerance) captures nothing.
-        DurableMetadata captured =
-                propagator == null ? DurableMetadata.empty() : propagator.capture(DispatchBoundary.WORKFLOW);
+        // The instance carries the durable context of the recording caller, because the executor has no caller to
+        // capture it from later. The capture strips the identity snapshot, so no later drive can bind an identity from
+        // the instance carrier. An empty capture persists as NULL; a null propagator captures nothing.
+        DurableMetadata captured = propagator == null
+                ? DurableMetadata.empty()
+                : propagator.capture(DispatchBoundary.WORKFLOW).without(IDENTITY_SNAPSHOT_NAMESPACE);
         DurableMetadata instanceMetadata = captured.isEmpty() ? null : captured;
 
-        WorkflowInstance fresh = new WorkflowInstance(
+        WorkflowInstance pending = new WorkflowInstance(
                 id,
-                rw.plan().definitionId(),
-                rw.plan().definitionVersion(),
-                rw.plan().planHash(),
+                selected.definitionId(),
+                selected.version(),
+                selected.planHash(),
                 0L,
-                WorkflowStatus.RUNNING,
+                WorkflowStatus.PENDING,
                 cmd.businessKey(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                now,
+                now,
+                instanceMetadata,
+                startScope,
+                selected.scopeKey());
+
+        return actors.recording("START", actor -> instances
+                        .insert(pending, tx)
+                        .compose(v ->
+                                commands.recordStart(id, cmd.idempotencyKey(), payloadJson, targetJson, actor, tx)))
+                .map(v -> id);
+    }
+
+    /** The durable-context namespace of the identity snapshot, which no instance carrier keeps. */
+    static final String IDENTITY_SNAPSHOT_NAMESPACE = "identity-snapshot";
+
+    /** The fork step and branch a branch-addressed retry names, as recorded on its command. */
+    record BranchRetryTarget(String forkStepId, String branchId) {}
+
+    /** The caller-supplied subject of a start, as recorded on its command. */
+    record SubjectTarget(WorkflowSubjectRef subject) {
+        static SubjectTarget of(WorkflowSubjectRef subject) {
+            return new SubjectTarget(subject);
+        }
+    }
+
+    // --- Executor segments ---
+
+    /**
+     * The engine's side of a segment, for the executor.
+     *
+     * @return the segments seam over this engine
+     */
+    WorkflowSegments segments() {
+        return new WorkflowSegments() {
+            @Override
+            public WorkflowRegistry registry() {
+                return registry;
+            }
+
+            @Override
+            public Future<Outcome> run(CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+                return runSegment(head, claim, command, tx, Integer.MAX_VALUE);
+            }
+
+            @Override
+            public Future<Outcome> run(
+                    CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
+                return runSegment(head, claim, command, tx, maxSteps);
+            }
+
+            @Override
+            public Future<Void> instanceFailed(
+                    WorkflowInstanceId instance,
+                    long historySequence,
+                    String reasonCode,
+                    String message,
+                    SqlClient tx) {
+                return emitInstanceFailed(instance, historySequence, reasonCode, message, tx);
+            }
+        };
+    }
+
+    /**
+     * Emits {@code WORKFLOW_FAILED} for an instance that the executor failed on behalf of a command, in the same
+     * transaction and the way a fail node does. The event's step is the plan's initial step when the pin still
+     * resolves, and {@code start} otherwise: an instance that failed before its first step has no current step.
+     */
+    private Future<Void> emitInstanceFailed(
+            WorkflowInstanceId id, long historySequence, String reasonCode, String message, SqlClient tx) {
+        return instances.findById(id, tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.succeededFuture();
+            }
+            WorkflowInstance inst = found.get();
+            String stepId = inst.currentStepId();
+            if (stepId == null) {
+                try {
+                    stepId = PinnedPlans.resolve(registry, inst).plan().initialStepId();
+                } catch (RuntimeException e) {
+                    stepId = "start";
+                }
+            }
+            return eventEmitter.emitEvent(
+                    inst,
+                    WorkflowEventType.WORKFLOW_FAILED,
+                    historySequence,
+                    null,
+                    stepId,
+                    WorkflowEventEmitter.attrs("errorType", reasonCode, "errorMessage", message),
+                    tx);
+        });
+    }
+
+    /**
+     * Runs a fenced command's work in the segment's transaction: a {@code START}, a recorded {@code SIGNAL}, a
+     * recorded {@code COMPLETION} or a {@code TIMER}.
+     */
+    private Future<WorkflowSegments.Outcome> runSegment(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
+        // Every history entry the segment writes is logged with the actor that recorded the command it is about, and
+        // with the actor of the executed command when it names none. The executor never reads the ambient identity.
+        CommandActor recorded = command.actor() == null ? CommandActor.none() : command.actor();
+        DefinitionKey pinned =
+                new DefinitionKey(head.definitionScopeKey(), head.definitionId(), head.definitionVersion());
+        return decisions.segment(
+                tx,
+                command,
+                pinned,
+                () -> recorderRouter.executing(command, tx, () -> history.nextSequence(command.workflowId(), tx)
+                        .compose(from -> legacyBaseline(command, tx)
+                                .compose(logged -> runCommand(head, claim, command, tx, maxSteps))
+                                .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
+                                        // A command the segment applied may have ended the instance: its dead-lettered
+                                        // commands are settled
+                                        ? commands.settleEnded(command.workflowId(), tx)
+                                                .map(settled -> outcome)
+                                        : Future.succeededFuture(outcome))
+                                .compose(outcome -> commands.attributeSegmentHistory(
+                                                command.workflowId(), from, recorded, tx)
+                                        .map(attributed -> outcome)))));
+    }
+
+    /**
+     * Logs the full state of an instance that existed before the decision log when its first segment claims it: the
+     * mark is consumed in the segment's transaction, so the baseline is written once, before the segment's decisions.
+     */
+    private Future<Void> legacyBaseline(SegmentCommand command, SqlClient tx) {
+        if ("START".equals(command.kind())) {
+            // an instance that has not started has no state to log: its first segment writes the baseline itself
+            return Future.succeededFuture();
+        }
+        return commands.consumeLegacyBaseline(command.workflowId(), tx).compose(owed -> {
+            if (!owed) {
+                return Future.<Void>succeededFuture();
+            }
+            return instances
+                    .findById(command.workflowId(), tx)
+                    .compose(found -> found.isPresent() && found.get().stateJson() != null
+                            ? decisions.baseline(found.get(), tx)
+                            : Future.<Void>succeededFuture());
+        });
+    }
+
+    private Future<WorkflowSegments.Outcome> runCommand(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx, int maxSteps) {
+        if ("RETRY".equals(command.kind())) {
+            return driver.withStepCap(tx, maxSteps, () -> signalHandler
+                    .parkedSignals()
+                    .managing(tx, () -> runRetry(head, claim, command, tx)));
+        }
+        if ("MIGRATION".equals(command.kind())) {
+            return driver.withStepCap(tx, maxSteps, () -> signalHandler
+                    .parkedSignals()
+                    .managing(tx, () -> runMigration(head, claim, command, tx)));
+        }
+        if ("SIGNAL".equals(command.kind())) {
+            return driver.withStepCap(tx, maxSteps, () -> signalHandler
+                    .parkedSignals()
+                    .managing(tx, () -> signalHandler.runSegment(head, claim, command, tx)));
+        }
+        if ("COMPLETION".equals(command.kind())) {
+            return driver.withStepCap(
+                    tx, maxSteps, () -> signalHandler.parkedSignals().managing(tx, () -> taskLifecycle
+                            .runCompletion(head, claim, command, tx)
+                            .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
+                                    ? signalHandler
+                                            .parkedSignals()
+                                            .drain(command.workflowId(), tx)
+                                            .map(done -> outcome)
+                                    : Future.succeededFuture(outcome))));
+        }
+        if ("TIMER".equals(command.kind())) {
+            return driver.withStepCap(
+                    tx, maxSteps, () -> signalHandler.parkedSignals().managing(tx, () -> timerLifecycle
+                            .runTimer(head, claim, command, tx)
+                            .compose(outcome -> outcome == WorkflowSegments.Outcome.APPLIED
+                                    ? signalHandler
+                                            .parkedSignals()
+                                            .drain(command.workflowId(), tx)
+                                            .map(done -> outcome)
+                                    : Future.succeededFuture(outcome))));
+        }
+        if (!"START".equals(command.kind())) {
+            return Future.failedFuture(
+                    new IllegalStateException("The executor cannot run a command of kind " + command.kind()));
+        }
+        return instances.findById(command.workflowId(), tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.failedFuture(new WorkflowInstanceNotFoundException(command.workflowId()));
+            }
+            WorkflowInstance inst = found.get();
+            if (inst.status() == WorkflowStatus.CANCELLED) {
+                return settleMet(claim, command, metInstance(command, inst).orElseThrow(), tx);
+            }
+            if (inst.status() != WorkflowStatus.PENDING) {
+                // The instance no longer waits for its start: it was already initialized.
+                return Future.succeededFuture(WorkflowSegments.Outcome.STALE);
+            }
+            if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
+                    || !inst.definitionId().equals(head.definitionId())
+                    || inst.definitionVersion() != head.definitionVersion()
+                    || !Objects.equals(inst.planHash(), head.planHash())) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            }
+            RuntimeWorkflow rw;
+            try {
+                rw = PinnedPlans.resolve(registry, inst);
+                requirePlanHashMatches(inst, rw);
+            } catch (WorkflowVersionNotRunnableException | WorkflowPlanHashDriftException e) {
+                // This node cannot run the pinned plan right now (it left the registry after the peek, or differs
+                // from the recorded one). Another node, or a later pass, may run it: release rather than fail.
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            } catch (Exception e) {
+                return Future.failedFuture(e);
+            }
+            DurableMetadata recorded;
+            try {
+                recorded = WorkflowContextBinder.decodeCarrier(command.contextJson());
+            } catch (RuntimeException e) {
+                return Future.failedFuture(
+                        new IllegalStateException("The recorded context of command " + command.commandId()
+                                + " of workflow instance " + inst.id().value() + " cannot be read"));
+            }
+            return driver.withStepCap(
+                            tx, maxSteps, () -> signalHandler.parkedSignals().managing(tx, () -> contextBinder
+                                    .withRecordedBase(
+                                            inst,
+                                            command.commandId(),
+                                            null,
+                                            recorded,
+                                            () -> startSegment(inst, rw, claim, command, tx))
+                                    .compose(done ->
+                                            signalHandler.parkedSignals().drain(inst.id(), tx))))
+                    .map(v -> WorkflowSegments.Outcome.APPLIED);
+        });
+    }
+
+    /**
+     * The first segment of an instance: logs that the command was received, computes the initial state from the
+     * recorded payload, resolves the subject, moves the instance out of {@code PENDING}, appends the {@code START}
+     * history entry and its event, advances the instance until it waits or ends, and logs that the command
+     * completed.
+     */
+    private Future<Void> startSegment(
+            WorkflowInstance inst, RuntimeWorkflow rw, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        return initialize(inst, rw, claim, command, true, tx);
+    }
+
+    /**
+     * Initializes an instance from the payload and subject recorded on a {@code START} command and drives it to its
+     * first wait or its end. A {@code START} segment runs it for its own command; a {@code RETRY} segment runs it for
+     * the start that failed before initialization and logs its own command.
+     *
+     * @param ownCommand whether the claimed command is the {@code START} itself, so that this method logs its receipt
+     *     and its completion
+     */
+    private Future<Void> initialize(
+            WorkflowInstance inst,
+            RuntimeWorkflow rw,
+            ClaimedCommand claim,
+            SegmentCommand command,
+            boolean ownCommand,
+            SqlClient tx) {
+        Object coercedPayload;
+        Object initialState;
+        WorkflowSubjectRef subjectRef;
+        try {
+            Object raw = command.payloadJson() == null ? null : Json.decodeValue(command.payloadJson());
+            coercedPayload = WorkflowPayloads.validateAndCoerceStartPayload(raw, rw.startPayloadType());
+            payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.START_REJECTION);
+            try {
+                initialState = rw.initialState().apply(coercedPayload);
+            } catch (Exception e) {
+                return Future.failedFuture(new WorkflowDefinitionException(
+                        "initialState function threw for definition '" + EchoedNames.bounded(inst.definitionId()) + "'",
+                        e));
+            }
+            subjectRef = resolveSubjectRef(recordedSubject(command), rw.plan(), initialState, rw.callbacks());
+        } catch (Exception e) {
+            return Future.failedFuture(e);
+        }
+        String stateJson = Json.encode(initialState);
+
+        WorkflowInstance running = new WorkflowInstance(
+                inst.id(),
+                inst.definitionId(),
+                inst.definitionVersion(),
+                inst.planHash(),
+                inst.version() + 1,
+                WorkflowStatus.RUNNING,
+                inst.businessKey(),
                 subjectRef,
                 rw.plan().initialStepId(),
                 null,
@@ -1017,17 +1441,333 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 stateJson,
                 null,
                 null,
-                now,
-                now,
-                instanceMetadata,
-                startScope,
-                rw.definitionScopeKey());
+                inst.createdAt(),
+                clock.instant(),
+                inst.metadata(),
+                inst.scopeKey(),
+                inst.definitionScopeKey());
 
+        Future<Void> received =
+                ownCommand ? historyRecorder.appendCommandReceived(inst, command, tx) : Future.succeededFuture();
+        return received.compose(v -> instances.updateOptimistic(running, inst.version(), tx))
+                .compose(rows ->
+                        requireRowUpdated(rows, "workflow instance " + inst.id().value() + " start"))
+                .compose(v -> historyRecorder.appendStartHistory(running, command.dedupKey(), tx))
+                .compose(v -> decisions.baseline(running, tx))
+                .compose(v -> driver.driveTransitions(running, rw, tx))
+                .compose(v -> ownCommand
+                        ? historyRecorder.appendCommandHistory(
+                                inst.id(), WorkflowEntryType.COMMAND_COMPLETED, claim.commandId(), command.kind(), tx)
+                        : Future.<Void>succeededFuture());
+    }
+
+    /**
+     * Runs a claimed {@code RETRY} command, the one recovery operation, in the segment's transaction:
+     *
+     * <ul>
+     *   <li>an instance that has ended rejects it;</li>
+     *   <li>a retry that names a fork step and branch re-drives that branch once, and is stale when the branch is no
+     *       longer running or its join has decided;</li>
+     *   <li>an instance that is not {@code FAILED} and holds no dead-lettered command has nothing to recover: the command
+     *       is stale;</li>
+     *   <li>a {@code FAILED} instance without state is initialized from the stored start payload, and a dead-lettered
+     *       start is superseded; a {@code FAILED} instance with state is driven again from its current step;</li>
+     *   <li>after a drive, the parked signals the wait it reached accepts are applied, while a dead-lettered timeout
+     *       still holds its deadline;</li>
+     *   <li>then, unless the instance has ended, every dead-lettered command is offered again with its attempts reset.</li>
+     * </ul>
+     *
+     * A failure of the drive rolls the segment back and the executor fails the command and the instance.
+     */
+    private Future<WorkflowSegments.Outcome> runRetry(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        return instances.findById(command.workflowId(), tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.<WorkflowSegments.Outcome>failedFuture(
+                        new WorkflowInstanceNotFoundException(command.workflowId()));
+            }
+            WorkflowInstance inst = found.get();
+            Optional<EndedInstanceOutcomes.Outcome> met = metInstance(command, inst);
+            if (met.isPresent() && met.get().settlement() != EndedInstanceOutcomes.Settlement.EXECUTES) {
+                return settleMet(claim, command, met.get(), tx);
+            }
+            if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
+                    || !inst.definitionId().equals(head.definitionId())
+                    || inst.definitionVersion() != head.definitionVersion()
+                    || !Objects.equals(inst.planHash(), head.planHash())) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            }
+            RuntimeWorkflow rw;
+            DurableMetadata recorded;
+            try {
+                rw = PinnedPlans.resolve(registry, inst);
+                requirePlanHashMatches(inst, rw);
+                recorded = WorkflowContextBinder.decodeCarrier(command.contextJson());
+            } catch (WorkflowVersionNotRunnableException | WorkflowPlanHashDriftException e) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            } catch (Exception e) {
+                return Future.failedFuture(e);
+            }
+            Future<Void> received = historyRecorder.appendCommandHistory(
+                    inst.id(), WorkflowEntryType.COMMAND_RECEIVED, command.commandId(), command.kind(), tx);
+            if (command.targetJson() != null) {
+                BranchRetryTarget target = Json.decodeValue(command.targetJson(), BranchRetryTarget.class);
+                return received.compose(v -> contextBinder.withRecordedBase(
+                        inst,
+                        command.commandId(),
+                        null,
+                        recorded,
+                        () -> redriveBranch(inst, rw, target, claim, command, tx)));
+            }
+            return received.compose(v -> commands.hasDeadLetters(inst.id(), tx))
+                    .compose(dead -> inst.status() != WorkflowStatus.FAILED && !dead
+                            ? staleCommand(claim, command, CommandErrors.nothingToRecover(), tx)
+                            : contextBinder.withRecordedBase(
+                                    inst,
+                                    command.commandId(),
+                                    null,
+                                    recorded,
+                                    () -> recover(inst, rw, claim, command, tx)));
+        });
+    }
+
+    /**
+     * Drives a branch once for a branch-addressed {@code RETRY}: the branch the command names runs from its current
+     * step. The command is stale when that branch is no longer running or its join has already decided.
+     */
+    private Future<WorkflowSegments.Outcome> redriveBranch(
+            WorkflowInstance inst,
+            RuntimeWorkflow rw,
+            BranchRetryTarget target,
+            ClaimedCommand claim,
+            SegmentCommand command,
+            SqlClient tx) {
+        return branchTokens
+                .findByWorkflowAndFork(inst.id(), target.forkStepId(), tx)
+                .compose(tokens -> {
+                    Optional<BranchToken> named = tokens.stream()
+                            .filter(t -> t.branchId().equals(target.branchId()))
+                            .findFirst();
+                    return named.isPresent()
+                            ? branchTokens.findByIdForUpdate(named.get().id(), tx)
+                            : Future.succeededFuture(Optional.<BranchToken>empty());
+                })
+                .compose(locked -> locked.isPresent() && locked.get().status() == BranchStatus.RUNNING
+                        ? forkJoin.isJoinOpen(inst.id(), target.forkStepId(), tx)
+                                .map(open -> open ? locked : Optional.<BranchToken>empty())
+                        : Future.succeededFuture(Optional.<BranchToken>empty()))
+                .compose(live -> live.isEmpty()
+                        ? staleCommand(claim, command, CommandErrors.retryBranchEnded(), tx)
+                        : forkJoin.driveAndMaybeJoin(inst, live.get(), rw, command.commandId(), tx)
+                                .compose(done -> historyRecorder.appendCommandHistory(
+                                        inst.id(),
+                                        WorkflowEntryType.COMMAND_COMPLETED,
+                                        command.commandId(),
+                                        command.kind(),
+                                        tx))
+                                .map(done -> WorkflowSegments.Outcome.APPLIED));
+    }
+
+    private Future<WorkflowSegments.Outcome> recover(
+            WorkflowInstance inst, RuntimeWorkflow rw, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        Future<Boolean> drove;
+        if (inst.status() != WorkflowStatus.FAILED) {
+            drove = Future.succeededFuture(false);
+        } else if (inst.stateJson() == null) {
+            // The start failed before the instance had a state: initialize it from the stored start payload. A start
+            // that was dead-lettered is superseded, so that its payload runs once.
+            drove = commands.readStart(inst.id(), tx).compose(start -> {
+                if (start.isEmpty()) {
+                    return Future.<Boolean>failedFuture(new IllegalStateException(
+                            "Workflow instance " + inst.id().value() + " has no start command to initialize from"));
+                }
+                return commands.supersedeDeadStart(inst.id(), tx)
+                        .compose(superseded -> initialize(inst, rw, claim, start.get(), false, tx))
+                        .map(done -> true);
+            });
+        } else if (inst.waitType() != null) {
+            // The instance failed at a wait it never left: it goes back to that wait, whose task, timers and branches
+            // are all still there. The wait's handler does not run again, so nothing is recorded twice.
+            drove = resumeWait(inst, tx).map(done -> true);
+        } else {
+            drove = redrive(inst, rw, tx).map(done -> true);
+        }
+        return drove.compose(drive ->
+                        drive ? signalHandler.parkedSignals().drain(inst.id(), tx) : Future.<Void>succeededFuture())
+                .compose(done -> instances.findById(inst.id(), tx))
+                .compose(after -> after.isPresent()
+                                && !EndedInstanceOutcomes.isEnded(after.get().status())
+                        ? commands.reofferDeadLetters(inst.id(), tx).<Void>mapEmpty()
+                        : Future.<Void>succeededFuture())
+                .compose(done -> historyRecorder.appendCommandHistory(
+                        inst.id(), WorkflowEntryType.COMMAND_COMPLETED, command.commandId(), command.kind(), tx))
+                .map(done -> WorkflowSegments.Outcome.APPLIED);
+    }
+
+    /** Resets a {@code FAILED} instance that has state to {@code RUNNING} and drives it again from its current step. */
+    private Future<Void> redrive(WorkflowInstance inst, RuntimeWorkflow rw, SqlClient tx) {
+        long prevVersion = inst.version();
+        WorkflowInstance retried = inst.withVersion(prevVersion + 1)
+                .withStatus(WorkflowStatus.RUNNING)
+                .withWait(null, null)
+                .withError(null, null)
+                .withUpdatedAt(clock.instant());
+        return reopen(inst, retried, tx).compose(v -> driver.driveTransitions(retried, rw, tx));
+    }
+
+    /**
+     * Returns a {@code FAILED} instance that failed at a wait to {@code WAITING} at that wait. The wait columns the
+     * failure kept stand as they were, the wait's task and branches are untouched and the wait's handler does not run;
+     * the timers whose command failed (or was settled because the instance had failed) are offered again, each with one
+     * new command that keeps the original fire time, so a deadline stands and a timer that was due fires at once.
+     */
+    private Future<Void> resumeWait(WorkflowInstance inst, SqlClient tx) {
+        long prevVersion = inst.version();
+        WorkflowInstance resumed = inst.withVersion(prevVersion + 1)
+                .withStatus(WorkflowStatus.WAITING)
+                .withError(null, null)
+                .withUpdatedAt(clock.instant());
+        return reopen(inst, resumed, tx)
+                .compose(v -> commands.rearmTimers(inst.id(), tx))
+                .mapEmpty();
+    }
+
+    /** Writes the instance's return from {@code FAILED} and the {@code RETRIED} entry. */
+    private Future<Void> reopen(WorkflowInstance failed, WorkflowInstance reopened, SqlClient tx) {
         return instances
-                .insert(fresh, tx)
-                .compose(v -> appendStartHistory(fresh, cmd, tx))
-                .compose(v -> driver.driveTransitions(fresh, rw, tx))
-                .map(v -> id);
+                .updateOptimistic(reopened, failed.version(), tx)
+                .compose(rowCount ->
+                        requireRowUpdated(rowCount, "instance '" + failed.id().value() + "' during retry"))
+                .compose(v -> decisions.record(
+                        failed,
+                        reopened,
+                        failed.currentStepId() == null ? "start" : failed.currentStepId(),
+                        "retried",
+                        tx))
+                .compose(v -> history.nextSequence(failed.id(), tx))
+                .compose(seq -> {
+                    String histPayload =
+                            Json.encode(new RetriedHistoryPayload("FAILED", WorkflowPayloads.commandCorrelationId()));
+                    return history.append(
+                            new WorkflowHistoryEntry(
+                                    failed.id(), seq, WorkflowEntryType.RETRIED, histPayload, clock.instant()),
+                            tx);
+                });
+    }
+
+    /**
+     * Runs a claimed {@code MIGRATION} command in the segment's transaction. A failed instance rejects it. Otherwise
+     * the migration runs under a savepoint: when it is applied, the parked signals the target version does not declare
+     * are rejected and the rest are applied at the wait the instance reached; when it is not valid it is rejected
+     * with a reason that states neither a value nor a failure's text, and the instance is unchanged.
+     */
+    private Future<WorkflowSegments.Outcome> runMigration(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        return instances.findById(command.workflowId(), tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.<WorkflowSegments.Outcome>failedFuture(
+                        new WorkflowInstanceNotFoundException(command.workflowId()));
+            }
+            WorkflowInstance inst = found.get();
+            Optional<EndedInstanceOutcomes.Outcome> met = metInstance(command, inst);
+            if (met.isPresent()) {
+                return settleMet(claim, command, met.get(), tx);
+            }
+            Optional<MigrationExecutor.Prepared> prepared;
+            try {
+                prepared = migrationExecutor.prepare(head, command, inst);
+            } catch (RuntimeException e) {
+                return Future.failedFuture(e);
+            }
+            if (prepared.isEmpty()) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            }
+            return historyRecorder
+                    .appendCommandReceived(inst, command, tx)
+                    .compose(v -> migrationExecutor.execute(prepared.get(), tx))
+                    .compose(result -> switch (result) {
+                        case MigrationExecutor.Result.Applied applied ->
+                            signalHandler
+                                    .rejectUndeclaredParked(inst.id(), applied.target(), tx)
+                                    .compose(done ->
+                                            signalHandler.parkedSignals().drain(inst.id(), tx))
+                                    .compose(done -> historyRecorder.appendCommandHistory(
+                                            inst.id(),
+                                            WorkflowEntryType.COMMAND_COMPLETED,
+                                            command.commandId(),
+                                            command.kind(),
+                                            tx))
+                                    .map(done -> WorkflowSegments.Outcome.APPLIED);
+                        case MigrationExecutor.Result.Rejected rejected ->
+                            rejectCommand(claim, command, rejected.reason(), tx);
+                    });
+        });
+    }
+
+    /** What the outcome table makes of the command that meets the instance, empty when the instance is live. */
+    private static Optional<EndedInstanceOutcomes.Outcome> metInstance(SegmentCommand command, WorkflowInstance inst) {
+        return EndedInstanceOutcomes.of(command.kind(), inst.status().name(), EndedInstanceOutcomes.Target.none());
+    }
+
+    /** Settles the claimed command of a retry, a migration or a start as the outcome table states. */
+    private Future<WorkflowSegments.Outcome> settleMet(
+            ClaimedCommand claim, SegmentCommand command, EndedInstanceOutcomes.Outcome outcome, SqlClient tx) {
+        return outcome.settlement() == EndedInstanceOutcomes.Settlement.CANCELLED
+                ? cancelCommand(claim, command, outcome.reason(), tx)
+                : rejectCommand(claim, command, outcome.reason(), tx);
+    }
+
+    /** Settles the claimed command as cancelled with a reason, and logs it, in the segment's transaction. */
+    private Future<WorkflowSegments.Outcome> cancelCommand(
+            ClaimedCommand claim, SegmentCommand command, String reason, SqlClient tx) {
+        return commands.cancel(command.commandId(), claim.token(), reason, tx)
+                .compose(ClaimLostException::requireRow)
+                .compose(done -> historyRecorder.appendCommandOutcomeHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_CANCELLED,
+                        command.commandId(),
+                        command.kind(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_CANCELLED);
+    }
+
+    /** Settles the claimed command as rejected with a reason, and logs it, in the segment's transaction. */
+    private Future<WorkflowSegments.Outcome> rejectCommand(
+            ClaimedCommand claim, SegmentCommand command, String reason, SqlClient tx) {
+        return commands.reject(command.commandId(), claim.token(), reason, tx)
+                .compose(ClaimLostException::requireRow)
+                .compose(done -> historyRecorder.appendCommandOutcomeHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_REJECTED,
+                        command.commandId(),
+                        command.kind(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_REJECTED);
+    }
+
+    /** Settles the claimed command as stale with a reason, and logs it, in the segment's transaction. */
+    private Future<WorkflowSegments.Outcome> staleCommand(
+            ClaimedCommand claim, SegmentCommand command, String reason, SqlClient tx) {
+        return commands.stale(command.commandId(), claim.token(), reason, tx)
+                .compose(ClaimLostException::requireRow)
+                .compose(done -> historyRecorder.appendCommandOutcomeHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_STALE,
+                        command.commandId(),
+                        command.kind(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_STALE);
+    }
+
+    /** The caller-supplied subject recorded on a start command, or {@code null}. */
+    private static WorkflowSubjectRef recordedSubject(SegmentCommand command) {
+        if (command.targetJson() == null) {
+            return null;
+        }
+        return Json.decodeValue(command.targetJson(), SubjectTarget.class).subject();
     }
 
     /**
@@ -1046,7 +1786,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * <p>The resolver is invoked before the {@link WorkflowInstance} row is inserted, inside the
      * start transaction, because it is a pure function of the initial state.
      *
-     * @param cmd          the start command; provides the caller-supplied subject ref (precedence 1)
+     * @param callerRef    the caller-supplied subject ref recorded with the start (precedence 1), or {@code null}
      * @param plan         the compiled workflow plan; provides the resolver callback id (precedence 2)
      * @param initialState the initial state derived from the start payload; passed to the resolver
      * @param callbacks    the callback registry used to look up the resolver function
@@ -1054,10 +1794,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * @throws WorkflowDefinitionException if the resolver is configured but returns {@code null}
      */
     private WorkflowSubjectRef resolveSubjectRef(
-            StartCommand cmd, WorkflowPlan plan, Object initialState, WorkflowCallbackRegistry callbacks) {
+            @Nullable WorkflowSubjectRef callerRef,
+            WorkflowPlan plan,
+            Object initialState,
+            WorkflowCallbackRegistry callbacks) {
         // Precedence 1: caller-supplied subject ref wins unconditionally.
-        if (cmd.subjectRef() != null) {
-            return cmd.subjectRef();
+        if (callerRef != null) {
+            return callerRef;
         }
 
         // Precedence 2: plan-configured subject resolver.
@@ -1084,40 +1827,20 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Appends the {@code START} history entry for a newly created instance and emits the
-     * {@link WorkflowEventType#WORKFLOW_STARTED} event.
-     *
-     * <p>Delegates to {@link WorkflowHistoryRecorder#appendStartHistory}.
-     *
-     * @param inst the fresh instance
-     * @param cmd the original start command
-     * @param tx the active transaction
-     * @return a {@link Future} that completes when the entry is inserted and the event is emitted
-     */
-    private Future<Void> appendStartHistory(WorkflowInstance inst, StartCommand cmd, SqlClient tx) {
-        return historyRecorder.appendStartHistory(inst, cmd, tx);
-    }
-
-    /**
      * {@inheritDoc}
      *
-     * <p>Performs a signal dedup claim, loads the instance row, validates the waiting state, coerces
-     * the payload, applies the state updater, and drives transitions. Returns a no-op if the signal
-     * was already applied — without ever loading the instance row. Throws
-     * {@link WorkflowVersionPinUnavailableException} when the pinned plan version is no longer
-     * registered.
-     *
-     * <p>When the instance is WAITING on a SIGNAL with an associated timeout timer
-     * ({@code wait_aux_id != null}), the timeout timer is cancelled transactionally before
-     * the signal transition is applied. This follows the lock-order invariant: the timer row
-     * is marked CANCELLED before the instance row is updated.
+     * <p>Records the signal as a {@code SIGNAL} command in the caller's transaction and returns once it is recorded; an
+     * executor applies it afterwards, in its own segment, in queue order. The call is refused synchronously only for a
+     * missing or ended instance, a name the instance's pinned definition row does not declare, a payload over the
+     * record-time size or depth bounds, or an instance that already holds the configured number of open signals. A
+     * committed duplicate returns success before any of that.
      *
      * @param id the workflow instance id; must not be null
      * @param signalName the name of the signal to deliver; must not be null
-     * @param payload the signal payload; coerced to the declared payload type
+     * @param payload the signal payload; stored as recorded and bound to the declared type when it is applied
      * @param signalDedupKey caller-supplied dedup key; must not be null
      * @param tx the active SQL transaction; must not be null
-     * @return a {@link Future} that completes when the signal has been applied
+     * @return a {@link Future} that completes when the signal is recorded
      */
     @Override
     public Future<Void> signal(
@@ -1126,8 +1849,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Delivers an instance-level signal inside {@code tx}. A non-null {@code callerContractName} makes the
-     * delivery refuse an instance pinned to a definition of another contract.
+     * Records an instance-level signal inside {@code tx}. A non-null {@code callerContractName} makes the recording
+     * refuse an instance pinned to a definition of another contract.
      */
     private Future<Void> deliverSignal(
             WorkflowInstanceId id,
@@ -1140,50 +1863,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         if (invalidClient != null) {
             return invalidClient;
         }
-
-        // Claim before load: the workflow_dedup upsert (kind='signal') locks only its own row —
-        // (kind, scope, key) is not part of the workflow_timers -> workflow_tasks ->
-        // workflow_branch_tokens -> workflow_instances lock-order chain — so claiming first cannot
-        // invert that invariant. Race-safe via the dedup repository's atomic upsert: exactly one
-        // caller observes inserted=true. The previous findSignal + insertSignal two-step left a
-        // snapshot-visibility window where two concurrent callers could both observe an empty dedup
-        // row, both apply the signal, and the loser of the workflow_instances optimistic-version race
-        // would surface a WorkflowConflictException to a caller that the public contract promises is
-        // idempotent. Claiming before the load also spares the loser an unnecessary instance read.
-        return dedup.claimOrResolveSignal(id, signalDedupKey, tx).compose(inserted -> {
-            if (!inserted) {
-                // Prior committed transaction already applied the signal — idempotent no-op. The
-                // instance row is never read on this path.
-                return Future.<Void>succeededFuture();
-            }
-            // Non-locking read: optimistic-version check on the subsequent UPDATE catches concurrent
-            // writes. Using findByIdForUpdate here would lock workflow_instances before
-            // workflow_timers, inverting the lock-order invariant (timers must be locked first) and
-            // causing deadlocks under signal-vs-fire / cancel-vs-fire races.
-            return instances.findById(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
-                if (optInst.isEmpty()) {
-                    return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
-                }
-                WorkflowInstance inst = optInst.get();
-                // Binder-row bind (Contract Appendix C2): instance-owned no-branch signal drive. No
-                // explicit carrier on this arity — the 8-arg explicit-carrier overload threads one
-                // instead.
-                return contextBinder.withBound(
-                        inst,
-                        null,
-                        () -> signalHandler.doApplySignal(
-                                inst,
-                                new SignalDeliveryContext(signalName, payload, signalDedupKey, callerContractName),
-                                tx));
-            });
-        });
+        return recordSignal(id, callerContractName, signalName, payload, signalDedupKey, null, null, null, tx);
     }
 
     /**
      * Branch-aware signal overload (PRD-WF-002 §D11). When both {@code forkStepId} and
-     * {@code branchId} are non-null, the engine routes to the matching branch token and drives
-     * its branch via {@link BranchTransitionEngine#driveBranchTransitions}; when both are null
-     * this is the existing instance-level signal path; mixed-null is rejected.
+     * {@code branchId} are non-null, the signal is recorded for the matching branch; when both are null
+     * this is the instance-level signal path; mixed-null is rejected.
      */
     @Override
     public Future<Void> signal(
@@ -1205,53 +1891,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         if (forkStepId == null || branchId == null) {
             return Future.failedFuture(
                     new IllegalArgumentException("forkStepId and branchId must be supplied together; got forkStepId="
-                            + forkStepId + ", branchId=" + branchId));
+                            + EchoedNames.bounded(forkStepId) + ", branchId=" + EchoedNames.bounded(branchId)));
         }
         if (branchTokens == null || branchEngine == null) {
             return Future.failedFuture(new UnsupportedOperationException(
                     "branch-aware signal requires branch collaborators; engine constructed without them"));
         }
-        // Branch dedup is scoped by (workflowId, forkStepId, branchId, dedupKey) — see
-        // WorkflowDedupScopes.signalKey. Use the same dedup repository as the instance path.
-        String scope = dev.vertique.workflow.dedup.WorkflowDedupScopes.signalScope(id);
-        String key = dev.vertique.workflow.dedup.WorkflowDedupScopes.signalKey(signalDedupKey, forkStepId, branchId);
-        return dedup.claimOrResolveSignalScoped(scope, key, id, tx).compose(inserted -> {
-            if (!inserted) {
-                return Future.<Void>succeededFuture();
-            }
-            return instances.findById(id, tx).compose(optInst -> {
-                if (optInst.isEmpty()) {
-                    return Future.<Void>failedFuture(new WorkflowInstanceNotFoundException(id));
-                }
-                WorkflowInstance inst = optInst.get();
-                RuntimeWorkflow rw;
-                try {
-                    rw = PinnedPlans.resolve(registry, inst);
-                    // Codex review fix H2: every other engine entry-point that resolves rw
-                    // also asserts plan-hash drift. Branch signals must do the same so a
-                    // redeployed-but-same-version plan doesn't silently run new callbacks
-                    // against a persisted instance.
-                    requirePlanHashMatches(inst, rw);
-                } catch (Exception e) {
-                    return Future.<Void>failedFuture(e);
-                }
-                return branchTokens
-                        .findByWaitForBranch(id, forkStepId, branchId, WaitType.SIGNAL.name(), signalName, tx)
-                        .compose(opt -> {
-                            if (opt.isEmpty()) {
-                                return Future.<Void>failedFuture(new WorkflowSignalRejectedException(
-                                        "No branch waiting for signal '" + signalName + "' on workflow '"
-                                                + id.value() + "' fork '" + forkStepId + "' branch '"
-                                                + branchId + "'"));
-                            }
-                            // Apply the signal payload to the branch-local state slice via the
-                            // wait-signal node's stateUpdater callback, then drive the branch
-                            // forward (which will trigger evaluateJoin if it terminates).
-                            BranchToken waiting = opt.get();
-                            return signalHandler.applyBranchSignal(inst, waiting, rw, signalName, payload, tx, null);
-                        });
-            });
-        });
+        return recordSignal(id, null, signalName, payload, signalDedupKey, forkStepId, branchId, null, tx);
     }
 
     /**
@@ -1259,47 +1905,20 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * default so a non-null {@code signalMetadata} is honored instead of failing fast.
      *
      * <p>A non-null {@code signalMetadata} requires durable-context propagation to be wired (C4
-     * no-silent-drop principle): when {@code propagator} is {@code null} — the same condition under
-     * which the {@link WorkflowEngineFactory} assembly seam substitutes
-     * {@link WorkflowContextBinder#noop()} for the instance-level binder, and under which
-     * {@link BranchTransitionEngine}'s branch-owned bind seam runs unbound — this overload fails
-     * fast with an {@link UnsupportedOperationException} instead of silently accepting and then
-     * discarding the caller's carrier. This check runs first, before dedup claim or sanitization, so
-     * neither path is reached at all: an accepted-but-ignored carrier would otherwise look like a
-     * successful delivery to the caller while never being bound anywhere.
+     * no-silent-drop principle): when {@code propagator} is {@code null} this overload fails fast with an
+     * {@link UnsupportedOperationException} instead of silently accepting and then discarding the caller's carrier.
+     * This check runs first, before the duplicate lookup or sanitization.
      *
-     * <p>A non-null {@code signalMetadata} is otherwise first sanitized exactly once via
-     * {@link DurableContextPropagator#sanitizeInboundCarrier(DurableMetadata)} (ADR-0147), stripping
-     * any namespace whose registered decoder declares itself authenticated-only, before either
-     * explicit-carrier path below runs.
-     *
-     * <p>Instance-level requests ({@code forkStepId} and {@code branchId} both {@code null}) mirror
-     * the 5-arg {@link #signal(WorkflowInstanceId, String, Object, String, SqlClient)} path exactly,
-     * except the dedup-winner's drive is bound via {@link WorkflowContextBinder#withBound} with the
-     * sanitized {@code signalMetadata} threaded through as the explicit carrier (instead of
-     * {@code null}). The dedup claim ({@link WorkflowDedupRepository#claimOrResolveSignal}) runs
-     * <em>before</em> the bind, exactly as in the 5-arg path — a losing delivery on a duplicate dedup
-     * key resolves to a no-op before any carrier is ever bound (FR-WF-CTX-042); its carrier is
-     * discarded with it.
+     * <p>A non-null {@code signalMetadata} is otherwise sanitized exactly once via
+     * {@link DurableContextPropagator#sanitizeInboundCarrier(DurableMetadata)} (authenticated-only namespaces), stripping any namespace
+     * whose registered decoder declares itself authenticated-only, and stripped of the identity-snapshot namespace.
+     * The result is bounded like a payload and stored on the recorded command as its explicit carrier; the executor
+     * binds it when it applies the signal. A losing delivery on a duplicate dedup key resolves to a no-op before any
+     * carrier is stored (FR-WF-CTX-042).
      *
      * <p>A {@code null} {@code signalMetadata} delegates to the interface default, which in turn
      * calls the legacy 7-arg {@link #signal(WorkflowInstanceId, String, Object, String, String,
      * String, SqlClient)} overload — behavior unchanged for callers that supply no carrier.
-     *
-     * <p>Branch-targeted requests ({@code forkStepId} and {@code branchId} both non-null) with a
-     * non-null {@code signalMetadata} drive the targeted branch through the
-     * {@link BranchTransitionEngine} override seam (Contract Appendix C3): the branch-scoped dedup
-     * claim ({@link WorkflowDedupRepository#claimOrResolveSignalScoped}) runs first — mirroring the
-     * 7-arg branch-signal path's ordering — so a losing delivery on a duplicate dedup key resolves
-     * to a no-op before any carrier is ever bound (FR-WF-CTX-042), discarding the loser's carrier
-     * with it. On a claim win, the effective base is computed as
-     * {@code signalMetadata.merge(instance.metadata(), MergePolicy.CALLER_WINS)} (or
-     * {@code signalMetadata} unchanged when {@code instance.metadata()} is {@code null} — a no-op
-     * merge) and passed as {@link SignalHandler#applyBranchSignal}'s {@code effectiveBaseOverride},
-     * which threads it into {@code driveBranchTransitions} so the branch's inner bind uses it
-     * instead of the token's own {@code metadata()} — the carrier is authoritative over the token
-     * metadata unconditionally, with no fallback to the token even when the carrier's namespaces
-     * happen to be a subset of the token's.
      *
      * @param id workflow instance id
      * @param signalName signal name
@@ -1310,7 +1929,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * @param signalMetadata optional explicit durable-context carrier overriding the ambient capture
      *     as the drive's base context, or {@code null} to fall back to the legacy overloads
      * @param tx the active SQL transaction; must not be null
-     * @return a {@link Future} that completes when the signal has been applied, or fails with
+     * @return a {@link Future} that completes when the signal is recorded, or fails with
      *     {@link UnsupportedOperationException} when {@code signalMetadata} is non-null but durable
      *     context propagation is not wired (C4 no-silent-drop)
      */
@@ -1334,201 +1953,306 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         }
         if (propagator == null) {
             // No-silent-drop (C4): an explicit carrier with no durable-context propagation wired has
-            // nowhere to be bound — the instance-level binder is WorkflowContextBinder.noop() and the
-            // branch-owned bind seam runs unbound (see WorkflowEngine's package-private constructor
-            // javadoc). Silently accepting the carrier here would look like a successful delivery to
-            // the caller while the carrier is dropped on the floor; fail fast instead, before the
-            // dedup claim or sanitization run.
+            // nowhere to be bound. Silently accepting the carrier here would look like a successful
+            // recording to the caller while the carrier is dropped on the floor; fail fast instead.
             return Future.failedFuture(new UnsupportedOperationException(
                     "explicit signal carrier requires durable context propagation to be wired"));
         }
-        // Sanitization seam (ADR-0147): strip authenticated-only namespaces from the sender-supplied
-        // explicit carrier exactly once, here at the dispatcher entry, before either explicit-carrier
-        // path (instance-level or branch-targeted) below is reached. Persisted carriers (timer/branch
-        // /instance metadata) are framework-captured and are never routed through this seam.
-        DurableMetadata sanitizedMetadata = propagator.sanitizeInboundCarrier(signalMetadata);
-        if (forkStepId == null && branchId == null) {
-            return signalInstanceWithExplicitCarrier(id, signalName, payload, signalDedupKey, sanitizedMetadata, tx);
-        }
-        if (forkStepId == null || branchId == null) {
+        if ((forkStepId == null) != (branchId == null)) {
             return Future.failedFuture(
                     new IllegalArgumentException("forkStepId and branchId must be supplied together; got forkStepId="
-                            + forkStepId + ", branchId=" + branchId));
+                            + EchoedNames.bounded(forkStepId) + ", branchId=" + EchoedNames.bounded(branchId)));
         }
-        if (branchTokens == null || branchEngine == null) {
+        if (forkStepId != null && (branchTokens == null || branchEngine == null)) {
             return Future.failedFuture(new UnsupportedOperationException(
                     "branch-aware signal requires branch collaborators; engine constructed without them"));
         }
-        return signalBranchWithExplicitCarrier(
-                id, signalName, payload, signalDedupKey, forkStepId, branchId, sanitizedMetadata, tx);
+        // Sanitization seam: strip authenticated-only namespaces from the sender-supplied explicit carrier
+        // exactly once, here at the entry. The identity snapshot is never stored in a command row.
+        DurableMetadata sanitizedMetadata =
+                propagator.sanitizeInboundCarrier(signalMetadata).without(IDENTITY_SNAPSHOT_NAMESPACE);
+        return recordSignal(id, null, signalName, payload, signalDedupKey, forkStepId, branchId, sanitizedMetadata, tx);
     }
 
     /**
-     * Instance-level explicit-carrier signal drive (PRD-WF-007, Contract Appendix C4, AC-4
-     * instance-level case). Mirrors the 5-arg {@link #signal(WorkflowInstanceId, String, Object,
-     * String, SqlClient)} path exactly, except the dedup-winner's drive is bound via
-     * {@link WorkflowContextBinder#withBound} with {@code signalMetadata} threaded through as the
-     * explicit carrier (instead of {@code null}).
-     *
-     * @param id workflow instance id
-     * @param signalName signal name
-     * @param payload signal payload
-     * @param signalDedupKey caller-supplied dedup key
-     * @param signalMetadata the explicit durable-context carrier (validated non-null by the caller)
-     * @param tx the active SQL transaction
-     * @return a {@link Future} that completes when the signal has been applied
+     * Records a {@code SIGNAL} command: the committed duplicate lookup first (a hit returns success and reads nothing
+     * else); then the instance, its ended status and the declared name, read without the execution lock; then the size
+     * and depth bounds of the payload and of the explicit carrier, which do no I/O; then, under the execution lock, the
+     * duplicate lookup and the checks again, the open-signal cap through the queue row's counter, the dedup claim and the
+     * command insert. A refusal before the claim writes nothing, so the caller may commit other work in the same
+     * transaction and the refused key stays free.
      */
-    private Future<Void> signalInstanceWithExplicitCarrier(
+    private Future<Void> recordSignal(
             WorkflowInstanceId id,
+            @Nullable String callerContractName,
             String signalName,
             Object payload,
             String signalDedupKey,
-            DurableMetadata signalMetadata,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            @Nullable DurableMetadata carrier,
             SqlClient tx) {
-        // Dedup claim MUST run before the load/bind (FR-WF-CTX-042): a losing delivery on a
-        // duplicate dedup key resolves to a no-op here without ever reading the instance row, so the
-        // loser's carrier is discarded with it rather than ever being bound. Claiming first is safe
-        // under the lock-order invariant: the workflow_dedup upsert (kind='signal') locks only its own
-        // row and is not part of the workflow_timers -> workflow_tasks -> workflow_branch_tokens ->
-        // workflow_instances chain — same rationale as the 5-arg signal() overload.
-        return dedup.claimOrResolveSignal(id, signalDedupKey, tx).compose(inserted -> {
-            if (!inserted) {
+        String oversized = oversizedName(signalName, forkStepId, branchId);
+        if (oversized != null) {
+            return Future.failedFuture(new WorkflowInvalidPayloadException(
+                    "Signal for instance '" + id.value() + "' is refused: the " + oversized + " exceeds "
+                            + MAX_NAME_LENGTH + " characters",
+                    List.of(ViolationDetail.unlocated("the " + oversized + " is too long", "payload"))));
+        }
+        String key = WorkflowDedupScopes.signalKey(signalDedupKey, forkStepId, branchId);
+        return dedup.findSignal(id, key, tx).compose(duplicate -> {
+            if (duplicate.isPresent()) {
                 return Future.<Void>succeededFuture();
             }
-            // Non-locking read: same lock-order rationale as the 5-arg signal() overload.
-            return instances.findById(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
-                if (optInst.isEmpty()) {
-                    return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
-                }
-                WorkflowInstance inst = optInst.get();
-                return contextBinder.withBound(
-                        inst,
-                        signalMetadata,
-                        () -> signalHandler.doApplySignal(
-                                inst, new SignalDeliveryContext(signalName, payload, signalDedupKey), tx));
-            });
+            return admitSignal(id, callerContractName, signalName, forkStepId, branchId, tx)
+                    .compose(admitted -> {
+                        String payloadJson;
+                        String carrierJson;
+                        try {
+                            recordValidator.validate(payload);
+                            JsonObject carrierDocument = carrier == null ? null : carrier.toCarrier();
+                            if (carrierDocument != null) {
+                                recordValidator.validate(carrierDocument);
+                            }
+                            payloadJson = payload == null ? null : Json.encode(payload);
+                            carrierJson = carrierDocument == null ? null : carrierDocument.encode();
+                        } catch (WorkflowInvalidPayloadException e) {
+                            return Future.<Void>failedFuture(new WorkflowInvalidPayloadException(
+                                    "Signal '" + EchoedNames.bounded(signalName) + "' for instance '" + id.value()
+                                            + "' is refused: " + e.getMessage(),
+                                    e.violations()));
+                        }
+                        return commands.lockInstance(id, tx)
+                                .compose(locked -> dedup.findSignal(id, key, tx))
+                                .compose(again -> again.isPresent()
+                                        ? Future.<Void>succeededFuture()
+                                        : admitSignal(id, callerContractName, signalName, forkStepId, branchId, tx)
+                                                .compose(inst -> claimAndRecord(
+                                                        id,
+                                                        signalName,
+                                                        signalDedupKey,
+                                                        key,
+                                                        forkStepId,
+                                                        branchId,
+                                                        payloadJson,
+                                                        carrierJson,
+                                                        tx)));
+                    });
+        });
+    }
+
+    /** The longest signal name, fork step id or branch id a recording accepts, in characters. */
+    private static final int MAX_NAME_LENGTH = 255;
+
+    /** Names the first of the signal name, fork step id and branch id that is too long, or {@code null}. */
+    private static @Nullable String oversizedName(
+            String signalName, @Nullable String forkStepId, @Nullable String branchId) {
+        if (signalName != null && signalName.length() > MAX_NAME_LENGTH) {
+            return "signal name";
+        }
+        if (forkStepId != null && forkStepId.length() > MAX_NAME_LENGTH) {
+            return "fork step id";
+        }
+        if (branchId != null && branchId.length() > MAX_NAME_LENGTH) {
+            return "branch id";
+        }
+        return null;
+    }
+
+    /** The cap, the dedup claim and the insert of a recording that passed every check, under the execution lock. */
+    private Future<Void> claimAndRecord(
+            WorkflowInstanceId id,
+            String signalName,
+            String signalDedupKey,
+            String dedupKeyOfClaim,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            @Nullable String payloadJson,
+            @Nullable String carrierJson,
+            SqlClient tx) {
+        return actors.captured().compose(actor -> commands.raiseOpenSignals(id, maxOpenSignals, tx)
+                .compose(raised -> {
+                    if (!raised) {
+                        return Future.<Void>failedFuture(new WorkflowSignalLimitException(id, maxOpenSignals));
+                    }
+                    return dedup.claimOrResolveSignalScoped(
+                                    WorkflowDedupScopes.signalScope(id), dedupKeyOfClaim, id, tx)
+                            .compose(inserted -> {
+                                if (!inserted) {
+                                    // A concurrent duplicate won the claim: undo the slot taken for this recording.
+                                    return commands.lowerOpenSignals(id, tx);
+                                }
+                                return commands.recordSignal(
+                                                id,
+                                                signalName,
+                                                forkStepId,
+                                                branchId,
+                                                signalDedupKey,
+                                                payloadJson,
+                                                carrierJson,
+                                                actor,
+                                                tx)
+                                        .onSuccess(recorded -> actors.reportAbsence(actor, "SIGNAL"))
+                                        .<Void>mapEmpty();
+                            });
+                }));
+    }
+
+    /**
+     * Reads the instance a signal addresses and refuses what recording refuses: a missing instance, an ended one, a
+     * caller of another contract and a name the pinned definition row does not declare for the addressed wait. A row
+     * that stores no declaration admits every name; the executor then rejects an undeclared one.
+     */
+    private Future<WorkflowInstance> admitSignal(
+            WorkflowInstanceId id,
+            @Nullable String callerContractName,
+            String signalName,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            SqlClient tx) {
+        return instances.findById(id, tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.<WorkflowInstance>failedFuture(new WorkflowInstanceNotFoundException(id));
+            }
+            WorkflowInstance inst = found.get();
+            if (switch (inst.status()) {
+                case COMPLETED, COMPENSATED, CANCELLED, EXPIRED -> true;
+                default -> false;
+            }) {
+                return Future.<WorkflowInstance>failedFuture(new WorkflowSignalRejectedException("Instance '"
+                        + id.value() + "' cannot receive signal '" + EchoedNames.bounded(signalName)
+                        + "': instance ended with status " + inst.status()));
+            }
+            DefinitionKey pin =
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion());
+            return checkContract(inst, pin, callerContractName, tx)
+                    .compose(ok -> commands.declaredSignalNames(pin, forkStepId, branchId, tx))
+                    .compose(declared -> {
+                        if (declared.isPresent() && !declared.get().contains(signalName)) {
+                            return Future.<WorkflowInstance>failedFuture(
+                                    new WorkflowSignalRejectedException("Instance '" + id.value()
+                                            + "' cannot receive signal '" + EchoedNames.bounded(signalName)
+                                            + "': '" + inst.definitionId() + "' v" + inst.definitionVersion()
+                                            + " does not declare it for the addressed wait"));
+                        }
+                        return Future.succeededFuture(inst);
+                    });
         });
     }
 
     /**
-     * Branch-targeted explicit-carrier signal drive (PRD-WF-007, Contract Appendix C3, AC-4
-     * branch-targeted case). Mirrors the 7-arg branch-signal path's dedup-then-load-then-drive
-     * ordering exactly, adding only the effective-base computation and its threading into
-     * {@link SignalHandler#applyBranchSignal}'s override parameter.
-     *
-     * @param id workflow instance id
-     * @param signalName signal name
-     * @param payload signal payload
-     * @param signalDedupKey caller-supplied dedup key
-     * @param forkStepId the fork step id (validated non-null by the caller)
-     * @param branchId the branch id (validated non-null by the caller)
-     * @param signalMetadata the explicit durable-context carrier (validated non-null by the caller)
-     * @param tx the active SQL transaction
-     * @return a {@link Future} that completes when the branch signal has been applied
+     * Compares the caller's contract with the contract of the definition the instance is pinned to. The node's plan
+     * names the contract when it holds one; otherwise the contract stored for the pinned row stands in for it, read
+     * through the caller's transaction, so that recording needs no plan on this node.
      */
-    private Future<Void> signalBranchWithExplicitCarrier(
-            WorkflowInstanceId id,
-            String signalName,
-            Object payload,
-            String signalDedupKey,
-            String forkStepId,
-            String branchId,
-            DurableMetadata signalMetadata,
-            SqlClient tx) {
-        // Branch dedup is scoped by (workflowId, forkStepId, branchId, dedupKey) — same encoding as
-        // the 7-arg branch-signal path. The claim MUST run before the merge/bind (FR-WF-CTX-042): a
-        // losing delivery on a duplicate dedup key resolves to a no-op here, so the loser's carrier
-        // never reaches driveBranchTransitions.
-        String scope = dev.vertique.workflow.dedup.WorkflowDedupScopes.signalScope(id);
-        String key = dev.vertique.workflow.dedup.WorkflowDedupScopes.signalKey(signalDedupKey, forkStepId, branchId);
-        return dedup.claimOrResolveSignalScoped(scope, key, id, tx).compose(inserted -> {
-            if (!inserted) {
+    private Future<Void> checkContract(
+            WorkflowInstance inst, DefinitionKey pin, @Nullable String callerContractName, SqlClient tx) {
+        if (callerContractName == null) {
+            return Future.succeededFuture();
+        }
+        Optional<String> local = registry.find(pin).map(RuntimeWorkflow::contractName);
+        Future<Optional<String>> contract =
+                local.isPresent() ? Future.succeededFuture(local) : instances.findDefinitionContract(pin, tx);
+        return contract.compose(pinned -> {
+            if (pinned.isEmpty()) {
+                return Future.<Void>failedFuture(new WorkflowVersionNotRunnableException(pin, inst.id()));
+            }
+            if (callerContractName.equals(pinned.get())) {
                 return Future.<Void>succeededFuture();
             }
-            return instances.findById(id, tx).compose(optInst -> {
-                if (optInst.isEmpty()) {
-                    return Future.<Void>failedFuture(new WorkflowInstanceNotFoundException(id));
-                }
-                WorkflowInstance inst = optInst.get();
-                RuntimeWorkflow rw;
-                try {
-                    rw = PinnedPlans.resolve(registry, inst);
-                    requirePlanHashMatches(inst, rw);
-                } catch (Exception e) {
-                    return Future.<Void>failedFuture(e);
-                }
-                return branchTokens
-                        .findByWaitForBranch(id, forkStepId, branchId, WaitType.SIGNAL.name(), signalName, tx)
-                        .compose(opt -> {
-                            if (opt.isEmpty()) {
-                                return Future.<Void>failedFuture(new WorkflowSignalRejectedException(
-                                        "No branch waiting for signal '" + signalName + "' on workflow '"
-                                                + id.value() + "' fork '" + forkStepId + "' branch '"
-                                                + branchId + "'"));
-                            }
-                            BranchToken waiting = opt.get();
-                            // Carrier-authoritative + instance-fill (Contract Appendix C2/C3): the
-                            // explicit carrier wins for any namespace present on both sides; the
-                            // instance only fills namespaces the carrier lacks. NULL instance
-                            // metadata is a no-op merge — the effective base is the carrier alone,
-                            // with no fallback to the branch token's own metadata.
-                            DurableMetadata effectiveBase = inst.metadata() == null
-                                    ? signalMetadata
-                                    : signalMetadata.merge(inst.metadata(), DurableMetadata.MergePolicy.CALLER_WINS);
-                            return signalHandler.applyBranchSignal(
-                                    inst, waiting, rw, signalName, payload, tx, effectiveBase);
-                        });
-            });
+            return Future.<Void>failedFuture(new WorkflowDefinitionContractMismatchException(
+                    pin,
+                    "Instance '" + inst.id().value() + "' is pinned to '" + pin.definitionId() + "' v"
+                            + pin.definitionVersion() + ", which implements contract '" + pinned.get()
+                            + "'; a client of contract '" + EchoedNames.bounded(callerContractName)
+                            + "' cannot signal it"));
         });
     }
 
     /**
      * {@inheritDoc}
      *
-     * <p>Transitions a non-terminal instance to {@code CANCELLED} and appends a history entry.
-     * When the instance is WAITING on a timer ({@code wait_type=TIMER}) or a signal with a timeout
-     * branch ({@code wait_type=SIGNAL} and {@code wait_aux_id != null}), the associated timer is
-     * cancelled first before the instance row is updated.
+     * <p>Cancels the instance synchronously, in the caller's transaction, under the instance's execution lock, which it
+     * waits for. An instance that has ended is refused; a {@code FAILED} instance, which a retry could resume, and an
+     * instance that was never initialized ({@code PENDING}, or {@code FAILED} before its start ran) are cancelled. In
+     * lock order it:
      *
-     * <p>When the instance is WAITING on a human task ({@code wait_type=TASK}), the task row is
-     * cancelled via {@link TaskStore#markCancelled} and a {@code TASK_CANCELLED} history entry is
-     * appended. If the task also has a due-date timer ({@code wait_aux_id != null}), that timer is
-     * cancelled first, preserving the lock-order invariant: timers → tasks → instances.
+     * <ol>
+     *   <li>cancels, in one statement, every pending, deferred, claimed, parked and dead-lettered command, with its token
+     *       and lease cleared and one {@code COMMAND_CANCELLED} entry each;</li>
+     *   <li>cancels the timers those commands fire, writing {@code TIMER_CANCELLED} for each that was still scheduled;</li>
+     *   <li>cancels the task the instance waits for (and its reminders), the tasks that cancelled completions reserved
+     *       and the tasks of active branches;</li>
+     *   <li>cancels the active branches;</li>
+     *   <li>marks the instance {@code CANCELLED} and appends the cancellation entry.</li>
+     * </ol>
      *
-     * <p>When the instance has active fan-out branch tokens (status {@code WAITING/JOIN}), every
-     * active branch's owned timers and tasks are closed via
-     * {@link #cancelBranchOwnedWaits(BranchToken, SqlClient)} and each branch token is transitioned
-     * to {@code CANCELLED} before the instance row is updated. Full lock order:
-     * timers → tasks → branch tokens → instance.
+     * <p>An instance cancelled before it was initialized keeps no state and no current step, and no initial state is
+     * computed. A segment that was running holds the lock, so the cancellation follows its commit; a command that was
+     * claimed is cancelled, so its late settlement finds nothing to settle and writes nothing.
      *
      * @param id the workflow instance id; must not be null
-     * @param reason human-readable reason for the cancellation; stored in history
+     * @param callerReason human-readable reason for the cancellation; cut at 255 code points, with control characters
+     *     replaced, and then stored in history
      * @param tx the active SQL transaction; must not be null
      * @return a {@link Future} that completes when the cancellation has been persisted
      */
     @Override
-    public Future<Void> cancel(WorkflowInstanceId id, String reason, SqlClient tx) {
+    public Future<Void> cancel(WorkflowInstanceId id, String callerReason, SqlClient tx) {
         Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("cancel", tx);
         if (invalidClient != null) {
             return invalidClient;
         }
+        // The reason is stored in the history, the instance and the events: bound it once, here.
+        String reason = boundedReason(callerReason);
 
         // Non-locking read: same lock-order rationale as signal(). The optimistic UPDATE catches
         // concurrent writes; using findByIdForUpdate would invert the timers-before-instances
         // invariant and cause deadlocks under cancel-vs-fire races.
-        return instances.findById(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
-            if (optInst.isEmpty()) {
-                return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
-            }
-            WorkflowInstance inst = optInst.get();
-            if (isTerminal(inst.status())) {
-                return Future.failedFuture(new WorkflowSignalRejectedException(
-                        "Cannot cancel instance '" + id.value() + "': already in terminal status " + inst.status()));
-            }
+        // The canceller is the caller's identity, taken before the instance's own context is bound.
+        return actors.captured().compose(canceller -> underExecutionLock(id, tx, () -> instances.findById(id, tx))
+                .compose((Optional<WorkflowInstance> optInst) -> {
+                    if (optInst.isEmpty()) {
+                        return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
+                    }
+                    WorkflowInstance inst = optInst.get();
+                    if (isTerminal(inst.status())) {
+                        return Future.failedFuture(new WorkflowSignalRejectedException("Cannot cancel instance '"
+                                + id.value() + "': already in terminal status " + inst.status()));
+                    }
 
-            // Binder-row bind (Contract Appendix C2): instance-owned cancel drive.
-            return contextBinder.withBound(inst, null, () -> doCancel(id, reason, inst, tx));
-        });
+                    // Binder-row bind (Contract Appendix C2): instance-owned cancel drive. Every history entry the
+                    // cancellation writes is logged with the canceller.
+                    return history.nextSequence(id, tx).compose(from -> contextBinder
+                            .withBound(inst, null, () -> doCancel(id, reason, inst, canceller, tx))
+                            .compose(done -> commands.attributeHistory(id, from, canceller, tx)));
+                }));
+    }
+
+    /** The most code points of a cancellation's reason that are stored. */
+    static final int MAX_REASON_CODE_POINTS = 255;
+
+    /**
+     * Cuts a caller's cancellation reason at {@value #MAX_REASON_CODE_POINTS} code points and replaces every control
+     * character and unpaired surrogate with a question mark, so that the reason can neither flood the history nor forge
+     * a log line.
+     */
+    @Nullable
+    static String boundedReason(@Nullable String reason) {
+        if (reason == null) {
+            return null;
+        }
+        StringBuilder out = new StringBuilder(Math.min(reason.length(), MAX_REASON_CODE_POINTS));
+        int index = 0;
+        int kept = 0;
+        while (index < reason.length() && kept < MAX_REASON_CODE_POINTS) {
+            int codePoint = reason.codePointAt(index);
+            index += Character.charCount(codePoint);
+            boolean unpairedSurrogate = codePoint >= Character.MIN_SURROGATE && codePoint <= Character.MAX_SURROGATE;
+            out.appendCodePoint(Character.isISOControl(codePoint) || unpairedSurrogate ? '?' : codePoint);
+            kept++;
+        }
+        return out.toString();
     }
 
     /**
@@ -1539,52 +2263,77 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * @param id     the workflow instance id
      * @param reason human-readable reason for the cancellation
      * @param inst   the loaded (non-terminal) instance snapshot
+     * @param canceller who cancelled the instance, logged on the entries of the cancelled commands
      * @param tx     the active transaction
      * @return a {@link Future} that completes when the cancellation has been persisted
      */
-    private Future<Void> doCancel(WorkflowInstanceId id, String reason, WorkflowInstance inst, SqlClient tx) {
-        // Determine whether an active timer must be cancelled alongside the workflow.
-        UUID activeTimerId = TimerLifecycleService.resolveActiveTimerId(inst);
-        Future<Void> cancelTimerFuture = Future.succeededFuture();
-        if (activeTimerId != null) {
-            cancelTimerFuture = timerStore
-                    .markCancelled(activeTimerId, clock.instant(), tx)
-                    .compose(transition -> timerLifecycle.appendTimerCancelledHistory(
-                            inst, activeTimerId, TimerCancelledCause.WORKFLOW_CANCELLED, tx));
-        }
-
-        // When waiting on a TASK, cancel pending reminder timers (lock order: timers first),
-        // then cancel the task row, append TASK_CANCELLED history, and emit TASK_CANCELLED event.
-        // Lock order: due-date timer (above) → reminder timers (here) → task → instance (below).
-        Future<Void> cancelTaskFuture = cancelTimerFuture;
+    private Future<Void> doCancel(
+            WorkflowInstanceId id, String reason, WorkflowInstance inst, CommandActor canceller, SqlClient tx) {
+        UUID waitTaskId = null;
         if (inst.waitType() == WaitType.TASK) {
-            UUID taskId;
             try {
-                taskId = UUID.fromString(inst.waitKey());
+                waitTaskId = UUID.fromString(inst.waitKey());
             } catch (IllegalArgumentException e) {
                 return Future.failedFuture(new WorkflowDefinitionException(
                         "Invalid task UUID in wait_key for instance '" + id.value() + "'"));
             }
-            WorkflowActor cancelledByActor = new WorkflowActor.System("workflow-cancelled");
-            Instant now = clock.instant();
-            cancelTaskFuture = cancelTimerFuture
-                    .compose(v -> reminderScheduler.cancelPendingReminders(taskId, inst, tx))
-                    .compose(v -> taskStore.markCancelled(taskId, reason, now, cancelledByActor, tx))
-                    .compose(transition -> taskLifecycle
-                            .appendTaskCancelledHistory(inst, taskId, reason, cancelledByActor, now, tx)
-                            .compose(taskCancelledSeq -> emitEvent(
-                                    inst,
-                                    WorkflowEventType.TASK_CANCELLED,
-                                    taskCancelledSeq,
-                                    taskId,
-                                    inst.currentStepId(),
-                                    attrs(
-                                            "cause",
-                                            "WORKFLOW_CANCELLED",
-                                            "cancelledBy",
-                                            WorkflowActorMaps.toMap(cancelledByActor)),
-                                    tx)));
         }
+        UUID taskId = waitTaskId;
+        UUID activeTimerId = TimerLifecycleService.resolveActiveTimerId(inst);
+        WorkflowActor cancelledByActor = new WorkflowActor.System("workflow-cancelled");
+        Instant now = clock.instant();
+
+        // Command rows first, in ascending id order: every command the instance still has is cancelled in one
+        // statement.
+        Future<Void> cancelTaskFuture = commands.cancelAll(id, canceller, tx).compose(cancelled -> {
+            // Timers: the timer the instance waits on, the reminders of the task it waits for, then every other timer
+            // whose command was cancelled and that is still scheduled.
+            Future<Void> timersDone = Future.succeededFuture();
+            if (activeTimerId != null) {
+                timersDone = timerStore
+                        .markCancelled(activeTimerId, clock.instant(), tx)
+                        .compose(transition -> timerLifecycle.appendTimerCancelledHistory(
+                                inst, activeTimerId, TimerCancelledCause.WORKFLOW_CANCELLED, tx));
+            }
+            if (taskId != null) {
+                timersDone = timersDone.compose(v -> reminderScheduler.cancelPendingReminders(taskId, inst, tx));
+            }
+            for (SettledCommand command : cancelled) {
+                UUID timerId = command.timerId();
+                if (timerId != null && !timerId.equals(activeTimerId)) {
+                    timersDone = timersDone
+                            .compose(v -> timerStore.markCancelled(timerId, clock.instant(), tx))
+                            .compose(transition -> transition == TimerStatusTransition.APPLIED
+                                    ? timerLifecycle.appendTimerCancelledHistory(
+                                            inst, timerId, TimerCancelledCause.WORKFLOW_CANCELLED, tx)
+                                    : Future.<Void>succeededFuture());
+                }
+            }
+
+            // Tasks: the task the instance waits for, whether open or reserved by a completion, with its history and
+            // event, then every other task a cancelled completion reserved, then every task that is still live in the
+            // task rows (the wait of an instance that failed may be gone).
+            Future<Void> tasksDone = timersDone;
+            if (taskId != null) {
+                tasksDone = tasksDone.compose(v -> cancelOwnTask(inst, taskId, reason, now, cancelledByActor, tx));
+            }
+            for (SettledCommand command : cancelled) {
+                UUID reserved = command.taskId();
+                if ("COMPLETION".equals(command.kind()) && reserved != null && !reserved.equals(taskId)) {
+                    tasksDone = tasksDone.compose(v -> taskStore
+                            .markCancelled(reserved, reason, now, cancelledByActor, tx)
+                            .<Void>mapEmpty());
+                }
+            }
+            return tasksDone.compose(v -> commands.liveTasks(id, tx)).compose(live -> {
+                Future<Void> leftovers = Future.succeededFuture();
+                for (UUID leftover : live) {
+                    leftovers = leftovers.compose(
+                            v -> cancelLeftoverTask(inst, leftover, reason, now, cancelledByActor, tx));
+                }
+                return leftovers;
+            });
+        });
 
         // Cancel branch-owned waits for any active fan-out branches.
         // Lock order: timers → tasks (inside cancelBranchOwnedWaits) → branch tokens (below)
@@ -1600,11 +2349,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             }
             return branchTokens.findActiveByWorkflow(id, tx).compose(activeBranches -> {
                 Future<Void> branchChain = Future.succeededFuture();
-                Instant now = clock.instant();
+                Instant branchNow = clock.instant();
                 for (BranchToken branch : activeBranches) {
                     // timers → tasks (cancelBranchOwnedWaits), then branch token.
                     final BranchToken b = branch;
-                    BranchToken cancelledBranch = b.withClearedWait(BranchStatus.CANCELLED, b.currentStepId(), now);
+                    BranchToken cancelledBranch =
+                            b.withClearedWait(BranchStatus.CANCELLED, b.currentStepId(), branchNow);
                     branchChain = branchChain
                             .compose(v2 -> cancelBranchOwnedWaits(b, tx))
                             .compose(v2 -> branchTokens
@@ -1628,8 +2378,17 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     .compose(rowCount -> requireRowUpdated(rowCount, "instance '" + id.value() + "' during cancel"))
                     .compose(v2 -> history.nextSequence(id, tx))
                     .compose(seq -> {
-                        String histPayload = Json.encode(
-                                new CancelledHistoryPayload(reason, WorkflowPayloads.commandCorrelationId()));
+                        String histPayload = Json.encode(new CancelledHistoryPayload(
+                                decisions.redactReason(
+                                        new DefinitionKey(
+                                                inst.definitionScopeKey(),
+                                                inst.definitionId(),
+                                                inst.definitionVersion()),
+                                        reason,
+                                        null,
+                                        inst.stateJson(),
+                                        tx),
+                                WorkflowPayloads.commandCorrelationId()));
                         return history.append(
                                         new WorkflowHistoryEntry(
                                                 id, seq, WorkflowEntryType.CANCELLED, histPayload, clock.instant()),
@@ -1647,14 +2406,56 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
+     * Cancels a task the cancellation found in the task rows and nothing else named: its due-date timer and reminders,
+     * then the task, with its history and event.
+     */
+    private Future<Void> cancelLeftoverTask(
+            WorkflowInstance inst, UUID taskId, String reason, Instant now, WorkflowActor actor, SqlClient tx) {
+        return taskStore.findById(taskId, tx).compose(found -> {
+            Future<Void> timers = Future.succeededFuture();
+            UUID dueTimerId = found.map(task -> task.dueDateTimerId()).orElse(null);
+            if (dueTimerId != null) {
+                timers = timerStore
+                        .markCancelled(dueTimerId, clock.instant(), tx)
+                        .compose(transition -> transition == TimerStatusTransition.APPLIED
+                                ? timerLifecycle.appendTimerCancelledHistory(
+                                        inst, dueTimerId, TimerCancelledCause.WORKFLOW_CANCELLED, tx)
+                                : Future.<Void>succeededFuture());
+            }
+            return timers.compose(v -> reminderScheduler.cancelPendingReminders(taskId, inst, tx))
+                    .compose(v -> cancelOwnTask(inst, taskId, reason, now, actor, tx));
+        });
+    }
+
+    /** Cancels a task of the instance, open or reserved by a completion, and writes its history and event. */
+    private Future<Void> cancelOwnTask(
+            WorkflowInstance inst, UUID taskId, String reason, Instant now, WorkflowActor actor, SqlClient tx) {
+        return taskStore.markCancelled(taskId, reason, now, actor, tx).compose(transition -> taskLifecycle
+                .appendTaskCancelledHistory(inst, taskId, reason, actor, now, tx)
+                .compose(taskCancelledSeq -> emitEvent(
+                        inst,
+                        WorkflowEventType.TASK_CANCELLED,
+                        taskCancelledSeq,
+                        taskId,
+                        inst.currentStepId(),
+                        attrs("cause", "WORKFLOW_CANCELLED", "cancelledBy", WorkflowActorMaps.toMap(actor)),
+                        tx)));
+    }
+
+    /**
      * {@inheritDoc}
      *
-     * <p>Resets a {@code FAILED} instance to {@code RUNNING} and re-drives transitions from the
-     * current step.
+     * <p>Records a {@code RETRY} command in the caller's transaction and returns once it is recorded; no workflow code
+     * runs here. An executor runs it afterwards, in its own segment, in queue order: it initializes an instance whose
+     * start failed before initialization from the stored start payload, re-drives a {@code FAILED} instance from its
+     * current step and applies the signals parked meanwhile at the wait it reaches, and then offers every dead-lettered
+     * command of the instance again with its attempts reset. A retry that finds nothing to recover completes as stale.
+     * The call is refused, under the instance's execution lock, when the instance has ended or is neither {@code FAILED}
+     * nor holds a dead-lettered command.
      *
      * @param id the workflow instance id; must not be null
      * @param tx the active SQL transaction; must not be null
-     * @return a {@link Future} that completes when the retry attempt has been initiated
+     * @return a {@link Future} that completes when the retry is recorded
      */
     @Override
     public Future<Void> retry(WorkflowInstanceId id, SqlClient tx) {
@@ -1662,68 +2463,41 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         if (invalidClient != null) {
             return invalidClient;
         }
-
-        // retry() keeps findByIdForUpdate (unlike signal() / cancel() which switched to non-locking
-        // findById to honor the workflow_timers-before-workflow_instances lock-order invariant).
-        // retry() does not touch workflow_timers — a retry only fires for FAILED instances, which
-        // are terminal w.r.t. timer firing — so the lock-order constraint does not apply.
-        return instances.findByIdForUpdate(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
-            if (optInst.isEmpty()) {
-                return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
-            }
-            WorkflowInstance inst = optInst.get();
-            if (inst.status() != WorkflowStatus.FAILED) {
-                return Future.failedFuture(new WorkflowSignalRejectedException("Cannot retry instance '" + id.value()
-                        + "': status is " + inst.status() + " (must be FAILED)"));
-            }
-
-            // Binder-row bind (Contract Appendix C2): instance-owned retry drive.
-            return contextBinder.withBound(inst, null, () -> doRetry(id, inst, tx));
-        });
+        return underExecutionLock(id, tx, () -> instances.findById(id, tx))
+                .compose((Optional<WorkflowInstance> found) -> {
+                    if (found.isEmpty()) {
+                        return Future.<Void>failedFuture(new WorkflowInstanceNotFoundException(id));
+                    }
+                    WorkflowInstance inst = found.get();
+                    if (EndedInstanceOutcomes.isEnded(inst.status())) {
+                        return Future.<Void>failedFuture(retryRefusal(id, inst.status()));
+                    }
+                    if (inst.status() == WorkflowStatus.FAILED) {
+                        return recordRetryOnce(id, tx);
+                    }
+                    return commands.hasDeadLetters(id, tx)
+                            .compose(dead -> dead
+                                    ? recordRetryOnce(id, tx)
+                                    : Future.<Void>failedFuture(retryRefusal(id, inst.status())));
+                });
     }
 
     /**
-     * Executes the retry drive body after the instance-owned binder-row bind is in effect.
-     * Extracted so {@link #retry(WorkflowInstanceId, SqlClient)} can pass it to
-     * {@link WorkflowContextBinder#withBound} as a {@link java.util.function.Supplier}.
-     *
-     * @param id   the workflow instance id
-     * @param inst the loaded (FAILED-status) instance snapshot
-     * @param tx   the active transaction
-     * @return a {@link Future} that completes when the retry attempt has been initiated
+     * Records a retry unless an instance-level one is already on its way: a repeated call, for instance after an
+     * uncertain response, then succeeds and records nothing, because one retry recovers everything a second would. A
+     * retry addressed to one branch recovers only that branch, so it does not count.
      */
-    private Future<Void> doRetry(WorkflowInstanceId id, WorkflowInstance inst, SqlClient tx) {
-        RuntimeWorkflow rw;
-        try {
-            rw = PinnedPlans.resolve(registry, inst);
-        } catch (Exception e) {
-            return Future.failedFuture(e);
-        }
-        try {
-            requirePlanHashMatches(inst, rw);
-        } catch (WorkflowPlanHashDriftException e) {
-            return Future.failedFuture(e);
-        }
+    private Future<Void> recordRetryOnce(WorkflowInstanceId id, SqlClient tx) {
+        return commands.unsettledTargets(id, "RETRY", tx)
+                .compose(pending -> pending.stream().noneMatch(String::isEmpty)
+                        ? actors.recording("RETRY", actor -> commands.recordRetry(id, actor, tx))
+                                .<Void>mapEmpty()
+                        : Future.<Void>succeededFuture());
+    }
 
-        long prevVersion = inst.version();
-        WorkflowInstance retried = inst.withVersion(prevVersion + 1)
-                .withStatus(WorkflowStatus.RUNNING)
-                .withWait(null, null)
-                .withError(null, null)
-                .withUpdatedAt(clock.instant());
-
-        return instances
-                .updateOptimistic(retried, prevVersion, tx)
-                .compose(rowCount -> requireRowUpdated(rowCount, "instance '" + id.value() + "' during retry"))
-                .compose(v -> history.nextSequence(id, tx))
-                .compose(seq -> {
-                    String histPayload =
-                            Json.encode(new RetriedHistoryPayload("FAILED", WorkflowPayloads.commandCorrelationId()));
-                    return history.append(
-                            new WorkflowHistoryEntry(id, seq, WorkflowEntryType.RETRIED, histPayload, clock.instant()),
-                            tx);
-                })
-                .compose(v -> driver.driveTransitions(retried, rw, tx));
+    private static WorkflowSignalRejectedException retryRefusal(WorkflowInstanceId id, WorkflowStatus status) {
+        return new WorkflowSignalRejectedException("Cannot retry instance '" + id.value() + "': status is " + status
+                + " (must be FAILED or hold dead-lettered commands)");
     }
 
     /**
@@ -1734,7 +2508,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * @param id            the workflow instance id; must not be null
      * @param targetVersion the definition version to migrate to
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     * @return a {@link Future} that completes when the migration is recorded
      */
     @Override
     public Future<Void> migrate(WorkflowInstanceId id, long targetVersion) {
@@ -1750,7 +2524,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * @param id            the workflow instance id; must not be null
      * @param targetScope   the scope of the definition to migrate to; must not be null
      * @param targetVersion the definition version to migrate to
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     * @return a {@link Future} that completes when the migration is recorded
      */
     @Override
     public Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion) {
@@ -1760,16 +2534,18 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
-     * <p>Delegates the migration algorithm to {@link MigrationExecutor#migrate}. The executor owns
-     * the opt-in {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} and the
-     * null-registry {@link UnsupportedOperationException} fail-fast guard: if no registry was
-     * provided (the migration module was not installed), the call fails immediately before any
+     * <p>Records a {@code MIGRATION} command in the caller's transaction and returns once it is recorded; no workflow
+     * code runs here. An executor that holds the source and the target plan runs it afterwards, in its own segment, in
+     * queue order, and rejects it with the instance unchanged on its previous version when it is not valid. The call is
+     * refused, under the instance's execution lock, only when the instance has ended; the executor owns the opt-in
+     * {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry}, and if no registry was provided (the migration
+     * module was not installed) the call fails immediately with {@link UnsupportedOperationException} before any
      * database work.
      *
      * @param id            the workflow instance id; must not be null
      * @param targetVersion the definition version to migrate to
      * @param tx            the active SQL transaction; must not be null
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     * @return a {@link Future} that completes when the migration is recorded
      */
     @Override
     public Future<Void> migrate(WorkflowInstanceId id, long targetVersion, SqlClient tx) {
@@ -1778,19 +2554,20 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
 
-        return migrationExecutor.migrate(id, targetVersion, tx);
+        return migrationExecutor.record(id, null, targetVersion, tx);
     }
 
     /**
      * {@inheritDoc}
      *
-     * <p>Delegates to {@link MigrationExecutor#migrate}, which resolves the target in {@code targetScope}.
+     * <p>Records the migration like {@link #migrate(WorkflowInstanceId, long, SqlClient)}; the executor resolves the
+     * target in {@code targetScope}.
      *
      * @param id            the workflow instance id; must not be null
      * @param targetScope   the scope of the definition to migrate to; must not be null
      * @param targetVersion the definition version to migrate to
      * @param tx            the active SQL transaction; must not be null
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     * @return a {@link Future} that completes when the migration is recorded
      */
     @Override
     public Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion, SqlClient tx) {
@@ -1799,7 +2576,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
         Objects.requireNonNull(targetScope, "targetScope");
-        return migrationExecutor.migrate(id, targetScope, targetVersion, tx);
+        return migrationExecutor.record(id, targetScope, targetVersion, tx);
     }
 
     // --- State machine driver — extracted to WorkflowTransitionDriver (slice C5) ---
@@ -1820,19 +2597,16 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
-     * <p>Implementation steps:
+     * <p>Records the completion as a {@code COMPLETION} command in the caller's transaction and reserves the task
+     * ({@code OPEN} to {@code COMPLETING}); an executor applies it afterwards in its own segment. The steps, in order:
      * <ol>
-     *   <li>Non-locking task lookup to discover workflowId and decisionsSnapshot.</li>
-     *   <li>Fingerprint computation and idempotency dedup claim.</li>
-     *   <li>Decision validation and payload coercion.</li>
-     *   <li>Non-locking instance read; validates WAITING/TASK/wait-key slot.</li>
-     *   <li>Cancel the due-date timer (if present) — lock order: timers before tasks.</li>
-     *   <li>Lock the task row for completion; a supplied {@code expectedAssignment} must still match.</li>
-     *   <li>Write completion columns.</li>
-     *   <li>Apply decision applicator to state.</li>
-     *   <li>Optimistic UPDATE on workflow_instances.</li>
-     *   <li>Append TASK_COMPLETED history.</li>
-     *   <li>Drive transitions from the decision's next step.</li>
+     *   <li>A committed duplicate (same key and fingerprint) returns its earlier result.</li>
+     *   <li>Non-locking task read; the payload's size and depth bounds and, when the task's snapshot stores a schema for
+     *       the decision, the payload's conformance to it.</li>
+     *   <li>The execution lock; the duplicate again (another fingerprint is a conflict), then the task row lock: the task
+     *       must be {@code OPEN}, a supplied {@code expectedAssignment} must match, the reviewed subject version must
+     *       match when the row requires stability, and the decision must be in the snapshot.</li>
+     *   <li>The deduplication claim, the {@code COMPLETION} command and the reservation.</li>
      * </ol>
      *
      * @param cmd the completion command; must not be null
@@ -1847,36 +2621,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         }
 
         return taskLifecycle.taskCompleted(cmd, tx);
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Dispatched by {@link #timerFired} when a timer matches the {@code wait_type=TASK} +
-     * {@code wait_aux_id=timerId} slot. Steps:
-     * <ol>
-     *   <li>Lock the task row for completion.</li>
-     *   <li>If not OPEN → return {@link TaskMutationResult#STALE_NOOP}.</li>
-     *   <li>Mark task EXPIRED.</li>
-     *   <li>Apply the {@code onDueMutator} to the workflow state.</li>
-     *   <li>Optimistic UPDATE on workflow_instances to {@code dueNextStepId}.</li>
-     *   <li>Append {@code TASK_EXPIRED} history.</li>
-     *   <li>Drive transitions.</li>
-     * </ol>
-     *
-     * @param workflowId the workflow instance this task belongs to
-     * @param taskId     the stable UUID of the task whose due-date timer fired
-     * @param tx         the active transaction context
-     * @return a {@link Future} resolving to the mutation result
-     */
-    @Override
-    public Future<TaskMutationResult> taskDueFired(WorkflowInstanceId workflowId, UUID taskId, SqlClient tx) {
-        Future<TaskMutationResult> invalidClient = WorkflowTransactionClientGuard.reject("taskDueFired", tx);
-        if (invalidClient != null) {
-            return invalidClient;
-        }
-
-        return taskLifecycle.taskDueFired(workflowId, taskId, tx);
     }
 
     /**
@@ -1904,91 +2648,22 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         return taskLifecycle.taskReassigned(cmd, tx);
     }
 
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Cycle-4 reminder-fire handling: appends a {@code TASK_REMINDER_FIRED} history entry and
-     * emits a {@code WORKFLOW_EVENT} side-effect when the task is still
-     * {@link dev.vertique.workflow.tasks.TaskStatus#OPEN}. Returns a succeeded future for both
-     * the applied and no-op (task already closed) paths; the executor marks the timer
-     * {@code FIRED} unconditionally on a succeeded future.
-     *
-     * @param workflowId the owning workflow instance id
-     * @param taskId     the stable UUID of the task
-     * @param timerId    the UUID of the firing reminder timer
-     * @param tx         the active transaction context
-     * @return succeeded future on both applied and no-op paths; failed future on transient errors
-     */
-    @Override
-    public Future<Void> taskReminderFired(
-            WorkflowInstanceId workflowId, UUID taskId, UUID timerId, Instant scheduledFireAt, SqlClient tx) {
-        Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("taskReminderFired", tx);
-        if (invalidClient != null) {
-            return invalidClient;
-        }
-
-        return taskLifecycle.taskReminderFired(workflowId, taskId, timerId, scheduledFireAt, tx);
-    }
-
-    // --- TransactionalTimerCallbacks ---
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Reads the instance without locking (no FOR UPDATE), then classifies the wait slot:
-     * <ul>
-     *   <li>{@code wait_type=TIMER, wait_key=timerId} — standalone-timer path: advances to
-     *       {@code tn.nextStepId()} and appends {@code TIMER_FIRED}.</li>
-     *   <li>{@code wait_type=SIGNAL, wait_aux_id=timerId} — signal-timeout path: applies the
-     *       {@code onTimeout} mutator, advances to {@code timeoutNextStepId}, and appends
-     *       {@code TIMEOUT}.</li>
-     *   <li>Otherwise — {@link TimerFiringResult#STALE_NOOP}.</li>
-     * </ul>
-     *
-     * @param workflowId the workflow instance this timer belongs to
-     * @param timerId the stable UUID of the timer that fired
-     * @param tx the active transaction context; all writes must use this context
-     * @return a {@link Future} resolving to the firing result
-     */
-    @Override
-    public Future<TimerFiringResult> timerFired(WorkflowInstanceId workflowId, UUID timerId, SqlClient tx) {
-        Future<TimerFiringResult> invalidClient = WorkflowTransactionClientGuard.reject("timerFired", tx);
-        if (invalidClient != null) {
-            return invalidClient;
-        }
-
-        return timerLifecycle.timerFired(workflowId, timerId, tx);
-    }
-
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Lock-order: acquires the {@code workflow_timers} row lock first via
-     * {@link TimerStore#lockForFiring}, then reads the instance. On slot match, marks the timer
-     * {@code FAILED}, appends {@code TIMER_FAILED} history, and transitions the
-     * workflow to {@code FAILED}. On slot mismatch or non-WAITING instance, marks the timer
-     * {@code FAILED} with {@code "TIMER_INCONSISTENCY: ..."} and returns
-     * {@link TimerFiringResult#STALE_NOOP} without mutating the workflow instance.
-     *
-     * @param workflowId the workflow instance this timer belongs to
-     * @param timerId the stable UUID of the timer that failed to fire
-     * @param errorType the error category reported by the delayed job executor
-     * @param errorMessage human-readable description of the failure cause
-     * @param tx the active transaction context; all writes must use this context
-     * @return a {@link Future} resolving to the firing result
-     */
-    @Override
-    public Future<TimerFiringResult> timerFiringFailed(
-            WorkflowInstanceId workflowId, UUID timerId, String errorType, String errorMessage, SqlClient tx) {
-        Future<TimerFiringResult> invalidClient = WorkflowTransactionClientGuard.reject("timerFiringFailed", tx);
-        if (invalidClient != null) {
-            return invalidClient;
-        }
-
-        return timerLifecycle.timerFiringFailed(workflowId, timerId, errorType, errorMessage, tx);
-    }
-
     // --- Internal helpers ---
+
+    /**
+     * Takes the execution lock of the instance in the caller's transaction, then runs the body. Every
+     * instance-changing entry point calls it before its first read-for-write or write, so one transaction at a time
+     * changes an instance. A wait that times out, or a deadlock, fails the returned future with the database error.
+     *
+     * @param id   the instance to lock
+     * @param tx   the caller's transaction
+     * @param body the work to run once the lock is held
+     * @param <T>  the result type of the body
+     * @return the future of the body, or the failure of the lock
+     */
+    private <T> Future<T> underExecutionLock(WorkflowInstanceId id, SqlClient tx, Supplier<Future<T>> body) {
+        return commands.lockInstance(id, tx).compose(locked -> body.get());
+    }
 
     /**
      * Returns a successful {@code Future<Void>} when {@code rowCount > 0}, or a failed future with
@@ -2023,17 +2698,14 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Returns {@code true} if the given status is a terminal state (no further transitions
-     * possible).
+     * Returns {@code true} if the given status is terminal: the instance has ended and takes no further transition. A
+     * {@code FAILED} instance is not terminal, because a retry can resume it, and so it can be cancelled.
      *
      * @param status the status to check
-     * @return {@code true} for terminal statuses
+     * @return {@code true} for ended statuses
      */
     private static boolean isTerminal(WorkflowStatus status) {
-        return switch (status) {
-            case COMPLETED, FAILED, COMPENSATED, CANCELLED, EXPIRED -> true;
-            default -> false;
-        };
+        return EndedInstanceOutcomes.isEnded(status);
     }
 
     // --- Event emission helpers (delegating to WorkflowEventEmitter) ---
@@ -2096,8 +2768,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * {@link BranchStatus#CANCELLED} in {@link #cancel(WorkflowInstanceId, String, SqlClient)}).
      *
      * <p>Timers are cancelled first (by id, one per row lock) so that any concurrent
-     * {@code WorkflowTimerFireExecutor} path — which holds a {@code workflow_timers} lock before
-     * calling back into the engine — cannot race the branch-token update and deadlock.
+     * timer command, which holds a {@code workflow_timers} lock before it calls into the engine,
+     * cannot race the branch-token update and deadlock.
      *
      * <p>Package-visible for integration testing; not part of any public API.
      *

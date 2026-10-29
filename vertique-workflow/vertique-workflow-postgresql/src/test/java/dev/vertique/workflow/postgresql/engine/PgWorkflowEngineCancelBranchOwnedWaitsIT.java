@@ -134,9 +134,11 @@ public class PgWorkflowEngineCancelBranchOwnedWaitsIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -238,7 +240,6 @@ public class PgWorkflowEngineCancelBranchOwnedWaitsIT {
                 "timer-step",
                 Instant.now().plusSeconds(3600),
                 TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
                 Instant.now(),
                 null,
                 null,
@@ -305,7 +306,6 @@ public class PgWorkflowEngineCancelBranchOwnedWaitsIT {
                 "timer-step-reminder",
                 Instant.now().plusSeconds(1800),
                 TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
                 Instant.now(),
                 null,
                 null,

@@ -4,8 +4,8 @@
 /**
  * SPI types and value objects for workflow timer management.
  *
- * <p>A workflow timer is a durable record that causes the engine to fire a callback at a future
- * {@link java.time.Instant}. Timers are used by two node types:
+ * <p>A workflow timer is a durable record that causes the engine to fire the timer at a future
+ * {@link java.time.Instant}, by running the timer command it is linked to. Timers are used by two node types:
  * <ul>
  *   <li>{@link dev.vertique.workflow.plan.TimerNode} — standalone timer wait; the workflow
  *       suspends until the timer fires.</li>
@@ -25,7 +25,7 @@
  * </ul>
  *
  * <p>Implementations of {@link dev.vertique.workflow.timer.TimerStore} live in the storage module
- * ({@code vertique-workflow-postgresql}). The timer executor (scheduling, recovery, firing) lives
- * in {@code vertique-workflow-delayed}.
+ * ({@code vertique-workflow-postgresql}). The workflow executor fires
+ * a timer when its command comes due.
  */
 package dev.vertique.workflow.timer;

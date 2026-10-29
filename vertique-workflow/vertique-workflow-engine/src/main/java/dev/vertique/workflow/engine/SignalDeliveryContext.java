@@ -23,7 +23,20 @@ record SignalDeliveryContext(
         String signalName,
         Object payload,
         String dedupKey,
-        @Nullable String callerContractName) {
+        @Nullable String callerContractName,
+        @Nullable Long commandId) {
+
+    /**
+     * Bundles a delivery that is not tied to a recorded command and whose caller names a contract.
+     *
+     * @param signalName the name of the signal being delivered
+     * @param payload the incoming signal payload
+     * @param dedupKey the caller-supplied dedup key
+     * @param callerContractName the contract name of the caller, or {@code null}
+     */
+    SignalDeliveryContext(String signalName, Object payload, String dedupKey, @Nullable String callerContractName) {
+        this(signalName, payload, dedupKey, callerContractName, null);
+    }
 
     /**
      * Bundles a delivery whose caller names no contract.
@@ -33,6 +46,6 @@ record SignalDeliveryContext(
      * @param dedupKey the caller-supplied dedup key
      */
     SignalDeliveryContext(String signalName, Object payload, String dedupKey) {
-        this(signalName, payload, dedupKey, null);
+        this(signalName, payload, dedupKey, null, null);
     }
 }

@@ -10,8 +10,7 @@ import java.util.Objects;
 /**
  * Immutable provenance record that describes where a workflow definition document was loaded from.
  *
- * <p>Source metadata is stored alongside the compiled definition in the
- * {@link dev.vertique.workflow.definition.service.WorkflowDefinitionStore} for management and
+ * <p>Source metadata is stored with the definition row as its provenance for management and
  * audit surfaces. It never crosses into the runtime engine — the engine sees only
  * {@code WorkflowPlan} and callbacks (FR-WF-DEF-026).
  *

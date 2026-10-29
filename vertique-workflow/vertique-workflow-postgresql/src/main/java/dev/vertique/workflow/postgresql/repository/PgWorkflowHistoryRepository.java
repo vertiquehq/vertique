@@ -7,10 +7,12 @@ import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
 import dev.vertique.db.postgresql.PgTableNames;
+import dev.vertique.workflow.engine.spi.DecisionEntry;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import io.vertx.core.Future;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
@@ -38,6 +40,9 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
     /** Name of the migration instance whose schema mapping places the workflow tables. */
     private static final String INSTANCE_NAME = "workflow";
 
+    /** The predicate that leaves the decision log out of a narrow list. */
+    private static final String NOT_DECISION_LOG = "entry_type NOT IN ('DECISION', 'STATE_BASELINE')";
+
     // --- SQL statements ---
     //
     // The statements are built once at construction because every table reference is qualified with
@@ -45,9 +50,11 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
     // configured placement rather than being a compile-time constant.
 
     private final String sqlAppend;
+    private final String sqlAppendDecision;
     private final String sqlNextSequence;
     private final String sqlListByInstance;
     private final String sqlListRecentByInstance;
+    private final String sqlListPage;
 
     // --- Constructor ---
 
@@ -82,15 +89,42 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
         this.sqlAppend = "INSERT INTO " + history + " (workflow_id, sequence, entry_type, payload_json, recorded_at)"
                 + " VALUES ($1, $2, $3, $4, $5)";
 
+        // A decision-log entry takes its sequence in the statement, under the execution lock the segment holds. Its
+        // executor is the one that claimed the command it belongs to or, for an entry about a command that is not
+        // claimed (a parked signal applied by another command's segment), the one that claimed the instance's running
+        // command. Its actor columns stay null: the segment attributes every entry it wrote when it ends.
+        String commands = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_commands");
+        this.sqlAppendDecision = "INSERT INTO " + history + " (workflow_id, sequence, entry_type, payload_json,"
+                + " recorded_at, executor_id, command_id, step_id, outcome, definition_scope_key, definition_id,"
+                + " definition_version, plan_hash, state_version_before, state_version_after, patch_json, entry_version)"
+                + " SELECT $1::uuid, COALESCE(MAX(sequence), 0) + 1, $2::varchar, $3::jsonb,"
+                + " $4::timestamptz, COALESCE($5::varchar, (SELECT c.claimed_by FROM " + commands
+                + " c WHERE c.id = $6::bigint),"
+                + " (SELECT c.claimed_by FROM " + commands
+                + " c WHERE c.workflow_id = $1::uuid AND c.state = 'CLAIMED' LIMIT 1)),"
+                + " $6::bigint, $7::varchar, $8::varchar, $9::varchar, $10::varchar, $11::bigint, $12::varchar,"
+                + " $13::bigint, $14::bigint, $15::jsonb, 2"
+                + " FROM " + history + " WHERE workflow_id = $1::uuid";
+
         this.sqlNextSequence =
                 "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_seq FROM " + history + " WHERE workflow_id = $1";
 
-        this.sqlListByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at" + " FROM "
-                + history + " WHERE workflow_id = $1 ORDER BY sequence ASC";
+        // The narrow lists serve query(), the migration context and compensation. They leave out the decision log: its
+        // entries are served by the history service, and a baseline holds the whole (redacted) state, so it must not
+        // shrink the window of the recent list or travel into a view.
+        this.sqlListByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at,"
+                + " entry_version FROM " + history + " WHERE workflow_id = $1 AND " + NOT_DECISION_LOG
+                + " ORDER BY sequence ASC";
 
-        this.sqlListRecentByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at"
-                + " FROM " + history + " WHERE workflow_id = $1"
+        this.sqlListRecentByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at,"
+                + " entry_version FROM " + history + " WHERE workflow_id = $1 AND " + NOT_DECISION_LOG
                 + " ORDER BY sequence DESC LIMIT $2";
+
+        this.sqlListPage = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at, entry_version,"
+                + " actor_kind, actor_id, actor_reason, on_behalf_of, attribution_status, executor_id, command_id,"
+                + " step_id, outcome, definition_scope_key, definition_id, definition_version, plan_hash,"
+                + " state_version_before, state_version_after, patch_json FROM " + history
+                + " WHERE workflow_id = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT $3";
     }
 
     // --- Write operations ---
@@ -119,6 +153,42 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history append")));
     }
 
+    /**
+     * Appends an entry of the decision log: its patch or full state, the command, step, outcome, definition, plan hash
+     * and state versions it carries, and {@code entry_version = 2}. The sequence is assigned in the statement.
+     *
+     * @param entry the entry
+     * @param tx    the active transaction to use for the insert
+     * @return a {@link Future} that completes when the row is inserted
+     */
+    @Override
+    public Future<Void> appendDecision(DecisionEntry entry, SqlClient tx) {
+        JsonObject payload = new JsonObject();
+        if (entry.stateJson() != null) {
+            payload.put("state", new JsonObject(entry.stateJson()));
+        }
+        Tuple params = Tuple.tuple()
+                .addValue(entry.instanceId().value())
+                .addValue(entry.entryType().name())
+                .addValue(payload)
+                .addValue(entry.recordedAt().atOffset(ZoneOffset.UTC))
+                .addValue(entry.executorId())
+                .addValue(entry.commandId())
+                .addValue(entry.stepId())
+                .addValue(entry.outcome())
+                .addValue(entry.scopeKey())
+                .addValue(entry.definitionId())
+                .addValue(entry.definitionVersion())
+                .addValue(entry.planHash())
+                .addValue(entry.stateVersionBefore())
+                .addValue(entry.stateVersionAfter())
+                .addValue(entry.patchJson() == null ? null : new JsonArray(entry.patchJson()));
+        return tx.preparedQuery(sqlAppendDecision)
+                .execute(params)
+                .<Void>mapEmpty()
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history appendDecision")));
+    }
+
     // --- Sequence operations ---
 
     /**
@@ -144,7 +214,8 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
 
     /**
      * Returns the most recent {@code limit} history entries for the given workflow instance,
-     * ordered by sequence descending (most recent first) within the transaction.
+     * ordered by sequence descending (most recent first) within the transaction. The entries of the decision log
+     * ({@code DECISION} and {@code STATE_BASELINE}) are left out and do not count toward the limit.
      *
      * <p>Callers that need oldest-first ordering should reverse the returned list. This method is
      * used by the migration engine to populate
@@ -205,5 +276,28 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
                     return entries;
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history listByInstance")));
+    }
+
+    /**
+     * Returns one page of the full history entries of an instance, ordered by sequence ascending, read from the pool
+     * with no lock. Unlike {@link #listByInstance(WorkflowInstanceId)}, every component the row holds is set.
+     *
+     * @param id            the workflow instance id whose history to retrieve
+     * @param afterSequence the sequence after which the page starts (exclusive)
+     * @param limit         the largest number of entries to return
+     * @return a {@link Future} containing up to {@code limit} entries
+     */
+    public Future<List<WorkflowHistoryEntry>> listPage(WorkflowInstanceId id, long afterSequence, int limit) {
+        return pool.preparedQuery(sqlListPage)
+                .execute(Tuple.of(id.value(), afterSequence, limit))
+                .map(rs -> {
+                    List<WorkflowHistoryEntry> entries = new ArrayList<>();
+                    var mapper = RowMappers.enrichedWorkflowHistoryEntry();
+                    for (var row : rs) {
+                        entries.add(mapper.map(row));
+                    }
+                    return entries;
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history listPage")));
     }
 }

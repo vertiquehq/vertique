@@ -6,7 +6,6 @@ package dev.vertique.workflow.engine;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -27,6 +26,9 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
@@ -79,6 +81,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * ambient correlation B as authoritative over the instance's persisted correlation A, while the
  * instance-fill half of the merge supplies tenant T for the namespace ambient lacks — proving the
  * base-wins/instance-fill contract (Contract Appendix C2) on the live (non-recovery) signal path.
+ *
+ * <p>A signal is applied by the segment that runs its recorded command, not by the call that records it, so the test
+ * drives that segment with the ambient correlation bound around it. The ambient context of the recording call itself is
+ * captured onto the command by a later change; until then the binder merges what is bound around the segment, which is
+ * what this test pins down.
  *
  * <p>Uses the {@code runOnDuplicated} pattern plus the shared {@link TenantCtx} /
  * {@link TenantCtxCodec} test fixture, extended with the real {@link CorrelationContext}
@@ -174,27 +181,33 @@ class WorkflowLiveSignalContextTest {
 
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
 
-        WorkflowEngineHandle handle = WorkflowEngineFactory.create(
-                txRunner,
-                workflowRegistry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                Set.<WorkflowSideEffectRecorder<SqlClient>>of(),
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.empty(),
-                propagator);
+        WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(workflowRegistry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.empty())
+                .propagator(propagator)
+                .typeNames(WorkflowEngineFactory.registryTypeNames(workflowRegistry))
+                .commands(new EmptyCommandRepository())
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(workflowRegistry))
+                .build());
         return new Harness(handle, instances, dedup, workflowRegistry, holder, correlationFactory);
     }
 
     @Test
-    @DisplayName("signal(): live ambient correlation B wins over the instance's persisted correlation A,"
+    @DisplayName("signal(): the signal's recorded correlation B wins over the instance's persisted correlation A,"
             + " and instance fill supplies tenant T")
     void signal_liveAmbientCorrelationNoExplicitCarrier_ambientWinsAndInstanceFillsTenant(
             Vertx vertx, VertxTestContext ctx) {
@@ -217,7 +230,6 @@ class WorkflowLiveSignalContextTest {
 
         WorkflowInstance inst = instanceWaitingOnSignal(instanceMetadata);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(h.dedup().claimOrResolveSignal(eq(inst.id()), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
 
         AtomicReference<Optional<TenantCtx>> capturedTenant = new AtomicReference<>();
         AtomicReference<Optional<CorrelationContext>> capturedCorrelation = new AtomicReference<>();
@@ -230,20 +242,31 @@ class WorkflowLiveSignalContextTest {
                 .updateOptimistic(any(), anyLong(), any());
 
         runOnDuplicated(vertx, v -> {
-            // Deliver the signal under a fresh ambient correlation B — no explicit carrier.
-            CorrelationContext ambientCorrelationB = h.correlationFactory()
+            // Apply a signal that was recorded under correlation B — no explicit carrier. The executor has no
+            // caller to capture from, so B arrives as the signal's recorded context.
+            CorrelationContext recordedCorrelationB = h.correlationFactory()
                     .create(new CorrelationIdentifier("req-B", "test"), new CorrelationIdentifier("corr-B", "test"));
-            h.holder().bind(CorrelationContext.class, ambientCorrelationB);
+            String recordedContext = new CorrelationContextDurableEncoder()
+                    .encode(recordedCorrelationB, new dev.vertique.core.context.DurableEncodeContext("test"))
+                    .toCarrier()
+                    .encode();
 
-            h.txOps()
-                    .signal(inst.id(), "approve", Map.of(), "dedup-1", tx)
+            RecordedSignalSegments.run(
+                            h.txOps(),
+                            inst,
+                            "approve",
+                            new io.vertx.core.json.JsonObject(),
+                            "dedup-1",
+                            null,
+                            recordedContext,
+                            tx)
                     .onComplete(ar -> ctx.verify(() -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());
                             return;
                         }
                         assertThat(capturedCorrelation.get())
-                                .as("ambient correlation B must be authoritative over the instance's persisted"
+                                .as("recorded correlation B must be authoritative over the instance's persisted"
                                         + " correlation A")
                                 .isPresent();
                         assertThat(capturedCorrelation

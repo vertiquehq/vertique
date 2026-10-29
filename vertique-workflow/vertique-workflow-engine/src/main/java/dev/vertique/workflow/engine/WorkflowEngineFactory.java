@@ -4,20 +4,25 @@
 package dev.vertique.workflow.engine;
 
 import dev.vertique.context.DurableContextPropagator;
-import dev.vertique.core.context.InboundContextInitializer;
-import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.workflow.engine.executor.CommandActors;
+import dev.vertique.workflow.engine.executor.DefaultWorkflowExecutionProbe;
+import dev.vertique.workflow.engine.executor.HoldingSegments;
+import dev.vertique.workflow.engine.executor.WorkflowExecutor;
+import dev.vertique.workflow.engine.history.DecisionLog;
+import dev.vertique.workflow.engine.history.JsonPatchDiff;
+import dev.vertique.workflow.engine.registry.PlanCache;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
-import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
-import dev.vertique.workflow.migration.WorkflowStateCompatibility;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerStore;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
@@ -25,23 +30,21 @@ import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import java.time.Clock;
-import java.util.Optional;
 import java.util.Set;
 
 /**
  * Public assembly seam for the portable workflow engine — the non-Dagger parallel to the wiring
  * {@link WorkflowEngineModule} performs at runtime.
  *
- * <p>{@link #create} accepts the engine's externally-supplied dependencies (the repository and
- * transaction-runner SPIs, the task/timer stores, the workflow registry, a {@link Clock}, the set
- * of side-effect recorders, the set of optional intent kinds, an optional migration registry, and
- * an optional durable-context propagator) and constructs the entire package-private collaborator
- * graph internally — {@link RecorderRouter}, {@link WorkflowReminderComposeValidator},
- * {@link FingerprintCanonicalizer}, the leaf history/event/reminder/compensation collaborators, the
- * {@link BranchTransitionEngine}, and finally the {@link WorkflowEngine} itself (which in turn wires
- * the {@code WorkflowTransitionDriver} ↔ {@link ForkJoinCoordinator} mutual-recursion cycle by
- * hand). It returns the assembled engine as a {@link WorkflowEngineHandle} so callers outside this
- * package never touch the package-private concrete type.
+ * <p>{@link #create} accepts the engine's externally-supplied dependencies as one
+ * {@link WorkflowEngineParts} (the repository and transaction-runner SPIs, the task/timer stores, the workflow
+ * registry, the durable definition store, a {@link Clock}, the side-effect recorders and the other optional parts)
+ * and constructs the entire package-private collaborator graph internally — {@link RecorderRouter},
+ * {@link FingerprintCanonicalizer}, the leaf
+ * history/event/reminder/compensation collaborators, the {@link BranchTransitionEngine}, and finally the
+ * {@link WorkflowEngine} itself (which in turn wires the {@code WorkflowTransitionDriver} ↔
+ * {@link ForkJoinCoordinator} mutual-recursion cycle by hand). It returns the assembled engine as a
+ * {@link WorkflowEngineHandle} so callers outside this package never touch the package-private concrete type.
  *
  * <p>This is the construction knowledge dialect/test code previously hand-wired (e.g. a
  * dialect adapter's test support); relocating it here keeps that knowledge in one
@@ -59,8 +62,8 @@ public final class WorkflowEngineFactory {
      *
      * <p>{@link IntentKind#WORKFLOW_EVENT} is optional so that apps without a workflow-events module
      * can still run as long as no registered plan declares reminders (the
-     * {@link WorkflowReminderComposeValidator} enforces the reminder-requires-events rule at startup
-     * for apps that do configure reminders).
+     * {@link WorkflowReminderComposeValidator} enforces the reminder-requires-events rule on each plan
+     * the registry builds, for apps that do configure reminders).
      */
     public static final Set<IntentKind> DEFAULT_OPTIONAL_INTENT_KINDS = Set.of(IntentKind.WORKFLOW_EVENT);
 
@@ -69,386 +72,50 @@ public final class WorkflowEngineFactory {
     }
 
     /**
-     * Assembles a fully wired workflow engine over the supplied dependencies.
+     * Assembles a fully wired workflow engine over the supplied parts.
      *
-     * @param txRunner the transaction runner SPI that owns the transaction boundary and the layered
-     *     DB-to-workflow exception mapping
-     * @param registry the workflow registry used to resolve pinned runtime workflows
-     * @param instances the instance repository SPI
-     * @param history the history repository SPI
-     * @param dedup the dedup repository SPI
-     * @param branchTokens the branch-token repository SPI
-     * @param joinStates the join-state repository SPI
-     * @param timerStore the timer store
-     * @param taskStore the task store
-     * @param clock the clock used to timestamp entries and state transitions
-     * @param recorders the set of side-effect recorders contributed by the application
-     * @param optionalIntentKinds the set of intent kinds the recorder router treats as optional
-     *     (use {@link #DEFAULT_OPTIONAL_INTENT_KINDS} for the engine default)
-     * @param migrationRegistryOpt the optional migration registry; when empty, {@code migrate} fails
-     *     with {@link UnsupportedOperationException}
-     * @param propagator the durable-context propagator used to capture branch metadata; may be
-     *     {@code null} for callers that do not exercise the branch durable-capture path
+     * <p>The engine shares one payload constraint check between start payloads and decision payloads, and one
+     * {@link dev.vertique.context.InboundExecutionContextScope} between binder-row drives (signal, cancel, retry,
+     * migrate, task and timer lifecycle callbacks) and branch-owned drives (branch-targeted signals, fork
+     * continuations, recovery) when the parts carry a propagator, so every registered initializer runs identically on
+     * both drive shapes, matching production Dagger wiring. Without a propagator no scope is built and the drives
+     * run without initializers.
+     *
+     * <p>The engine this method assembles runs no startup step: it reads the rows and the activation records of
+     * {@link WorkflowEngineParts#definitionStore()} when a start selects its version, so what the store holds at that
+     * time decides it. A store that cannot read on the caller's transaction, see {@link TransactionalDefinitionReads},
+     * fails the start of an instance.
+     *
+     * @param parts the engine's externally supplied dependencies, including the durable definition store
      * @return the assembled engine as a {@link WorkflowEngineHandle}
      */
-    public static WorkflowEngineHandle create(
-            WorkflowTransactionRunner<SqlClient> txRunner,
-            WorkflowRegistry registry,
-            WorkflowInstanceRepository<SqlClient> instances,
-            WorkflowHistoryRepository<SqlClient> history,
-            WorkflowDedupRepository<SqlClient> dedup,
-            BranchTokenRepository<SqlClient> branchTokens,
-            JoinStateRepository<SqlClient> joinStates,
-            TimerStore<SqlClient> timerStore,
-            TaskStore<SqlClient> taskStore,
-            Clock clock,
-            Set<WorkflowSideEffectRecorder<SqlClient>> recorders,
-            Set<IntentKind> optionalIntentKinds,
-            Optional<WorkflowMigrationRegistry> migrationRegistryOpt,
-            @Nullable DurableContextPropagator propagator) {
-        return create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                clock,
-                recorders,
-                optionalIntentKinds,
-                migrationRegistryOpt,
-                propagator,
-                Set.of());
-    }
-
-    /**
-     * Assembles a fully wired workflow engine over the supplied dependencies, additionally
-     * threading a set of {@link InboundContextInitializer}s into the engine's shared
-     * {@link dev.vertique.context.InboundExecutionContextScope} (factory initializer parity).
-     *
-     * <p>{@link #create(WorkflowTransactionRunner, WorkflowRegistry, WorkflowInstanceRepository,
-     * WorkflowHistoryRepository, WorkflowDedupRepository, BranchTokenRepository, JoinStateRepository,
-     * TimerStore, TaskStore, Clock, Set, Set, Optional, DurableContextPropagator) the no-initializer
-     * overload} delegates here with an empty initializer set and assembles the engine
-     * <b>without</b> inbound initializers — correlation seeding and any other registered
-     * {@link InboundContextInitializer} are absent from both a binder-row bind and a branch-owned
-     * drive, unlike production Dagger wiring ({@link WorkflowEngineModule}), which runs every
-     * registered initializer via the injected {@link dev.vertique.context.InboundExecutionContextScope}.
-     * Callers that need parity with production initializer behavior (e.g. dialect/test harnesses
-     * exercising correlation seeding) should call this overload directly with the same initializer
-     * set the application registers via Dagger multibindings.
-     *
-     * <p>This overload constructs exactly one
-     * {@link dev.vertique.context.InboundExecutionContextScope} from {@code propagator} and
-     * {@code inboundContextInitializers} (when {@code propagator} is non-{@code null}) and threads
-     * that same instance into both the binder-row {@link WorkflowContextBinder} (instance-owned
-     * single-path drives: signal, cancel, retry, migrate, task/timer lifecycle callbacks) and
-     * {@link BranchTransitionEngine} (branch-owned drives: branch-targeted signals, fork
-     * continuations, recovery via the bridge) — so every registered initializer runs identically on
-     * both drive shapes, matching production Dagger wiring where both collaborators receive the same
-     * injected singleton scope.
-     *
-     * @param txRunner the transaction runner SPI that owns the transaction boundary and the layered
-     *     DB-to-workflow exception mapping
-     * @param registry the workflow registry used to resolve pinned runtime workflows
-     * @param instances the instance repository SPI
-     * @param history the history repository SPI
-     * @param dedup the dedup repository SPI
-     * @param branchTokens the branch-token repository SPI
-     * @param joinStates the join-state repository SPI
-     * @param timerStore the timer store
-     * @param taskStore the task store
-     * @param clock the clock used to timestamp entries and state transitions
-     * @param recorders the set of side-effect recorders contributed by the application
-     * @param optionalIntentKinds the set of intent kinds the recorder router treats as optional
-     *     (use {@link #DEFAULT_OPTIONAL_INTENT_KINDS} for the engine default)
-     * @param migrationRegistryOpt the optional migration registry; when empty, {@code migrate} fails
-     *     with {@link UnsupportedOperationException}
-     * @param propagator the durable-context propagator used to capture branch metadata; may be
-     *     {@code null} for callers that do not exercise the branch durable-capture path
-     * @param inboundContextInitializers the set of {@link InboundContextInitializer}s to run on
-     *     every bound drive (binder-row and branch-owned), mirroring the Dagger-registered
-     *     {@code Set<InboundContextInitializer>} multibinding
-     * @return the assembled engine as a {@link WorkflowEngineHandle}
-     */
-    public static WorkflowEngineHandle create(
-            WorkflowTransactionRunner<SqlClient> txRunner,
-            WorkflowRegistry registry,
-            WorkflowInstanceRepository<SqlClient> instances,
-            WorkflowHistoryRepository<SqlClient> history,
-            WorkflowDedupRepository<SqlClient> dedup,
-            BranchTokenRepository<SqlClient> branchTokens,
-            JoinStateRepository<SqlClient> joinStates,
-            TimerStore<SqlClient> timerStore,
-            TaskStore<SqlClient> taskStore,
-            Clock clock,
-            Set<WorkflowSideEffectRecorder<SqlClient>> recorders,
-            Set<IntentKind> optionalIntentKinds,
-            Optional<WorkflowMigrationRegistry> migrationRegistryOpt,
-            @Nullable DurableContextPropagator propagator,
-            Set<InboundContextInitializer> inboundContextInitializers) {
-        return create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                clock,
-                recorders,
-                optionalIntentKinds,
-                migrationRegistryOpt,
-                propagator,
-                inboundContextInitializers,
-                Optional.empty());
-    }
-
-    /**
-     * Assembles a fully wired workflow engine over the supplied dependencies, additionally
-     * threading an optional {@link BeanValidator} that switches on constraint enforcement for
-     * coerced decision and start payloads.
-     *
-     * <p>The {@link #create(WorkflowTransactionRunner, WorkflowRegistry, WorkflowInstanceRepository,
-     * WorkflowHistoryRepository, WorkflowDedupRepository, BranchTokenRepository, JoinStateRepository,
-     * TimerStore, TaskStore, Clock, Set, Set, Optional, DurableContextPropagator, Set)
-     * initializer overload} delegates here with an empty validator, which leaves payloads
-     * unchecked beyond coercion. This overload builds exactly one payload constraint check and
-     * threads that same instance into both the engine (start payloads) and the task lifecycle
-     * service (decision payloads), matching production Dagger wiring where
-     * {@link WorkflowEngineModule} declares the validator as an optional binding.
-     *
-     * <p>The engine shares the type-name index of {@code registry} when it is a
-     * {@code DefaultWorkflowRegistry}; for any other registry it starts with an empty index, so pass
-     * the index explicitly through the overload that takes a {@link WorkflowTypeNames}.
-     *
-     * @param txRunner the transaction runner SPI that owns the transaction boundary and the layered
-     *     DB-to-workflow exception mapping
-     * @param registry the workflow registry used to resolve pinned runtime workflows
-     * @param instances the instance repository SPI
-     * @param history the history repository SPI
-     * @param dedup the dedup repository SPI
-     * @param branchTokens the branch-token repository SPI
-     * @param joinStates the join-state repository SPI
-     * @param timerStore the timer store
-     * @param taskStore the task store
-     * @param clock the clock used to timestamp entries and state transitions
-     * @param recorders the set of side-effect recorders contributed by the application
-     * @param optionalIntentKinds the set of intent kinds the recorder router treats as optional
-     *     (use {@link #DEFAULT_OPTIONAL_INTENT_KINDS} for the engine default)
-     * @param migrationRegistryOpt the optional migration registry; when empty, {@code migrate} fails
-     *     with {@link UnsupportedOperationException}
-     * @param propagator the durable-context propagator used to capture branch metadata; may be
-     *     {@code null} for callers that do not exercise the branch durable-capture path
-     * @param inboundContextInitializers the set of {@link InboundContextInitializer}s to run on
-     *     every bound drive (binder-row and branch-owned)
-     * @param beanValidator the bean validator that checks coerced decision and start payloads; when
-     *     empty, payload constraints are not enforced
-     * @return the assembled engine as a {@link WorkflowEngineHandle}
-     */
-    public static WorkflowEngineHandle create(
-            WorkflowTransactionRunner<SqlClient> txRunner,
-            WorkflowRegistry registry,
-            WorkflowInstanceRepository<SqlClient> instances,
-            WorkflowHistoryRepository<SqlClient> history,
-            WorkflowDedupRepository<SqlClient> dedup,
-            BranchTokenRepository<SqlClient> branchTokens,
-            JoinStateRepository<SqlClient> joinStates,
-            TimerStore<SqlClient> timerStore,
-            TaskStore<SqlClient> taskStore,
-            Clock clock,
-            Set<WorkflowSideEffectRecorder<SqlClient>> recorders,
-            Set<IntentKind> optionalIntentKinds,
-            Optional<WorkflowMigrationRegistry> migrationRegistryOpt,
-            @Nullable DurableContextPropagator propagator,
-            Set<InboundContextInitializer> inboundContextInitializers,
-            Optional<BeanValidator> beanValidator) {
-        return create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                clock,
-                recorders,
-                optionalIntentKinds,
-                migrationRegistryOpt,
-                propagator,
-                inboundContextInitializers,
-                beanValidator,
-                registryTypeNames(registry));
-    }
-
-    /**
-     * Returns the type-name index of a {@link DefaultWorkflowRegistry}, and an empty index for any
-     * other registry, which a wrapped registry cannot share. Pass the index explicitly through the
-     * overload that takes a {@link WorkflowTypeNames} when the registry is not a default registry.
-     */
-    static WorkflowTypeNames registryTypeNames(WorkflowRegistry registry) {
-        return registry instanceof DefaultWorkflowRegistry defaultRegistry
-                ? defaultRegistry.typeNames()
-                : new DefaultWorkflowTypeNames();
-    }
-
-    /**
-     * Assembles a fully wired workflow engine over the supplied dependencies, additionally
-     * threading an optional {@link BeanValidator} that switches on constraint enforcement for
-     * coerced decision and start payloads.
-     *
-     * <p>This overload takes the type-name index explicitly, so an engine over a registry that wraps or
-     * decorates the default registry shares the index the wrapped registry fills. The overload without
-     * the index uses the index of the registry when it is a {@code DefaultWorkflowRegistry} and an
-     * empty one otherwise; with an empty index a decision payload type that is not a binary class name
-     * cannot be resolved.
-     *
-     * <p>The {@link #create(WorkflowTransactionRunner, WorkflowRegistry, WorkflowInstanceRepository,
-     * WorkflowHistoryRepository, WorkflowDedupRepository, BranchTokenRepository, JoinStateRepository,
-     * TimerStore, TaskStore, Clock, Set, Set, Optional, DurableContextPropagator, Set)
-     * initializer overload} delegates here with an empty validator, which leaves payloads
-     * unchecked beyond coercion. This overload builds exactly one payload constraint check and
-     * threads that same instance into both the engine (start payloads) and the task lifecycle
-     * service (decision payloads), matching production Dagger wiring where
-     * {@link WorkflowEngineModule} declares the validator as an optional binding.
-     *
-     * @param txRunner the transaction runner SPI that owns the transaction boundary and the layered
-     *     DB-to-workflow exception mapping
-     * @param registry the workflow registry used to resolve pinned runtime workflows
-     * @param instances the instance repository SPI
-     * @param history the history repository SPI
-     * @param dedup the dedup repository SPI
-     * @param branchTokens the branch-token repository SPI
-     * @param joinStates the join-state repository SPI
-     * @param timerStore the timer store
-     * @param taskStore the task store
-     * @param clock the clock used to timestamp entries and state transitions
-     * @param recorders the set of side-effect recorders contributed by the application
-     * @param optionalIntentKinds the set of intent kinds the recorder router treats as optional
-     *     (use {@link #DEFAULT_OPTIONAL_INTENT_KINDS} for the engine default)
-     * @param migrationRegistryOpt the optional migration registry; when empty, {@code migrate} fails
-     *     with {@link UnsupportedOperationException}
-     * @param propagator the durable-context propagator used to capture branch metadata; may be
-     *     {@code null} for callers that do not exercise the branch durable-capture path
-     * @param inboundContextInitializers the set of {@link InboundContextInitializer}s to run on
-     *     every bound drive (binder-row and branch-owned)
-     * @param beanValidator the bean validator that checks coerced decision and start payloads; when
-     *     empty, payload constraints are not enforced
-     * @param typeNames the type-name index the engine resolves a decision payload's declared type name
-     *     through; pass the one index the registry fills, which is what Dagger wiring injects
-     * @return the assembled engine as a {@link WorkflowEngineHandle}
-     */
-    public static WorkflowEngineHandle create(
-            WorkflowTransactionRunner<SqlClient> txRunner,
-            WorkflowRegistry registry,
-            WorkflowInstanceRepository<SqlClient> instances,
-            WorkflowHistoryRepository<SqlClient> history,
-            WorkflowDedupRepository<SqlClient> dedup,
-            BranchTokenRepository<SqlClient> branchTokens,
-            JoinStateRepository<SqlClient> joinStates,
-            TimerStore<SqlClient> timerStore,
-            TaskStore<SqlClient> taskStore,
-            Clock clock,
-            Set<WorkflowSideEffectRecorder<SqlClient>> recorders,
-            Set<IntentKind> optionalIntentKinds,
-            Optional<WorkflowMigrationRegistry> migrationRegistryOpt,
-            @Nullable DurableContextPropagator propagator,
-            Set<InboundContextInitializer> inboundContextInitializers,
-            Optional<BeanValidator> beanValidator,
-            WorkflowTypeNames typeNames) {
-        return create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                clock,
-                recorders,
-                optionalIntentKinds,
-                migrationRegistryOpt,
-                propagator,
-                inboundContextInitializers,
-                beanValidator,
-                typeNames,
-                Optional.empty());
-    }
-
-    /**
-     * Assembles a fully wired workflow engine over the supplied dependencies, additionally threading the
-     * comparison that decides whether a migration may move an instance to a definition whose state class differs
-     * from the one it is pinned to.
-     *
-     * <p>The overload without the comparison delegates here with an empty one, so the engine refuses a migration
-     * between differing state classes. Pass the comparison the registry was built with, which is what Dagger wiring
-     * injects.
-     *
-     * @param txRunner the transaction runner SPI that owns the transaction boundary and the layered
-     *     DB-to-workflow exception mapping
-     * @param registry the workflow registry used to resolve pinned runtime workflows
-     * @param instances the instance repository SPI
-     * @param history the history repository SPI
-     * @param dedup the dedup repository SPI
-     * @param branchTokens the branch-token repository SPI
-     * @param joinStates the join-state repository SPI
-     * @param timerStore the timer store
-     * @param taskStore the task store
-     * @param clock the clock used to timestamp entries and state transitions
-     * @param recorders the set of side-effect recorders contributed by the application
-     * @param optionalIntentKinds the set of intent kinds the recorder router treats as optional
-     *     (use {@link #DEFAULT_OPTIONAL_INTENT_KINDS} for the engine default)
-     * @param migrationRegistryOpt the optional migration registry; when empty, {@code migrate} fails
-     *     with {@link UnsupportedOperationException}
-     * @param propagator the durable-context propagator used to capture branch metadata; may be
-     *     {@code null} for callers that do not exercise the branch durable-capture path
-     * @param inboundContextInitializers the set of {@link InboundContextInitializer}s to run on
-     *     every bound drive (binder-row and branch-owned)
-     * @param beanValidator the bean validator that checks coerced decision and start payloads; when
-     *     empty, payload constraints are not enforced
-     * @param typeNames the type-name index the engine resolves a decision payload's declared type name
-     *     through; pass the one index the registry fills, which is what Dagger wiring injects
-     * @param stateCompatibility the comparison a migration applies to differing state classes; when empty, a
-     *     migration between differing state classes is refused
-     * @return the assembled engine as a {@link WorkflowEngineHandle}
-     */
-    public static WorkflowEngineHandle create(
-            WorkflowTransactionRunner<SqlClient> txRunner,
-            WorkflowRegistry registry,
-            WorkflowInstanceRepository<SqlClient> instances,
-            WorkflowHistoryRepository<SqlClient> history,
-            WorkflowDedupRepository<SqlClient> dedup,
-            BranchTokenRepository<SqlClient> branchTokens,
-            JoinStateRepository<SqlClient> joinStates,
-            TimerStore<SqlClient> timerStore,
-            TaskStore<SqlClient> taskStore,
-            Clock clock,
-            Set<WorkflowSideEffectRecorder<SqlClient>> recorders,
-            Set<IntentKind> optionalIntentKinds,
-            Optional<WorkflowMigrationRegistry> migrationRegistryOpt,
-            @Nullable DurableContextPropagator propagator,
-            Set<InboundContextInitializer> inboundContextInitializers,
-            Optional<BeanValidator> beanValidator,
-            WorkflowTypeNames typeNames,
-            Optional<WorkflowStateCompatibility> stateCompatibility) {
-        PayloadConstraintCheck payloadConstraintCheck = new PayloadConstraintCheck(beanValidator);
-        WorkflowReminderComposeValidator complianceCheck = new WorkflowReminderComposeValidator(registry, recorders);
-        RecorderRouter recorderRouter = new RecorderRouter(recorders, optionalIntentKinds, complianceCheck);
+    public static WorkflowEngineHandle create(WorkflowEngineParts parts) {
+        WorkflowTransactionRunner<SqlClient> txRunner = parts.txRunner();
+        WorkflowRegistry registry = parts.registry();
+        WorkflowInstanceRepository<SqlClient> instances = parts.instances();
+        WorkflowHistoryRepository<SqlClient> history = parts.history();
+        WorkflowDedupRepository<SqlClient> dedup = parts.dedup();
+        BranchTokenRepository<SqlClient> branchTokens = parts.branchTokens();
+        JoinStateRepository<SqlClient> joinStates = parts.joinStates();
+        TimerStore<SqlClient> timerStore = parts.timerStore();
+        TaskStore<SqlClient> taskStore = parts.taskStore();
+        Clock clock = parts.clock();
+        DurableContextPropagator propagator = parts.propagator();
+        WorkflowExecutionProbe executionProbe = parts.vertx() == null
+                ? new DefaultWorkflowExecutionProbe(
+                        parts.commands(), parts.executorConfig().stuckAfterSeconds())
+                : new DefaultWorkflowExecutionProbe(
+                        parts.commands(), parts.vertx(), parts.executorConfig().stuckAfterSeconds());
+        PayloadConstraintCheck payloadConstraintCheck = new PayloadConstraintCheck(parts.beanValidator());
+        RecorderRouter recorderRouter = new RecorderRouter(parts.recorders(), parts.optionalIntentKinds());
         FingerprintCanonicalizer fingerprintCanonicalizer = new FingerprintCanonicalizer();
         WorkflowEventEmitter eventEmitter = new WorkflowEventEmitter(recorderRouter, clock);
-        WorkflowHistoryRecorder historyRecorder = new WorkflowHistoryRecorder(history, eventEmitter, clock);
-        ReminderScheduler reminderScheduler = new ReminderScheduler(history, recorderRouter, timerStore, clock);
+        DecisionLog decisionLog = new DecisionLog(new JsonPatchDiff(), history, parts.historyRedactor(), clock);
+        WorkflowHistoryRecorder historyRecorder =
+                new WorkflowHistoryRecorder(history, eventEmitter, clock, decisionLog);
+        ReminderScheduler reminderScheduler = new ReminderScheduler(history, parts.commands(), timerStore, clock);
         CompensationService compensationService =
-                new CompensationService(instances, history, recorderRouter, eventEmitter, clock);
+                new CompensationService(instances, history, recorderRouter, eventEmitter, clock, decisionLog);
         // Build the substrate lifecycle helper ONCE from the (possibly-null) propagator and the
         // supplied initializer set, and thread the same instance into BranchTransitionEngine so
         // binder-row drives (WorkflowContextBinder, wired inside the WorkflowEngine constructor
@@ -463,14 +130,45 @@ public final class WorkflowEngineFactory {
         dev.vertique.context.InboundExecutionContextScope inboundExecScope = propagator == null
                 ? null
                 : new dev.vertique.context.InboundExecutionContextScope(
-                        new dev.vertique.context.InboundDispatchScope(), propagator, inboundContextInitializers);
+                        new dev.vertique.context.InboundDispatchScope(),
+                        propagator,
+                        parts.inboundContextInitializers());
         BranchTransitionEngine branchEngine = inboundExecScope == null
-                ? new BranchTransitionEngine(branchTokens, dedup, history, recorderRouter, taskStore, clock, propagator)
+                ? new BranchTransitionEngine(
+                        branchTokens,
+                        dedup,
+                        history,
+                        recorderRouter,
+                        parts.commands(),
+                        taskStore,
+                        clock,
+                        propagator,
+                        null,
+                        parts.schemaProducer())
                 : new BranchTransitionEngine(
-                        branchTokens, dedup, history, recorderRouter, taskStore, clock, propagator, inboundExecScope);
+                        branchTokens,
+                        dedup,
+                        history,
+                        recorderRouter,
+                        parts.commands(),
+                        taskStore,
+                        clock,
+                        propagator,
+                        inboundExecScope,
+                        parts.schemaProducer());
         BranchCompensationOrchestrator branchCompensation =
                 new BranchCompensationOrchestrator(history, recorderRouter, clock);
-        return new WorkflowEngine(
+        WorkflowExecutorControl[] executorHolder = new WorkflowExecutorControl[1];
+        // The plan cache of a factory-built engine has the default size and no observers, so it emits no cache events.
+        PlanCache planCache = PlanCache.bound(
+                parts.definitionStore(),
+                Set.of(),
+                registry,
+                parts.vertx(),
+                parts.schemaProducer(),
+                PlanCache.DEFAULT_CONFIG,
+                Set.of());
+        WorkflowEngine engine = new WorkflowEngine(
                 txRunner,
                 registry,
                 instances,
@@ -486,16 +184,56 @@ public final class WorkflowEngineFactory {
                 branchEngine,
                 branchCompensation,
                 propagator,
-                migrationRegistryOpt,
+                parts.migrationRegistry(),
                 eventEmitter,
                 historyRecorder,
                 reminderScheduler,
                 compensationService,
                 inboundExecScope,
                 payloadConstraintCheck,
-                typeNames,
-                new DefinitionActivations(),
-                stateCompatibility,
-                new FailingDefinitions());
+                parts.typeNames(),
+                parts.stateCompatibility(),
+                executionProbe,
+                parts.commands(),
+                () -> executorHolder[0],
+                parts.recordingConfig(),
+                parts.taskReservations(),
+                parts.schemaProducer(),
+                planCache.marks()::find,
+                transactionalReads(parts.definitionStore()),
+                new CommandActors(parts.contextHolder(), parts.actorMapper(), parts.executorObservers()));
+        executorHolder[0] = new WorkflowExecutor(
+                parts.vertx(),
+                parts.executorConfig(),
+                parts.commands(),
+                txRunner,
+                new HoldingSegments(engine::segments, () -> planCache),
+                WorkflowExecutor.newNodeId(),
+                parts.executorObservers(),
+                parts.commandWakeups());
+        return engine;
+    }
+
+    /**
+     * The store's reads of definition rows on a caller's transaction, when it offers them; {@code null} fails a start,
+     * which selects its version from the rows. The SQL-client handle is the only handle type the engine records on.
+     */
+    @SuppressWarnings("unchecked")
+    private static @Nullable TransactionalDefinitionReads<SqlClient> transactionalReads(
+            WorkflowDefinitionRegistryStore store) {
+        return store instanceof TransactionalDefinitionReads<?> reads
+                ? (TransactionalDefinitionReads<SqlClient>) reads
+                : null;
+    }
+
+    /**
+     * Returns the type-name index of a {@link DefaultWorkflowRegistry}, and an empty index for any
+     * other registry, which a wrapped registry cannot share. Pass the index explicitly through the
+     * overload that takes a {@link WorkflowTypeNames} when the registry is not a default registry.
+     */
+    static WorkflowTypeNames registryTypeNames(WorkflowRegistry registry) {
+        return registry instanceof DefaultWorkflowRegistry defaultRegistry
+                ? defaultRegistry.typeNames()
+                : new DefaultWorkflowTypeNames();
     }
 }

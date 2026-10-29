@@ -13,6 +13,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import io.vertx.core.Vertx;
@@ -39,8 +40,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Integration tests for {@link PgBranchTokenRepository} against a real PostgreSQL instance.
  *
  * <p>Covers insert + findById round-trip, optimistic update (success and stale-version),
- * findByWorkflowAndFork ordering, findRecoverable selection by status + due time, and stale-running
- * detection.
+ * findByWorkflowAndFork ordering, and selection by status.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -72,9 +72,11 @@ public class PgBranchTokenRepositoryIT {
 
     @BeforeEach
     void cleanTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> {
                     if (ar.failed()) ctx.failNow(ar.cause());
@@ -226,58 +228,6 @@ public class PgBranchTokenRepositoryIT {
     }
 
     @Test
-    @DisplayName("findRecoverable selects RETRY_SCHEDULED branches whose next_retry_at is at or before now")
-    void findRecoverableSelectsDue(VertxTestContext ctx) {
-        WorkflowInstanceId wf = insertInstance();
-        Instant now = Instant.parse("2026-05-10T00:00:00Z");
-        BranchToken due = makeToken(wf, "due", BranchStatus.RETRY_SCHEDULED, now);
-        BranchToken dueLater = makeToken(wf, "later", BranchStatus.RETRY_SCHEDULED, now);
-        BranchToken running = makeToken(wf, "run", BranchStatus.RUNNING, now);
-
-        BranchToken dueWithRetry = withRetry(due, now.minusSeconds(5));
-        BranchToken laterWithRetry = withRetry(dueLater, now.plusSeconds(60));
-
-        pool.withTransaction(tx -> repo.insert(dueWithRetry, tx)
-                        .compose(v -> repo.insert(laterWithRetry, tx))
-                        .compose(v -> repo.insert(running, tx))
-                        .compose(v -> repo.findRecoverable(now, 10, tx)))
-                .onComplete(ar -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    List<BranchToken> rows = ar.result();
-                    assertEquals(1, rows.size());
-                    assertEquals("due", rows.get(0).branchId());
-                    ctx.completeNow();
-                });
-    }
-
-    @Test
-    @DisplayName("findStaleRunning selects RUNNING rows whose updated_at is older than threshold")
-    void findStaleRunningSelectsOld(VertxTestContext ctx) {
-        WorkflowInstanceId wf = insertInstance();
-        Instant tStale = Instant.parse("2026-05-09T00:00:00Z");
-        Instant tFresh = Instant.parse("2026-05-10T00:00:00Z");
-        BranchToken stale = makeToken(wf, "stale", BranchStatus.RUNNING, tStale);
-        BranchToken fresh = makeToken(wf, "fresh", BranchStatus.RUNNING, tFresh);
-
-        pool.withTransaction(tx -> repo.insert(stale, tx)
-                        .compose(v -> repo.insert(fresh, tx))
-                        .compose(v -> repo.findStaleRunning(tFresh.minusSeconds(60), 10, tx)))
-                .onComplete(ar -> {
-                    if (ar.failed()) {
-                        ctx.failNow(ar.cause());
-                        return;
-                    }
-                    List<BranchToken> rows = ar.result();
-                    assertEquals(1, rows.size());
-                    assertEquals("stale", rows.get(0).branchId());
-                    ctx.completeNow();
-                });
-    }
-
-    @Test
     @DisplayName("(workflowId, forkStepId, branchId) UNIQUE rejects duplicate branch ids in the same fork")
     void uniqueBranchIdRejectsDuplicate(VertxTestContext ctx) {
         WorkflowInstanceId wf = insertInstance();
@@ -314,31 +264,5 @@ public class PgBranchTokenRepositoryIT {
                     assertFalse(ar.cause().getMessage().isEmpty());
                     ctx.completeNow();
                 });
-    }
-
-    private static BranchToken withRetry(BranchToken token, Instant nextRetryAt) {
-        return new BranchToken(
-                token.id(),
-                token.workflowId(),
-                token.forkStepId(),
-                token.branchId(),
-                token.currentStepId(),
-                token.status(),
-                token.waitType(),
-                token.waitKey(),
-                token.waitAuxId(),
-                token.resultJson(),
-                token.errorType(),
-                token.errorMessage(),
-                token.attemptCount(),
-                token.maxAttempts(),
-                nextRetryAt,
-                token.lastErrorType(),
-                token.lastErrorMessage(),
-                token.lastErrorAt(),
-                token.version(),
-                token.createdAt(),
-                token.updatedAt(),
-                DurableMetadata.empty());
     }
 }

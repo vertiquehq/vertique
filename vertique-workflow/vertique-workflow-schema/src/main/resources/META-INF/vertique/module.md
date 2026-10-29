@@ -75,6 +75,12 @@ once whether the supplement is enabled.
 
 ---
 
+## Schemas Stored On Definition Rows
+
+`WorkflowSchemaModule` also binds the internal `WorkflowPlanSchemaProducer`. A node that installs the module stores, with the plan hash of every definition row it writes, the signal names the version declares and the JSON Schema of its start payload. The producer reads the schemas the registration validator cached, so the start schema equals the one `validateStart` checks against; a payload type that is not cached yet, as for a document candidate that is loaded but not published, is described by the same generator under the same profile. A version whose start type is `void` gets the explicit schema `{"type":"null"}`, which admits no payload, so that a start that submits one is refused at record time; a row without a start schema (a null column, written before the schema was stored) leaves the decision to the executor. A node that runs the executor (`workflow.executor.enabled` is `true`, the default) needs this producer: without the module its startup fails with a `WorkflowConfigurationException` that names `vertique-workflow-schema` and `workflow.executor.enabled`, before it writes any definition row. A recording-only node (`workflow.executor.enabled=false`) needs neither the producer nor the module.
+
+---
+
 ## State Type Comparison
 
 `WorkflowSchemaModule` also binds `WorkflowStateCompatibility`, which the workflow registry and the engine use to decide
@@ -177,6 +183,8 @@ linear-safe, or review them before they enter a payload type.
 
 ## Reading Payload Schemas
 
+Every `WorkflowPayloadSchemas` method resolves a plan, so on a recording-only node (`workflow.executor.enabled=false`) each one fails with `WorkflowNodeRoleException` (a failed future) and reads nothing.
+
 `WorkflowPayloadSchemas` is bound by `WorkflowSchemaModule`. It returns the schemas generated at
 registration as plain descriptors, so a client can render a form for a decision or a start payload
 without knowing the Java types.
@@ -185,7 +193,7 @@ without knowing the Java types.
 
 | Class | Role |
 |---|---|
-| `WorkflowPayloadSchemas` | `describe(key)` for the whole definition; `decision(key, stepId, decisionName)` for one decision; `validateDecision` and `validateStart` to validate a submitted payload. The key is the `DefinitionKey` of the pin: scope, definition id and version |
+| `WorkflowPayloadSchemas` | `describe(key)` for the whole definition; `decision(key, stepId, decisionName)` for one decision; `validateDecision` and `validateStart` to validate a submitted payload. Every method returns a `Future`: `Future<Optional<WorkflowDefinitionDescriptor>>`, `Future<Optional<DecisionDescriptor>>` and `Future<PayloadValidationResult>` twice. The key is the `DefinitionKey` of the pin: scope, definition id and version |
 | `WorkflowDefinitionDescriptor` | Definition id and version, the start payload schema (`null` for a `void` start) and the human task steps in plan order |
 | `HumanTaskStepDescriptor` | A step id and its decisions in declaration order |
 | `DecisionDescriptor` | Decision name, the step it leads to and the payload schema (`null` for a `void` decision) |
@@ -218,16 +226,24 @@ in the document's `properties` nor in `propertyOrder`; extra keys are described 
 
 ### Behavior of reads
 
-- **Unknown returns empty on `describe` and `decision`.** An unknown definition id, version, step or
-  decision gives `Optional.empty()`. The validation methods answer the same situation with a
+- **Unknown completes empty on `describe` and `decision`.** An unknown definition id, version, step or
+  decision completes the future with `Optional.empty()`. The validation methods answer the same situation with a
   violation instead (see Validating Payloads).
-- **No class loading on read.** Descriptors are assembled from the registry's stored plan and the
-  cache filled at registration. A read loads no class, generates nothing and touches no storage.
-- **Non-blocking and event-loop safe.** `describe` and `decision` are plain in-memory reads and may
-  run on the event loop.
+- **The plan comes from `WorkflowRegistry.load`.** A version that is stored but not resident is built on
+  demand, so `describe` for it completes after the plan is loaded instead of answering empty. A version
+  that cannot run on this node, because no stored row supplies it or its stored source does not build (a
+  definition refusal or an unavailable pin), is unknown: it completes empty, or with the `definition`
+  violation, and the cause is logged on the server and never returned. Any other load failure, such as an
+  unreadable row, fails the future with that failure unchanged. The service does not decide who may ask:
+  authorize access to the definition and check the scope of the key before calling. No plan reference is held
+  after the call.
+- **No class loading or generation on read.** Descriptors are assembled from the loaded plan and the
+  cache filled at registration; the read itself generates nothing.
+- **Non-blocking and event-loop safe.** The calls add no blocking work; a plan that must be built is built
+  on `load`'s worker thread, so the methods may run on the event loop.
 - **A missing schema is a wiring fault.** If a definition is registered but one of its payload
   types has no cached schema, the registry was built without this module's validator. `describe`,
-  `decision` and the validation methods then throw `IllegalStateException` naming the type and saying
+  `decision` and the validation methods then fail the returned future with `IllegalStateException` naming the type and saying
   to install `WorkflowSchemaModule` in the component that provides `WorkflowRegistry`.
 - **One profile per process.** Cache entries are keyed by type and profile, and a process has one
   system profile. If entries for the same type exist under more than one profile, a read or a
@@ -243,7 +259,7 @@ a client needs two hops to reach the schema of a task's decisions:
 1. Read the task record and take its workflow id and step id.
 2. Query the instance through `WorkflowOperations.query`; the returned instance names the
    definition id and the pinned definition version.
-3. Call `describe` (or `decision`) with that id and version, and pick the step.
+3. Call `describe` (or `decision`) with that id and version, await the future, and pick the step.
 
 ---
 
@@ -253,19 +269,19 @@ a client needs two hops to reach the schema of a task's decisions:
 definition version:
 
 ```java
-PayloadValidationResult result =
-    schemas.validateDecision(key, "review", "approve", payload);
-if (!result.valid()) {
-  List<ViolationDetail> violations = result.violations();
-}
-PayloadValidationResult start = schemas.validateStart(key, startPayload);
+schemas.validateDecision(key, "review", "approve", payload).onSuccess(result -> {
+  if (!result.valid()) {
+    List<ViolationDetail> violations = result.violations();
+  }
+});
+Future<PayloadValidationResult> start = schemas.validateStart(key, startPayload);
 ```
 
 `validateDecision(key, stepId, decisionName, payload)` and
 `validateStart(key, payload)` take the payload as a nullable `JsonObject`. The key names the scope, the definition id and
 the version, for example `new DefinitionKey(WorkflowScopes.DEFAULT, "order-review", 2)`, so two scopes that hold one id
 and version are described and validated by their own plans. A key that no registered definition holds describes as empty
-and validates as one `definition` violation.
+and validates as one `definition` violation; both complete normally.
 `PayloadValidationResult.valid()` is true when `violations()` is empty. A mistake by the caller, such
 as an unknown id or a payload that does not fit, is answered with a violation and never an exception.
 
@@ -344,7 +360,8 @@ engine, and the two are not identical:
 ### Behavior of validation
 
 - **No class loading, generation or compilation per call.** Validation runs the validator compiled at
-  registration, so it is non-blocking and may run on the event loop.
+  registration against the plan obtained from `load`, so it adds no blocking work and may run on the
+  event loop.
 - **Catalog coherence.** A definition rejected at registration, whether as a duplicate or by another
   validator, is neither describable nor validatable.
 

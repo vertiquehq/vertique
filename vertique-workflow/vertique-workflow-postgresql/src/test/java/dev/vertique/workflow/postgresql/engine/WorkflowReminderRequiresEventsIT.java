@@ -169,6 +169,18 @@ public class WorkflowReminderRequiresEventsIT {
         }
     };
 
+    /**
+     * Builds a registry that runs a {@link WorkflowReminderComposeValidator} over the recorders on every plan it
+     * registers.
+     *
+     * @param recorders the registered recorders
+     * @return the registry
+     */
+    private static DefaultWorkflowRegistry registryWithValidator(
+            Set<dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient>> recorders) {
+        return new DefaultWorkflowRegistry(null, Set.of(new WorkflowReminderComposeValidator(recorders)));
+    }
+
     // --- Tests ---
 
     /**
@@ -179,14 +191,13 @@ public class WorkflowReminderRequiresEventsIT {
      * the misconfiguration quickly.
      */
     @Test
-    @DisplayName("One-shot reminder plan + no event recorder → IllegalStateException at validator construction")
+    @DisplayName("One-shot reminder plan + no event recorder → IllegalStateException when the plan registers")
     void oneShotReminderWithoutEventRecorderThrows() {
-        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
-        registry.register(ONE_SHOT_REMINDER_DEF);
+        DefaultWorkflowRegistry registry = registryWithValidator(Set.of());
 
         IllegalStateException ex = assertThrows(
                 IllegalStateException.class,
-                () -> new WorkflowReminderComposeValidator(registry, Set.of()),
+                () -> registry.register(ONE_SHOT_REMINDER_DEF),
                 "validator must throw when a plan has reminders but no WORKFLOW_EVENT recorder");
 
         assertTrue(
@@ -199,14 +210,13 @@ public class WorkflowReminderRequiresEventsIT {
      * with recurring reminders and an empty recorder set throws {@link IllegalStateException}.
      */
     @Test
-    @DisplayName("Recurring reminder plan + no event recorder → IllegalStateException at validator construction")
+    @DisplayName("Recurring reminder plan + no event recorder → IllegalStateException when the plan registers")
     void recurringReminderWithoutEventRecorderThrows() {
-        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
-        registry.register(RECURRING_REMINDER_DEF);
+        DefaultWorkflowRegistry registry = registryWithValidator(Set.of());
 
         IllegalStateException ex = assertThrows(
                 IllegalStateException.class,
-                () -> new WorkflowReminderComposeValidator(registry, Set.of()),
+                () -> registry.register(RECURRING_REMINDER_DEF),
                 "validator must throw for recurring reminder plan without event recorder");
 
         assertTrue(
@@ -221,13 +231,12 @@ public class WorkflowReminderRequiresEventsIT {
     @Test
     @DisplayName("Mixed registry (one with reminders, one without) + no event recorder → exception names offender")
     void mixedRegistryOnlyNamesOffendingPlan() {
-        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
+        DefaultWorkflowRegistry registry = registryWithValidator(Set.of());
         registry.register(NO_REMINDER_DEF);
-        registry.register(ONE_SHOT_REMINDER_DEF);
 
         IllegalStateException ex = assertThrows(
                 IllegalStateException.class,
-                () -> new WorkflowReminderComposeValidator(registry, Set.of()),
+                () -> registry.register(ONE_SHOT_REMINDER_DEF),
                 "validator must throw because one plan has reminders");
 
         assertTrue(
@@ -243,13 +252,12 @@ public class WorkflowReminderRequiresEventsIT {
     @Test
     @DisplayName("Plans without reminders are accepted even with empty recorder set")
     void noReminderPlansPassWithoutEventRecorder() {
-        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
-        registry.register(NO_REMINDER_DEF);
+        DefaultWorkflowRegistry registry = registryWithValidator(Set.of());
 
         // Must not throw
-        WorkflowReminderComposeValidator validator = new WorkflowReminderComposeValidator(registry, Set.of());
+        registry.register(NO_REMINDER_DEF);
 
-        assertTrue(validator != null, "validator must be constructed successfully");
+        assertTrue(registry.codeDefinitions().size() == 1, "reminder-free plan must register");
     }
 
     /**
@@ -258,11 +266,8 @@ public class WorkflowReminderRequiresEventsIT {
      * {@link IntentKind#WORKFLOW_EVENT}.
      */
     @Test
-    @DisplayName("Reminder plan + WORKFLOW_EVENT recorder → validator construction succeeds")
+    @DisplayName("Reminder plan + WORKFLOW_EVENT recorder → registration succeeds")
     void reminderPlanWithEventRecorderSucceeds() {
-        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
-        registry.register(ONE_SHOT_REMINDER_DEF);
-
         // Provide a stub recorder that declares WORKFLOW_EVENT
         dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient> stubEventRecorder =
                 new dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<>() {
@@ -280,10 +285,13 @@ public class WorkflowReminderRequiresEventsIT {
                     }
                 };
 
-        // Must not throw
-        WorkflowReminderComposeValidator validator =
-                new WorkflowReminderComposeValidator(registry, Set.of(stubEventRecorder));
+        DefaultWorkflowRegistry registry = registryWithValidator(Set.of(stubEventRecorder));
 
-        assertTrue(validator != null, "validator must construct when event recorder is present");
+        // Must not throw
+        registry.register(ONE_SHOT_REMINDER_DEF);
+
+        assertTrue(
+                registry.codeDefinitions().size() == 1,
+                "reminder plan must register when an event recorder is present");
     }
 }

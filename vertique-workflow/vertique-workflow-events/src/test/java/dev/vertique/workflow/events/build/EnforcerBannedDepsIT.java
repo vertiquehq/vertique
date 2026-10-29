@@ -33,8 +33,6 @@ import org.w3c.dom.NodeList;
  *       {@code WorkflowSideEffectRecorder&lt;SqlClient&gt;} SPI from workflow-core.</li>
  *   <li>{@code dev.vertique:vertique-workflow-services} — peer adapter module must not be
  *       pulled in transitively.</li>
- *   <li>{@code dev.vertique:vertique-workflow-delayed} — peer adapter module must not be
- *       pulled in transitively.</li>
  *   <li>{@code dev.vertique:vertique-workflow-tasks} — peer adapter module must not be
  *       pulled in transitively.</li>
  *   <li>{@code dev.vertique:vertique-inbox-outbox-services} — the outbox destination handler is
@@ -64,7 +62,6 @@ public class EnforcerBannedDepsIT {
 
     private static final String BANNED_WORKFLOW_POSTGRESQL = "dev.vertique:vertique-workflow-postgresql";
     private static final String BANNED_WORKFLOW_SERVICES = "dev.vertique:vertique-workflow-services";
-    private static final String BANNED_WORKFLOW_DELAYED = "dev.vertique:vertique-workflow-delayed";
     private static final String BANNED_WORKFLOW_TASKS = "dev.vertique:vertique-workflow-tasks";
     private static final String BANNED_INBOX_OUTBOX_SERVICES = "dev.vertique:vertique-inbox-outbox-services";
     private static final String BANNED_INBOX_OUTBOX_POSTGRESQL = "dev.vertique:vertique-inbox-outbox-postgresql";
@@ -142,14 +139,6 @@ public class EnforcerBannedDepsIT {
         assertThat(excludedArtifacts)
                 .as("bannedDependencies must exclude '%s'", BANNED_WORKFLOW_SERVICES)
                 .contains(BANNED_WORKFLOW_SERVICES);
-    }
-
-    @Test
-    @DisplayName("bannedDependencies rule excludes vertique-workflow-delayed")
-    void bannedDependencies_excludes_workflowDelayed() {
-        assertThat(excludedArtifacts)
-                .as("bannedDependencies must exclude '%s'", BANNED_WORKFLOW_DELAYED)
-                .contains(BANNED_WORKFLOW_DELAYED);
     }
 
     @Test

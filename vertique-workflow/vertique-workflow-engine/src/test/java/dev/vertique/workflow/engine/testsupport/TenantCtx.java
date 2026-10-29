@@ -11,8 +11,7 @@ import dev.vertique.core.context.ContextValue;
  * {@code <T extends ContextValue>} bound on {@link dev.vertique.core.context.DurableContextMetadataEncoder}
  * / {@link dev.vertique.core.context.DurableContextMetadataDecoder}.
  *
- * <p>Modeled on {@code WorkflowTimerRecoveryDurableBindTest.StringCtx}
- * (vertique-workflow-delayed) — this is the reusable tenant-like test namespace shared across
+ * <p>This is the reusable tenant-like test namespace shared across
  * the durable-context test suites in this module. This class is packaged into this module's
  * test-jar (see the {@code maven-jar-plugin} {@code test-jar} execution in this module's
  * {@code pom.xml}) so {@code vertique-workflow-postgresql} ITs reuse it directly via a

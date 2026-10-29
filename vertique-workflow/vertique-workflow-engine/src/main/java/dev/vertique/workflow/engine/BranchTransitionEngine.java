@@ -9,6 +9,8 @@ import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.InboundContextInitializer;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.TimerCommandSpec;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.exception.WorkflowConflictException;
@@ -25,9 +27,10 @@ import dev.vertique.workflow.plan.TimerNode;
 import dev.vertique.workflow.plan.TimerSpec;
 import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowNode;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
@@ -41,7 +44,6 @@ import dev.vertique.workflow.tasks.TaskDecisionDescriptor;
 import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStatus;
 import dev.vertique.workflow.tasks.TaskStore;
-import dev.vertique.workflow.timer.TimerIntentPayload;
 import dev.vertique.workflow.timer.TimerPurpose;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
@@ -56,6 +58,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -86,7 +89,9 @@ final class BranchTransitionEngine {
     private final WorkflowDedupRepository<SqlClient> dedup;
     private final WorkflowHistoryRepository<SqlClient> history;
     private final RecorderRouter recorders;
+    private final WorkflowCommandRepository<SqlClient> commands;
     private final TaskStore<SqlClient> taskStore;
+    private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
     private final Clock clock;
 
     /**
@@ -128,6 +133,9 @@ final class BranchTransitionEngine {
      */
     private final dev.vertique.context.InboundExecutionContextScope inboundExecScope;
 
+    /** The binder an executor branch drive binds through; {@code null} when no propagator or scope is wired. */
+    private final WorkflowContextBinder executorBinder;
+
     /**
      * Creates a new engine.
      *
@@ -135,12 +143,15 @@ final class BranchTransitionEngine {
      * @param dedup        dedup repository (used for the dispatch-dedup gate)
      * @param history      history repository (used to assign sequence numbers + append entries)
      * @param recorders    side-effect recorder router
+     * @param commands     command repository that records the timers of timed waits
      * @param taskStore    task store (used for branch-owned human-task creation)
      * @param clock        wall-clock used for {@code updated_at} and decision timestamps
      * @param propagator   durable context propagator; {@code null} is tolerated for legacy test
      *                     ctors that do not exercise branch-dispatch durable binding
      * @param inboundExecScope substrate lifecycle helper; {@code null} for legacy callers that do
      *                         not need first-ingress initializers to run on branch drive
+     * @param schemaProducer   produces the payload schema of each decision a branch task offers, for the task's
+     *                         decision snapshot; empty when no schema module is installed
      */
     @Inject
     BranchTransitionEngine(
@@ -148,18 +159,52 @@ final class BranchTransitionEngine {
             WorkflowDedupRepository<SqlClient> dedup,
             WorkflowHistoryRepository<SqlClient> history,
             RecorderRouter recorders,
+            WorkflowCommandRepository<SqlClient> commands,
             TaskStore<SqlClient> taskStore,
             Clock clock,
             dev.vertique.context.DurableContextPropagator propagator,
-            dev.vertique.context.InboundExecutionContextScope inboundExecScope) {
+            dev.vertique.context.InboundExecutionContextScope inboundExecScope,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+        this.schemaProducer = schemaProducer;
         this.branchTokens = branchTokens;
         this.dedup = dedup;
         this.history = history;
         this.recorders = recorders;
+        this.commands = commands;
         this.taskStore = taskStore;
         this.clock = clock;
         this.propagator = propagator;
         this.inboundExecScope = inboundExecScope;
+        this.executorBinder = propagator == null || inboundExecScope == null
+                ? null
+                : new WorkflowContextBinder(propagator, inboundExecScope);
+    }
+
+    /**
+     * Constructor without a decision-schema producer: the tasks this engine creates store no payload schemas in their
+     * decision snapshots.
+     */
+    BranchTransitionEngine(
+            BranchTokenRepository<SqlClient> branchTokens,
+            WorkflowDedupRepository<SqlClient> dedup,
+            WorkflowHistoryRepository<SqlClient> history,
+            RecorderRouter recorders,
+            WorkflowCommandRepository<SqlClient> commands,
+            TaskStore<SqlClient> taskStore,
+            Clock clock,
+            dev.vertique.context.DurableContextPropagator propagator,
+            dev.vertique.context.InboundExecutionContextScope inboundExecScope) {
+        this(
+                branchTokens,
+                dedup,
+                history,
+                recorders,
+                commands,
+                taskStore,
+                clock,
+                propagator,
+                inboundExecScope,
+                Optional.empty());
     }
 
     /**
@@ -171,10 +216,11 @@ final class BranchTransitionEngine {
             WorkflowDedupRepository<SqlClient> dedup,
             WorkflowHistoryRepository<SqlClient> history,
             RecorderRouter recorders,
+            WorkflowCommandRepository<SqlClient> commands,
             TaskStore<SqlClient> taskStore,
             Clock clock,
             dev.vertique.context.DurableContextPropagator propagator) {
-        this(branchTokens, dedup, history, recorders, taskStore, clock, propagator, null);
+        this(branchTokens, dedup, history, recorders, commands, taskStore, clock, propagator, null);
     }
 
     /**
@@ -186,9 +232,10 @@ final class BranchTransitionEngine {
             WorkflowDedupRepository<SqlClient> dedup,
             WorkflowHistoryRepository<SqlClient> history,
             RecorderRouter recorders,
+            WorkflowCommandRepository<SqlClient> commands,
             TaskStore<SqlClient> taskStore,
             Clock clock) {
-        this(branchTokens, dedup, history, recorders, taskStore, clock, null, null);
+        this(branchTokens, dedup, history, recorders, commands, taskStore, clock, null, null);
     }
 
     // --- Public entry points ---
@@ -232,12 +279,61 @@ final class BranchTransitionEngine {
             InstanceScope instanceScope,
             SqlClient tx,
             @Nullable DurableMetadata effectiveBaseOverride) {
+        return driveBranchTransitions(
+                token, parentStateJson, parentSubjectVersion, rw, instanceScope, tx, effectiveBaseOverride, null);
+    }
+
+    /**
+     * Drives a branch token for the executor: the same as {@link #driveBranchTransitions} except that the document
+     * to bind (the override, else the token's carrier) goes through the binder's executor entry, which strips the
+     * identity-snapshot namespace from it and refuses the drive when a security context or a deferred-execution
+     * origin is already bound on the current context.
+     *
+     * @param token the branch token to drive
+     * @param parentStateJson the parent instance's {@code state_json} at dispatch time
+     * @param parentSubjectVersion the parent instance's subject-ref version, or {@code null}
+     * @param rw the resolved runtime workflow
+     * @param instanceScope the definition scope and start scope of the owning instance
+     * @param tx the active transaction
+     * @param effectiveBaseOverride the document to bind instead of the token's carrier, or {@code null}
+     * @param commandId the id of the command whose operation runs, for the failure of a refused bind
+     * @return a {@link Future} of the post-drive {@link BranchToken} snapshot
+     */
+    Future<BranchToken> driveExecutorBranchTransitions(
+            BranchToken token,
+            String parentStateJson,
+            @Nullable String parentSubjectVersion,
+            RuntimeWorkflow rw,
+            InstanceScope instanceScope,
+            SqlClient tx,
+            @Nullable DurableMetadata effectiveBaseOverride,
+            long commandId) {
+        return driveBranchTransitions(
+                token,
+                parentStateJson,
+                parentSubjectVersion,
+                rw,
+                instanceScope,
+                tx,
+                effectiveBaseOverride,
+                Long.valueOf(commandId));
+    }
+
+    private Future<BranchToken> driveBranchTransitions(
+            BranchToken token,
+            String parentStateJson,
+            @Nullable String parentSubjectVersion,
+            RuntimeWorkflow rw,
+            InstanceScope instanceScope,
+            SqlClient tx,
+            @Nullable DurableMetadata effectiveBaseOverride,
+            @Nullable Long executorCommandId) {
         // Bind the branch's persisted durable metadata for the entire drive so every transition
         // — service dispatch, timer side-effects, signals, tasks, decisions — sees exactly the
         // durable context the branch was forked under. bindFrom is authoritative: every
         // registered durable type absent from token.metadata() is cleared for the scope's
         // lifetime so that a subsequent mergeCaptured(...) inside the drive (e.g. timer-create
-        // capturing into the underlying delayed-job's metadata column) cannot accidentally pull
+        // capturing into the timer row's metadata column) cannot accidentally pull
         // in ambient context that did not cross the workflow boundary. Production callers reach
         // this on a duplicated context — the dispatcher's per-message duplicate is preserved
         // through pool.withTransaction by vertx-sql-client 5.x. Per FR-CTX-157b, bindFrom is
@@ -250,13 +346,22 @@ final class BranchTransitionEngine {
         // token.metadata() is never null — BranchToken's compact constructor normalizes a null
         // metadata argument to DurableMetadata.empty() — so no empty-doc fallback is needed here.
         DurableMetadata meta = effectiveBaseOverride != null ? effectiveBaseOverride : token.metadata();
+        if (executorCommandId != null && executorBinder != null) {
+            return executorBinder.withExecutorDocument(
+                    token.workflowId(),
+                    executorCommandId,
+                    meta,
+                    () -> step(token, parentStateJson, parentSubjectVersion, rw, instanceScope, tx));
+        }
+        // A branch drive never binds an identity, whoever starts it: the namespace is stripped from the document of
+        // every drive that does not go through the executor entry, such as the dispatch of a fork's branches.
+        meta = meta.without(WorkflowEngine.IDENTITY_SNAPSHOT_NAMESPACE);
         if (inboundExecScope != null) {
             // Substrate lifecycle helper composes propagator.bindFrom AND any registered
             // InboundContextInitializers (e.g. CorrelationContextSeeder) in one scope —
             // identical bindFrom semantics, plus first-ingress seeding for typed contexts
             // that have no durable-encoded value at the workflow boundary. installDurableAndRun
-            // implements the install/try/close shape shared with WorkflowContextBinder.withBound
-            // and PgWorkflowBranchRecoveryService.withBranchDurableBound.
+            // implements the install/try/close shape shared with WorkflowContextBinder.withBound.
             return inboundExecScope.installDurableAndRun(
                     meta,
                     DispatchBoundary.WORKFLOW,
@@ -311,15 +416,15 @@ final class BranchTransitionEngine {
         }
         if (node instanceof WaitSignalNode wsn) {
             if (wsn.timeout() != null) {
-                return branchHandleWaitSignalWithTimeout(token, wsn, parentStateJson, rw, instanceScope, tx);
+                return branchHandleWaitSignalWithTimeout(token, wsn, parentStateJson, rw, tx);
             }
             return branchHandleWaitSignal(token, wsn, tx);
         }
         if (node instanceof HumanTaskNode htn) {
-            return branchHandleHumanTaskNode(token, htn, parentStateJson, parentSubjectVersion, rw, instanceScope, tx);
+            return branchHandleHumanTaskNode(token, htn, parentStateJson, parentSubjectVersion, rw, tx);
         }
         if (node instanceof TimerNode tn) {
-            return branchHandleTimerNode(token, tn, parentStateJson, rw, instanceScope, tx);
+            return branchHandleTimerNode(token, tn, parentStateJson, rw, tx);
         }
         if (node instanceof DecisionNode dn) {
             return branchHandleDecision(token, dn, parentStateJson, parentSubjectVersion, rw, instanceScope, tx);
@@ -371,7 +476,7 @@ final class BranchTransitionEngine {
         // The branch's durable metadata is already bound by driveBranchTransitions (the public
         // entry point) for the entire drive lifetime — see driveBranchTransitions's
         // propagator.bindFrom + Future.eventually pattern. Recorders that capture ambient durable
-        // context via mergeCaptured (outbox, timer recorder) therefore see the branch's
+        // context via mergeCaptured (the outbox recorder, timer commands) therefore see the branch's
         // persisted metadata throughout this method without an additional bind here.
         Object payload;
         try {
@@ -474,57 +579,43 @@ final class BranchTransitionEngine {
      * @param parentStateJson the parent instance's {@code state_json} (used by
      *     {@link TimerSpec.FromState} resolvers)
      * @param rw              the resolved runtime workflow
-     * @param instanceScope the definition scope and start scope of the owning instance
      * @param tx              the active transaction
      * @return a {@link Future} of the post-transition branch token
      */
     private Future<BranchToken> branchHandleWaitSignalWithTimeout(
-            BranchToken token,
-            WaitSignalNode wsn,
-            String parentStateJson,
-            RuntimeWorkflow rw,
-            InstanceScope instanceScope,
-            SqlClient tx) {
-        Instant fireAt = resolveFireAt(wsn.timeout().timeout(), parentStateJson, rw);
-        return history.nextSequence(token.workflowId(), tx).compose(seq -> {
-            WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
-                    IntentKind.WORKFLOW_TIMER,
-                    wsn.stepId(),
-                    new TimerIntentPayload(fireAt, TimerPurpose.SIGNAL_TIMEOUT, null),
-                    Map.of(),
-                    new WorkflowSideEffectIntent.Correlation(
-                            token.workflowId(),
-                            seq,
-                            rw.plan().definitionId(),
-                            instanceScope.definitionScopeKey(),
-                            instanceScope.scopeKey(),
-                            wsn.stepId(),
-                            token.id(),
-                            token.forkStepId(),
-                            token.branchId()));
-            return recorders.route(intent, tx).compose(recorderResult -> {
-                if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
-                    return Future.failedFuture(new WorkflowDefinitionException(
-                            "WORKFLOW_TIMER recorder must return RecorderResult.Timer for branch SIGNAL_TIMEOUT; got "
-                                    + recorderResult.getClass().getSimpleName()));
-                }
-                UUID timerId = timerResult.timerId();
-                String histPayload = Json.encode(
-                        new TimerScheduledHistoryPayload(wsn.stepId(), timerId, fireAt, TimerPurpose.SIGNAL_TIMEOUT));
-                return history.append(
+            BranchToken token, WaitSignalNode wsn, String parentStateJson, RuntimeWorkflow rw, SqlClient tx) {
+        TimerCommandSpec timer = new TimerCommandSpec(
+                token.workflowId(),
+                TimerPurpose.SIGNAL_TIMEOUT,
+                wsn.stepId(),
+                null,
+                token.id(),
+                token.forkStepId(),
+                token.branchId(),
+                TimerFireTimes.of(
+                        wsn.timeout().timeout(),
+                        () -> resolveFireAt(wsn.timeout().timeout(), parentStateJson, rw)),
+                List.of(wsn.signalName()));
+        return commands.recordTimer(timer, tx).compose(recorded -> {
+            UUID timerId = recorded.timerId();
+            return history.nextSequence(token.workflowId(), tx)
+                    .compose(seq -> {
+                        String histPayload = Json.encode(new TimerScheduledHistoryPayload(
+                                wsn.stepId(), timerId, recorded.fireAt(), TimerPurpose.SIGNAL_TIMEOUT));
+                        return history.append(
                                 new WorkflowHistoryEntry(
                                         token.workflowId(),
                                         seq,
                                         WorkflowEntryType.BRANCH_SIGNAL_TIMEOUT_SCHEDULED,
                                         histPayload,
                                         clock.instant()),
-                                tx)
-                        .compose(v -> {
-                            BranchToken waiting = token.withWait(
-                                    WaitType.SIGNAL, wsn.signalName(), timerId, token.version() + 1, clock.instant());
-                            return casUpdate(waiting, token.version(), tx, "WaitSignalWithTimeout", wsn.stepId());
-                        });
-            });
+                                tx);
+                    })
+                    .compose(v -> {
+                        BranchToken waiting = token.withWait(
+                                WaitType.SIGNAL, wsn.signalName(), timerId, token.version() + 1, clock.instant());
+                        return casUpdate(waiting, token.version(), tx, "WaitSignalWithTimeout", wsn.stepId());
+                    });
         });
     }
 
@@ -549,7 +640,6 @@ final class BranchTransitionEngine {
      * @param parentStateJson      the parent instance's {@code state_json}
      * @param parentSubjectVersion the parent instance's subject-ref version, or {@code null}
      * @param rw                   the resolved runtime workflow
-     * @param instanceScope the definition scope and start scope of the owning instance
      * @param tx                   the active transaction
      * @return a {@link Future} of the post-transition branch token
      */
@@ -559,7 +649,6 @@ final class BranchTransitionEngine {
             String parentStateJson,
             @Nullable String parentSubjectVersion,
             RuntimeWorkflow rw,
-            InstanceScope instanceScope,
             SqlClient tx) {
         // Fail fast if version stability is required but the parent has no versioned subject ref.
         if (htn.requireVersionStability() && parentSubjectVersion == null) {
@@ -577,25 +666,13 @@ final class BranchTransitionEngine {
         }
 
         UUID taskId = UUID.randomUUID();
-        List<TaskDecisionDescriptor> descriptors = htn.decisions().stream()
-                .map(d -> new TaskDecisionDescriptor(d.name(), d.payloadTypeName(), d.nextStepId()))
-                .toList();
+        List<TaskDecisionDescriptor> descriptors = DecisionSnapshots.of(htn, rw, schemaProducer);
 
         Instant now = clock.instant();
 
         if (htn.dueDate() != null) {
             return branchHandleHumanTaskNodeWithDueDate(
-                    token,
-                    htn,
-                    parentStateJson,
-                    rw,
-                    instanceScope,
-                    tx,
-                    assignment,
-                    taskId,
-                    descriptors,
-                    parentSubjectVersion,
-                    now);
+                    token, htn, parentStateJson, rw, tx, assignment, taskId, descriptors, parentSubjectVersion, now);
         }
 
         // No due-date — simple branch task wait.
@@ -606,7 +683,7 @@ final class BranchTransitionEngine {
                     token.withWait(WaitType.TASK, taskId.toString(), null, token.version() + 1, clock.instant());
             return casUpdate(waiting, token.version(), tx, "HumanTaskNode", htn.stepId())
                     .compose(t -> appendBranchTaskCreatedHistory(t, htn.stepId(), taskId, assignment, null, tx))
-                    .compose(t -> scheduleBranchReminderTimers(t, htn, taskId, rw, now, instanceScope, tx));
+                    .compose(t -> scheduleBranchReminderTimers(t, htn, taskId, now, tx));
         });
     }
 
@@ -617,7 +694,6 @@ final class BranchTransitionEngine {
      * @param token                the current branch token
      * @param htn                  the node with a non-null {@code dueDate()} triplet
      * @param rw                   the resolved runtime workflow
-     * @param instanceScope the definition scope and start scope of the owning instance
      * @param tx                   the active transaction
      * @param assignment           the resolved literal task assignment
      * @param taskId               the new task UUID
@@ -631,74 +707,59 @@ final class BranchTransitionEngine {
             HumanTaskNode htn,
             String parentStateJson,
             RuntimeWorkflow rw,
-            InstanceScope instanceScope,
             SqlClient tx,
             TaskAssignment assignment,
             UUID taskId,
             List<TaskDecisionDescriptor> descriptors,
             @Nullable String parentSubjectVersion,
             Instant now) {
-        Instant fireAt = resolveFireAt(htn.dueDate(), parentStateJson, rw);
-        return history.nextSequence(token.workflowId(), tx).compose(seq -> {
-            WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
-                    IntentKind.WORKFLOW_TIMER,
-                    htn.stepId(),
-                    new TimerIntentPayload(fireAt, TimerPurpose.TASK_DUE, taskId),
-                    Map.of(),
-                    new WorkflowSideEffectIntent.Correlation(
-                            token.workflowId(),
-                            seq,
-                            rw.plan().definitionId(),
-                            instanceScope.definitionScopeKey(),
-                            instanceScope.scopeKey(),
-                            htn.stepId(),
-                            token.id(),
-                            token.forkStepId(),
-                            token.branchId()));
-            return recorders.route(intent, tx).compose(recorderResult -> {
-                if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
-                    return Future.failedFuture(new WorkflowDefinitionException(
-                            "WORKFLOW_TIMER recorder must return RecorderResult.Timer for branch TASK_DUE; got "
-                                    + recorderResult.getClass().getSimpleName()));
-                }
-                UUID dueDateTimerId = timerResult.timerId();
-                String histPayload = Json.encode(
-                        new TimerScheduledHistoryPayload(htn.stepId(), dueDateTimerId, fireAt, TimerPurpose.TASK_DUE));
-                return history.append(
+        TimerCommandSpec timer = new TimerCommandSpec(
+                token.workflowId(),
+                TimerPurpose.TASK_DUE,
+                htn.stepId(),
+                taskId,
+                token.id(),
+                token.forkStepId(),
+                token.branchId(),
+                TimerFireTimes.of(htn.dueDate(), () -> resolveFireAt(htn.dueDate(), parentStateJson, rw)),
+                List.of());
+        return commands.recordTimer(timer, tx).compose(recorded -> {
+            UUID dueDateTimerId = recorded.timerId();
+            Instant fireAt = recorded.fireAt();
+            return history.nextSequence(token.workflowId(), tx)
+                    .compose(seq -> {
+                        String histPayload = Json.encode(new TimerScheduledHistoryPayload(
+                                htn.stepId(), dueDateTimerId, fireAt, TimerPurpose.TASK_DUE));
+                        return history.append(
                                 new WorkflowHistoryEntry(
                                         token.workflowId(),
                                         seq,
                                         WorkflowEntryType.TIMER_SCHEDULED,
                                         histPayload,
                                         clock.instant()),
-                                tx)
-                        .compose(v -> {
-                            TaskRecord record = buildBranchTaskRecord(
-                                    taskId,
-                                    token,
-                                    htn,
-                                    assignment,
-                                    descriptors,
-                                    fireAt,
-                                    dueDateTimerId,
-                                    parentSubjectVersion,
-                                    now);
-                            return taskStore.insertOpen(record, tx);
-                        })
-                        .compose(v -> {
-                            BranchToken waiting = token.withWait(
-                                    WaitType.TASK,
-                                    taskId.toString(),
-                                    dueDateTimerId,
-                                    token.version() + 1,
-                                    clock.instant());
-                            return casUpdate(waiting, token.version(), tx, "HumanTaskNodeWithDueDate", htn.stepId())
-                                    .compose(t -> appendBranchTaskCreatedHistory(
-                                            t, htn.stepId(), taskId, assignment, fireAt, tx))
-                                    .compose(t ->
-                                            scheduleBranchReminderTimers(t, htn, taskId, rw, now, instanceScope, tx));
-                        });
-            });
+                                tx);
+                    })
+                    .compose(v -> {
+                        TaskRecord record = buildBranchTaskRecord(
+                                taskId,
+                                token,
+                                htn,
+                                assignment,
+                                descriptors,
+                                fireAt,
+                                dueDateTimerId,
+                                parentSubjectVersion,
+                                now);
+                        return taskStore.insertOpen(record, tx);
+                    })
+                    .compose(v -> {
+                        BranchToken waiting = token.withWait(
+                                WaitType.TASK, taskId.toString(), dueDateTimerId, token.version() + 1, clock.instant());
+                        return casUpdate(waiting, token.version(), tx, "HumanTaskNodeWithDueDate", htn.stepId())
+                                .compose(t ->
+                                        appendBranchTaskCreatedHistory(t, htn.stepId(), taskId, assignment, fireAt, tx))
+                                .compose(t -> scheduleBranchReminderTimers(t, htn, taskId, now, tx));
+                    });
         });
     }
 
@@ -714,57 +775,41 @@ final class BranchTransitionEngine {
      * @param token the current branch token
      * @param tn    the timer node
      * @param rw    the resolved runtime workflow
-     * @param instanceScope the definition scope and start scope of the owning instance
      * @param tx    the active transaction
      * @return a {@link Future} of the post-transition branch token
      */
     private Future<BranchToken> branchHandleTimerNode(
-            BranchToken token,
-            TimerNode tn,
-            String parentStateJson,
-            RuntimeWorkflow rw,
-            InstanceScope instanceScope,
-            SqlClient tx) {
-        Instant fireAt = resolveFireAt(tn.spec(), parentStateJson, rw);
-        return history.nextSequence(token.workflowId(), tx).compose(seq -> {
-            WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
-                    IntentKind.WORKFLOW_TIMER,
-                    tn.stepId(),
-                    new TimerIntentPayload(fireAt, TimerPurpose.STANDALONE, null),
-                    Map.of(),
-                    new WorkflowSideEffectIntent.Correlation(
-                            token.workflowId(),
-                            seq,
-                            rw.plan().definitionId(),
-                            instanceScope.definitionScopeKey(),
-                            instanceScope.scopeKey(),
-                            tn.stepId(),
-                            token.id(),
-                            token.forkStepId(),
-                            token.branchId()));
-            return recorders.route(intent, tx).compose(recorderResult -> {
-                if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
-                    return Future.failedFuture(new WorkflowDefinitionException(
-                            "WORKFLOW_TIMER recorder must return RecorderResult.Timer for branch STANDALONE; got "
-                                    + recorderResult.getClass().getSimpleName()));
-                }
-                UUID timerId = timerResult.timerId();
-                String histPayload = Json.encode(
-                        new TimerScheduledHistoryPayload(tn.stepId(), timerId, fireAt, TimerPurpose.STANDALONE));
-                return history.append(
+            BranchToken token, TimerNode tn, String parentStateJson, RuntimeWorkflow rw, SqlClient tx) {
+        TimerCommandSpec timer = new TimerCommandSpec(
+                token.workflowId(),
+                TimerPurpose.STANDALONE,
+                tn.stepId(),
+                null,
+                token.id(),
+                token.forkStepId(),
+                token.branchId(),
+                TimerFireTimes.of(tn.spec(), () -> resolveFireAt(tn.spec(), parentStateJson, rw)),
+                List.of());
+        return commands.recordTimer(timer, tx).compose(recorded -> {
+            UUID timerId = recorded.timerId();
+            return history.nextSequence(token.workflowId(), tx)
+                    .compose(seq -> {
+                        String histPayload = Json.encode(new TimerScheduledHistoryPayload(
+                                tn.stepId(), timerId, recorded.fireAt(), TimerPurpose.STANDALONE));
+                        return history.append(
                                 new WorkflowHistoryEntry(
                                         token.workflowId(),
                                         seq,
                                         WorkflowEntryType.BRANCH_TIMER_SCHEDULED,
                                         histPayload,
                                         clock.instant()),
-                                tx)
-                        .compose(v -> {
-                            BranchToken waiting = token.withWait(
-                                    WaitType.TIMER, timerId.toString(), null, token.version() + 1, clock.instant());
-                            return casUpdate(waiting, token.version(), tx, "TimerNode", tn.stepId());
-                        });
-            });
+                                tx);
+                    })
+                    .compose(v -> {
+                        BranchToken waiting = token.withWait(
+                                WaitType.TIMER, timerId.toString(), null, token.version() + 1, clock.instant());
+                        return casUpdate(waiting, token.version(), tx, "TimerNode", tn.stepId());
+                    });
         });
     }
 
@@ -1031,7 +1076,10 @@ final class BranchTransitionEngine {
                 parentSubjectVersion, // subjectVersionAtCreation
                 token.id(), // branchTokenId
                 token.forkStepId(), // forkStepId
-                token.branchId()); // branchId
+                token.branchId(), // branchId
+                WorkflowScopes.DEFAULT,
+                htn.requireVersionStability(),
+                null); // reservationCommandId
     }
 
     /**
@@ -1076,20 +1124,12 @@ final class BranchTransitionEngine {
      * @param token         the branch token
      * @param htn           the human-task node
      * @param taskId        the new task UUID
-     * @param rw            the resolved runtime workflow
-     * @param instanceScope the definition scope and start scope of the owning instance
      * @param taskCreatedAt the task-creation instant (anchor for offset/interval calculations)
      * @param tx            the active transaction
      * @return a {@link Future} of the unchanged branch token
      */
     private Future<BranchToken> scheduleBranchReminderTimers(
-            BranchToken token,
-            HumanTaskNode htn,
-            UUID taskId,
-            RuntimeWorkflow rw,
-            Instant taskCreatedAt,
-            InstanceScope instanceScope,
-            SqlClient tx) {
+            BranchToken token, HumanTaskNode htn, UUID taskId, Instant taskCreatedAt, SqlClient tx) {
         ReminderSpec spec = htn.reminders();
         if (spec == null) {
             return Future.succeededFuture(token);
@@ -1098,70 +1138,49 @@ final class BranchTransitionEngine {
         if (spec instanceof ReminderSpec.OneShotOffsets osu) {
             for (Duration offset : osu.offsetsFromTaskCreation()) {
                 Instant fireAt = taskCreatedAt.plus(offset);
-                chain = chain.compose(
-                        v -> scheduleBranchReminderTimer(token, htn, taskId, rw, fireAt, instanceScope, tx));
+                chain = chain.compose(v -> scheduleBranchReminderTimer(token, htn, taskId, fireAt, tx));
             }
         } else if (spec instanceof ReminderSpec.RecurringInterval ri) {
             Instant fireAt = taskCreatedAt.plus(ri.interval());
-            chain = chain.compose(v -> scheduleBranchReminderTimer(token, htn, taskId, rw, fireAt, instanceScope, tx));
+            chain = chain.compose(v -> scheduleBranchReminderTimer(token, htn, taskId, fireAt, tx));
         }
         return chain.map(v -> token);
     }
 
     /**
-     * Schedules a single reminder timer for a branch-owned task using a branch-correlated intent.
+     * Schedules a single reminder timer for a branch-owned task as a {@code REMINDER} command.
      *
-     * @param token  the branch token (supplies branch identity for the correlation)
+     * @param token  the branch token (supplies the branch identity)
      * @param htn    the human-task node
      * @param taskId the task UUID
-     * @param rw     the resolved runtime workflow
-     * @param instanceScope the definition scope and start scope of the owning instance
      * @param fireAt the absolute fire instant
      * @param tx     the active transaction
-     * @return a {@link Future} that completes when the timer intent and history entry are persisted
+     * @return a {@link Future} that completes when the timer and history entry are persisted
      */
     private Future<Void> scheduleBranchReminderTimer(
-            BranchToken token,
-            HumanTaskNode htn,
-            UUID taskId,
-            RuntimeWorkflow rw,
-            Instant fireAt,
-            InstanceScope instanceScope,
-            SqlClient tx) {
-        return history.nextSequence(token.workflowId(), tx).compose(seq -> {
-            WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
-                    IntentKind.WORKFLOW_TIMER,
-                    htn.stepId(),
-                    new TimerIntentPayload(fireAt, TimerPurpose.TASK_REMINDER, taskId),
-                    Map.of(),
-                    new WorkflowSideEffectIntent.Correlation(
-                            token.workflowId(),
-                            seq,
-                            rw.plan().definitionId(),
-                            instanceScope.definitionScopeKey(),
-                            instanceScope.scopeKey(),
-                            htn.stepId(),
-                            token.id(),
-                            token.forkStepId(),
-                            token.branchId()));
-            return recorders.route(intent, tx).compose(recorderResult -> {
-                if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
-                    return Future.failedFuture(new WorkflowDefinitionException(
-                            "WORKFLOW_TIMER recorder must return RecorderResult.Timer for branch TASK_REMINDER; got "
-                                    + recorderResult.getClass().getSimpleName()));
-                }
-                UUID timerId = timerResult.timerId();
-                String histPayload = Json.encode(
-                        new TimerScheduledHistoryPayload(htn.stepId(), timerId, fireAt, TimerPurpose.TASK_REMINDER));
-                return history.append(
-                        new WorkflowHistoryEntry(
-                                token.workflowId(),
-                                seq,
-                                WorkflowEntryType.BRANCH_TIMER_SCHEDULED,
-                                histPayload,
-                                clock.instant()),
-                        tx);
-            });
-        });
+            BranchToken token, HumanTaskNode htn, UUID taskId, Instant fireAt, SqlClient tx) {
+        TimerCommandSpec timer = new TimerCommandSpec(
+                token.workflowId(),
+                TimerPurpose.TASK_REMINDER,
+                htn.stepId(),
+                taskId,
+                token.id(),
+                token.forkStepId(),
+                token.branchId(),
+                new TimerCommandSpec.FireTime.At(fireAt),
+                List.of());
+        return commands.recordTimer(timer, tx).compose(recorded -> history.nextSequence(token.workflowId(), tx)
+                .compose(seq -> {
+                    String histPayload = Json.encode(new TimerScheduledHistoryPayload(
+                            htn.stepId(), recorded.timerId(), recorded.fireAt(), TimerPurpose.TASK_REMINDER));
+                    return history.append(
+                            new WorkflowHistoryEntry(
+                                    token.workflowId(),
+                                    seq,
+                                    WorkflowEntryType.BRANCH_TIMER_SCHEDULED,
+                                    histPayload,
+                                    clock.instant()),
+                            tx);
+                }));
     }
 }

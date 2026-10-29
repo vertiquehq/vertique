@@ -42,6 +42,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -75,6 +76,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineMigrateIllegalStateIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers ---
 
@@ -434,9 +437,11 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -455,7 +460,7 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
      * {@link WorkflowMigrationIllegalStateException}.
      */
     @Test
-    @DisplayName("AC #15a — migrate on COMPLETED instance throws WorkflowMigrationIllegalStateException")
+    @DisplayName("AC #15a — migrate on COMPLETED instance is refused with WorkflowMigrationIllegalStateException")
     void migrateCompletedInstance(VertxTestContext ctx) {
         String key = "migrate-completed-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
@@ -473,7 +478,12 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         engineSimpleV1
                 .start(cmd)
                 .compose(id -> engineSimpleV1
+                        .executionProbe()
+                        .awaitIdle(id, IDLE_TIMEOUT)
+                        .map(idle -> id))
+                .compose(id -> engineSimpleV1
                         .signal(id, "go", "payload", "dedup-" + UUID.randomUUID())
+                        .compose(v -> engineSimpleV1.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
                         .compose(v -> engineSimpleV1.query(id).map(view -> {
                             assertEquals(
                                     WorkflowStatus.COMPLETED,
@@ -483,7 +493,10 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
                         })))
                 .compose(id -> engineSimpleMigrate
                         .migrate(id, 2L)
-                        .map(v -> (WorkflowInstanceId) null)
+                        .<WorkflowInstanceId>map(v -> {
+                            throw new AssertionError(
+                                    "migrate of an ended instance must be refused when it is recorded");
+                        })
                         .recover(e -> {
                             assertInstanceOf(
                                     WorkflowMigrationIllegalStateException.class,
@@ -518,6 +531,10 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
 
         engineSimpleV1
                 .start(cmd)
+                .compose(id -> engineSimpleV1
+                        .executionProbe()
+                        .awaitIdle(id, IDLE_TIMEOUT)
+                        .map(idle -> id))
                 .compose(id -> engineSimpleV1.cancel(id, "test-cancel").map(v -> id))
                 .compose(id -> engineSimpleV1.query(id).map(view -> {
                     assertEquals(
@@ -528,7 +545,10 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
                 }))
                 .compose(id -> engineSimpleMigrate
                         .migrate(id, 2L)
-                        .map(v -> (WorkflowInstanceId) null)
+                        .<WorkflowInstanceId>map(v -> {
+                            throw new AssertionError(
+                                    "migrate of an ended instance must be refused when it is recorded");
+                        })
                         .recover(e -> {
                             assertInstanceOf(
                                     WorkflowMigrationIllegalStateException.class,
@@ -552,7 +572,7 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
      */
     @Test
     @DisplayName(
-            "AC #15b — migrate on instance with active fork-branch state throws WorkflowMigrationIllegalStateException")
+            "AC #15b — migrate on instance with active fork-branch state is rejected and the instance stays on its version")
     void migrateInstanceWithActiveBranches(VertxTestContext ctx) {
         String key = "migrate-fork-" + UUID.randomUUID();
         StartCommand cmd = new StartCommand(
@@ -560,6 +580,10 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
 
         engineForkV1
                 .start(cmd)
+                .compose(id -> engineForkV1
+                        .executionProbe()
+                        .awaitIdle(id, IDLE_TIMEOUT)
+                        .map(idle -> id))
                 .compose(id -> engineForkV1.query(id).map(view -> {
                     // Instance is parked at the join with waitType=JOIN and status=RUNNING
                     // (handleForkNode does not change status to WAITING — it keeps RUNNING
@@ -573,13 +597,22 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
                 }))
                 .compose(id -> engineForkMigrate
                         .migrate(id, 2L)
-                        .map(v -> (WorkflowInstanceId) null)
-                        .recover(e -> {
-                            assertInstanceOf(
-                                    WorkflowMigrationIllegalStateException.class,
-                                    e,
-                                    "must throw WorkflowMigrationIllegalStateException for active branches; got: " + e);
-                            return io.vertx.core.Future.succeededFuture(null);
+                        .compose(v -> engineForkMigrate.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                        .compose(v -> pool.preparedQuery("SELECT state, last_error FROM workflow_commands"
+                                        + " WHERE workflow_id = $1 AND kind = 'MIGRATION'")
+                                .execute(io.vertx.sqlclient.Tuple.of(id.value())))
+                        .map(rows -> {
+                            // The recording succeeds; the executor rejects the migration with the instance unchanged
+                            assertEquals(1, rows.size(), "one migration command must be recorded");
+                            io.vertx.sqlclient.Row row = rows.iterator().next();
+                            assertEquals("REJECTED", row.getString("state"));
+                            assertTrue(row.getString("last_error").startsWith("MIGRATION_REJECTED: "));
+                            return id;
+                        })
+                        .compose(engineForkMigrate::query)
+                        .map(view -> {
+                            assertEquals(1L, view.instance().definitionVersion(), "instance must stay on version 1");
+                            return (WorkflowInstanceId) null;
                         }))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "test chain must complete: " + ar.cause());

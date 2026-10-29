@@ -13,7 +13,7 @@ import jakarta.inject.Singleton;
  * Workflow definition used by the cycle-3 human-task integration tests.
  *
  * <p>Registers a single definition that waits for a compliance-role human task with two decisions:
- * {@code "approve"} and {@code "reject"}. Both decisions capture a {@link String} payload and
+ * {@code "approve"} and {@code "reject"}. Both decisions capture a {@link ReviewComment} payload and
  * encode the outcome into the workflow state, then advance to a terminal
  * {@link dev.vertique.workflow.plan.CompleteNode}.
  *
@@ -23,9 +23,9 @@ import jakarta.inject.Singleton;
  *   <li>Definition version: {@code 1}</li>
  *   <li>Initial step: {@code "review"} — a {@link dev.vertique.workflow.plan.HumanTaskNode}
  *       assigned to role {@code "compliance"}.</li>
- *   <li>Decision {@code "approve"}: state becomes {@code "approved:<payload>"}, advances to
+ *   <li>Decision {@code "approve"}: state becomes {@code "approved:<comment>"}, advances to
  *       {@code "done"}.</li>
- *   <li>Decision {@code "reject"}: state becomes {@code "rejected:<payload>"}, advances to
+ *   <li>Decision {@code "reject"}: state becomes {@code "rejected:<comment>"}, advances to
  *       {@code "declined"}.</li>
  *   <li>{@code "done"} and {@code "declined"}: terminal
  *       {@link dev.vertique.workflow.plan.CompleteNode} steps.</li>
@@ -37,6 +37,14 @@ public final class TaskReviewWorkflowDefinition
 
     /** Start command / payload for the task-review workflow. */
     public record TaskReviewStart(String id) {}
+
+    /**
+     * Decision payload of the review task: the reviewer's comment. A decision payload is an object, so the comment is
+     * wrapped in a record.
+     *
+     * @param comment the reviewer's comment
+     */
+    public record ReviewComment(String comment) {}
 
     /**
      * Marker contract interface for the {@code "task-review"} workflow definition.
@@ -80,11 +88,11 @@ public final class TaskReviewWorkflowDefinition
                 .initialStep("review")
                 .task("review")
                 .assignToRole("compliance")
-                .decision("approve", String.class)
-                .onDecision((s, payload) -> new TaskReviewState("approved:" + payload))
+                .decision("approve", ReviewComment.class)
+                .onDecision((s, payload) -> new TaskReviewState("approved:" + payload.comment()))
                 .toStep("done")
-                .decision("reject", String.class)
-                .onDecision((s, payload) -> new TaskReviewState("rejected:" + payload))
+                .decision("reject", ReviewComment.class)
+                .onDecision((s, payload) -> new TaskReviewState("rejected:" + payload.comment()))
                 .toStep("declined")
                 .build()
                 .complete("done")

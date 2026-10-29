@@ -27,6 +27,9 @@ public interface TimerStore<TX> {
      * Inserts a new timer row with {@link TimerStatus#SCHEDULED} status within the given
      * transaction.
      *
+     * <p>The record may carry a command link ({@code commandId}) instead of a delayed-job execution
+     * id; both are persisted as given and may be null.
+     *
      * <p>The timer id in {@code record} must be unique. Implementations should propagate any
      * unique-constraint violation as a failed {@link Future}.
      *
@@ -109,36 +112,6 @@ public interface TimerStore<TX> {
      * @return a {@link Future} resolving to the transition outcome
      */
     Future<TimerStatusTransition> markFailed(UUID timerId, Instant failedAt, String failureReason, TX tx);
-
-    /**
-     * Finds timers that are in {@link TimerStatus#SCHEDULED} status and whose {@code fire_at} is
-     * at or before {@code beforeFireAt}, ordered by {@code fire_at} ascending.
-     *
-     * <p>This method is used by the recovery/orphan-scan process to find timers whose delayed jobs
-     * may have been lost (e.g., after a restart) and reschedule them. Results are returned in
-     * ascending fire-time order so the earliest-overdue timers are processed first.
-     *
-     * @param beforeFireAt the cutoff instant; only timers with {@code fire_at <= beforeFireAt} are
-     *     returned
-     * @param limit the maximum number of records to return
-     * @param tx the active transaction context
-     * @return a {@link Future} resolving to the list of recoverable scheduled timers, possibly empty
-     */
-    Future<List<TimerRecord>> findRecoverableScheduled(Instant beforeFireAt, int limit, TX tx);
-
-    /**
-     * Updates the {@code delayed_job_execution_id} of the timer identified by {@code timerId}.
-     *
-     * <p>Called by the recovery process after a timer's delayed job is rescheduled to record the
-     * new execution id. The timer must exist; implementations should fail the {@link Future} if
-     * the timer is not found.
-     *
-     * @param timerId the timer to update
-     * @param delayedJobExecutionId the new delayed-job execution id to record
-     * @param tx the active transaction context
-     * @return a {@link Future} that completes when the column is updated
-     */
-    Future<Void> updateExecutionId(UUID timerId, UUID delayedJobExecutionId, TX tx);
 
     /**
      * Returns the timer ids of all {@link TimerStatus#SCHEDULED} reminder timers (purpose =

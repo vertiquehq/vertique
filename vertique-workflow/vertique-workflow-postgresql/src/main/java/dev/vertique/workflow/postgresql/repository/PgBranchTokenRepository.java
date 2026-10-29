@@ -55,8 +55,6 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
     private final String sqlFindByIdForUpdate;
     private final String sqlFindByWorkflowAndFork;
     private final String sqlFindByWorkflow;
-    private final String sqlFindRecoverable;
-    private final String sqlFindStaleRunning;
     private final String sqlFindByWait;
 
     /**
@@ -121,12 +119,6 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
 
         this.sqlFindByWorkflow =
                 "SELECT * FROM " + tokens + " WHERE workflow_id = $1 ORDER BY created_at ASC, branch_id ASC";
-
-        this.sqlFindRecoverable = "SELECT * FROM " + tokens
-                + " WHERE status = 'RETRY_SCHEDULED' AND next_retry_at <= $1" + " ORDER BY next_retry_at ASC LIMIT $2";
-
-        this.sqlFindStaleRunning = "SELECT * FROM " + tokens + " WHERE status = 'RUNNING' AND updated_at < $1"
-                + " ORDER BY updated_at ASC LIMIT $2";
 
         this.sqlFindByWait = "SELECT * FROM " + tokens + " WHERE workflow_id = $1 AND fork_step_id = $2"
                 + " AND branch_id = $3 AND wait_type = $4 AND wait_key = $5";
@@ -310,42 +302,6 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
                 .map(rs -> mapFirst(rs))
                 .recover(t -> Future.failedFuture(
                         exceptionMapper.translate(t, "workflow_branch_tokens findByWaitForBranch")));
-    }
-
-    /**
-     * Returns RETRY_SCHEDULED branch tokens whose {@code next_retry_at} is at or before
-     * {@code now}, ordered by {@code next_retry_at} ascending.
-     *
-     * @param now the current time
-     * @param limit maximum rows to return
-     * @param tx the active transaction
-     * @return a {@link Future} of due branch tokens
-     */
-    @Override
-    public Future<List<BranchToken>> findRecoverable(Instant now, int limit, SqlClient tx) {
-        return tx.preparedQuery(sqlFindRecoverable)
-                .execute(Tuple.of(toOdt(now), limit))
-                .map(rs -> mapAll(rs))
-                .recover(t ->
-                        Future.failedFuture(exceptionMapper.translate(t, "workflow_branch_tokens findRecoverable")));
-    }
-
-    /**
-     * Returns RUNNING branch tokens whose {@code updated_at} is older than {@code before},
-     * ordered by {@code updated_at} ascending.
-     *
-     * @param before stale-threshold timestamp
-     * @param limit maximum rows to return
-     * @param tx the active transaction
-     * @return a {@link Future} of stale RUNNING branch tokens
-     */
-    @Override
-    public Future<List<BranchToken>> findStaleRunning(Instant before, int limit, SqlClient tx) {
-        return tx.preparedQuery(sqlFindStaleRunning)
-                .execute(Tuple.of(toOdt(before), limit))
-                .map(rs -> mapAll(rs))
-                .recover(t ->
-                        Future.failedFuture(exceptionMapper.translate(t, "workflow_branch_tokens findStaleRunning")));
     }
 
     // --- Helpers ---

@@ -111,6 +111,9 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      */
     private final String sqlClaimOrResolveTaskComplete;
 
+    /** Read-only lookup of a committed task-completion dedup row: $1=dedup_namespace (taskId::text), $2=key. */
+    private final String sqlFindTaskComplete;
+
     /**
      * Race-safe upsert for task-reassignment dedup. Mirror of
      * {@link #sqlClaimOrResolveTaskComplete} with a different {@code kind} literal.
@@ -179,6 +182,9 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
                 + " ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE"
                 + " SET workflow_id = workflow_dedup.workflow_id"
                 + " RETURNING (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
+
+        this.sqlFindTaskComplete = "SELECT fingerprint FROM " + dedup + " WHERE kind = '" + DEDUP_KIND_TASK_COMPLETE
+                + "' AND scope_key = '" + WorkflowScopes.DEFAULT + "' AND dedup_namespace = $1 AND key = $2";
 
         this.sqlClaimOrResolveTaskReassign = "INSERT INTO " + dedup
                 + " (kind, scope_key, dedup_namespace, key, workflow_id, fingerprint)"
@@ -326,6 +332,27 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     }
 
     // --- Task dedup ---
+
+    /**
+     * Reads, without writing, the fingerprint of the committed completion of a task under an idempotency key.
+     *
+     * @param taskId         the task id; used as the dedup scope
+     * @param idempotencyKey the caller-supplied idempotency key
+     * @param tx             the active transaction to use
+     * @return a {@link Future} containing the recorded fingerprint, or empty when none has committed
+     */
+    @Override
+    public Future<Optional<String>> findTaskCompletion(UUID taskId, String idempotencyKey, SqlClient tx) {
+        return tx.preparedQuery(sqlFindTaskComplete)
+                .execute(Tuple.of(taskId.toString(), idempotencyKey))
+                .map(rs -> {
+                    var it = rs.iterator();
+                    return it.hasNext()
+                            ? Optional.ofNullable(it.next().getString("fingerprint"))
+                            : Optional.<String>empty();
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup findTaskCompletion")));
+    }
 
     /**
      * Atomically claims or resolves a task-completion dedup slot, including fingerprint comparison.

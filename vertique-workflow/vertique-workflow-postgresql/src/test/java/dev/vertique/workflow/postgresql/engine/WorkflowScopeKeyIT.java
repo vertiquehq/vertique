@@ -24,8 +24,8 @@ import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
-import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
@@ -38,6 +38,8 @@ import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
+import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
@@ -65,9 +67,8 @@ import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -96,6 +97,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class WorkflowScopeKeyIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_scope_key_test")
             .withMigration("classpath:db/migration/workflow");
@@ -105,6 +108,7 @@ public class WorkflowScopeKeyIT {
     private static final String MIGRATE_ID = "scope-migrate";
 
     static Vertx vertxRef;
+    static ExecutorDeployment executor;
     static Pool pool;
     static TenantEngineHost host;
     static WorkflowOperations operations;
@@ -112,7 +116,7 @@ public class WorkflowScopeKeyIT {
     static WorkflowTransactionRunner<SqlClient> txRunner;
     static WorkflowInstanceRepository<SqlClient> instanceRepository;
     static ContextHolder holder;
-    static PgWorkflowBranchRecoveryService recovery;
+    static TransactionalWorkflowOperations<SqlClient> txOperations;
 
     // --- Workflow definitions ---
 
@@ -212,7 +216,7 @@ public class WorkflowScopeKeyIT {
 
     /**
      * fork: branch a creates a task at once, branch b waits for a signal and then creates a task. The
-     * test parks branch b for recovery, so the sweep creates the second task.
+     * test signals branch b, which creates the second task.
      */
     static final WorkflowDefinition<FlowState, ForkContract> FORK =
             new FlowDefinition<>(ForkContract.class, FlowState.class, FORK_ID, 1L, wf -> {
@@ -360,8 +364,8 @@ public class WorkflowScopeKeyIT {
     }
 
     /**
-     * Generated application graph with the PostgreSQL engine, the migration registry, the recovery
-     * bridge and the real propagator.
+     * Generated application graph with the PostgreSQL engine, the migration registry and the real
+     * propagator.
      */
     @Singleton
     @Component(
@@ -370,21 +374,28 @@ public class WorkflowScopeKeyIT {
                 WorkflowMigrationModule.class,
                 ContextRuntimeModule.class,
                 LoggingContextModule.class,
+                ExecutorDeployment.FastPolling.class,
                 TenantEngineHostModule.class
             })
     interface TenantEngineHost {
 
+        java.util.Set<dev.vertique.deploy.VerticleDeployment> verticleDeployments();
+
         WorkflowOperations workflowOperations();
 
+        WorkflowExecutionProbe workflowExecutionProbe();
+
         TransactionalTaskCallbacks<SqlClient> taskCallbacks();
+
+        TransactionalWorkflowOperations<SqlClient> txWorkflowOperations();
 
         WorkflowTransactionRunner<SqlClient> transactionRunner();
 
         BranchTokenRepository<SqlClient> branchTokenRepository();
 
-        WorkflowInstanceRepository<SqlClient> instanceRepository();
+        WorkflowCommandRepository<SqlClient> commandRepository();
 
-        WorkflowRecoveryBridge recoveryBridge();
+        WorkflowInstanceRepository<SqlClient> instanceRepository();
 
         WorkflowRegistry workflowRegistry();
 
@@ -415,6 +426,11 @@ public class WorkflowScopeKeyIT {
                 .using(vertx)
                 .build();
         host = DaggerWorkflowScopeKeyIT_TenantEngineHost.factory().create(pool, Clock.systemUTC());
+        // The graph runs no deployer: only its workflow executor is deployed
+        executor = ExecutorDeployment.deploy(vertx, host.verticleDeployments())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
         DefaultVersionSeed.recordAndActivate(
                 host.pgWorkflowDefinitionRegistryStore(), host.definitionLifecycle(), host.workflowRegistry());
         operations = host.workflowOperations();
@@ -422,26 +438,25 @@ public class WorkflowScopeKeyIT {
         txRunner = host.transactionRunner();
         instanceRepository = host.instanceRepository();
         holder = host.contextHolder();
-        recovery = new PgWorkflowBranchRecoveryService(
-                txRunner,
-                host.branchTokenRepository(),
-                instanceRepository,
-                host.recoveryBridge(),
-                host.workflowRegistry(),
-                Clock.systemUTC());
+        txOperations = host.txWorkflowOperations();
         ctx.completeNow();
     }
 
     @BeforeEach
     void truncateTables() throws Exception {
-        await(pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        await(WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute());
     }
 
     @AfterAll
     static void tearDown() {
+        if (executor != null) {
+            executor.undeploy().toCompletionStage().toCompletableFuture().join();
+        }
         if (pool != null) {
             pool.close();
         }
@@ -466,6 +481,7 @@ public class WorkflowScopeKeyIT {
                         null,
                         null,
                         null))));
+        await(host.workflowExecutionProbe().awaitIdle(singleUnstamped, IDLE_TIMEOUT));
         WorkflowInstanceId forkUnstamped = await(inContext(
                 "t1",
                 () -> operations.start(new StartCommand(
@@ -478,6 +494,7 @@ public class WorkflowScopeKeyIT {
                         null,
                         null,
                         null))));
+        await(host.workflowExecutionProbe().awaitIdle(forkUnstamped, IDLE_TIMEOUT));
         WorkflowInstanceId singleStamped = await(inContext(
                 "t1",
                 () -> operations.start(new StartCommand(
@@ -490,6 +507,7 @@ public class WorkflowScopeKeyIT {
                         null,
                         null,
                         null))));
+        await(host.workflowExecutionProbe().awaitIdle(singleStamped, IDLE_TIMEOUT));
         WorkflowInstanceId forkStamped = await(inContext(
                 "t1",
                 () -> operations.start(new StartCommand(
@@ -502,6 +520,7 @@ public class WorkflowScopeKeyIT {
                         null,
                         null,
                         null))));
+        await(host.workflowExecutionProbe().awaitIdle(forkStamped, IDLE_TIMEOUT));
 
         // Then the ambient tenant was not taken: every instance row and start task is in the default scope
         for (WorkflowInstanceId started : List.of(singleUnstamped, forkUnstamped, singleStamped, forkStamped)) {
@@ -514,11 +533,11 @@ public class WorkflowScopeKeyIT {
         stampInstanceScope(forkStamped, "t1");
 
         // And every single-task workflow has its first task completed and is signalled, and every forking
-        // workflow has branch b parked for recovery and swept, all under a context without a tenant
+        // workflow has branch b signalled, all under a context without a tenant
         completeFirstTaskThenSignalGo(singleUnstamped, "unstamped");
         completeFirstTaskThenSignalGo(singleStamped, "stamped");
-        parkBranchBThenSweep(forkUnstamped);
-        parkBranchBThenSweep(forkStamped);
+        signalBranchB(forkUnstamped);
+        signalBranchB(forkStamped);
 
         // Then the unstamped instances and all of their tasks are still in the default scope
         for (WorkflowInstanceId unstamped : List.of(singleUnstamped, forkUnstamped)) {
@@ -531,7 +550,7 @@ public class WorkflowScopeKeyIT {
         }
 
         // And the stamped instances keep t1, the tasks created before the stamp stay in the default scope, and the
-        // signal-resumed task and the recovered branch b task carry t1
+        // signal-resumed task and the branch b task carry t1
         for (WorkflowInstanceId stamped : List.of(singleStamped, forkStamped)) {
             assertThat(instanceScopeColumn(stamped)).isEqualTo("t1");
             assertThat(await(instanceRepository.findById(stamped)).orElseThrow().scopeKey())
@@ -600,7 +619,9 @@ public class WorkflowScopeKeyIT {
 
         // When the waiting instance is migrated to version 2 and the failed instance is retried
         await(inContext(null, () -> operations.migrate(running, 2L)));
+        await(host.workflowExecutionProbe().awaitIdle(running, IDLE_TIMEOUT));
         await(inContext(null, () -> operations.retry(finished)));
+        await(host.workflowExecutionProbe().awaitIdle(finished, IDLE_TIMEOUT));
 
         // Then the migrated instance moved to version 2 and still carries t1 as its start scope in its row and its
         // record
@@ -656,29 +677,29 @@ public class WorkflowScopeKeyIT {
 
     private static void completeFirstTaskThenSignalGo(WorkflowInstanceId id, String keySuffix) throws Exception {
         UUID firstTask = openTaskId(id);
-        assertThat((TaskMutationResult) await(inContext(
-                        null,
-                        () -> pool.withTransaction(tx -> taskCallbacks.taskCompleted(
-                                new TaskCompletionCommand(
-                                        firstTask,
-                                        "approve",
-                                        null,
-                                        "k-complete-" + keySuffix,
-                                        new WorkflowActor.User("user-1"),
-                                        null),
-                                tx)))))
-                .isEqualTo(TaskMutationResult.APPLIED);
+        TaskMutationResult completed = await(inContext(
+                null,
+                () -> pool.withTransaction(tx -> taskCallbacks.taskCompleted(
+                        new TaskCompletionCommand(
+                                firstTask,
+                                "approve",
+                                null,
+                                "k-complete-" + keySuffix,
+                                new WorkflowActor.User("user-1"),
+                                null),
+                        tx))));
+        await(host.workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
+        assertThat(completed).isEqualTo(TaskMutationResult.APPLIED);
         await(inContext(null, () -> operations.signal(id, "go", "payload", "k-signal-" + keySuffix)));
+        await(host.workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
     }
 
-    private static void parkBranchBThenSweep(WorkflowInstanceId id) throws Exception {
-        await(pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
-                        + " current_step_id = 'task-b', wait_type = NULL, wait_key = NULL,"
-                        + " next_retry_at = $1, version = version + 1"
-                        + " WHERE workflow_id = $2 AND branch_id = 'b'")
-                .execute(Tuple.of(
-                        OffsetDateTime.ofInstant(Instant.now().minusSeconds(60), ZoneOffset.UTC), id.value())));
-        await(inContext(null, () -> recovery.sweepOnce(Instant.now(), 10)));
+    private static void signalBranchB(WorkflowInstanceId id) throws Exception {
+        await(inContext(
+                null,
+                () -> pool.withTransaction(
+                        tx -> txOperations.signal(id, "sig-b", "go", "k-sig-b-" + id.value(), "fork", "b", tx))));
+        await(host.workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
     }
 
     private static String instanceScopeColumn(WorkflowInstanceId id) throws Exception {

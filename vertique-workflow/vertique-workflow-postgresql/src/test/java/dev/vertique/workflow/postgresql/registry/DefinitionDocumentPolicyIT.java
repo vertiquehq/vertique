@@ -102,7 +102,11 @@ public class DefinitionDocumentPolicyIT {
                 .put(
                         "workflow",
                         new JsonObject()
-                                .put("definitions", new JsonObject().put("maxDocumentSizeBytes", DOCUMENT_LIMIT)));
+                                .put(
+                                        "definitions",
+                                        new JsonObject()
+                                                .put("maxDocumentSizeBytes", DOCUMENT_LIMIT)
+                                                .put("buildDefaultScopeDocumentsAtStartup", true)));
         var staticSource = (dev.vertique.workflow.definition.source.WorkflowDefinitionSource)
                 () -> List.of(new DefinitionResource(yamlBytes, DocumentFormat.YAML, yamlMetadata));
         BootObservation initialObservation = new BootObservation("order-fulfillment-doc", 1, "unused", false);
@@ -130,11 +134,6 @@ public class DefinitionDocumentPolicyIT {
                 .compose(handle -> {
                     handles.add(handle);
                     assertThat(initialParserProbe.calls()).isGreaterThan(parserCallsBeforeStartup);
-                    assertThat(first.workflowRegistry()
-                                    .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "order-fulfillment-doc", 1))
-                                    .plan()
-                                    .planHash())
-                            .isEqualTo(yamlPlanHash);
                     assertThat(first.workflowDefinitionsConfig().maxDocumentSizeBytes())
                             .isEqualTo(DOCUMENT_LIMIT);
                     assertThat(first.workflowDefinitionsConfig().maxStoredDocumentSizeBytes())
@@ -247,22 +246,6 @@ public class DefinitionDocumentPolicyIT {
                                                 VertiqueRuntime.of(vertx, raisedConfig), ignoredRuntime -> restored)
                                         .compose(restoredHandle -> {
                                             handles.add(restoredHandle);
-                                            assertThat(restored.workflowRegistry()
-                                                            .resolve(new DefinitionKey(
-                                                                    WorkflowScopes.DEFAULT,
-                                                                    yamlKey.definitionId(),
-                                                                    yamlKey.definitionVersion()))
-                                                            .plan()
-                                                            .planHash())
-                                                    .isEqualTo(yamlPlanHash);
-                                            assertThat(restored.workflowRegistry()
-                                                            .resolve(new DefinitionKey(
-                                                                    WorkflowScopes.DEFAULT,
-                                                                    jsonKey.definitionId(),
-                                                                    jsonKey.definitionVersion()))
-                                                            .plan()
-                                                            .planHash())
-                                                    .isEqualTo(jsonPlanHash.get());
                                             assertThat(restoredObservation.events())
                                                     .containsExactly(
                                                             "bootstrap-complete", "bootstrap-verticle-deployed");
@@ -415,28 +398,24 @@ public class DefinitionDocumentPolicyIT {
             assertThat(document.key()).isEqualTo(key);
             assertThat(document.document()).isEqualTo(source);
             assertThat(document.documentFormat()).isEqualTo(format.name());
-            assertThat(component
-                            .workflowRegistry()
-                            .resolve(new DefinitionKey(
-                                    WorkflowScopes.DEFAULT, key.definitionId(), key.definitionVersion()))
-                            .plan()
-                            .planHash())
-                    .isEqualTo(expectedPlanHash);
-            int statementStart = observer.statements().size();
-            return component
-                    .definitionService()
-                    .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
-                    .map(records -> {
-                        assertThat(records.stream()
-                                        .filter(record -> record.key().equals(key))
-                                        .findFirst())
-                                .isPresent()
-                                .get()
-                                .extracting(WorkflowDefinitionRecord::planHash)
-                                .isEqualTo(expectedPlanHash);
-                        assertNoDocumentSqlSince(observer, statementStart);
-                        return (Void) null;
-                    });
+            return component.workflowRegistry().load(key).compose(plan -> {
+                assertThat(plan.plan().planHash()).isEqualTo(expectedPlanHash);
+                int statementStart = observer.statements().size();
+                return component
+                        .definitionService()
+                        .list(new DefinitionFilter(WorkflowScopes.DEFAULT, null, null))
+                        .map(records -> {
+                            assertThat(records.stream()
+                                            .filter(record -> record.key().equals(key))
+                                            .findFirst())
+                                    .isPresent()
+                                    .get()
+                                    .extracting(WorkflowDefinitionRecord::planHash)
+                                    .isEqualTo(expectedPlanHash);
+                            assertNoDocumentSqlSince(observer, statementStart);
+                            return (Void) null;
+                        });
+            });
         });
     }
 
@@ -650,7 +629,12 @@ public class DefinitionDocumentPolicyIT {
         JsonObject loweredConfig = new JsonObject()
                 .put(
                         "workflow",
-                        new JsonObject().put("definitions", new JsonObject().put("maxDocumentSizeBytes", lowerLimit)));
+                        new JsonObject()
+                                .put(
+                                        "definitions",
+                                        new JsonObject()
+                                                .put("maxDocumentSizeBytes", lowerLimit)
+                                                .put("buildDefaultScopeDocumentsAtStartup", true)));
 
         Pool initialPool = ManagedDefinitionDatabase.openPool(vertx, postgres);
         pools.add(initialPool);

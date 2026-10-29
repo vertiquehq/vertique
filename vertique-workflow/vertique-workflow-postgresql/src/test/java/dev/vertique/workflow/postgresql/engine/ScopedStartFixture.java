@@ -12,6 +12,7 @@ import dev.vertique.workflow.contract.WorkflowStart;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.engine.testsupport.ScopedDefinitions;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
@@ -115,8 +116,15 @@ final class ScopedStartFixture {
         }
     }
 
-    /** An engine over a pool, the registry it resolves from and a client factory over both. */
-    record Harness(WorkflowEngineHandle engine, DefaultWorkflowRegistry registry, WorkflowClientFactory factory) {}
+    /**
+     * An engine over a pool, the registry it resolves from, a client factory over both, and the stored versions of the
+     * scopes other than the default one, which the registry does not hold.
+     */
+    record Harness(
+            WorkflowEngineHandle engine,
+            DefaultWorkflowRegistry registry,
+            WorkflowClientFactory factory,
+            ScopedDefinitions scoped) {}
 
     /**
      * Builds an engine over the pool with a fresh registry that holds the given definitions in the default scope.
@@ -142,13 +150,16 @@ final class ScopedStartFixture {
                 new PgTimerStore(new PgDbExceptionMapper()),
                 new PgTaskStore(pool, new PgDbExceptionMapper()),
                 Clock.systemUTC());
-        return new Harness(engine, registry, new WorkflowClientFactory(engine, registry));
+        return new Harness(
+                engine, registry, new WorkflowClientFactory(engine, registry), ScopedDefinitions.of(registry));
     }
 
     /** Empties every table a start writes. */
     static void truncate(Pool pool) throws Exception {
-        await(pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        await(WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute());
     }
 

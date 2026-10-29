@@ -20,18 +20,17 @@ import org.junit.jupiter.api.Test;
  */
 class TransactionalTaskCallbacksShapeTest {
 
-    private static final Set<String> EXPECTED_METHODS =
-            Set.of("taskCompleted", "taskDueFired", "taskReassigned", "taskReminderFired");
+    private static final Set<String> EXPECTED_METHODS = Set.of("taskCompleted", "taskReassigned");
 
     @Test
-    @DisplayName("TransactionalTaskCallbacks declares all 4 expected SPI method names")
+    @DisplayName("TransactionalTaskCallbacks declares both expected SPI method names")
     void hasExpectedMethods() {
         Set<String> declared = Arrays.stream(TransactionalTaskCallbacks.class.getDeclaredMethods())
                 .map(Method::getName)
                 .collect(Collectors.toSet());
 
         assertThat(declared)
-                .as("TransactionalTaskCallbacks must declare all 4 SPI methods")
+                .as("TransactionalTaskCallbacks must declare both SPI methods")
                 .containsAll(EXPECTED_METHODS);
     }
 

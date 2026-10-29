@@ -13,6 +13,7 @@ import dagger.multibindings.IntoSet;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.di.WorkflowCoreModule;
+import dev.vertique.workflow.engine.testsupport.InMemoryDefinitionRegistryModule;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
@@ -38,7 +39,13 @@ class WorkflowDefinitionModuleWiringTest {
     // --- Empty-source component ---
 
     @Singleton
-    @Component(modules = {WorkflowDefinitionModule.class, WorkflowCoreModule.class, ForkJoinValidatorModule.class})
+    @Component(
+            modules = {
+                WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
+                WorkflowCoreModule.class,
+                ForkJoinValidatorModule.class
+            })
     interface EmptySourceComponent {
 
         WorkflowDefinitionService workflowDefinitionService();
@@ -104,6 +111,7 @@ class WorkflowDefinitionModuleWiringTest {
     @Component(
             modules = {
                 WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
                 WorkflowCoreModule.class,
                 ForkJoinValidatorModule.class,
                 SingleSourceModule.class

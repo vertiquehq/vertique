@@ -3,19 +3,25 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.history.DecisionLog;
+import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.events.WorkflowEventType;
-import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Package-private collaborator responsible for appending generic workflow lifecycle history entries
@@ -42,6 +48,7 @@ final class WorkflowHistoryRecorder {
     private final WorkflowHistoryRepository<SqlClient> history;
     private final WorkflowEventEmitter eventEmitter;
     private final Clock clock;
+    private final DecisionLog decisions;
 
     /**
      * Constructs a new history recorder.
@@ -50,13 +57,27 @@ final class WorkflowHistoryRecorder {
      * @param eventEmitter the event emitter used to emit {@code WORKFLOW_EVENT} intents after
      *     each history entry is appended
      * @param clock the clock used to timestamp history entries
+     * @param decisions the decision log whose redaction the logged copy of a command's payload passes through
      */
     @Inject
     WorkflowHistoryRecorder(
-            WorkflowHistoryRepository<SqlClient> history, WorkflowEventEmitter eventEmitter, Clock clock) {
+            WorkflowHistoryRepository<SqlClient> history,
+            WorkflowEventEmitter eventEmitter,
+            Clock clock,
+            DecisionLog decisions) {
+        this.decisions = decisions;
         this.history = history;
         this.eventEmitter = eventEmitter;
         this.clock = clock;
+    }
+
+    /**
+     * The decision log that shares this recorder's redaction.
+     *
+     * @return the decision log
+     */
+    DecisionLog decisions() {
+        return decisions;
     }
 
     // --- History append helpers ---
@@ -65,15 +86,15 @@ final class WorkflowHistoryRecorder {
      * Appends the {@code START} history entry for a newly created instance and emits the
      * {@link WorkflowEventType#WORKFLOW_STARTED} event.
      *
-     * @param inst the fresh instance
-     * @param cmd the original start command
+     * @param inst the instance, as initialized by its first segment
+     * @param idempotencyKey the idempotency key of the recorded start, or {@code null} when none was kept
      * @param tx the active transaction
      * @return a {@link Future} that completes when the entry is inserted and the event is emitted
      */
-    Future<Void> appendStartHistory(WorkflowInstance inst, StartCommand cmd, SqlClient tx) {
+    Future<Void> appendStartHistory(WorkflowInstance inst, @Nullable String idempotencyKey, SqlClient tx) {
         return history.nextSequence(inst.id(), tx).compose(seq -> {
             String payload = Json.encode(
-                    new StartHistoryPayload(cmd.definitionId(), inst.definitionVersion(), cmd.businessKey()));
+                    new StartHistoryPayload(inst.definitionId(), inst.definitionVersion(), inst.businessKey()));
             WorkflowHistoryEntry entry =
                     new WorkflowHistoryEntry(inst.id(), seq, WorkflowEntryType.START, payload, clock.instant());
             return history.append(entry, tx)
@@ -83,8 +104,163 @@ final class WorkflowHistoryRecorder {
                             seq,
                             null,
                             null,
-                            Map.of("idempotencyKey", cmd.idempotencyKey()),
+                            idempotencyKey == null ? Map.of() : Map.of("idempotencyKey", idempotencyKey),
                             tx));
+        });
+    }
+
+    /**
+     * Appends a history entry that says what happened to a command: received by a segment, or completed by it.
+     *
+     * @param workflowId the instance
+     * @param type the entry type, one of the {@code COMMAND_*} types
+     * @param commandId the command's row id
+     * @param kind the command kind
+     * @param tx the active transaction
+     * @return a {@link Future} that completes when the entry is inserted
+     */
+    Future<Void> appendCommandHistory(
+            WorkflowInstanceId workflowId, WorkflowEntryType type, long commandId, String kind, SqlClient tx) {
+        return history.nextSequence(workflowId, tx).compose(seq -> {
+            String payload = Json.encode(new CommandHistoryPayload(commandId, kind));
+            return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
+        });
+    }
+
+    /**
+     * Appends the {@code COMMAND_RECEIVED} entry of a command: the command and the logged copy of its payload, with the
+     * values a bound history redactor names for the instance's definition replaced. The command's row keeps the
+     * payload as recorded.
+     *
+     * @param inst    the instance, whose definition version selects the redactor's pointers
+     * @param command the command the segment executes
+     * @param tx      the active transaction
+     * @return a {@link Future} that completes when the entry is inserted
+     */
+    Future<Void> appendCommandReceived(WorkflowInstance inst, SegmentCommand command, SqlClient tx) {
+        return history.nextSequence(inst.id(), tx).compose(seq -> {
+            DefinitionKey key =
+                    new DefinitionKey(inst.definitionScopeKey(), inst.definitionId(), inst.definitionVersion());
+            Object payload = command.payloadJson() == null ? null : Json.decodeValue(command.payloadJson());
+            String encoded = Json.encode(new CommandReceivedHistoryPayload(
+                    command.commandId(), command.kind(), decisions.redactedCopy(key, payload, tx)));
+            return history.append(
+                    new WorkflowHistoryEntry(
+                            inst.id(), seq, WorkflowEntryType.COMMAND_RECEIVED, encoded, clock.instant()),
+                    tx);
+        });
+    }
+
+    /**
+     * Appends a history entry about what became of a recorded command that has no payload of its own to name: a retry or
+     * a migration. The entry names the command, its kind and the sanitized reason, never a payload value or exception
+     * text.
+     *
+     * @param workflowId the instance
+     * @param type the entry type
+     * @param commandId the command's row id
+     * @param kind the command kind
+     * @param reason the sanitized reason, or {@code null} for an outcome without one
+     * @param tx the active transaction
+     * @return a future that completes when the entry is appended
+     */
+    Future<Void> appendCommandOutcomeHistory(
+            WorkflowInstanceId workflowId,
+            WorkflowEntryType type,
+            long commandId,
+            String kind,
+            @Nullable String reason,
+            SqlClient tx) {
+        return history.nextSequence(workflowId, tx).compose(seq -> {
+            String payload =
+                    Json.encode(new CommandOutcomeHistoryPayload(commandId, kind, decisions.redactReason(reason, tx)));
+            return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
+        });
+    }
+
+    /**
+     * Appends a history entry about what became of a recorded {@code SIGNAL} command. The entry names the command, the
+     * signal and the sanitized reason, never a payload value or exception text.
+     *
+     * @param workflowId the instance
+     * @param type the entry type
+     * @param commandId the command's row id
+     * @param signalName the signal's name
+     * @param reason the sanitized reason, or {@code null} for an outcome without one
+     * @param tx the active transaction
+     * @return a future that completes when the entry is appended
+     */
+    Future<Void> appendSignalCommandHistory(
+            WorkflowInstanceId workflowId,
+            WorkflowEntryType type,
+            long commandId,
+            String signalName,
+            @Nullable String reason,
+            SqlClient tx) {
+        return history.nextSequence(workflowId, tx).compose(seq -> {
+            String payload = Json.encode(new SignalCommandHistoryPayload(
+                    commandId, "SIGNAL", EchoedNames.bounded(signalName), decisions.redactReason(reason, tx)));
+            return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
+        });
+    }
+
+    /**
+     * Appends a history entry about what became of a recorded {@code TIMER} command. The entry names the command, its
+     * timer kind and timer and the sanitized reason, never a payload value or exception text.
+     *
+     * @param workflowId the instance
+     * @param type the entry type
+     * @param commandId the command's row id
+     * @param timerKind the timer kind, or {@code null} when unknown
+     * @param timerId the timer row the command fires, or {@code null} when unknown
+     * @param reason the sanitized reason, or {@code null} for an outcome without one
+     * @param tx the active transaction
+     * @return a future that completes when the entry is appended
+     */
+    Future<Void> appendTimerCommandHistory(
+            WorkflowInstanceId workflowId,
+            WorkflowEntryType type,
+            long commandId,
+            @Nullable String timerKind,
+            @Nullable UUID timerId,
+            @Nullable String reason,
+            SqlClient tx) {
+        return history.nextSequence(workflowId, tx).compose(seq -> {
+            String payload = Json.encode(new TimerCommandHistoryPayload(
+                    commandId, "TIMER", timerKind, timerId, decisions.redactReason(reason, tx)));
+            return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
+        });
+    }
+
+    /**
+     * Appends a history entry about what became of a recorded {@code COMPLETION} command. The entry names the command,
+     * the task, the decision and the sanitized reason, never a payload value or exception text.
+     *
+     * @param workflowId the instance
+     * @param type the entry type
+     * @param commandId the command's row id
+     * @param taskId the task the completion reserved
+     * @param decisionName the decision's name
+     * @param reason the sanitized reason, or {@code null} for an outcome without one
+     * @param tx the active transaction
+     * @return a future that completes when the entry is appended
+     */
+    Future<Void> appendCompletionCommandHistory(
+            WorkflowInstanceId workflowId,
+            WorkflowEntryType type,
+            long commandId,
+            UUID taskId,
+            String decisionName,
+            @Nullable String reason,
+            SqlClient tx) {
+        return history.nextSequence(workflowId, tx).compose(seq -> {
+            String payload = Json.encode(new CompletionCommandHistoryPayload(
+                    commandId,
+                    "COMPLETION",
+                    taskId,
+                    EchoedNames.bounded(decisionName),
+                    decisions.redactReason(reason, tx)));
+            return history.append(new WorkflowHistoryEntry(workflowId, seq, type, payload, clock.instant()), tx);
         });
     }
 }

@@ -4,8 +4,6 @@
 package dev.vertique.workflow.postgresql.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.db.DbPoolConfig;
@@ -37,6 +35,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -58,6 +57,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class WorkflowVersionPinUnavailableIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -179,7 +180,8 @@ public class WorkflowVersionPinUnavailableIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        pool.query(
+        WorkflowTestTables.truncating(
+                        pool,
                         "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
@@ -195,16 +197,16 @@ public class WorkflowVersionPinUnavailableIT {
     // --- Tests ---
 
     /**
-     * Sending a signal via engine B (which lacks the v1 definition) must fail with
-     * {@link WorkflowVersionPinUnavailableException} carrying the correct fields.
+     * Sending a signal via engine B (which lacks the v1 definition) records it: only operations that need the plan,
+     * such as a start of the version, fail with {@link WorkflowVersionPinUnavailableException}.
      *
-     * <p>Engine A starts the instance (which enters WAITING state). Engine B attempts to signal it.
-     * Since engine B does not have the definition registered, it must fail with a typed exception
-     * that includes the definitionId, version, and the actual instance id.
+     * <p>Engine A starts the instance (which enters WAITING state). Engine B signals it. Engine B does not have the
+     * definition registered, but recording a signal needs no plan, so the call succeeds; engine A, which has the
+     * definition, runs the recorded command.
      */
     @Test
-    @DisplayName("signal via engine without pinned version fails with WorkflowVersionPinUnavailableException")
-    void signalViaEngineWithoutPinnedVersionFails(VertxTestContext ctx) {
+    @DisplayName("signal via engine without pinned version is recorded and applied by the engine with the version")
+    void signalViaEngineWithoutPinnedVersionIsRecordedAndAppliedByTheEngineWithIt(VertxTestContext ctx) {
         SimpleStartType payload = new SimpleStartType("test-value");
         String idempotencyKey = "version-pin-test-" + UUID.randomUUID();
         StartCommand startCmd = new StartCommand(
@@ -220,22 +222,23 @@ public class WorkflowVersionPinUnavailableIT {
 
         // Engine A starts the instance; it will be WAITING for signal "go".
         engineA.start(startCmd)
+                .compose(started -> engineA.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> {
                     String dedupKey = "dedup-" + UUID.randomUUID();
-                    // Engine B attempts to signal — must fail since it doesn't know v1.
-                    return engineB.signal(id, "go", "payload", dedupKey).map(v -> id);
+                    // Engine B signals although it doesn't know v1: recording needs no plan; engine A applies it.
+                    return engineB.signal(id, "go", "payload", dedupKey)
+                            .compose(recorded -> engineA.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                            .compose(idle -> engineA.query(id));
                 })
                 .onComplete(ar -> ctx.verify(() -> {
-                    assertTrue(ar.failed(), "engineB.signal must fail when v1 is not registered");
-                    assertInstanceOf(
-                            WorkflowVersionPinUnavailableException.class,
-                            ar.cause(),
-                            "cause must be WorkflowVersionPinUnavailableException, got: " + ar.cause());
-
-                    WorkflowVersionPinUnavailableException ex = (WorkflowVersionPinUnavailableException) ar.cause();
-                    assertEquals("version-test", ex.definitionId(), "definitionId must be 'version-test'");
-                    assertEquals(1L, ex.version(), "version must be 1");
-                    assertNotNull(ex.instanceId(), "instanceId must not be null (engine must enrich the exception)");
+                    assertTrue(
+                            ar.succeeded(), "engineB.signal must be recorded when v1 is not registered: " + ar.cause());
+                    assertEquals(
+                            dev.vertique.workflow.state.WorkflowStatus.COMPLETED,
+                            ar.result().instance().status(),
+                            "the engine with v1 must apply the recorded signal");
                     ctx.completeNow();
                 }));
     }
@@ -261,6 +264,9 @@ public class WorkflowVersionPinUnavailableIT {
                 null);
 
         engineA.start(startCmd)
+                .compose(started -> engineA.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> engineB.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "engineB.query must read without the pinned code: " + ar.cause());
@@ -290,6 +296,9 @@ public class WorkflowVersionPinUnavailableIT {
                 null);
 
         engineA.start(startCmd)
+                .compose(started -> engineA.executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(id -> engineB.query(id, "version-test"))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.failed(), "engineB.query with a contract name must fail without the pinned code");

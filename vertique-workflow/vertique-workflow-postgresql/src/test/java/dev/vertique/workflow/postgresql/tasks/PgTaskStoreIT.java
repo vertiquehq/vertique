@@ -17,6 +17,7 @@ import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
@@ -30,6 +31,7 @@ import dev.vertique.workflow.tasks.TaskStatus;
 import dev.vertique.workflow.tasks.TaskTransition;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.pgclient.PgBuilder;
@@ -99,8 +101,10 @@ public class PgTaskStoreIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
-                        + " workflow_instances RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
+                                + " workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -187,6 +191,38 @@ public class PgTaskStoreIT {
                 null); // branchId
     }
 
+    /** A copy of a task record with other decisions (when given) and another stability requirement. */
+    private static TaskRecord copyOf(
+            TaskRecord record, List<TaskDecisionDescriptor> decisions, Boolean requireVersionStability) {
+        return new TaskRecord(
+                record.taskId(),
+                record.workflowId(),
+                record.stepId(),
+                record.assignment(),
+                record.status(),
+                decisions != null ? decisions : record.decisions(),
+                record.dueAt(),
+                record.dueDateTimerId(),
+                record.completedAt(),
+                record.cancelledAt(),
+                record.expiredAt(),
+                record.updatedAt(),
+                record.decisionName(),
+                record.decisionPayloadJson(),
+                record.completedBy(),
+                record.cancelledBy(),
+                record.reassignedBy(),
+                record.cancellationReason(),
+                record.reassignmentReason(),
+                record.subjectVersionAtCreation(),
+                record.branchTokenId(),
+                record.forkStepId(),
+                record.branchId(),
+                record.scopeKey(),
+                requireVersionStability,
+                null);
+    }
+
     // =========================================================================
     // insertOpen + findById round-trip
     // =========================================================================
@@ -246,6 +282,58 @@ public class PgTaskStoreIT {
                         assertNull(found.decisionPayloadJson(), "decisionPayloadJson should be null");
                         assertNull(found.cancellationReason(), "cancellationReason should be null");
                         assertNull(found.reassignmentReason(), "reassignmentReason should be null");
+                        ctx.completeNow();
+                    }))
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("insertOpen + findById round-trips the stability requirement and each decision's payload schema")
+        void roundTripStabilityRequirementAndPayloadSchemas(VertxTestContext ctx) {
+            WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+            UUID required = UUID.randomUUID();
+            UUID notRequired = UUID.randomUUID();
+            UUID legacy = UUID.randomUUID();
+            JsonObject schema = new JsonObject().put("type", "object");
+            TaskRecord base = openTask(required, workflowId, new TaskAssignment.Role("r"));
+            TaskRecord withSchema = copyOf(
+                    base,
+                    List.of(
+                            new TaskDecisionDescriptor("approve", "java.lang.String", "ship", schema),
+                            new TaskDecisionDescriptor("reject", "java.lang.String", "notify")),
+                    Boolean.TRUE);
+
+            seedInstance(workflowId)
+                    .compose(v -> pool.withTransaction(tx -> store.insertOpen(withSchema, tx)))
+                    .compose(v -> pool.withTransaction(tx -> store.insertOpen(
+                            copyOf(
+                                    openTask(notRequired, workflowId, new TaskAssignment.Role("r")),
+                                    null,
+                                    Boolean.FALSE),
+                            tx)))
+                    .compose(v -> pool.withTransaction(
+                            tx -> store.insertOpen(openTask(legacy, workflowId, new TaskAssignment.Role("r")), tx)))
+                    .compose(v -> pool.withTransaction(tx -> store.findById(required, tx)))
+                    .compose(found -> {
+                        ctx.verify(() -> {
+                            assertEquals(Boolean.TRUE, found.orElseThrow().requireVersionStability());
+                            assertEquals(
+                                    schema,
+                                    found.orElseThrow().decisions().get(0).payloadSchema());
+                            assertNull(found.orElseThrow().decisions().get(1).payloadSchema());
+                            assertNull(found.orElseThrow().reservationCommandId());
+                        });
+                        return pool.withTransaction(tx -> store.findById(notRequired, tx));
+                    })
+                    .compose(found -> {
+                        ctx.verify(() ->
+                                assertEquals(Boolean.FALSE, found.orElseThrow().requireVersionStability()));
+                        return pool.withTransaction(tx -> store.findById(legacy, tx));
+                    })
+                    .onSuccess(found -> ctx.verify(() -> {
+                        assertNull(
+                                found.orElseThrow().requireVersionStability(),
+                                "a task written without the flag reads it as null");
                         ctx.completeNow();
                     }))
                     .onFailure(ctx::failNow);
@@ -342,6 +430,67 @@ public class PgTaskStoreIT {
                         assertEquals(
                                 "auto-approve",
                                 ((WorkflowActor.System) opt.get().completedBy()).reason());
+                        ctx.completeNow();
+                    }))
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("markCompleted completes a task reserved by a recorded completion and keeps the owner on the row")
+        void markCompletedCompletesAReservedTask(VertxTestContext ctx) {
+            WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+            UUID taskId = UUID.randomUUID();
+            PgTaskReservations reservations = new PgTaskReservations(pool, new PgDbExceptionMapper());
+
+            seedInstance(workflowId)
+                    .compose(v -> pool.withTransaction(
+                            tx -> store.insertOpen(openTask(taskId, workflowId, new TaskAssignment.Role("r")), tx)))
+                    .compose(v -> pool.withTransaction(tx -> reservations.markCompleting(taskId.toString(), 7L, tx)))
+                    .compose(reserved -> {
+                        ctx.verify(() -> assertTrue(reserved));
+                        return pool.withTransaction(tx -> store.findById(taskId, tx));
+                    })
+                    .compose(found -> {
+                        ctx.verify(() -> {
+                            assertEquals(
+                                    TaskStatus.COMPLETING, found.orElseThrow().status());
+                            assertEquals(7L, found.orElseThrow().reservationCommandId());
+                        });
+                        return pool.withTransaction(tx -> store.markCompleted(
+                                taskId, "approve", "\"ok\"", Instant.now(), new WorkflowActor.User("alice"), tx));
+                    })
+                    .compose(result -> {
+                        ctx.verify(() -> assertEquals(TaskTransition.APPLIED, result));
+                        return pool.withTransaction(tx -> store.findById(taskId, tx));
+                    })
+                    .onSuccess(found -> ctx.verify(() -> {
+                        assertEquals(TaskStatus.COMPLETED, found.orElseThrow().status());
+                        assertEquals(7L, found.orElseThrow().reservationCommandId());
+                        ctx.completeNow();
+                    }))
+                    .onFailure(ctx::failNow);
+        }
+
+        @Test
+        @DisplayName("a task being completed is not reassignable")
+        void reservedTaskRefusesReassignment(VertxTestContext ctx) {
+            WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+            UUID taskId = UUID.randomUUID();
+            PgTaskReservations reservations = new PgTaskReservations(pool, new PgDbExceptionMapper());
+
+            seedInstance(workflowId)
+                    .compose(v -> pool.withTransaction(
+                            tx -> store.insertOpen(openTask(taskId, workflowId, new TaskAssignment.Role("r")), tx)))
+                    .compose(v -> pool.withTransaction(tx -> reservations.markCompleting(taskId.toString(), 9L, tx)))
+                    .compose(v -> pool.withTransaction(tx -> store.reassign(
+                            taskId,
+                            new TaskAssignment.Role("other"),
+                            new WorkflowActor.User("manager"),
+                            "no",
+                            Instant.now(),
+                            tx)))
+                    .onSuccess(result -> ctx.verify(() -> {
+                        assertInstanceOf(TaskReassignmentResult.LostToTerminal.class, result);
                         ctx.completeNow();
                     }))
                     .onFailure(ctx::failNow);

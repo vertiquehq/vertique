@@ -21,7 +21,6 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
-import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowView;
@@ -44,6 +43,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -66,6 +66,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class SignalByPinIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("signal_by_pin_test")
@@ -220,8 +222,10 @@ public class SignalByPinIT {
 
     @BeforeEach
     void truncateTables() throws Exception {
-        await(pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        await(WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute());
     }
 
@@ -235,8 +239,8 @@ public class SignalByPinIT {
     // --- Tests ---
 
     @Test
-    @DisplayName("a signal the pinned version does not await fails naming that version and changes nothing")
-    void signalNotAwaitedByPinnedVersionFailsNamingVersion() throws Exception {
+    @DisplayName("a signal the pinned version does not await is rejected naming that version and changes nothing")
+    void signalNotAwaitedByPinnedVersionIsRejectedNamingVersion() throws Exception {
         // Given: only purchase-approval v1 is registered; it waits for approve, not for escalate
         Harness harness = open(new PurchaseApprovalV1());
         WorkflowInstanceId id = startPinned(harness, "purchase-approval", "approval", 1L, "state-marker-4");
@@ -244,22 +248,35 @@ public class SignalByPinIT {
         assertThat(before.status()).isEqualTo(WorkflowStatus.WAITING);
         assertThat(before.waitKey()).isEqualTo("approve");
 
-        // When: a client of the contract signals escalate; creating that client does not throw
+        // When: a client of the contract signals escalate; the call records the signal and the executor then runs it
         ApprovalContract client = harness.factory().create(ApprovalContract.class, "purchase-approval");
-        Throwable failure = failureOf(client.escalate(id, new ApprovalSignal("payload-marker-4")));
+        await(client.escalate(id, new ApprovalSignal("payload-marker-4")));
+        await(harness.engine().executionProbe().awaitIdle(id, IDLE_TIMEOUT));
 
-        // Then: the signal is refused naming the instance, the signal and the pinned version
-        assertThat(failure)
-                .isInstanceOf(WorkflowSignalRejectedException.class)
-                .hasMessageContaining("'purchase-approval' v1")
-                .hasMessageContaining("escalate")
-                .hasMessageContaining(id.value().toString())
-                .message()
+        // Then: the signal command is rejected, its reason naming the signal and the pinned version, and no more
+        String rejection =
+                await(pool.preparedQuery("SELECT state || '|' || last_error AS outcome FROM workflow_commands"
+                                + " WHERE workflow_id = $1 AND kind = 'SIGNAL'")
+                        .execute(Tuple.of(id.value()))
+                        .map(rows -> rows.iterator().next().getString("outcome")));
+        assertThat(rejection)
+                .startsWith("REJECTED|")
+                .contains("escalate")
+                .contains("version 1")
                 .doesNotContain("payload-marker-4")
                 .doesNotContain("state-marker-4");
 
-        // and: the instance, its history, the dedup rows and the timers are unchanged
-        assertThat(snapshot(harness, id)).isEqualTo(before);
+        // and: the instance is unchanged; the rejection added its history entry and the signal kept its dedup row
+        Snapshot after = snapshot(harness, id);
+        assertThat(after)
+                .isEqualTo(new Snapshot(
+                        before.status(),
+                        before.waitKey(),
+                        before.stateJson(),
+                        before.instanceVersion(),
+                        before.historyLength() + 1,
+                        before.dedupRows() + 1,
+                        before.timerRows()));
     }
 
     @Test
@@ -276,7 +293,9 @@ public class SignalByPinIT {
         // When: the client sends approve to the v1 instance and escalate to the v2 instance
         ApprovalContract client = harness.factory().create(ApprovalContract.class, "purchase-approval");
         await(client.approve(pinnedToV1, new ApprovalSignal("v1-decision")));
+        await(harness.engine().executionProbe().awaitIdle(pinnedToV1, IDLE_TIMEOUT));
         await(client.escalate(pinnedToV2, new ApprovalSignal("v2-decision")));
+        await(harness.engine().executionProbe().awaitIdle(pinnedToV2, IDLE_TIMEOUT));
 
         // Then: both instances completed and each history records its signal
         WorkflowView v1 = await(harness.engine().query(pinnedToV1));
@@ -317,6 +336,7 @@ public class SignalByPinIT {
         // When: the instance's own client queries and then signals it
         WorkflowView viaOwnClient = await(own.view(id));
         await(own.approve(id, new ApprovalSignal("own-decision")));
+        await(harness.engine().executionProbe().awaitIdle(id, IDLE_TIMEOUT));
 
         // Then: both succeed
         assertThat(viaOwnClient.instance().id()).isEqualTo(id);
@@ -374,6 +394,7 @@ public class SignalByPinIT {
         StartCommand command = new StartCommand(
                 definitionId, contractName, payload, payload.idempotencyKey(), null, null, version, null, null);
         WorkflowInstanceId id = await(harness.engine().start(command));
+        await(harness.engine().executionProbe().awaitIdle(id, IDLE_TIMEOUT));
         assertThat(snapshot(harness, id).status()).isEqualTo(WorkflowStatus.WAITING);
         return id;
     }

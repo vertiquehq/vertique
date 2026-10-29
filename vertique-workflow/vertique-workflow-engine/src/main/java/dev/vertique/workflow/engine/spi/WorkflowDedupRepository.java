@@ -110,6 +110,17 @@ public interface WorkflowDedupRepository<TX> {
     // --- Task dedup ---
 
     /**
+     * Reads, without writing, the fingerprint of the committed completion of a task under an idempotency key.
+     *
+     * @param taskId         the task id; used as the dedup scope
+     * @param idempotencyKey the caller-supplied idempotency key
+     * @param tx             the active transaction to use
+     * @return a {@link Future} containing the fingerprint the committed completion was recorded with, or empty when no
+     *     completion of the task under that key has committed
+     */
+    Future<Optional<String>> findTaskCompletion(UUID taskId, String idempotencyKey, TX tx);
+
+    /**
      * Atomically claims or resolves a task-completion dedup slot, including fingerprint comparison.
      *
      * @param taskId         the task id; used as the dedup scope

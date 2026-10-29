@@ -30,6 +30,7 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.inboxoutbox.ClaimScope;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxDestinationHandler;
@@ -46,6 +47,7 @@ import dev.vertique.workflow.events.compose.WorkflowEventsComposeValidator;
 import dev.vertique.workflow.events.recorder.WorkflowEventSideEffectRecorder;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
@@ -75,11 +77,12 @@ import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Singleton;
 import java.time.Clock;
-import java.util.ArrayList;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterAll;
@@ -99,6 +102,8 @@ public class WorkflowDurableScopeContextIT {
             .withDatabaseName("workflow_durable_scope")
             .withMigration("classpath:db/migration/workflow");
     private static final ScopeContext ACME = scope("acme");
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(20);
+    private static ExecutorDeployment executor;
     private static Pool pool;
     private static Vertx vertx;
     private static WorkflowGraph graph;
@@ -126,11 +131,11 @@ public class WorkflowDurableScopeContextIT {
             Optional<Initialized> initialized) {}
 
     static final class Probe {
-        final List<Observation> initializers = new ArrayList<>();
-        final List<Observation> services = new ArrayList<>();
-        final List<WorkflowEventEnvelope> events = new ArrayList<>();
-        int closedInitializers;
-        boolean failService;
+        final List<Observation> initializers = new CopyOnWriteArrayList<>();
+        final List<Observation> services = new CopyOnWriteArrayList<>();
+        final List<WorkflowEventEnvelope> events = new CopyOnWriteArrayList<>();
+        volatile int closedInitializers;
+        volatile boolean failService;
 
         void reset() {
             initializers.clear();
@@ -321,8 +326,18 @@ public class WorkflowDurableScopeContextIT {
     }
 
     @Singleton
-    @Component(modules = {WorkflowPostgresqlModule.class, ContextRuntimeModule.class, FixtureModule.class})
+    @Component(
+            modules = {
+                WorkflowPostgresqlModule.class,
+                ContextRuntimeModule.class,
+                ExecutorDeployment.FastPolling.class,
+                FixtureModule.class
+            })
     interface WorkflowGraph {
+        Set<VerticleDeployment> verticleDeployments();
+
+        WorkflowExecutionProbe executionProbe();
+
         WorkflowOperations operations();
 
         TransactionalWorkflowOperations<SqlClient> transactional();
@@ -358,19 +373,30 @@ public class WorkflowDurableScopeContextIT {
                 .using(vertx)
                 .build();
         graph = DaggerWorkflowDurableScopeContextIT_WorkflowGraph.factory().create(pool, Clock.systemUTC(), probe);
+        // The graph runs no deployer: only its workflow executor is deployed
+        try {
+            executor = await(ExecutorDeployment.deploy(vertx, graph.verticleDeployments()));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
         DefaultVersionSeed.recordAndActivate(graph.definitionStore(), graph.definitionLifecycle(), graph.registry());
     }
 
     @BeforeEach
     void reset() throws Exception {
-        await(pool.query("TRUNCATE workflow_branch_tokens, workflow_join_states, workflow_timers, workflow_history,"
-                        + " workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
+        await(WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE workflow_branch_tokens, workflow_join_states, workflow_timers, workflow_tasks,"
+                                + " workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute());
         probe.reset();
     }
 
     @AfterAll
     static void tearDown() throws Exception {
+        if (executor != null) {
+            await(executor.undeploy());
+        }
         if (pool != null) {
             await(pool.close());
         }
@@ -387,8 +413,12 @@ public class WorkflowDurableScopeContextIT {
                             "instance start must persist the exact captured scope");
                     return id;
                 }))
-                .compose(id -> onFreshDuplicate(() -> graph.operations().signal(id, "go", "go", "instance-go")))
+                .compose(WorkflowDurableScopeContextIT::idle)
+                .compose(id -> onFreshDuplicate(() -> graph.operations().signal(id, "go", "go", "instance-go"))
+                        .map(id))
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .compose(ignored -> start("scope-branch", ACME, null))
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .compose(id -> pool.preparedQuery(
                                 "SELECT metadata FROM workflow_branch_tokens WHERE workflow_id = $1 AND branch_id ="
                                         + " 'a'")
@@ -400,7 +430,9 @@ public class WorkflowDurableScopeContextIT {
                                     "branch creation must persist the exact captured scope");
                             return id;
                         }))
-                .compose(id -> onFreshDuplicate(() -> signal(id, null, "fork", "a", "branch-go")))
+                .compose(id -> onFreshDuplicate(() -> signal(id, null, "fork", "a", "branch-go"))
+                        .map(id))
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .onComplete(ctx.succeeding(ignored -> ctx.verify(() -> {
                     assertEquals(2, probe.services.size());
                     probe.services.forEach(observation -> assertEquals(
@@ -415,9 +447,11 @@ public class WorkflowDurableScopeContextIT {
     @DisplayName("ambient and explicit caller scopes override saved scope without changing workflow scope fields")
     void callerScopeOverridesSavedScopeWithoutChangingWorkflowScopeFields(VertxTestContext ctx) {
         start("scope-instance", ACME, "orders")
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .compose(id -> onFreshDuplicate(
                                 () -> withScope(scope("ambient-b"), () -> signal(id, null, null, null, "ambient")))
                         .map(id))
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .compose(id -> instanceRow(id).map(row -> {
                     assertWorkflowFields(row, "orders");
                     assertEquals(
@@ -427,9 +461,11 @@ public class WorkflowDurableScopeContextIT {
                     return id;
                 }))
                 .compose(ignored -> start("scope-instance", ACME, "orders"))
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .compose(id -> onFreshDuplicate(() -> withScope(
                                 scope("ambient-c"), () -> signal(id, saved("explicit-b"), null, null, "explicit")))
                         .map(id))
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .compose(id -> instanceRow(id).map(row -> {
                     assertWorkflowFields(row, "orders");
                     return id;
@@ -451,6 +487,7 @@ public class WorkflowDurableScopeContextIT {
     @DisplayName("ambient scope does not select workflow start scope or event-envelope scope fields")
     void ambientScopeDoesNotSelectWorkflowStartScopeOrEventEnvelope(VertxTestContext ctx) {
         start("scope-instance", ACME, null)
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .compose(WorkflowDurableScopeContextIT::instanceRow)
                 .onComplete(ctx.succeeding(row -> ctx.verify(() -> {
                     assertWorkflowFields(row, "default");
@@ -487,6 +524,7 @@ public class WorkflowDurableScopeContextIT {
     @DisplayName("a seeded scope-only row opens the bind gate and runs the existing initializer lifecycle")
     void scopeOnlySavedMetadataOpensBindGateAndRunsExistingInitializerLifecycle(VertxTestContext ctx) {
         start("scope-instance", null, null)
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .compose(id -> seed(id, saved("saved-only")).map(id))
                 .compose(id -> instanceRow(id).map(row -> {
                     assertEquals(
@@ -497,28 +535,39 @@ public class WorkflowDurableScopeContextIT {
                     return id;
                 }))
                 .compose(id -> onFreshDuplicate(() -> {
-                    ContextHolder.Scope registered =
-                            graph.holder().bind(DecoderOnly.class, new DecoderOnly("previous"));
-                    ContextHolder.Scope unregistered =
-                            graph.holder().bind(Unregistered.class, new Unregistered("keep"));
-                    return graph.operations().signal(id, "go", "go", "gate").eventually(() -> {
-                        try {
-                            assertEquals(
-                                    new DecoderOnly("previous"),
-                                    graph.holder().current(DecoderOnly.class).orElseThrow());
-                            assertEquals(
-                                    new Unregistered("keep"),
-                                    graph.holder().current(Unregistered.class).orElseThrow());
-                            assertTrue(
-                                    graph.holder().current(ScopeContext.class).isEmpty());
-                            assertTrue(graph.holder().current(Initialized.class).isEmpty());
-                        } finally {
-                            unregistered.close();
-                            registered.close();
-                        }
-                        return Future.succeededFuture();
-                    });
-                }))
+                            ContextHolder.Scope registered =
+                                    graph.holder().bind(DecoderOnly.class, new DecoderOnly("previous"));
+                            ContextHolder.Scope unregistered =
+                                    graph.holder().bind(Unregistered.class, new Unregistered("keep"));
+                            return graph.operations()
+                                    .signal(id, "go", "go", "gate")
+                                    .eventually(() -> {
+                                        try {
+                                            assertEquals(
+                                                    new DecoderOnly("previous"),
+                                                    graph.holder()
+                                                            .current(DecoderOnly.class)
+                                                            .orElseThrow());
+                                            assertEquals(
+                                                    new Unregistered("keep"),
+                                                    graph.holder()
+                                                            .current(Unregistered.class)
+                                                            .orElseThrow());
+                                            assertTrue(graph.holder()
+                                                    .current(ScopeContext.class)
+                                                    .isEmpty());
+                                            assertTrue(graph.holder()
+                                                    .current(Initialized.class)
+                                                    .isEmpty());
+                                        } finally {
+                                            unregistered.close();
+                                            registered.close();
+                                        }
+                                        return Future.succeededFuture();
+                                    });
+                        })
+                        .map(id))
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .onComplete(ctx.succeeding(ignored -> ctx.verify(() -> {
                     assertEquals(
                             1,
@@ -532,7 +581,9 @@ public class WorkflowDurableScopeContextIT {
                     assertTrue(
                             initializer.registered().isEmpty(),
                             "an absent decoder-only registered value must be cleared");
-                    assertEquals(Optional.of(new Unregistered("keep")), initializer.unregistered());
+                    assertTrue(
+                            initializer.unregistered().isEmpty(),
+                            "the executor never inherits the recording caller's unregistered binding");
                     assertEquals(1, probe.closedInitializers);
                     assertEquals(
                             Optional.of(new Initialized(DispatchBoundary.WORKFLOW)),
@@ -545,24 +596,39 @@ public class WorkflowDurableScopeContextIT {
     }
 
     @Test
-    @DisplayName("a null instance carrier leaves ambient bindings alone and skips the bind gate")
+    @DisplayName("a null instance carrier and no caller scope skip the bind gate and bind nothing")
     void nullCarrierControlLeavesHolderAndSkipsBindGate(VertxTestContext ctx) {
         start("scope-instance", null, null)
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .compose(id -> instanceRow(id).map(row -> {
                     assertNull(row.getValue("metadata"));
                     probe.reset();
                     return id;
                 }))
-                .compose(id -> onFreshDuplicate(() ->
-                        withScope(scope("ambient"), () -> graph.operations().signal(id, "go", "go", "null-carrier"))))
+                .compose(id -> onFreshDuplicate(() -> graph.operations().signal(id, "go", "go", "null-carrier"))
+                        .map(id))
+                .compose(WorkflowDurableScopeContextIT::idle)
+                .compose(ignored -> start("scope-instance", null, null))
+                .compose(WorkflowDurableScopeContextIT::idle)
+                .compose(id -> onFreshDuplicate(() -> withScope(
+                                scope("ambient"), () -> graph.operations().signal(id, "go", "go", "ambient")))
+                        .map(id))
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .onComplete(ctx.succeeding(ignored -> ctx.verify(() -> {
+                    assertEquals(2, probe.services.size());
+                    assertEquals(
+                            Optional.empty(),
+                            probe.services.getFirst().scope(),
+                            "with nothing recorded and no instance carrier the executor binds no scope");
                     assertEquals(
                             Optional.of(scope("ambient")),
-                            probe.services.getFirst().scope());
-                    assertTrue(
-                            probe.initializers.isEmpty(),
-                            "a null carrier must not run durable initializers even with ambient scope");
-                    assertEquals(0, probe.closedInitializers);
+                            probe.services.get(1).scope(),
+                            "the caller's scope recorded with the signal is the one the executor binds");
+                    assertEquals(
+                            1,
+                            probe.initializers.size(),
+                            "only the drive that had a recorded scope may run durable initializers");
+                    assertEquals(1, probe.closedInitializers);
                     ctx.completeNow();
                 })));
     }
@@ -571,31 +637,41 @@ public class WorkflowDurableScopeContextIT {
     @DisplayName("an asynchronous workflow failure unwinds the installed saved scope and restores the prior value")
     void closesBindingAfterWorkflowAsyncFailure(VertxTestContext ctx) {
         start("scope-instance", null, null)
+                .compose(WorkflowDurableScopeContextIT::idle)
                 .compose(id -> seed(id, saved("acme")).map(id))
                 .compose(id -> {
                     probe.reset();
                     probe.failService = true;
-                    return onFreshDuplicate(
-                            () -> withScope(scope("previous"), () -> signal(id, saved("acme"), null, null, "failure")
-                                    .transform(outcome -> {
-                                        assertEquals(
-                                                Optional.of(ACME),
-                                                probe.services.getFirst().scope(),
-                                                "saved scope must have been installed before the asynchronous failure");
-                                        assertTrue(
-                                                outcome.failed(),
-                                                "the recorder's asynchronous failure must reach the workflow caller");
-                                        assertEquals(
-                                                scope("previous"),
-                                                graph.holder()
-                                                        .current(ScopeContext.class)
-                                                        .orElseThrow(),
-                                                "the failed drive must restore its caller's prior binding");
-                                        assertEquals(probe.initializers.size(), probe.closedInitializers);
-                                        return Future.succeededFuture();
-                                    })));
+                    return onFreshDuplicate(() ->
+                                    withScope(scope("previous"), () -> signal(id, saved("acme"), null, null, "failure")
+                                            .transform(outcome -> {
+                                                assertTrue(outcome.succeeded(), "the signal is only recorded");
+                                                assertEquals(
+                                                        scope("previous"),
+                                                        graph.holder()
+                                                                .current(ScopeContext.class)
+                                                                .orElseThrow(),
+                                                        "recording must leave its caller's binding alone");
+                                                return Future.succeededFuture();
+                                            })))
+                            .map(id);
                 })
-                .onComplete(ctx.succeeding(ignored -> ctx.completeNow()));
+                .compose(WorkflowDurableScopeContextIT::idle)
+                .onComplete(ctx.succeeding(ignored -> ctx.verify(() -> {
+                    assertEquals(
+                            Optional.of(ACME),
+                            probe.services.getFirst().scope(),
+                            "saved scope must have been installed before the asynchronous failure");
+                    assertEquals(
+                            probe.initializers.size(),
+                            probe.closedInitializers,
+                            "the failed drive must close every initializer scope it opened");
+                    ctx.completeNow();
+                })));
+    }
+
+    private static Future<WorkflowInstanceId> idle(WorkflowInstanceId id) {
+        return graph.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(id);
     }
 
     private static Future<WorkflowInstanceId> start(String definition, ScopeContext ambient, String startScope) {

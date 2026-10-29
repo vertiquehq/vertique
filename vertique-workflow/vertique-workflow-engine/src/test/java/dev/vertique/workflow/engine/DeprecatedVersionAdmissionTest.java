@@ -15,6 +15,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import dev.vertique.workflow.engine.executor.WorkflowSegments;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
@@ -22,6 +23,9 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.migration.MigrationContext;
@@ -39,9 +43,12 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
+import dev.vertique.workflow.state.WorkflowEntryType;
+import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.tasks.TaskStore;
@@ -74,7 +81,7 @@ import org.mockito.ArgumentCaptor;
  * Verifies that the engine refuses to admit new work onto a deprecated definition version, while
  * instances that already run on that version keep resuming.
  *
- * <p>The registry reports version 2 as deprecated and version 1 as the current version. The
+ * <p>The definition rows report version 2 as deprecated and version 1 as the current version. The
  * scenario starts version 2 explicitly, migrates another instance onto it, signals an instance that
  * is pinned to it, and finally starts without naming a version.
  */
@@ -88,9 +95,10 @@ class DeprecatedVersionAdmissionTest {
     private static final String WAIT_STEP = "wait-signal";
     private static final String COMPLETE_STEP = "complete";
     private static final String SIGNAL_NAME = "approve";
-    private static final String PLAN_HASH_V1 = "plan-hash-v1";
-    private static final String PLAN_HASH_V2 = "plan-hash-v2";
-    private static final String PLAN_HASH_V3 = "plan-hash-v3";
+    private static final String PLAN_HASH_V1 = "1".repeat(64);
+    private static final String PLAN_HASH_V2 = "2".repeat(64);
+    private static final String PLAN_HASH_V3 = "3".repeat(64);
+    private static final String PLAN_HASH_V4 = "4".repeat(64);
 
     /** Runs the given task on a duplicated Vert.x context. */
     private static void runOnDuplicated(Vertx vertx, Handler<Void> task) {
@@ -180,11 +188,12 @@ class DeprecatedVersionAdmissionTest {
             WorkflowInstance pinnedToDeprecated,
             WorkflowInstance onVersion1,
             AtomicInteger migrationsToVersion2,
-            AtomicInteger migrationsToVersion3) {}
+            AtomicInteger migrationsToVersion3,
+            AtomicInteger migrationsToVersion4) {}
 
     /**
-     * Assembles an engine whose registry reports version 1 as current, version 2 as deprecated and
-     * version 3 as an ordinary registered version, with every collaborator write succeeding so only
+     * Assembles an engine whose definition rows hold version 1 as current, version 2 as deprecated and
+     * version 3 as an ordinary available version, with every collaborator write succeeding so only
      * the admission checks can stop a start or a migration.
      */
     private static Harness harness() {
@@ -202,21 +211,22 @@ class DeprecatedVersionAdmissionTest {
         RuntimeWorkflow version1 = runtimeWorkflow(1, PLAN_HASH_V1);
         RuntimeWorkflow version2 = runtimeWorkflow(2, PLAN_HASH_V2);
         RuntimeWorkflow version3 = runtimeWorkflow(3, PLAN_HASH_V3);
-        DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
-        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
-        when(registry.isDeployed(currentKey)).thenReturn(true);
+        RuntimeWorkflow version4 = runtimeWorkflow(4, PLAN_HASH_V4);
         when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1)))
                 .thenReturn(version1);
         when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2)))
                 .thenReturn(version2);
         when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 3)))
                 .thenReturn(version3);
-        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2)))
-                .thenReturn(true);
-        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1)))
-                .thenReturn(false);
-        when(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 3)))
-                .thenReturn(false);
+        // Version 4 is retired, although a node may still hold its plan
+        when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 4)))
+                .thenReturn(version4);
+        // The rows decide: version 1 is current, version 2 is deprecated and version 3 is available
+        InMemoryWorkflowDefinitionRegistryStore definitions = new InMemoryWorkflowDefinitionRegistryStore()
+                .seedCode(version1)
+                .seedCode(version2, DefinitionStatus.DEPRECATED)
+                .seedCode(version3, DefinitionStatus.AVAILABLE)
+                .seedCode(version4, DefinitionStatus.RETIRED);
 
         WorkflowInstance pinnedToDeprecated = waitingInstance(2, PLAN_HASH_V2);
         WorkflowInstance onVersion1 = waitingInstance(1, PLAN_HASH_V1);
@@ -230,17 +240,21 @@ class DeprecatedVersionAdmissionTest {
         when(dedup.claimOrResolveStart(any(), eq(DEFINITION_ID), any(), any(), any(), any()))
                 .thenAnswer(invocation -> Future.succeededFuture(new StartDedupResult(
                         new WorkflowInstanceId(UUID.randomUUID()), true, "definitionVersion=unused")));
-        when(dedup.claimOrResolveSignal(any(), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
+        when(dedup.findSignal(any(), any(), eq(tx))).thenReturn(Future.succeededFuture(Optional.empty()));
+        when(dedup.claimOrResolveSignalScoped(any(), any(), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
         when(instances.insert(any(), any())).thenReturn(Future.succeededFuture());
         when(instances.updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
         when(instances.migratePinAndState(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
         when(history.listRecentByInstance(any(), anyInt(), any())).thenReturn(Future.succeededFuture(List.of()));
         when(branchTokens.findActiveByWorkflow(any(), any())).thenReturn(Future.succeededFuture(List.of()));
 
         AtomicInteger toVersion2 = new AtomicInteger();
         AtomicInteger toVersion3 = new AtomicInteger();
+        AtomicInteger toVersion4 = new AtomicInteger();
+        WorkflowMigrationHandler<Object, Object> handlerToVersion4 = migrationFromV1(4, toVersion4);
         WorkflowMigrationHandler<Object, Object> handlerToVersion2 = migrationFromV1(2, toVersion2);
         WorkflowMigrationHandler<Object, Object> handlerToVersion3 = migrationFromV1(3, toVersion3);
         WorkflowMigrationRegistry migrations = new WorkflowMigrationRegistry() {
@@ -254,32 +268,47 @@ class DeprecatedVersionAdmissionTest {
                 if (!definitionId.equals(DEFINITION_ID) || sourceVersion != 1) return Optional.empty();
                 if (targetVersion == 2) return Optional.of(handlerToVersion2);
                 if (targetVersion == 3) return Optional.of(handlerToVersion3);
+                if (targetVersion == 4) return Optional.of(handlerToVersion4);
                 return Optional.empty();
             }
 
             @Override
             public Collection<WorkflowMigrationHandler<?, ?>> all() {
-                return List.of(handlerToVersion2, handlerToVersion3);
+                return List.of(handlerToVersion2, handlerToVersion3, handlerToVersion4);
             }
         };
 
-        WorkflowEngineHandle engine = WorkflowEngineFactory.create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                Set.<WorkflowSideEffectRecorder<SqlClient>>of(),
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.of(migrations),
-                null);
+        WorkflowEngineHandle engine = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.of(migrations))
+                .propagator(null)
+                .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .commands(new EmptyCommandRepository())
+                .definitionStore(definitions)
+                .build());
         return new Harness(
-                engine, instances, dedup, history, tx, pinnedToDeprecated, onVersion1, toVersion2, toVersion3);
+                engine,
+                instances,
+                dedup,
+                history,
+                tx,
+                pinnedToDeprecated,
+                onVersion1,
+                toVersion2,
+                toVersion3,
+                toVersion4);
     }
 
     /** Resolves to the failure of the given future, or to {@code null} when it succeeded. */
@@ -323,30 +352,41 @@ class DeprecatedVersionAdmissionTest {
                         verify(dedup, never()).claimOrResolveStart(any(), any(), any(), any(), any(), any());
                         verify(history, never()).append(any(), any());
 
-                        // When another instance is migrated onto the deprecated version
-                        return failureOf(engine.migrate(onVersion1.id(), 2L, tx));
+                        // When another instance is migrated onto the deprecated version, which is recorded and then
+                        // rejected by the segment that runs it
+                        return engine.migrate(onVersion1.id(), 2L, tx)
+                                .compose(recorded -> RecordedRecoverySegments.migrate(engine, onVersion1, 2L, tx));
                     })
-                    .compose(migrateFailure -> {
-                        // Then the migration fails typed naming the deprecated version, and the instance stays pinned
-                        assertThat(migrateFailure)
-                                .as("a migration onto a deprecated version must fail")
-                                .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                                    assertThat(failure.reason()).isEqualTo(Reason.DEPRECATED);
-                                    assertThat(failure.key().definitionId()).isEqualTo(DEFINITION_ID);
-                                    assertThat(failure.key().definitionVersion())
-                                            .isEqualTo(2);
-                                    assertThat(failure.getMessage()).contains(DEFINITION_ID);
-                                });
+                    .compose(migrateOutcome -> {
+                        // Then the migration is rejected naming no value, and the instance stays pinned
+                        assertThat(migrateOutcome)
+                                .as("a migration onto a deprecated version must be rejected")
+                                .isEqualTo(WorkflowSegments.Outcome.SETTLED_REJECTED);
                         verify(instances, never()).migratePinAndState(any(), anyLong(), any());
                         verify(instances, never()).updateOptimistic(any(), anyLong(), any());
-                        verify(history, never()).append(any(), any());
                         verify(history, never()).listRecentByInstance(any(), anyInt(), any());
+                        ArgumentCaptor<WorkflowHistoryEntry> entries =
+                                ArgumentCaptor.forClass(WorkflowHistoryEntry.class);
+                        verify(history, atLeastOnce()).append(entries.capture(), any());
+                        assertThat(entries.getAllValues())
+                                .extracting(WorkflowHistoryEntry::entryType)
+                                .doesNotContain(WorkflowEntryType.WORKFLOW_MIGRATED)
+                                .contains(WorkflowEntryType.COMMAND_REJECTED);
+                        assertThat(entries.getAllValues())
+                                .filteredOn(entry -> entry.entryType() == WorkflowEntryType.COMMAND_REJECTED)
+                                .singleElement()
+                                .satisfies(entry -> assertThat(entry.payloadJson())
+                                        .contains("MIGRATION_REJECTED")
+                                        .contains("deprecated"));
                         assertThat(harness.migrationsToVersion2())
                                 .as("the migration handler must not run for a deprecated target")
                                 .hasValue(0);
 
-                        // When the instance already pinned to the deprecated version receives its signal
-                        return failureOf(engine.signal(pinnedToDeprecated.id(), SIGNAL_NAME, Map.of(), "signal-1", tx));
+                        // When the instance already pinned to the deprecated version receives its signal, which is
+                        // recorded and then applied by the segment that runs it
+                        return failureOf(engine.signal(pinnedToDeprecated.id(), SIGNAL_NAME, Map.of(), "signal-1", tx)
+                                .compose(recorded ->
+                                        RecordedSignalSegments.run(engine, pinnedToDeprecated, SIGNAL_NAME, tx)));
                     })
                     .compose(signalFailure -> {
                         // Then the signal resumes it to completion
@@ -384,6 +424,33 @@ class DeprecatedVersionAdmissionTest {
     }
 
     @Test
+    @DisplayName("a migration onto a retired version whose plan is still held is rejected")
+    void rejectsMigrationOntoARetiredVersion(Vertx vertx, VertxTestContext ctx) {
+        // Given version 4 is retired in the rows, its plan is still resolvable on the node and a handler exists
+        Harness harness = harness();
+
+        runOnDuplicated(
+                vertx,
+                v ->
+                        // When an instance on version 1 is migrated to version 4, which is recorded and then run
+                        harness.engine()
+                                .migrate(harness.onVersion1().id(), 4L, harness.tx())
+                                .compose(recorded -> RecordedRecoverySegments.migrate(
+                                        harness.engine(), harness.onVersion1(), 4L, harness.tx()))
+                                .onComplete(outcome -> ctx.verify(() -> {
+                                    if (outcome.failed()) {
+                                        ctx.failNow(outcome.cause());
+                                        return;
+                                    }
+                                    // Then the migration is rejected, no handler ran and the instance stays pinned
+                                    assertThat(outcome.result()).isEqualTo(WorkflowSegments.Outcome.SETTLED_REJECTED);
+                                    assertThat(harness.migrationsToVersion4()).hasValue(0);
+                                    verify(harness.instances(), never()).migratePinAndState(any(), anyLong(), any());
+                                    ctx.completeNow();
+                                })));
+    }
+
+    @Test
     @DisplayName("an explicit start and a migration target on a version that is not deprecated are admitted")
     void admitsExplicitStartAndMigrationOnNonDeprecatedVersions(Vertx vertx, VertxTestContext ctx) {
         // Given version 1 is current, version 3 is registered and neither is deprecated
@@ -406,19 +473,23 @@ class DeprecatedVersionAdmissionTest {
                         assertThat(inserted.getValue().definitionVersion()).isEqualTo(1);
                         assertThat(inserted.getValue().planHash()).isEqualTo(PLAN_HASH_V1);
 
-                        // When an instance on version 1 is migrated to version 3
-                        return failureOf(
-                                harness.engine().migrate(harness.onVersion1().id(), 3L, harness.tx()));
+                        // When an instance on version 1 is migrated to version 3, which is recorded and then carried
+                        // out by the segment that runs it
+                        return harness.engine()
+                                .migrate(harness.onVersion1().id(), 3L, harness.tx())
+                                .compose(recorded -> RecordedRecoverySegments.migrate(
+                                        harness.engine(), harness.onVersion1(), 3L, harness.tx()));
                     })
                     .onComplete(outcome -> ctx.verify(() -> {
                         if (outcome.failed()) {
                             ctx.failNow(outcome.cause());
                             return;
                         }
-                        // Then the migration succeeds: the handler ran once and the instance is re-pinned to version 3
+                        // Then the migration is applied: the handler ran once and the instance is re-pinned to version
+                        // 3
                         assertThat(outcome.result())
-                                .as("a migration onto a version that is not deprecated must succeed")
-                                .isNull();
+                                .as("a migration onto a version that is not deprecated must be applied")
+                                .isEqualTo(WorkflowSegments.Outcome.APPLIED);
                         assertThat(harness.migrationsToVersion3()).hasValue(1);
                         assertThat(harness.migrationsToVersion2()).hasValue(0);
                         ArgumentCaptor<WorkflowInstance> migrated = ArgumentCaptor.forClass(WorkflowInstance.class);

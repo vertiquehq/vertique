@@ -13,19 +13,22 @@ import dev.vertique.db.DbModule;
 import dev.vertique.db.flyway.DbFlywayModule;
 import dev.vertique.db.postgresql.DbPostgresqlModule;
 import dev.vertique.deploy.DeployerModule;
+import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.examples.workflow.order.di.AppModule;
 import dev.vertique.examples.workflow.order.di.OrderFulfillmentDefinitionModule;
 import dev.vertique.examples.workflow.order.di.StubServicesModule;
 import dev.vertique.inboxoutbox.postgresql.TransactionalMessagingPostgresqlModule;
 import dev.vertique.job.cron.dagger.CronPersistenceModule;
+import dev.vertique.job.postgresql.JobPostgresqlModule;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.services.DispatchModule;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
-import dev.vertique.workflow.services.compose.WorkflowOutboxComposeValidator;
+import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.services.di.WorkflowServicesModule;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,8 +40,8 @@ import org.junit.jupiter.api.Timeout;
  * <p>Verifies that an application composed WITHOUT {@link
  * dev.vertique.inboxoutbox.services.TransactionalMessagingServiceModule} passes Dagger component
  * construction (lazy {@code @Singleton}) but throws {@link IllegalStateException} with the
- * documented message when {@link WorkflowOutboxComposeValidator} is first requested via the
- * component accessor.
+ * documented message when the workflow registry is first requested via the component accessor,
+ * because a code plan that dispatches to a service is refused by the per-plan outbox validator.
  *
  * <p>This test uses a separate test-only {@code @Component} ({@link ComponentWithoutServiceModule})
  * that mirrors the production {@link dev.vertique.examples.workflow.order.AppComponent} but omits
@@ -55,7 +58,7 @@ public class MissingServiceHandlerIT {
      *
      * <p>This simulates a misconfigured application. Dagger constructs the component
      * successfully (all bindings are satisfied at graph level), but the
-     * {@link WorkflowOutboxComposeValidator} accessor will throw on first call because no
+     * workflow registry accessor will throw on first call because no
      * {@code SERVICE} {@link dev.vertique.inboxoutbox.OutboxDestinationHandler} is registered.
      */
     @Singleton
@@ -72,6 +75,8 @@ public class MissingServiceHandlerIT {
                 TransactionalMessagingPostgresqlModule.class,
                 // TransactionalMessagingServiceModule intentionally omitted
                 CronPersistenceModule.class,
+                // the cron scheduler deployment, which the graph's deployments include, needs a job repository
+                JobPostgresqlModule.class,
                 WorkflowPostgresqlModule.class,
                 WorkflowServicesModule.class,
                 OrderFulfillmentDefinitionModule.class,
@@ -81,13 +86,22 @@ public class MissingServiceHandlerIT {
     interface ComponentWithoutServiceModule {
 
         /**
-         * Returns the composition validator — will throw {@link IllegalStateException} when no
+         * Returns the workflow registry — building it registers the code definitions, which
+         * throws {@link IllegalStateException} when a plan dispatches to a service and no
          * {@code SERVICE} handler is registered.
          *
-         * @return the composition validator
+         * @return the workflow registry
          * @throws IllegalStateException if no SERVICE OutboxDestinationHandler is in the graph
          */
-        WorkflowOutboxComposeValidator workflowComposeValidator();
+        WorkflowRegistry workflowRegistry();
+
+        /**
+         * Returns the verticle deployments of the graph, among them the workflow executor, which a graph that runs
+         * no deployer deploys alone.
+         *
+         * @return the verticle deployments
+         */
+        Set<VerticleDeployment> verticleDeployments();
     }
 
     // --- Tests ---
@@ -105,16 +119,16 @@ public class MissingServiceHandlerIT {
     }
 
     @Test
-    @DisplayName("calling workflowComposeValidator() without SERVICE handler throws documented IllegalStateException")
-    void composeValidatorThrowsWithoutServiceHandler() {
+    @DisplayName("building the workflow registry without SERVICE handler throws documented IllegalStateException")
+    void registryThrowsWithoutServiceHandler() {
         Vertx vertx = Vertx.vertx();
         try {
             var component = buildComponentWithoutServiceModule(vertx);
 
             IllegalStateException ex = assertThrows(
                     IllegalStateException.class,
-                    component::workflowComposeValidator,
-                    "validator accessor must throw when no SERVICE handler is registered");
+                    component::workflowRegistry,
+                    "registry accessor must throw when no SERVICE handler is registered");
 
             String msg = ex.getMessage();
             assertNotNull(msg, "exception message must not be null");
@@ -125,6 +139,29 @@ public class MissingServiceHandlerIT {
             org.junit.jupiter.api.Assertions.assertTrue(
                     msg.contains("TransactionalMessagingServiceModule"),
                     "message must reference TransactionalMessagingServiceModule; got: " + msg);
+        } finally {
+            vertx.close();
+        }
+    }
+
+    @Test
+    @DisplayName("the graph contributes the workflow executor as a SERVICES deployment at priority 100")
+    void graphContributesTheWorkflowExecutorDeployment() {
+        Vertx vertx = Vertx.vertx();
+        try {
+            var component = buildComponentWithoutServiceModule(vertx);
+
+            var executor = component.verticleDeployments().stream()
+                    .filter(deployment -> deployment.name().equals("workflow-executor"))
+                    .toList();
+
+            org.junit.jupiter.api.Assertions.assertEquals(1, executor.size(), "one workflow-executor deployment");
+            org.junit.jupiter.api.Assertions.assertEquals(
+                    dev.vertique.core.lifecycle.LifecyclePhase.SERVICES,
+                    executor.get(0).phase());
+            org.junit.jupiter.api.Assertions.assertEquals(100, executor.get(0).priority());
+            org.junit.jupiter.api.Assertions.assertEquals(
+                    1, executor.get(0).options().getInstances());
         } finally {
             vertx.close();
         }

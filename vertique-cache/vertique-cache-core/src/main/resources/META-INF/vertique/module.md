@@ -80,6 +80,14 @@ selector function. Components are type-framed by the runtime; a `CacheKey` is ne
 
 Validated records bound from the `cache` configuration section; see Configuration.
 
+### ObjectCacheConfig
+
+`ObjectCacheConfig(int maximumEntries, long ttlSeconds)` configures a by-reference object cache, which
+`CaffeineObjectCache` in `vertique-cache-caffeine` builds from it: `maximumEntries` is at least 1 and
+`ttlSeconds` is `0` (no time expiry) or positive. It is not part of the `cache` section and has no defaults;
+the owner of a cache binds it from its own configuration key and supplies the values for members the
+application leaves unset. `CacheEntryConfig` stays the settings of serialized caches.
+
 ### CacheAdapterSupport
 
 Framework integration seam used by `vertique-cache-aop` and generated code. It is not
@@ -190,7 +198,7 @@ only after their application authorization decision. The optional `CacheObserver
 empty by default and receives the sealed `dev.vertique.cache.spi.event` vocabulary:
 `CacheOperationCompleted` (typed `CacheOperation`/`CacheOutcome` enums plus provider,
 cache name, and elapsed time), at most one `CacheLateCompletion` supplement after a
-timed-out operation, and provider-maintenance `CacheCleanupCompleted` events. Observers
+timed-out operation, and provider-maintenance `CacheCleanupCompleted` events. `CacheOperation.LOAD` reports a value load behind a miss and `CacheOutcome.SIZE_EVICTED` an entry removed by a size bound; the Caffeine object cache emits both. Observers
 implement the single `onEvent(CacheEvent)` method, must remain bounded and
 non-blocking, and their failures are suppressed. A standalone annotation eviction whose
 name and ordered selector paths have no matching registered definition emits

@@ -43,6 +43,9 @@ The optional `vertique-micrometer-resilience` adapter consumes only the resilien
 the shared Micrometer registry. It stays outside the runtime so resilience execution remains free of
 telemetry-library dependencies.
 
+The optional `vertique-micrometer-workflow` adapter consumes only the workflow executor observer SPI
+from `vertique-workflow-core` and the shared Micrometer registry, and no workflow module depends on it.
+
 `vertique-json-schema` owns transport-neutral Java `Type` -> JSON Schema 2020-12
 generation, built on Victools. It depends only on `vertique-core` plus Jackson,
 Victools, Jakarta Validation, and Swagger annotations — it has no dependency on
@@ -67,6 +70,10 @@ configuration, dependency ordering, per-instance histories and reporting. Persis
 applications contribute their own the same way. Placement-aware adapters read placement through the
 optional `DbSchemas` binding and reference no Flyway types, so a runtime component needs no Flyway
 module or configuration.
+
+`vertique-workflow-engine` depends on `vertique-deploy` (`VerticleDeployment`, `LifecyclePhase`) for the
+`workflow-executor` deployment, which it contributes to the `SERVICES` phase like the outbox relay. Among Vertique
+modules `vertique-deploy` depends only on `vertique-core`, so the dependency adds no cycle.
 
 `vertique-workflow-schema` owns the schemas of workflow decision and start payloads. It consumes
 `vertique-workflow-core`, `vertique-json-schema` and `vertique-json-schema-validation`, and plugs

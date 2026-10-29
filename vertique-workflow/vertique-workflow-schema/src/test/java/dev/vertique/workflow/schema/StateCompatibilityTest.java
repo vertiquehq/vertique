@@ -15,8 +15,8 @@ import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
-import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
@@ -25,6 +25,7 @@ import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
 import java.lang.reflect.Type;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -38,8 +39,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Verifies the schema module's {@link WorkflowStateCompatibility}: a scope-owned state type extends the default
- * scope's when every property of the source exists in the target with the same type, and the registry applies the
- * comparison when the second of the two definitions registers.
+ * scope's when every property of the source exists in the target with the same type, and the registry reports the
+ * comparison of a scope-owned plan with the default scope's definition.
  *
  * <p>The comparison and the registry come from a Dagger component over the public modules, so the proofs run
  * through the same binding an application gets.
@@ -73,8 +74,9 @@ class StateCompatibilityTest {
         Optional<WorkflowStateCompatibility> compatibility();
     }
 
-    private static WorkflowRegistry freshRegistry() {
-        return DaggerStateCompatibilityTest_Wired.create().registry();
+    private static DefaultWorkflowRegistry freshRegistry() {
+        return (DefaultWorkflowRegistry)
+                DaggerStateCompatibilityTest_Wired.create().registry();
     }
 
     private static WorkflowStateCompatibility comparison() {
@@ -231,41 +233,27 @@ class StateCompatibilityTest {
     void scopeOwnedStateMustExtendDefaultState(
             String name, Supplier<WorkflowDefinition<?, ?>> candidate, String offendingPath) {
         // Given: a registry with the schema comparison and (default, s-z, 1) with Base(id, amount)
-        WorkflowRegistry registry = freshRegistry();
+        DefaultWorkflowRegistry registry = freshRegistry();
         registry.register(base());
+        WorkflowDefinition<?, ?> scopeOwned = candidate.get();
 
-        // When: the candidate registers as (acme, s-z, 1)
-        Throwable scopeFirst = null;
-        try {
-            registry.register("acme", candidate.get());
-        } catch (RuntimeException e) {
-            scopeFirst = e;
-        }
+        // When: the plan of the candidate as (acme, s-z, 1) is compared with the default scope's
+        DefaultWorkflowRegistry.StateComparison comparison =
+                registry.compareWithDefault(registry.build("acme", scopeOwned, Map.of()));
 
-        // and: in another registry the candidate registers in acme first and Base in default second
-        WorkflowRegistry reversed = freshRegistry();
-        reversed.register("acme", candidate.get());
-        Throwable defaultSecond = null;
-        try {
-            reversed.register(base());
-        } catch (RuntimeException e) {
-            defaultSecond = e;
-        }
-
-        // Then: an added property is accepted in both orders
+        // Then: an added property is accepted
         if (offendingPath.isEmpty()) {
-            assertThat(scopeFirst).isNull();
-            assertThat(defaultSecond).isNull();
+            assertThat(comparison.accepted()).isTrue();
+            assertThat(comparison().firstIncompatibility(Base.class, scopeOwned.stateType()))
+                    .isEmpty();
             return;
         }
 
-        // and: a removed or retyped property fails naming the scope, the id and the property path
-        assertThat(scopeFirst).isInstanceOf(WorkflowDefinitionException.class);
-        assertThat(scopeFirst.getMessage()).contains("acme").contains("s-z").contains(offendingPath);
-
-        // and: in the reversed order the default registration fails the same way
-        assertThat(defaultSecond).isInstanceOf(WorkflowDefinitionException.class);
-        assertThat(defaultSecond.getMessage()).contains("acme").contains("s-z").contains(offendingPath);
+        // and: a removed or retyped property is not accepted, and the comparison names the property path
+        assertThat(comparison.accepted()).isFalse();
+        assertThat(comparison.defaultStateTypeName()).isNotNull();
+        assertThat(comparison().firstIncompatibility(Base.class, scopeOwned.stateType()))
+                .hasValueSatisfying(path -> assertThat(path).contains(offendingPath));
     }
 
     static Stream<Arguments> nestedTargets() {

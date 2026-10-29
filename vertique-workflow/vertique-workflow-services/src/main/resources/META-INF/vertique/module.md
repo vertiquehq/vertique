@@ -48,6 +48,21 @@ The recorder must never make a live downstream call. The outbox row is the durab
 
 `WorkflowSignalContributor` registers the `workflow.signals.post` service contract. Service delivery uses inbox deduplication before calling `TransactionalWorkflowOperations.signal(...)` in the same SQL transaction.
 
+The endpoint's reply means the signal is **recorded**, not applied: `signal` records a `SIGNAL` command of the instance and returns,
+and an executor applies it afterwards in queue order. A signal the instance does not await yet is parked and applied when the instance
+reaches a wait that accepts it. The call is refused only for what recording refuses: a missing or ended instance, a name the instance's
+pinned definition does not declare for the addressed wait, a payload or carrier over the record-time bounds, or an instance that already
+holds `workflow.recording.maxOpenSignalsPerInstance` open signals (`WorkflowSignalLimitException`). A refusal rolls the inbox record back
+with the transaction, so the relay retries it.
+
+**Who is logged.** The endpoint records the signal inside the dispatch context the relay rebuilt for the delivery, and the engine
+logs the signal's actor from the identity of that context (see "Who asked for a command" in the engine module reference). The
+actor is never read from `WorkflowSignalRequest`, its payload or its carrier. By default the relay's identity is `SYSTEM` with the
+outbox row's event type as the reason; a bound `ServiceIdentityResolver` names a service instead. Either acts for the user whose
+transaction wrote the outbox row (`on_behalf_of`). A snapshot that cannot be verified refuses the delivery under the default
+degradation policy, so no command, dedup or inbox row is written; under `CONTINUE_WITHOUT_IDENTITY` the signal is logged `DEGRADED`
+and acts for no one. A graph without identity carriage logs the signal as `NONE`.
+
 Signal dedup happens at two layers:
 
 | Layer | Scope | Purpose |
@@ -80,7 +95,7 @@ has two consequences:
   legitimate duplicate delivery of a previously-successful carrier is never re-decoded.
 
 **Security.** `WorkflowSignalEndpoint.post` is an internal-relay-only endpoint. The `metadata`
-carrier is bound as the *authoritative* durable-context base for the signal's drive — it is never
+carrier is stored with the recorded signal, without its identity-snapshot namespace, and the executor binds it as the *authoritative* durable-context base for the signal's drive — it is never
 populated from untrusted or end-user input, only from the relay that produced it via
 `DurableMetadata.toCarrier()`. The carrier's provenance is not independently authenticated against
 the caller's identity — a future revision may derive the tenant namespace from the authenticated
@@ -106,13 +121,12 @@ An app that uses service-dispatch workflows needs the workflow services module p
 })
 public interface AppComponent {
     WorkflowOperations workflowOperations();
-    WorkflowOutboxComposeValidator workflowOutboxComposeValidator();
 }
 ```
 
 `TransactionalMessagingServiceModule` is required for the `SERVICE` outbox destination handler. Without it, service-dispatch intents cannot be delivered after commit.
 
-Expose and call `workflowOutboxComposeValidator()` during application startup if you want fail-fast validation before serving requests. The recorder also enforces the same checks when the workflow graph is constructed.
+`WorkflowOutboxComposeValidator` is a per-plan `WorkflowDefinitionValidator` that `WorkflowServicesModule` contributes into the registry's validator set, so the registry runs it once for every plan it builds, at startup and for a definition loaded or published later. A plan that dispatches to a service (a service-dispatch or compensation step) is refused when no `SERVICE` outbox handler is bound, or when a target id does not resolve or has the wrong shape (`@OneWay`, a return type other than `Future<Void>`, other than one payload parameter). A graph whose plans dispatch to no service starts without a `SERVICE` handler. A code plan that fails a check aborts startup with an `IllegalStateException` naming the definition, step and target; a document that fails one is refused at publication with the same text. The validator is no longer a `ComposeValidator`, no accessor is needed on the component, and `OutboxSideEffectRecorder` no longer takes it as a constructor dependency. Its public constructor takes the outbox destination handlers and the `ServiceTargetResolver`.
 
 ---
 

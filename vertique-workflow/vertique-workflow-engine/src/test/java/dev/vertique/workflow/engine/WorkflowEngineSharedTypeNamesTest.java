@@ -5,23 +5,22 @@ package dev.vertique.workflow.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
-import dev.vertique.workflow.engine.spi.DedupClaim;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
-import dev.vertique.workflow.ops.TaskCompletionCommand;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -48,8 +47,6 @@ import io.vertx.core.internal.ContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.sqlclient.SqlClient;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -222,18 +219,25 @@ class WorkflowEngineSharedTypeNamesTest {
                 null,
                 null,
                 null);
-        when(taskStore.findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(dedup.claimOrResolveTaskCompletion(eq(taskId), any(), eq(instance.id()), any(), eq(tx)))
-                .thenReturn(Future.succeededFuture(new DedupClaim(true, "fp")));
+        TaskRecord reserved = RecordedCompletionSegments.reserved(task);
+        when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
+        when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
+        when(taskStore.findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(reserved)));
         when(instances.findById(instance.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(instance)));
         when(timerStore.findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
         // The task lock is the first step after payload validation, so reaching it proves the payload type resolved.
         when(taskStore.lockForCompletion(taskId, tx)).thenReturn(Future.failedFuture(new ReachedTheTaskLock()));
-        TaskCompletionCommand command = new TaskCompletionCommand(
-                taskId, "approve", Map.of("approved", true), "idem-1", new WorkflowActor.User("user-1"), null);
 
-        // When: the task is completed with a payload that binds to the logically named decision type
-        runOnDuplicated(vertx, v -> engine.taskCompleted(command, tx)
+        // When: the recorded completion is applied with a payload that binds to the logically named decision type
+        runOnDuplicated(vertx, v -> RecordedCompletionSegments.run(
+                        engine,
+                        instance,
+                        reserved,
+                        "approve",
+                        Map.of("approved", true),
+                        new WorkflowActor.User("user-1"),
+                        tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     // Then: validation resolved the type by its logical name and the engine went on to lock the task
                     assertThat(ar.failed()).isTrue();
@@ -262,53 +266,25 @@ class WorkflowEngineSharedTypeNamesTest {
             TimerStore<SqlClient> timerStore,
             TaskStore<SqlClient> taskStore,
             WorkflowTypeNames names) {
-        Set<WorkflowSideEffectRecorder<SqlClient>> recorders = Set.of();
-        Object[] leading = {
-            txRunner,
-            registry,
-            instances,
-            history,
-            dedup,
-            branchTokens,
-            joinStates,
-            timerStore,
-            taskStore,
-            FIXED_CLOCK,
-            recorders,
-            WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-            Optional.empty(),
-            (DurableContextPropagator) null,
-            Set.of(),
-            Optional.empty()
-        };
-        for (Method method : WorkflowEngineFactory.class.getMethods()) {
-            Class<?>[] parameters = method.getParameterTypes();
-            if (method.getName().equals("create")
-                    && parameters.length == leading.length + 1
-                    && parameters[parameters.length - 1] == WorkflowTypeNames.class) {
-                Object[] arguments = java.util.Arrays.copyOf(leading, leading.length + 1);
-                arguments[leading.length] = names;
-                try {
-                    return (WorkflowEngineHandle) method.invoke(null, arguments);
-                } catch (InvocationTargetException | IllegalAccessException e) {
-                    throw new AssertionError("the factory overload that takes the index failed", e);
-                }
-            }
-        }
-        return WorkflowEngineFactory.create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                recorders,
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.empty(),
-                null);
+        return WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.empty())
+                .propagator(null)
+                .typeNames(names)
+                .commands(new EmptyCommandRepository())
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                .build());
     }
 }

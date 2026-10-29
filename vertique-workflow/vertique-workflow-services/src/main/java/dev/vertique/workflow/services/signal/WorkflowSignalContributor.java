@@ -131,7 +131,9 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
     }
 
     /**
-     * Handles an inbound signal by opening a transaction and applying exactly-once delivery.
+     * Handles an inbound signal by opening a transaction and recording it exactly once. The reply means the signal is
+     * recorded as a command of its instance; an executor applies it afterwards, so the reply does not say it has been
+     * applied.
      *
      * <p>The work chain is:
      * <pre>{@code
@@ -140,9 +142,9 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
      *         txOpsProvider.get().signal(req.workflowId(), req.signalName(), req.payload(), req.dedupKey(), tx))
      *     .mapEmpty())
      * }</pre>
-     * Both the inbox dedup record and the workflow state transition commit in the same transaction.
+     * Both the inbox dedup record and the recorded signal command commit in the same transaction.
      * If the relay retries due to a transient failure, the inbox record prevents the signal from
-     * being applied twice.
+     * being recorded twice.
      *
      * <p>The inbox {@code messageId} is scoped to the workflow instance:
      * {@code workflowId.value() + ":" + req.dedupKey()}. This prevents two different workflow
@@ -180,7 +182,7 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
      * until the transport's own policy stops retrying or an operator intervenes.
      *
      * @param req the signal request containing the workflow id, signal name, payload, and dedup key
-     * @return a {@link Future} that completes with {@code null} when the signal is applied (or
+     * @return a {@link Future} that completes with {@code null} when the signal is recorded (or
      *     idempotently skipped as a duplicate)
      */
     Future<Void> handleSignal(WorkflowSignalRequest req) {

@@ -3,6 +3,8 @@
 
 package dev.vertique.workflow.tasks;
 
+import io.vertx.core.json.JsonObject;
+import jakarta.annotation.Nullable;
 import java.util.Objects;
 
 /**
@@ -18,8 +20,24 @@ import java.util.Objects;
  *     use this to coerce the raw payload before submitting a
  *     {@link dev.vertique.workflow.ops.TaskCompletionCommand}
  * @param nextStepId the plan step id the workflow will advance to after this decision is applied
+ * @param payloadSchema JSON schema of the decision payload, or null when none was captured
  */
-public record TaskDecisionDescriptor(String name, String payloadTypeName, String nextStepId) {
+public record TaskDecisionDescriptor(
+        String name,
+        String payloadTypeName,
+        String nextStepId,
+        @Nullable JsonObject payloadSchema) {
+
+    /**
+     * Creates a descriptor without a payload schema.
+     *
+     * @param name the decision name
+     * @param payloadTypeName the logical payload type name
+     * @param nextStepId the step the workflow advances to
+     */
+    public TaskDecisionDescriptor(String name, String payloadTypeName, String nextStepId) {
+        this(name, payloadTypeName, nextStepId, null);
+    }
 
     /**
      * Validates that all required fields are non-null and non-blank.

@@ -33,6 +33,7 @@ import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -62,6 +63,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineIdempotencyVersionConflictIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -176,8 +179,10 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -221,6 +226,8 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
                 null);
 
         engine.start(firstCmd)
+                .compose(firstId ->
+                        engine.executionProbe().awaitIdle(firstId, IDLE_TIMEOUT).map(idle -> firstId))
                 .compose(firstId -> {
                     assertNotNull(firstId, "first start must return an id");
                     return engine.start(conflictCmd);
@@ -266,7 +273,11 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
                 null);
 
         engine.start(cmd)
-                .compose(firstId -> engine.start(cmd).map(secondId -> new WorkflowInstanceId[] {firstId, secondId}))
+                .compose(firstId ->
+                        engine.executionProbe().awaitIdle(firstId, IDLE_TIMEOUT).map(idle -> firstId))
+                .compose(firstId -> engine.start(cmd).compose(secondId -> engine.executionProbe()
+                        .awaitIdle(secondId, IDLE_TIMEOUT)
+                        .map(idle -> new WorkflowInstanceId[] {firstId, secondId})))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "both starts must succeed: " + ar.cause());
                     WorkflowInstanceId[] ids = ar.result();
@@ -307,7 +318,11 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
                 null);
 
         engine.start(explicitV1)
-                .compose(firstId -> engine.start(noVersion).map(retryId -> new WorkflowInstanceId[] {firstId, retryId}))
+                .compose(firstId ->
+                        engine.executionProbe().awaitIdle(firstId, IDLE_TIMEOUT).map(idle -> firstId))
+                .compose(firstId -> engine.start(noVersion).compose(retryId -> engine.executionProbe()
+                        .awaitIdle(retryId, IDLE_TIMEOUT)
+                        .map(idle -> new WorkflowInstanceId[] {firstId, retryId})))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "lenient retry must succeed: " + ar.cause());
                     WorkflowInstanceId[] ids = ar.result();
@@ -349,6 +364,8 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
                 null);
 
         engine.start(noVersion)
+                .compose(firstId ->
+                        engine.executionProbe().awaitIdle(firstId, IDLE_TIMEOUT).map(idle -> firstId))
                 .compose(firstId -> {
                     assertNotNull(firstId, "first start must succeed");
                     return engine.start(explicitV1);

@@ -19,7 +19,7 @@ import java.util.UUID;
  *   <li>{@link Empty} — the recorder wrote a durable record but produced no correlated resource id
  *       (used by SERVICE and KAFKA recorders).</li>
  *   <li>{@link Timer} — the recorder scheduled a durable timer and returns its stable id
- *       (used by the WORKFLOW_TIMER recorder in cycle 2).</li>
+ *       (used by a recorder that schedules a timer).</li>
  * </ul>
  */
 public sealed interface RecorderResult permits RecorderResult.Empty, RecorderResult.Timer {

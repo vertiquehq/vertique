@@ -65,9 +65,7 @@ public class TypedProxyIT extends SagaTestBase {
 
     @AfterAll
     static void tearDown() {
-        if (component != null && component.pgInboxOutboxRepository() != null) {
-            component.pgInboxOutboxRepository().pool().close();
-        }
+        closeComponent();
     }
 
     @Test
@@ -81,6 +79,7 @@ public class TypedProxyIT extends SagaTestBase {
                 100L);
 
         proxy.start(cmd)
+                .compose(id -> awaitIdle(id))
                 .compose(id -> driveRelay().map(v -> id))
                 .compose(id -> driveRelay().map(v -> id))
                 .compose(id -> driveRelay().map(v -> id))
@@ -135,7 +134,9 @@ public class TypedProxyIT extends SagaTestBase {
                 50L);
 
         proxy.start(cmd)
-                .compose(id1 -> proxy.start(cmd).map(id2 -> new WorkflowInstanceId[] {id1, id2}))
+                .compose(id1 -> awaitIdle(id1))
+                .compose(id1 ->
+                        proxy.start(cmd).compose(id2 -> awaitIdle(id2)).map(id2 -> new WorkflowInstanceId[] {id1, id2}))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "idempotent start must succeed: " + ar.cause());
                     var ids = ar.result();

@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.postgresql.engine;
 
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.db.DbPoolConfig;
@@ -38,6 +38,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -69,6 +70,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class MalformedHistoryFailLoudIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -313,7 +316,8 @@ public class MalformedHistoryFailLoudIT {
     @BeforeEach
     void truncate(VertxTestContext ctx) {
         capturedIntents.clear();
-        pool.query(
+        WorkflowTestTables.truncating(
+                        pool,
                         "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
@@ -362,10 +366,13 @@ public class MalformedHistoryFailLoudIT {
                 null);
 
         engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose((WorkflowInstanceId id) ->
                         // Deliver sig1: SIGNAL_RECEIVED written, dispatch-b fires, WAITING at wait-sig2.
                         engine.signal(id, "sig1", new SigOne("d"), "dedup-sig1-run1")
-                                .map(v -> id))
+                                .compose(v -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                                .map(r -> id))
                 .compose((WorkflowInstanceId id) -> {
                     // Corrupt the SIGNAL_RECEIVED payload: replace with JSON missing "signalName".
                     String sql = "UPDATE workflow_history"
@@ -375,25 +382,22 @@ public class MalformedHistoryFailLoudIT {
                     return pool.query(sql).execute().map(v -> id);
                 })
                 .compose((WorkflowInstanceId id) ->
-                        // Deliver sig2: triggers fail-step → compensation reads corrupted SIGNAL_RECEIVED.
-                        engine.signal(id, "sig2", new SigTwo("d"), "dedup-sig2-run1")
-                                .<Throwable>map(v -> null)
-                                .recover(Future::succeededFuture))
+                        // Record sig2: its application reaches fail-step, and compensation reads corrupted
+                        // SIGNAL_RECEIVED.
+                        recordAndRunSignal(id, "sig2", new SigTwo("d"), "dedup-sig2-run1"))
                 .onComplete(ar -> ctx.verify(() -> {
-                    assertTrue(ar.succeeded(), "outer future must succeed (captures engine failure as value)");
-                    Throwable cause = ar.result();
-                    assertTrue(
-                            cause != null,
-                            "engine must have failed due to malformed SIGNAL_RECEIVED payload; "
-                                    + "got success (under-compensation silently occurred)");
-                    assertInstanceOf(
-                            WorkflowDefinitionException.class,
-                            cause,
-                            "cause must be WorkflowDefinitionException, got: "
-                                    + cause.getClass().getName() + ": " + cause.getMessage());
-                    assertTrue(
-                            cause.getMessage().contains("SIGNAL_RECEIVED"),
-                            "error message must identify the entry type, got: " + cause.getMessage());
+                    assertTrue(ar.succeeded(), "recording and running the signal must complete: " + ar.cause());
+                    String[] outcome = ar.result();
+                    assertEquals(
+                            "REJECTED",
+                            outcome[0],
+                            "engine must have failed due to malformed SIGNAL_RECEIVED payload; the signal command"
+                                    + " must be rejected, not applied (under-compensation silently occurred)");
+                    assertEquals(
+                            "WAITING",
+                            outcome[1],
+                            "the failed application must roll back: the instance is still waiting for sig2");
+                    assertContainedFailure(outcome);
                     ctx.completeNow();
                 }));
     }
@@ -432,6 +436,8 @@ public class MalformedHistoryFailLoudIT {
                 null);
 
         engine.start(cmd)
+                .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
                 .compose((WorkflowInstanceId id) -> {
                     // After start: dispatch-step fired, SIDE_EFFECT_RECORDED written, WAITING at wait-done.
                     // Corrupt the SIDE_EFFECT_RECORDED payload: stepId is an array (wrong type).
@@ -442,26 +448,76 @@ public class MalformedHistoryFailLoudIT {
                     return pool.query(sql).execute().map(v -> id);
                 })
                 .compose((WorkflowInstanceId id) ->
-                        // Deliver "done" signal: triggers fail-step → compensation reads corrupted payload.
-                        engine.signal(id, "done", new SigOne("d"), "dedup-done-run1")
-                                .<Throwable>map(v -> null)
-                                .recover(Future::succeededFuture))
+                        // Record the "done" signal: its application reaches fail-step, and compensation reads the
+                        // corrupted payload.
+                        recordAndRunSignal(id, "done", new SigOne("d"), "dedup-done-run1"))
                 .onComplete(ar -> ctx.verify(() -> {
-                    assertTrue(ar.succeeded(), "outer future must succeed (captures engine failure as value)");
-                    Throwable cause = ar.result();
-                    assertTrue(
-                            cause != null,
-                            "engine must have failed due to malformed SIDE_EFFECT_RECORDED payload; "
-                                    + "got success (under-compensation silently occurred)");
-                    assertInstanceOf(
-                            WorkflowDefinitionException.class,
-                            cause,
-                            "cause must be WorkflowDefinitionException, got: "
-                                    + cause.getClass().getName() + ": " + cause.getMessage());
-                    assertTrue(
-                            cause.getMessage().contains("SIDE_EFFECT_RECORDED"),
-                            "error message must identify the entry type, got: " + cause.getMessage());
+                    assertTrue(ar.succeeded(), "recording and running the signal must complete: " + ar.cause());
+                    String[] outcome = ar.result();
+                    assertEquals(
+                            "REJECTED",
+                            outcome[0],
+                            "engine must have failed due to malformed SIDE_EFFECT_RECORDED payload; the signal"
+                                    + " command must be rejected, not applied (under-compensation silently occurred)");
+                    assertEquals(
+                            "WAITING",
+                            outcome[1],
+                            "the failed application must roll back: the instance is still waiting for the signal");
+                    assertContainedFailure(outcome);
                     ctx.completeNow();
                 }));
+    }
+
+    /**
+     * Records the signal, lets the executor apply it, and returns how the signal command ended, whether the instance is
+     * still waiting where it was, the command's stored reason, how many compensation history entries were written and
+     * the warning the executor logged for the failure. The failure of the application is contained by the signal's
+     * savepoint, so the caller sees it as a rejected command, never as a silent success.
+     */
+    private static Future<String[]> recordAndRunSignal(
+            WorkflowInstanceId id, String signalName, Object payload, String dedupKey) {
+        ch.qos.logback.classic.Logger handlerLog = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(
+                dev.vertique.workflow.engine.WorkflowEngineHandle.class.getPackageName() + ".SignalHandler");
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs =
+                new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();
+        handlerLog.addAppender(logs);
+        return engine.signal(id, signalName, payload, dedupKey)
+                .compose(v -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                .compose(idle -> pool.preparedQuery("SELECT c.state AS command_state, i.status AS instance_status,"
+                                + " c.last_error AS last_error, (SELECT count(*) FROM workflow_history h WHERE"
+                                + " h.workflow_id = c.workflow_id AND h.entry_type IN ('COMPENSATING_START',"
+                                + " 'COMPENSATING_STEP', 'COMPENSATED')) AS compensation FROM workflow_commands c"
+                                + " JOIN workflow_instances i ON i.id = c.workflow_id"
+                                + " WHERE c.workflow_id = $1 AND c.dedup_key = $2")
+                        .execute(io.vertx.sqlclient.Tuple.of(id.value(), dedupKey))
+                        .map(rows -> {
+                            io.vertx.sqlclient.Row row = rows.iterator().next();
+                            String warning = logs.list.stream()
+                                    .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
+                                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                                    .findFirst()
+                                    .orElse("");
+                            return new String[] {
+                                row.getString("command_state"),
+                                row.getString("instance_status"),
+                                row.getString("last_error"),
+                                String.valueOf(row.getLong("compensation")),
+                                warning
+                            };
+                        }))
+                .eventually(() -> {
+                    handlerLog.detachAppender(logs);
+                    return Future.succeededFuture();
+                });
+    }
+
+    /** What the rejection must show beyond the command state: its reason, no compensation and the failure's class. */
+    private static void assertContainedFailure(String[] outcome) {
+        assertTrue(outcome[2] != null && outcome[2].startsWith("DETERMINISTIC_FAILURE"), "reason code: " + outcome[2]);
+        assertEquals("0", outcome[3], "no compensation history may be written from a malformed history");
+        assertTrue(
+                outcome[4].contains("WorkflowDefinitionException"),
+                "the executor must log the definition failure of the history reader: " + outcome[4]);
     }
 }

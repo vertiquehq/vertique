@@ -20,17 +20,13 @@ import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
-import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
-import dev.vertique.workflow.engine.spi.BranchTokenRepository;
-import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
-import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
-import dev.vertique.workflow.postgresql.recovery.PgWorkflowBranchRecoveryCron;
-import dev.vertique.workflow.postgresql.recovery.WorkflowBranchRecoveryConfig;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
@@ -45,9 +41,7 @@ import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Singleton;
 import java.time.Clock;
-import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
+import java.time.Duration;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
@@ -63,7 +57,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link dev.vertique.core.context.InboundContextInitializer}s — the bare
  * {@link dev.vertique.context.ContextRuntimeModule} multibinding defaults, contributed transitively
  * by {@link WorkflowPostgresqlModule} with no additional context-provider module installed), the
- * full lifecycle — start, live signal, a parked branch, and a recovery sweep — runs exactly as it
+ * full lifecycle — start, live signal, and a branch-targeted signal — runs exactly as it
  * did before PRD-WF-007: {@code workflow_instances.metadata} is {@code NULL} throughout (every
  * capture is empty per FR-WF-CTX-010), no bind-related failure occurs (the FR-CTX-157b strict-context
  * guard never trips because the bind gate — explicit carrier {@code null} AND instance metadata
@@ -75,14 +69,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class WorkflowDarkModeIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_dark_mode_test")
             .withMigration("classpath:db/migration/workflow");
 
     static Pool pool;
     static WorkflowOperations engine;
-    static PgWorkflowBranchRecoveryService recovery;
+    static WorkflowExecutionProbe probe;
+    static TransactionalWorkflowOperations<SqlClient> txOperations;
     static Vertx vertxRef;
+    static ExecutorDeployment executor;
 
     /** Idempotency-keyed start payload for the dark-mode fanout. */
     record Start(String orderId) implements IdempotencyKeyed {
@@ -107,9 +105,9 @@ public class WorkflowDarkModeIT {
     /**
      * Fork with a single {@code ALL_REQUIRED} branch waiting on a signal. After {@code start}, the
      * single branch is WAITING and the parent instance is parked at JOIN. The test delivers the
-     * fork-triggering signal live (an instance-owned binder-row drive per S4), then forces the
-     * branch into a stale-scheduled state so the recovery sweep re-drives it to completion,
-     * exercising the S5 branch-recovery carrier seam with zero registered namespaces.
+     * fork-triggering signal live (an instance-owned binder-row drive per S4), then delivers a
+     * branch-targeted signal that drives the branch to completion, exercising the branch carrier
+     * seam with zero registered namespaces.
      */
     static final WorkflowDefinition<State, DarkModeContract> DEFINITION = new WorkflowDefinition<>() {
         @Override
@@ -178,24 +176,27 @@ public class WorkflowDarkModeIT {
         // absence IS the dark-mode fixture (zero registered durable namespaces).
         DarkModeTestComponent component =
                 DaggerWorkflowDarkModeIT_DarkModeTestComponent.factory().create(pool, Clock.systemUTC());
+        // The graph runs no deployer: only its workflow executor is deployed
+        executor = ExecutorDeployment.deploy(vertx, component.verticleDeployments())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
         DefaultVersionSeed.recordAndActivate(
                 component.pgWorkflowDefinitionRegistryStore(),
                 component.definitionLifecycle(),
                 component.workflowRegistry());
 
         engine = component.workflowOperations();
-        recovery = new PgWorkflowBranchRecoveryService(
-                component.transactionRunner(),
-                component.branchTokenRepository(),
-                component.instanceRepository(),
-                component.recoveryBridge(),
-                component.workflowRegistry(),
-                Clock.systemUTC());
+        probe = component.workflowExecutionProbe();
+        txOperations = component.txWorkflowOperations();
         ctx.completeNow();
     }
 
     @AfterAll
     static void tearDown() {
+        if (executor != null) {
+            executor.undeploy().toCompletionStage().toCompletableFuture().join();
+        }
         if (pool != null) {
             pool.close();
         }
@@ -236,18 +237,17 @@ public class WorkflowDarkModeIT {
      * durable namespaces are registered.
      */
     @Singleton
-    @Component(modules = {WorkflowPostgresqlModule.class, DarkModeTestModule.class})
+    @Component(
+            modules = {WorkflowPostgresqlModule.class, ExecutorDeployment.FastPolling.class, DarkModeTestModule.class})
     interface DarkModeTestComponent {
+
+        java.util.Set<dev.vertique.deploy.VerticleDeployment> verticleDeployments();
 
         WorkflowOperations workflowOperations();
 
-        WorkflowTransactionRunner<SqlClient> transactionRunner();
+        WorkflowExecutionProbe workflowExecutionProbe();
 
-        BranchTokenRepository<SqlClient> branchTokenRepository();
-
-        WorkflowInstanceRepository<SqlClient> instanceRepository();
-
-        WorkflowRecoveryBridge recoveryBridge();
+        TransactionalWorkflowOperations<SqlClient> txWorkflowOperations();
 
         dev.vertique.workflow.registry.WorkflowRegistry workflowRegistry();
 
@@ -267,7 +267,7 @@ public class WorkflowDarkModeIT {
      * <p>Even in dark mode, {@link dev.vertique.context.DefaultContextHolder} write paths (bind /
      * install) require a duplicated context (per FR-CTX-157b) — production dispatch entries always
      * reach the engine via a duplicate; this IT calls the engine directly from a JUnit thread, so it
-     * must establish the duplicate itself, mirroring {@code PgWorkflowBranchRecoveryServiceIT}.
+     * must establish the duplicate itself, mirroring the other engine ITs.
      *
      * @param body the test chain to run; its terminal {@code onComplete} signals the test context
      */
@@ -290,9 +290,9 @@ public class WorkflowDarkModeIT {
     }
 
     @Test
-    @DisplayName("AC-8 — dark mode: start, live signal, and recovery sweep leave metadata NULL throughout"
+    @DisplayName("AC-8 — dark mode: start, live signal, and branch signal leave metadata NULL throughout"
             + " with no bind-related failure")
-    void darkMode_startSignalRecovery_metadataAlwaysNullAndBehaviorByteIdenticalToToday(VertxTestContext ctx) {
+    void darkMode_startSignalBranchSignal_metadataAlwaysNullAndBehaviorByteIdenticalToToday(VertxTestContext ctx) {
         Start payload = new Start("dm-1");
         StartCommand cmd = new StartCommand(
                 DEFINITION.definitionId(),
@@ -306,6 +306,7 @@ public class WorkflowDarkModeIT {
                 null);
 
         runOnDuplicatedContext(() -> engine.start(cmd)
+                .compose(started -> probe.awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 // Post-start: metadata must be NULL (empty ambient capture per FR-WF-CTX-010).
                 .compose(id -> metadataIsNull(id.value()).compose(isNull -> {
                     assertTrue(
@@ -314,23 +315,19 @@ public class WorkflowDarkModeIT {
                 }))
                 // Live signal: instance-owned binder-row drive (S4) triggers the fork.
                 .compose(id -> engine.signal(id, "signal-start", "go", "dark-mode-dedup-start")
-                        .map(v -> id))
+                        .compose(v -> probe.awaitIdle(id, IDLE_TIMEOUT))
+                        .map(idle -> id))
                 .compose(id -> metadataIsNull(id.value()).compose(isNull -> {
                     assertTrue(isNull, "post-signal workflow_instances.metadata must remain NULL");
                     return io.vertx.core.Future.succeededFuture(id);
                 }))
-                // Park the fork's single branch: force it into RETRY_SCHEDULED so the recovery
-                // sweep re-drives it through completion and the join.
-                .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
-                                + " current_step_id = 'complete-a', wait_type = NULL, wait_key = NULL,"
-                                + " next_retry_at = $1, version = version + 1"
-                                + " WHERE workflow_id = $2 AND branch_id = 'a'")
-                        .execute(Tuple.of(
-                                OffsetDateTime.ofInstant(Instant.now().minusSeconds(60), ZoneOffset.UTC), id.value()))
-                        .map(v -> id))
-                .compose(id -> recovery.sweepOnce(Instant.now(), 10).map(id))
+                // Branch-targeted signal: the fork's single branch drives through completion and the join.
+                .compose(id -> pool.withTransaction(
+                                tx -> txOperations.signal(id, "signal-a", "go", "dark-mode-dedup-a", "fork", "a", tx))
+                        .compose(v -> probe.awaitIdle(id, IDLE_TIMEOUT))
+                        .map(idle -> id))
                 .compose(id -> metadataIsNull(id.value()).compose(isNull -> {
-                    assertTrue(isNull, "post-recovery-sweep workflow_instances.metadata must remain NULL");
+                    assertTrue(isNull, "post-branch-signal workflow_instances.metadata must remain NULL");
                     return io.vertx.core.Future.succeededFuture(id);
                 }))
                 .compose(id -> engine.query(id))
@@ -341,52 +338,8 @@ public class WorkflowDarkModeIT {
                     assertEquals(
                             WorkflowStatus.COMPLETED,
                             ar.result().instance().status(),
-                            "the recovered branch must drive the ALL_REQUIRED join to completion,"
+                            "the signalled branch must drive the ALL_REQUIRED join to completion,"
                                     + " exactly as it did before PRD-WF-007 with no context registered");
-                    ctx.completeNow();
-                })));
-    }
-
-    @Test
-    @DisplayName("AC-8 — the PgWorkflowBranchRecoveryCron adapter also completes cleanly in dark mode")
-    void darkMode_reconcileAdapterCompletesCleanly(VertxTestContext ctx) {
-        PgWorkflowBranchRecoveryCron adapter = new PgWorkflowBranchRecoveryCron(
-                () -> recovery, new WorkflowBranchRecoveryConfig(10, java.time.Duration.ofSeconds(1)));
-
-        Start payload = new Start("dm-2");
-        StartCommand cmd = new StartCommand(
-                DEFINITION.definitionId(),
-                DEFINITION.contract().getName(),
-                payload,
-                payload.idempotencyKey(),
-                null,
-                null,
-                null,
-                null,
-                null);
-
-        runOnDuplicatedContext(() -> engine.start(cmd)
-                .compose(id -> engine.signal(id, "signal-start", "go", "dark-mode-dedup-adapter")
-                        .map(v -> id))
-                .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
-                                + " current_step_id = 'complete-a', wait_type = NULL, wait_key = NULL,"
-                                + " next_retry_at = $1, version = version + 1"
-                                + " WHERE workflow_id = $2 AND branch_id = 'a'")
-                        .execute(Tuple.of(
-                                OffsetDateTime.ofInstant(Instant.now().minusSeconds(60), ZoneOffset.UTC), id.value()))
-                        .map(v -> id))
-                .compose(id -> adapter.reconcile().map(id))
-                .compose(id -> metadataIsNull(id.value()).compose(isNull -> {
-                    assertTrue(isNull, "workflow_instances.metadata must remain NULL through the adapter path too");
-                    return io.vertx.core.Future.succeededFuture(id);
-                }))
-                .compose(id -> engine.query(id))
-                .onComplete(ar -> ctx.verify(() -> {
-                    assertTrue(ar.succeeded(), "adapter reconcile should succeed in dark mode: " + ar.cause());
-                    assertEquals(
-                            WorkflowStatus.COMPLETED,
-                            ar.result().instance().status(),
-                            "adapter-driven recovery must complete the join exactly as before PRD-WF-007");
                     ctx.completeNow();
                 })));
     }

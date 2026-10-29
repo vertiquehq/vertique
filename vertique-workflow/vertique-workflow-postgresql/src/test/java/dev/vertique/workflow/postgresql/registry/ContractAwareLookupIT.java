@@ -39,6 +39,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -55,6 +56,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class ContractAwareLookupIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     /** The contract of the clients that the default scope's code definitions serve. */
     @WorkflowContract("lookup-c")
@@ -316,7 +319,8 @@ public class ContractAwareLookupIT {
 
     /**
      * Boots without a default X, publishes and activates acme's own X versions under D, restarts with the default's
-     * code X versions under C and returns the second node.
+     * code X versions under C, lets the second node reconcile once, which brings in the records and versions of the
+     * scope that startup does not read, and returns it.
      */
     private static Boot shipDefaultAfterScopeOwn(DefinitionScenario database, long acmeVersions, long defaultVersions) {
         Boot first = database.node(none(), observation());
@@ -324,7 +328,8 @@ public class ContractAwareLookupIT {
         asD.publish(ACME, X, LongStream.rangeClosed(1, acmeVersions).toArray());
         await(first.app().definitionService().activate(ACME, X, ACME, acmeVersions));
         first.close();
-        return database.node(none(), observation(), code(X, ContractC.class, defaultVersions));
+        Boot second = database.node(none(), observation(), code(X, ContractC.class, defaultVersions));
+        return second;
     }
 
     private static Pin startAs(DefinitionScenario database, Boot node, Class<?> contract, String scope, String id) {
@@ -343,6 +348,7 @@ public class ContractAwareLookupIT {
             String idempotencyKey) {
         StartCommand command = command(contract, scope, id, version, targetScope, idempotencyKey);
         var instance = await(node.app().workflowOperations().start(command));
+        await(node.app().executionProbe().awaitIdle(instance, IDLE_TIMEOUT));
         Row row = await(database.admin().preparedQuery("""
                                 SELECT scope_key, definition_scope_key, definition_id, definition_version
                                 FROM workflow_instances WHERE id = $1

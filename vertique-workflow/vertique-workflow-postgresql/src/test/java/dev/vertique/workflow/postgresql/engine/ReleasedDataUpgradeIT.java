@@ -13,6 +13,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
@@ -23,8 +24,10 @@ import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
+import dev.vertique.workflow.postgresql.executor.PgExecutionProbeSupport;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
@@ -50,6 +53,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +75,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class ReleasedDataUpgradeIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     private static final String DEFINITION_ID = "released-approval";
 
@@ -158,8 +164,14 @@ public class ReleasedDataUpgradeIT {
         Pool pool = openPool(vertx, withoutStoreDb);
         WorkflowInstanceId replayed;
         try {
-            WorkflowEngineHandle engine = engineOver(pool);
-            replayed = resume(engine, engine, pool, instanceA, instanceB, taskA);
+            // The released instances were not started through this engine, so its executor must run every command
+            WorkflowEngineHandle engine = runningEngineOver(vertx, pool);
+            await(engine.executor().start());
+            try {
+                replayed = resume(engine, engine, engine.executionProbe(), pool, instanceA, instanceB, taskA);
+            } finally {
+                await(engine.executor().stop());
+            }
         } finally {
             await(pool.close());
         }
@@ -194,7 +206,14 @@ public class ReleasedDataUpgradeIT {
                 await(VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, new JsonObject()), ignored -> app));
         WorkflowInstanceId replayed;
         try {
-            replayed = resume(app.workflowOperations(), app.taskCallbacks(), app.pool(), instanceA, instanceB, taskA);
+            replayed = resume(
+                    app.workflowOperations(),
+                    app.taskCallbacks(),
+                    PgExecutionProbeSupport.probe(app.pool(), vertx),
+                    app.pool(),
+                    instanceA,
+                    instanceB,
+                    taskA);
         } finally {
             await(handle.shutdown());
             await(pool.close());
@@ -241,6 +260,7 @@ public class ReleasedDataUpgradeIT {
     private static WorkflowInstanceId resume(
             WorkflowOperations operations,
             TransactionalTaskCallbacks<SqlClient> taskCallbacks,
+            WorkflowExecutionProbe probe,
             Pool pool,
             UUID instanceA,
             UUID instanceB,
@@ -249,10 +269,13 @@ public class ReleasedDataUpgradeIT {
         TaskCompletionCommand approve = new TaskCompletionCommand(
                 taskA, "approve", Map.of("comment", "looks fine"), "approve-a", new WorkflowActor.User("alice"), null);
         TaskMutationResult completed = await(pool.withTransaction(tx -> taskCallbacks.taskCompleted(approve, tx)));
+        await(probe.awaitIdle(new WorkflowInstanceId(instanceA), IDLE_TIMEOUT));
         assertThat(completed).isEqualTo(TaskMutationResult.APPLIED);
         await(operations.signal(new WorkflowInstanceId(instanceA), "ship", Map.of("carrier", "post"), "ship-a"));
+        await(probe.awaitIdle(new WorkflowInstanceId(instanceA), IDLE_TIMEOUT));
         await(operations.signal(new WorkflowInstanceId(instanceB), "ship", Map.of("carrier", "rail"), "ship-b"));
-        return await(operations.start(new StartCommand(
+        await(probe.awaitIdle(new WorkflowInstanceId(instanceB), IDLE_TIMEOUT));
+        WorkflowInstanceId replayedStart = await(operations.start(new StartCommand(
                 DEFINITION_ID,
                 ReleasedContract.class.getName(),
                 new ReleasedStart("a"),
@@ -262,6 +285,8 @@ public class ReleasedDataUpgradeIT {
                 1L,
                 null,
                 null)));
+        await(probe.awaitIdle(replayedStart, IDLE_TIMEOUT));
+        return replayedStart;
     }
 
     private static void assertResumed(
@@ -296,7 +321,7 @@ public class ReleasedDataUpgradeIT {
         Pool pool = openPool(vertx, hashProbeDb);
         try {
             WorkflowEngineHandle engine = engineOver(pool);
-            await(engine.start(new StartCommand(
+            WorkflowInstanceId probed = await(engine.start(new StartCommand(
                     DEFINITION_ID,
                     ReleasedContract.class.getName(),
                     new ReleasedStart("probe"),
@@ -306,6 +331,7 @@ public class ReleasedDataUpgradeIT {
                     null,
                     null,
                     null)));
+            await(engine.executionProbe().awaitIdle(probed, IDLE_TIMEOUT));
         } finally {
             await(pool.close());
         }
@@ -330,6 +356,15 @@ public class ReleasedDataUpgradeIT {
                 new PgTimerStore(mapper),
                 new PgTaskStore(pool, mapper),
                 Clock.systemUTC());
+    }
+
+    /** An engine whose executor, which the test starts, runs every command of the database. */
+    private static WorkflowEngineHandle runningEngineOver(Vertx vertx, Pool pool) {
+        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
+        registry.register(new ReleasedApprovalDefinition());
+        return PgWorkflowEngineTestSupport.executorEngine(pool, vertx, registry)
+                .executorConfig(new WorkflowExecutorConfig(1, 8, 100, 60))
+                .build();
     }
 
     private static Pool openPool(Vertx vertx, PostgresContainer database) {

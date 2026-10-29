@@ -19,17 +19,17 @@ import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.correlation.CorrelationContextFactory;
-import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
-import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
-import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
@@ -50,6 +50,7 @@ import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
+import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
@@ -214,7 +215,6 @@ class HistoryPayloadCorrelationStitchingTest {
             WorkflowOperations ops,
             TransactionalWorkflowOperations<SqlClient> txOps,
             TransactionalTaskCallbacks<SqlClient> taskCallbacks,
-            TransactionalTimerCallbacks<SqlClient> timerCallbacks,
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowHistoryRepository<SqlClient> history,
             WorkflowDedupRepository<SqlClient> dedup,
@@ -238,33 +238,28 @@ class HistoryPayloadCorrelationStitchingTest {
                 .when(instances.updateOptimistic(any(), anyLong(), any()))
                 .thenReturn(Future.succeededFuture(1));
 
-        WorkflowEngineHandle handle = WorkflowEngineFactory.create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                Set.<WorkflowSideEffectRecorder<SqlClient>>of(),
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.empty(),
-                propagator);
+        WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.empty())
+                .propagator(propagator)
+                .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .commands(new EmptyCommandRepository())
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                .build());
         return new Harness(
-                handle,
-                handle,
-                handle,
-                handle,
-                instances,
-                history,
-                dedup,
-                registry,
-                taskStore,
-                timerStore,
-                branchTokens);
+                handle, handle, handle, instances, history, dedup, registry, taskStore, timerStore, branchTokens);
     }
 
     /**
@@ -274,9 +269,52 @@ class HistoryPayloadCorrelationStitchingTest {
     private static AtomicReference<String> captureAppendedPayload(WorkflowHistoryRepository<SqlClient> history) {
         AtomicReference<String> captured = new AtomicReference<>();
         org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
         doAnswer(inv -> {
                     WorkflowHistoryEntry entry = inv.getArgument(0);
                     captured.compareAndSet(null, entry.payloadJson());
+                    return Future.succeededFuture();
+                })
+                .when(history)
+                .append(any(), any());
+        return captured;
+    }
+
+    /**
+     * Stubs {@code history.append} to capture the {@code payloadJson} of the first entry of the given type, then
+     * succeeds; the entries a segment appends before it are not captured.
+     */
+    private static AtomicReference<String> captureAppendedPayload(
+            WorkflowHistoryRepository<SqlClient> history, WorkflowEntryType type) {
+        AtomicReference<String> captured = new AtomicReference<>();
+        org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
+        doAnswer(inv -> {
+                    WorkflowHistoryEntry entry = inv.getArgument(0);
+                    if (entry.entryType() == type) {
+                        captured.compareAndSet(null, entry.payloadJson());
+                    }
+                    return Future.succeededFuture();
+                })
+                .when(history)
+                .append(any(), any());
+        return captured;
+    }
+
+    /**
+     * Stubs {@code history.append} to capture the {@code payloadJson} of the first {@code TASK_COMPLETED} or
+     * {@code BRANCH_TASK_COMPLETED} entry, then succeeds; the entries a segment appends before it are not captured.
+     */
+    private static AtomicReference<String> captureCompletedPayload(WorkflowHistoryRepository<SqlClient> history) {
+        AtomicReference<String> captured = new AtomicReference<>();
+        org.mockito.Mockito.lenient().when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
+        org.mockito.Mockito.lenient().when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
+        doAnswer(inv -> {
+                    WorkflowHistoryEntry entry = inv.getArgument(0);
+                    if (entry.entryType() == WorkflowEntryType.TASK_COMPLETED
+                            || entry.entryType() == WorkflowEntryType.BRANCH_TASK_COMPLETED) {
+                        captured.compareAndSet(null, entry.payloadJson());
+                    }
                     return Future.succeededFuture();
                 })
                 .when(history)
@@ -349,7 +387,7 @@ class HistoryPayloadCorrelationStitchingTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
-        var captured = captureAppendedPayload(h.history());
+        var captured = captureAppendedPayload(h.history(), WorkflowEntryType.RETRIED);
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
@@ -357,12 +395,13 @@ class HistoryPayloadCorrelationStitchingTest {
                 .thenReturn(rw);
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, null, null, WorkflowStatus.FAILED);
-        when(h.instances().findByIdForUpdate(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
+        when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
 
         runOnDuplicated(vertx, v -> {
             ContextValues.bind(CorrelationContext.class, correlation("corr-E"));
             h.txOps()
                     .retry(inst.id(), tx)
+                    .compose(recorded -> RecordedRecoverySegments.retry(h.txOps(), inst, null, tx))
                     .onComplete(ar -> ctx.verify(() -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());
@@ -394,7 +433,7 @@ class HistoryPayloadCorrelationStitchingTest {
         TaskStore<SqlClient> taskStore = mock();
         SqlClient tx = ActiveTransactionClient.create();
 
-        var captured = captureAppendedPayload(history);
+        var captured = captureAppendedPayload(history, WorkflowEntryType.WORKFLOW_MIGRATED);
         when(history.listRecentByInstance(any(), anyInt(), any())).thenReturn(Future.succeededFuture(List.of()));
 
         RuntimeWorkflow sourceRw = buildRuntimeWorkflow(stubCallbacks());
@@ -430,30 +469,37 @@ class HistoryPayloadCorrelationStitchingTest {
         dev.vertique.workflow.migration.WorkflowMigrationRegistry migrationRegistry = mock();
         dev.vertique.workflow.migration.WorkflowMigrationHandler<Object, Object> handler = mock();
         when(handler.sourceStateType()).thenReturn((Class) Object.class);
+        when(handler.targetStateType()).thenReturn((Class) Object.class);
         when(handler.migrate(any(), any()))
                 .thenReturn(dev.vertique.workflow.migration.MigrationResult.anchorAtInitial(Map.of()));
         when(migrationRegistry.find("default", DEFINITION_ID, 1L, "default", 2L))
                 .thenReturn(Optional.of(handler));
 
-        WorkflowEngineHandle handle = WorkflowEngineFactory.create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                Set.<WorkflowSideEffectRecorder<SqlClient>>of(),
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.of(migrationRegistry),
-                propagator);
+        WorkflowEngineHandle handle = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.of(migrationRegistry))
+                .propagator(propagator)
+                .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .commands(new EmptyCommandRepository())
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCodeFrom(registry))
+                .build());
 
         runOnDuplicated(vertx, v -> {
             ContextValues.bind(CorrelationContext.class, correlation("corr-F"));
             handle.migrate(inst.id(), 2L, tx)
+                    .compose(recorded -> RecordedRecoverySegments.migrate(handle, inst, 2L, tx))
                     .onComplete(ar -> ctx.verify(() -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());
@@ -470,12 +516,12 @@ class HistoryPayloadCorrelationStitchingTest {
 
     @Test
     @DisplayName(
-            "taskCompleted(): ambient correlation E — side effects (history payload) carry E over instance fallback")
+            "completion segment: ambient correlation E — side effects (history payload) carry E over instance fallback")
     void taskCompleted_ambientCorrelationE_sideEffectsCarryEOverInstanceFallback(Vertx vertx, VertxTestContext ctx) {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
-        var captured = captureAppendedPayload(h.history());
+        var captured = captureCompletedPayload(h.history());
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
@@ -512,22 +558,17 @@ class HistoryPayloadCorrelationStitchingTest {
                 null,
                 null,
                 null);
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.dedup().claimOrResolveTaskCompletion(eq(taskId), any(), eq(inst.id()), any(), eq(tx)))
-                .thenReturn(Future.succeededFuture(new dev.vertique.workflow.engine.spi.DedupClaim(true, "fp")));
+        TaskRecord reserved = RecordedCompletionSegments.reserved(task);
+        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(reserved)));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
         when(h.timerStore().findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
-        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
+        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(reserved)));
         when(h.taskStore().markCompleted(eq(taskId), eq("approve"), any(), any(), any(), eq(tx)))
                 .thenReturn(Future.succeededFuture(TaskTransition.APPLIED));
 
-        TaskCompletionCommand cmd = new TaskCompletionCommand(
-                taskId, "approve", Map.of(), "idem-1", new WorkflowActor.User("user-1"), null);
-
         runOnDuplicated(vertx, v -> {
             ContextValues.bind(CorrelationContext.class, correlation("corr-E"));
-            h.taskCallbacks()
-                    .taskCompleted(cmd, tx)
+            RecordedCompletionSegments.run(h.txOps(), inst, reserved, tx)
                     .onComplete(ar -> ctx.verify(() -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());
@@ -618,14 +659,14 @@ class HistoryPayloadCorrelationStitchingTest {
     }
 
     @Test
-    @DisplayName("taskCompleted(): branch-owned completion, no ambient correlation, instance metadata carries"
+    @DisplayName("completion segment: branch-owned completion, no ambient correlation, instance metadata carries"
             + " correlation X — payload records X")
     void taskCompleted_branchOwned_noAmbientCorrelation_instanceMetadataFallbackRecordsX(
             Vertx vertx, VertxTestContext ctx) {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
-        var captured = captureAppendedPayload(h.history());
+        var captured = captureCompletedPayload(h.history());
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildBranchRuntimeWorkflow(stubCallbacks());
@@ -637,13 +678,12 @@ class HistoryPayloadCorrelationStitchingTest {
         WorkflowInstance inst = instanceAt(
                 "branch-human-task", WaitType.JOIN, null, WorkflowStatus.WAITING, correlationMetadata("corr-X"));
         TaskRecord task = branchTaskAt(taskId, inst.id(), branchTokenId);
+        TaskRecord reserved = RecordedCompletionSegments.reserved(task);
         BranchToken branch = waitingBranchToken(branchTokenId, inst.id(), taskId);
 
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.dedup().claimOrResolveTaskCompletion(eq(taskId), any(), eq(inst.id()), any(), eq(tx)))
-                .thenReturn(Future.succeededFuture(new dev.vertique.workflow.engine.spi.DedupClaim(true, "fp")));
+        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(reserved)));
         when(h.timerStore().findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
-        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
+        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(reserved)));
         when(h.branchTokens().findByIdForUpdate(branchTokenId, tx))
                 .thenReturn(Future.succeededFuture(Optional.of(branch)));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -653,13 +693,9 @@ class HistoryPayloadCorrelationStitchingTest {
                 .when(h.branchTokens().updateOptimistic(any(), anyLong(), any()))
                 .thenReturn(Future.succeededFuture(1));
 
-        TaskCompletionCommand cmd = new TaskCompletionCommand(
-                taskId, "approve", Map.of(), "idem-1", new WorkflowActor.User("user-1"), null);
-
         // No ambient correlation is bound for this drive — the C2 bind-once rule keeps the
         // branch-owned path unbound; the fallback must read inst.metadata() instead.
-        runOnDuplicated(vertx, v -> h.taskCallbacks()
-                .taskCompleted(cmd, tx)
+        runOnDuplicated(vertx, v -> RecordedCompletionSegments.run(h.txOps(), inst, reserved, tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());
@@ -672,14 +708,14 @@ class HistoryPayloadCorrelationStitchingTest {
     }
 
     @Test
-    @DisplayName("taskCompleted(): branch-owned completion, ambient correlation E, instance metadata carries a"
+    @DisplayName("completion segment: branch-owned completion, ambient correlation E, instance metadata carries a"
             + " different correlation — payload records E (ambient wins)")
     void taskCompleted_branchOwned_ambientCorrelationE_ambientWinsOverInstanceMetadata(
             Vertx vertx, VertxTestContext ctx) {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
-        var captured = captureAppendedPayload(h.history());
+        var captured = captureCompletedPayload(h.history());
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildBranchRuntimeWorkflow(stubCallbacks());
@@ -695,13 +731,12 @@ class HistoryPayloadCorrelationStitchingTest {
                 WorkflowStatus.WAITING,
                 correlationMetadata("corr-instance-fallback"));
         TaskRecord task = branchTaskAt(taskId, inst.id(), branchTokenId);
+        TaskRecord reserved = RecordedCompletionSegments.reserved(task);
         BranchToken branch = waitingBranchToken(branchTokenId, inst.id(), taskId);
 
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.dedup().claimOrResolveTaskCompletion(eq(taskId), any(), eq(inst.id()), any(), eq(tx)))
-                .thenReturn(Future.succeededFuture(new dev.vertique.workflow.engine.spi.DedupClaim(true, "fp")));
+        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(reserved)));
         when(h.timerStore().findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
-        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
+        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(reserved)));
         when(h.branchTokens().findByIdForUpdate(branchTokenId, tx))
                 .thenReturn(Future.succeededFuture(Optional.of(branch)));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -711,13 +746,9 @@ class HistoryPayloadCorrelationStitchingTest {
                 .when(h.branchTokens().updateOptimistic(any(), anyLong(), any()))
                 .thenReturn(Future.succeededFuture(1));
 
-        TaskCompletionCommand cmd = new TaskCompletionCommand(
-                taskId, "approve", Map.of(), "idem-1", new WorkflowActor.User("user-1"), null);
-
         runOnDuplicated(vertx, v -> {
             ContextValues.bind(CorrelationContext.class, correlation("corr-E"));
-            h.taskCallbacks()
-                    .taskCompleted(cmd, tx)
+            RecordedCompletionSegments.run(h.txOps(), inst, reserved, tx)
                     .onComplete(ar -> ctx.verify(() -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());
@@ -749,7 +780,7 @@ class HistoryPayloadCorrelationStitchingTest {
     }
 
     @Test
-    @DisplayName("taskCompleted(): branch-owned completion, no ambient correlation, instance metadata"
+    @DisplayName("completion segment: branch-owned completion, no ambient correlation, instance metadata"
             + " correlationId is malformed (not an object) — payload records null commandCorrelationId,"
             + " completion succeeds")
     void taskCompleted_branchOwned_malformedNestedCorrelationId_recordsNullCommandCorrelationId(
@@ -757,7 +788,7 @@ class HistoryPayloadCorrelationStitchingTest {
         DefaultContextHolder holder = new DefaultContextHolder();
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
-        var captured = captureAppendedPayload(h.history());
+        var captured = captureCompletedPayload(h.history());
         SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildBranchRuntimeWorkflow(stubCallbacks());
@@ -769,13 +800,12 @@ class HistoryPayloadCorrelationStitchingTest {
         WorkflowInstance inst = instanceAt(
                 "branch-human-task", WaitType.JOIN, null, WorkflowStatus.WAITING, malformedNestedCorrelationMetadata());
         TaskRecord task = branchTaskAt(taskId, inst.id(), branchTokenId);
+        TaskRecord reserved = RecordedCompletionSegments.reserved(task);
         BranchToken branch = waitingBranchToken(branchTokenId, inst.id(), taskId);
 
-        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
-        when(h.dedup().claimOrResolveTaskCompletion(eq(taskId), any(), eq(inst.id()), any(), eq(tx)))
-                .thenReturn(Future.succeededFuture(new dev.vertique.workflow.engine.spi.DedupClaim(true, "fp")));
+        when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(reserved)));
         when(h.timerStore().findScheduledRemindersForTask(taskId, tx)).thenReturn(Future.succeededFuture(List.of()));
-        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
+        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(reserved)));
         when(h.branchTokens().findByIdForUpdate(branchTokenId, tx))
                 .thenReturn(Future.succeededFuture(Optional.of(branch)));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -785,13 +815,9 @@ class HistoryPayloadCorrelationStitchingTest {
                 .when(h.branchTokens().updateOptimistic(any(), anyLong(), any()))
                 .thenReturn(Future.succeededFuture(1));
 
-        TaskCompletionCommand cmd = new TaskCompletionCommand(
-                taskId, "approve", Map.of(), "idem-1", new WorkflowActor.User("user-1"), null);
-
         // No ambient correlation is bound — the fallback must read inst.metadata(), encounter the
         // malformed nested correlationId, and return null rather than throwing ClassCastException.
-        runOnDuplicated(vertx, v -> h.taskCallbacks()
-                .taskCompleted(cmd, tx)
+        runOnDuplicated(vertx, v -> RecordedCompletionSegments.run(h.txOps(), inst, reserved, tx)
                 .onComplete(ar -> ctx.verify(() -> {
                     if (ar.failed()) {
                         ctx.failNow(ar.cause());

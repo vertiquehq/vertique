@@ -3,14 +3,18 @@
 
 package dev.vertique.workflow.definition.service;
 
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.pipeline.CompiledDefinition;
 import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
-import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
+import dev.vertique.workflow.exception.WorkflowNodeRoleException;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
+import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DeclaredSignalNames;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -25,6 +29,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
@@ -37,43 +42,70 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
- * Candidate compilation and metadata facade with optional durable storage.
+ * Candidate compilation and metadata facade over the durable definition registry.
  *
  * <p>Lazy registry resolution preserves contributor wiring. Runtime byte admission precedes the
  * ordinary pipeline. Durable loads then validate the complete source representation before any
- * candidate write. Without a store, the existing in-memory compilation and publication outcomes
- * remain available through failed or successful Futures. Compilation invoked on a Vert.x context
+ * candidate write. Compilation invoked on a Vert.x context
  * uses that context's worker executor; standalone callers without a context use their caller thread.
  * JVM fatal Errors are not treated as ordinary recoverable load or publication failures.
  */
 @Singleton
 public final class DefaultWorkflowDefinitionService implements WorkflowDefinitionService {
     private final WorkflowDefinitionPipeline pipeline;
-    private final WorkflowDefinitionStore store;
     private final Provider<WorkflowRegistry> registryProvider;
-    private final Optional<WorkflowDefinitionRegistryStore> durable;
-    private final Optional<WorkflowDefinitionLifecycle> lifecycle;
+    private final WorkflowDefinitionRegistryStore durable;
+    private final WorkflowDefinitionLifecycle lifecycle;
     private final WorkflowDefinitionsConfig config;
+    private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
+    private final boolean executorNode;
 
-    /** Standalone construction retains the in-memory path and default document policy. */
+    /**
+     * Constructs the facade over the durable registry, its lifecycle and the typed policy, for a node that does not
+     * store signal names and start schemas with a candidate.
+     */
     public DefaultWorkflowDefinitionService(
             WorkflowDefinitionPipeline pipeline,
-            WorkflowDefinitionStore store,
-            Provider<WorkflowRegistry> registryProvider) {
-        this(pipeline, store, registryProvider, Optional.empty(), Optional.empty(), Optional.empty());
+            Provider<WorkflowRegistry> registryProvider,
+            WorkflowDefinitionRegistryStore durable,
+            WorkflowDefinitionLifecycle lifecycle,
+            Optional<WorkflowDefinitionsConfig> config) {
+        this(pipeline, registryProvider, durable, lifecycle, config, Optional.empty());
     }
 
-    /** Constructs the facade with optional persistence, lifecycle and typed policy. */
+    /**
+     * Constructs the facade over the durable registry, its lifecycle and the typed policy. When a schema producer is
+     * bound, a loaded candidate is stored with the signal names and start schema its plan declares. The node runs the
+     * executor.
+     */
+    public DefaultWorkflowDefinitionService(
+            WorkflowDefinitionPipeline pipeline,
+            Provider<WorkflowRegistry> registryProvider,
+            WorkflowDefinitionRegistryStore durable,
+            WorkflowDefinitionLifecycle lifecycle,
+            Optional<WorkflowDefinitionsConfig> config,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+        this(pipeline, registryProvider, durable, lifecycle, config, schemaProducer, Optional.empty());
+    }
+
+    /**
+     * Constructs the facade over the durable registry, its lifecycle and the typed policy. When a schema producer is
+     * bound, a loaded candidate is stored with the signal names and start schema its plan declares. When the executor
+     * configuration turns the executor off, the node is recording-only and {@code load} and {@code reinstate} are
+     * refused with {@link WorkflowNodeRoleException}.
+     */
     @Inject
     public DefaultWorkflowDefinitionService(
             WorkflowDefinitionPipeline pipeline,
-            WorkflowDefinitionStore store,
             Provider<WorkflowRegistry> registryProvider,
-            Optional<WorkflowDefinitionRegistryStore> durable,
-            Optional<WorkflowDefinitionLifecycle> lifecycle,
-            Optional<WorkflowDefinitionsConfig> config) {
+            WorkflowDefinitionRegistryStore durable,
+            WorkflowDefinitionLifecycle lifecycle,
+            Optional<WorkflowDefinitionsConfig> config,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer,
+            Optional<WorkflowExecutorConfig> executorConfig) {
+        this.executorNode = executorConfig.map(WorkflowExecutorConfig::enabled).orElse(true);
+        this.schemaProducer = Objects.requireNonNull(schemaProducer, "schemaProducer");
         this.pipeline = Objects.requireNonNull(pipeline, "pipeline");
-        this.store = Objects.requireNonNull(store, "store");
         this.registryProvider = Objects.requireNonNull(registryProvider, "registryProvider");
         this.durable = Objects.requireNonNull(durable, "durable");
         this.lifecycle = Objects.requireNonNull(lifecycle, "lifecycle");
@@ -84,6 +116,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     public Future<CompiledDefinitionRef> load(
             String scopeKey, byte[] content, DocumentFormat format, SourceMetadata metadata) {
         return attempt(() -> {
+            requireExecutorNode("load");
             // The scope is checked before the document is read, so a bad scope costs no parsing work.
             requireValidScope(scopeKey);
             Objects.requireNonNull(content, "content");
@@ -100,28 +133,37 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                                 scopeKey,
                                 compiled.definition().definitionId(),
                                 compiled.definition().definitionVersion());
-                        WorkflowDefinitionDocument text = durable.isPresent()
-                                ? DefinitionSourceText.decode(key, resource.content(), format, config)
-                                : null;
+                        WorkflowDefinitionDocument text =
+                                DefinitionSourceText.decode(key, resource.content(), format, config);
+                        RuntimeWorkflow plan = schemaProducer.isPresent() ? pipeline.runtime(compiled) : null;
                         return new Candidate(
-                                key, compiled, text, format.name(), pipeline.nameBinding(compiled.definition()));
+                                key,
+                                compiled,
+                                text,
+                                format.name(),
+                                pipeline.nameBinding(compiled.definition()),
+                                plan == null ? null : DeclaredSignalNames.of(plan),
+                                plan == null
+                                        ? null
+                                        : schemaProducer.orElseThrow().startSchema(plan));
                     })
                     .compose(candidate -> {
-                        if (durable.isEmpty()) {
-                            store.candidate(candidate.key(), candidate.compiled(), candidate.format());
-                            return Future.succeededFuture(reference(candidate.compiled()));
-                        }
                         WorkflowDefinitionRecord record = record(
-                                candidate.key(), candidate.compiled(), candidate.format(), candidate.nameBinding());
-                        return durable.orElseThrow()
-                                .insertCandidate(record, candidate.document())
-                                .map(ignored -> {
-                                    store.storeCandidate(candidate.key(), candidate.compiled());
-                                    store.metadata(record);
-                                    return reference(candidate.compiled());
-                                });
+                                candidate.key(),
+                                candidate.compiled(),
+                                candidate.format(),
+                                candidate.nameBinding(),
+                                candidate.signalNames(),
+                                candidate.startSchema());
+                        return durable.insertCandidate(record, candidate.document())
+                                .map(ignored -> reference(candidate.compiled()));
                     });
         });
+    }
+
+    /** Refuses an operation that compiles and builds a document on a node that does not run the executor. */
+    private void requireExecutorNode(String operation) {
+        if (!executorNode) throw new WorkflowNodeRoleException(operation);
     }
 
     /**
@@ -137,32 +179,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     public Future<Void> publish(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
-            if (durable.isPresent()) {
-                if (lifecycle.isEmpty())
-                    throw new WorkflowDefinitionLifecycleException(
-                            WorkflowDefinitionLifecycleException.Reason.LOADER_MISSING,
-                            key,
-                            "No lifecycle implementation for " + key);
-                return lifecycle.orElseThrow().publish(key);
-            }
-            boolean claimed = store.tryClaimForActivation(key);
-            if (!claimed) {
-                ActivationStatus status = store.currentStatus(key);
-                if (status == ActivationStatus.AVAILABLE) return Future.succeededFuture();
-                throw new WorkflowDefinitionException("cannot publish " + key + ": status is " + status);
-            }
-            try {
-                registryProvider
-                        .get()
-                        .register(
-                                key.scopeKey(),
-                                store.get(key).orElseThrow().compiled().definition());
-                store.markActive(key);
-                return Future.succeededFuture();
-            } catch (RuntimeException e) {
-                store.resetToCandidate(key);
-                throw e;
-            }
+            return lifecycle.publish(key);
         });
     }
 
@@ -170,23 +187,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     public Future<Void> deprecate(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
-            if (durable.isEmpty())
-                throw new WorkflowDefinitionException("cannot deprecate " + key + ": a durable registry is required");
-            if (lifecycle.isEmpty())
-                throw new WorkflowDefinitionLifecycleException(
-                        WorkflowDefinitionLifecycleException.Reason.LOADER_MISSING,
-                        key,
-                        "No lifecycle implementation for " + key);
-            // The committed row is the source of truth for the local cache projection.
-            return lifecycle
-                    .orElseThrow()
-                    .deprecate(key)
-                    .compose(ignored -> durable.orElseThrow().find(key))
-                    .map(found -> {
-                        found.filter(record -> record.kind() == DefinitionKind.DOCUMENT)
-                                .ifPresent(store::metadata);
-                        return (Void) null;
-                    });
+            return lifecycle.deprecate(key);
         });
     }
 
@@ -194,23 +195,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     public Future<Void> retire(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
-            if (durable.isEmpty())
-                throw new WorkflowDefinitionException("cannot retire " + key + ": a durable registry is required");
-            if (lifecycle.isEmpty())
-                throw new WorkflowDefinitionLifecycleException(
-                        WorkflowDefinitionLifecycleException.Reason.LOADER_MISSING,
-                        key,
-                        "No lifecycle implementation for " + key);
-            // The committed row is the source of truth for the local cache projection.
-            return lifecycle
-                    .orElseThrow()
-                    .retire(key)
-                    .compose(ignored -> durable.orElseThrow().find(key))
-                    .map(found -> {
-                        found.filter(record -> record.kind() == DefinitionKind.DOCUMENT)
-                                .ifPresent(store::metadata);
-                        return (Void) null;
-                    });
+            return lifecycle.retire(key);
         });
     }
 
@@ -218,57 +203,36 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     public Future<Void> reinstate(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
-            if (durable.isEmpty())
-                throw new WorkflowDefinitionException("cannot reinstate " + key + ": a durable registry is required");
-            if (lifecycle.isEmpty())
-                throw new WorkflowDefinitionLifecycleException(
-                        WorkflowDefinitionLifecycleException.Reason.LOADER_MISSING,
-                        key,
-                        "No lifecycle implementation for " + key);
-            // The committed row is the source of truth for the local cache projection.
-            return lifecycle
-                    .orElseThrow()
-                    .reinstate(key)
-                    .compose(ignored -> durable.orElseThrow().find(key))
-                    .map(found -> {
-                        found.filter(record -> record.kind() == DefinitionKind.DOCUMENT)
-                                .ifPresent(store::metadata);
-                        return (Void) null;
-                    });
+            requireExecutorNode("reinstate");
+            return lifecycle.reinstate(key);
         });
     }
 
     @Override
     public Future<Void> activate(String scopeKey, String definitionId, String targetScopeKey, long version) {
-        return attempt(() -> lifecycleOperation("activate").activate(scopeKey, definitionId, targetScopeKey, version));
+        return attempt(() -> lifecycle.activate(scopeKey, definitionId, targetScopeKey, version));
     }
 
     @Override
     public Future<Void> deactivateDefault(String definitionId) {
-        return attempt(() -> lifecycleOperation("deactivate the default").deactivateDefault(definitionId));
+        return attempt(() -> lifecycle.deactivateDefault(definitionId));
     }
 
     @Override
     public Future<Void> follow(String scopeKey, String definitionId) {
-        return attempt(() -> lifecycleOperation("follow").follow(scopeKey, definitionId));
+        return attempt(() -> lifecycle.follow(scopeKey, definitionId));
     }
 
     @Override
     public Future<List<DefinitionActivation>> activations(@Nullable String scopeKey) {
-        return attempt(() -> lifecycleOperation("list activations").activations(scopeKey));
-    }
-
-    /** The lifecycle that carries the activation operations; the facade holds no activation state of its own. */
-    private WorkflowDefinitionLifecycle lifecycleOperation(String operation) {
-        return lifecycle.orElseThrow(
-                () -> new WorkflowDefinitionException("cannot " + operation + ": no lifecycle implementation"));
+        return attempt(() -> lifecycle.activations(scopeKey));
     }
 
     @Override
     public Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter) {
         return attempt(() -> {
             Objects.requireNonNull(filter, "filter");
-            return durable.map(s -> s.list(filter)).orElseGet(() -> Future.succeededFuture(store.records(filter)));
+            return durable.list(filter);
         });
     }
 
@@ -276,8 +240,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     public Future<Optional<SourceMetadata>> sourceMetadata(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
-            return durable.map(s -> s.find(key).map(row -> row.map(r -> source(r.provenance()))))
-                    .orElseGet(() -> Future.succeededFuture(store.sourceMetadata(key)));
+            return durable.find(key).map(row -> row.map(r -> source(r.provenance())));
         });
     }
 
@@ -291,6 +254,16 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
 
     static WorkflowDefinitionRecord record(
             DefinitionKey key, CompiledDefinition compiled, String format, Map<String, String> nameBinding) {
+        return record(key, compiled, format, nameBinding, null, null);
+    }
+
+    static WorkflowDefinitionRecord record(
+            DefinitionKey key,
+            CompiledDefinition compiled,
+            String format,
+            Map<String, String> nameBinding,
+            @Nullable JsonObject signalNames,
+            @Nullable JsonObject startSchema) {
         Instant now = Instant.now();
         return new WorkflowDefinitionRecord(
                 key,
@@ -304,7 +277,9 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                 now,
                 now,
                 nameBinding,
-                null);
+                null,
+                signalNames,
+                startSchema);
     }
 
     private static CompiledDefinitionRef reference(CompiledDefinition compiled) {
@@ -339,5 +314,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
             CompiledDefinition compiled,
             WorkflowDefinitionDocument document,
             String format,
-            Map<String, String> nameBinding) {}
+            Map<String, String> nameBinding,
+            @Nullable JsonObject signalNames,
+            @Nullable JsonObject startSchema) {}
 }

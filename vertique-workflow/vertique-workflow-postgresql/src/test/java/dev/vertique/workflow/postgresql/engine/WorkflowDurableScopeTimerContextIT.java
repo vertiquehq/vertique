@@ -3,13 +3,7 @@
 
 package dev.vertique.workflow.postgresql.engine;
 
-import static org.junit.jupiter.api.Assertions.assertAll;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import dagger.BindsInstance;
 import dagger.Component;
@@ -25,24 +19,11 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
-import dev.vertique.job.JobExecution;
-import dev.vertique.job.JobRepository;
-import dev.vertique.job.JobState;
-import dev.vertique.job.JobType;
-import dev.vertique.job.ProgressSnapshot;
-import dev.vertique.job.delayed.DelayedJob;
-import dev.vertique.job.delayed.DelayedJobHandlerRegistrar;
-import dev.vertique.job.delayed.DelayedJobOptions;
-import dev.vertique.job.delayed.DelayedJobService;
-import dev.vertique.job.postgresql.PgJobRepository;
-import dev.vertique.workflow.delayed.compose.WorkflowDelayedComposeValidator;
-import dev.vertique.workflow.delayed.job.WorkflowTimerFireJob;
-import dev.vertique.workflow.delayed.recorder.WorkflowTimerSideEffectRecorder;
-import dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryConfig;
-import dev.vertique.workflow.delayed.recovery.WorkflowTimerRecoveryService;
+import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
@@ -56,31 +37,27 @@ import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
+import dev.vertique.workflow.timer.TimerPurpose;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
-import io.vertx.junit5.VertxTestContext;
 import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
-import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterAll;
@@ -91,25 +68,48 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-/** Proves persisted timer capture, recovery callbacks, orphan re-enqueue, and async scope cleanup. */
+/**
+ * Proves that a recorded timer persists the durable scope captured when it was scheduled, and that the executor that
+ * fires the timer command runs the timer's step under exactly that scope and leaves nothing bound afterwards, whether
+ * the step succeeds or fails asynchronously.
+ */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
-@Timeout(value = 20, unit = TimeUnit.SECONDS)
+@Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class WorkflowDurableScopeTimerContextIT {
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_timer_scope")
             .withMigration("classpath:db/migration/workflow");
-    private static final Instant NOW = Instant.parse("2026-01-02T12:00:00Z");
-    private static final ScopeContext ACME = new ScopeContext(new ScopeKey("acme"));
-    private static final ScopeContext PREVIOUS = new ScopeContext(new ScopeKey("previous"));
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(20);
+    private static final ScopeContext ACME = scope("acme");
+    private static final String FAIL_KEY_PREFIX = "fail-";
     private static Vertx vertx;
     private static Pool pool;
     private static TimerGraph graph;
+    private static ExecutorDeployment executor;
     private static final Probe probe = new Probe();
 
     record State(String key) {}
 
     interface Contract {}
+
+    /** The scope that was bound while the timer's step ran, by instance. */
+    record Observation(WorkflowInstanceId instance, Optional<ScopeContext> scope) {}
+
+    static final class Probe {
+        final List<Observation> steps = new CopyOnWriteArrayList<>();
+
+        void reset() {
+            steps.clear();
+        }
+
+        List<Optional<ScopeContext>> scopesOf(WorkflowInstanceId id) {
+            return steps.stream()
+                    .filter(observation -> observation.instance().equals(id))
+                    .map(Observation::scope)
+                    .toList();
+        }
+    }
 
     static final class Definition implements WorkflowDefinition<State, Contract> {
         @Override
@@ -136,31 +136,10 @@ public class WorkflowDurableScopeTimerContextIT {
         public void define(WorkflowBuilder<State> wf) {
             wf.init(State.class, state -> state)
                     .timer("wait", Duration.ofSeconds(1))
-                    .toStep("done")
+                    .toStep("dispatch")
+                    .dispatch("dispatch", "scope.service", State::key, "done")
                     .complete("done");
             wf.initialStep("wait");
-        }
-    }
-
-    static final class Probe {
-        final List<Optional<ScopeContext>> enqueuedScopes = new ArrayList<>();
-        final List<DurableMetadata> enqueuedMetadata = new ArrayList<>();
-        final List<Optional<ScopeContext>> callbackScopes = new ArrayList<>();
-        boolean orphan;
-        boolean asynchronousCallback;
-        boolean failCallback;
-        boolean callbackSettled;
-        boolean callbackFailed;
-
-        void reset() {
-            enqueuedScopes.clear();
-            enqueuedMetadata.clear();
-            callbackScopes.clear();
-            orphan = true;
-            asynchronousCallback = false;
-            failCallback = false;
-            callbackSettled = false;
-            callbackFailed = false;
         }
     }
 
@@ -175,7 +154,7 @@ public class WorkflowDurableScopeTimerContextIT {
         @Provides
         @Singleton
         static WorkflowPlanValidator validator() {
-            return new WorkflowPlanValidator(new DefaultRaceSafetyTargetRegistry(java.util.Set.of()));
+            return new WorkflowPlanValidator(new DefaultRaceSafetyTargetRegistry(Set.of()));
         }
 
         @Provides
@@ -184,92 +163,48 @@ public class WorkflowDurableScopeTimerContextIT {
             return new PgDbExceptionMapper();
         }
 
-        @Provides
-        static WorkflowDelayedComposeValidator delayedValidator() {
-            return mock(WorkflowDelayedComposeValidator.class);
-        }
-
-        @Provides
-        static WorkflowTimerRecoveryConfig recoveryConfig() {
-            return new WorkflowTimerRecoveryConfig(10, Duration.ofSeconds(30));
-        }
-
-        @Provides
-        @Singleton
-        static DelayedJobHandlerRegistrar handlerRegistrar() {
-            DelayedJobHandlerRegistrar registrar = mock(DelayedJobHandlerRegistrar.class);
-            when(registrar.handlerAddresses()).thenReturn(Map.of("timer-scope", "test.scope.timer-fire"));
-            return registrar;
-        }
-
-        @Provides
-        @Singleton
-        static PgJobRepository jobRows(Probe probe) {
-            PgJobRepository repository = mock(PgJobRepository.class);
-            when(repository.save(any(JobExecution.class), any(SqlClient.class))).thenAnswer(invocation -> {
-                JobExecution execution = invocation.getArgument(0);
-                probe.enqueuedMetadata.add(execution.metadata());
-                return Future.succeededFuture(execution.id());
-            });
-            return repository;
-        }
-
+        /** Observes the scope bound while the step after the timer runs, and fails it asynchronously on request. */
         @Provides
         @IntoSet
         @WorkflowRecorders
-        static WorkflowSideEffectRecorder<SqlClient> timerRecorder(WorkflowTimerSideEffectRecorder recorder) {
-            return recorder;
-        }
-
-        @Provides
-        @IntoSet
-        @WorkflowRecorders
-        static WorkflowSideEffectRecorder<SqlClient> events(ContextHolder holder, Probe probe) {
+        static WorkflowSideEffectRecorder<SqlClient> stepRecorder(ContextHolder holder, Probe probe) {
             return new WorkflowSideEffectRecorder<>() {
                 @Override
                 public IntentKind kind() {
-                    return IntentKind.WORKFLOW_EVENT;
+                    return IntentKind.SERVICE;
                 }
 
                 @Override
                 public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                    if (!"WORKFLOW_FAILED".equals(intent.targetId())) {
+                    probe.steps.add(
+                            new Observation(intent.correlation().workflowId(), holder.current(ScopeContext.class)));
+                    if (!String.valueOf(intent.payload()).startsWith(FAIL_KEY_PREFIX)) {
                         return Future.succeededFuture(RecorderResult.empty());
                     }
-                    probe.callbackScopes.add(holder.current(ScopeContext.class));
-                    Promise<RecorderResult> callback = Promise.promise();
-                    Runnable completion = () -> {
-                        if (probe.failCallback) {
-                            callback.fail(new IllegalStateException("async timer callback failure"));
-                        } else {
-                            callback.complete(RecorderResult.empty());
-                        }
-                    };
-                    if (probe.asynchronousCallback) {
-                        Vertx.currentContext().runOnContext(ignored -> completion.run());
-                    } else {
-                        completion.run();
-                    }
-                    return callback.future().transform(result -> {
-                        probe.callbackSettled = true;
-                        probe.callbackFailed = result.failed();
-                        return result.succeeded()
-                                ? Future.succeededFuture(result.result())
-                                : Future.failedFuture(result.cause());
-                    });
+                    Promise<RecorderResult> failed = Promise.promise();
+                    Vertx.currentContext()
+                            .runOnContext(
+                                    ignored -> failed.fail(new IllegalStateException("async timer step failure")));
+                    return failed.future();
                 }
             };
         }
     }
 
     @Singleton
-    @Component(modules = {WorkflowPostgresqlModule.class, ContextRuntimeModule.class, FixtureModule.class})
+    @Component(
+            modules = {
+                WorkflowPostgresqlModule.class,
+                ContextRuntimeModule.class,
+                ExecutorDeployment.FastPolling.class,
+                FixtureModule.class
+            })
     interface TimerGraph {
+        Set<VerticleDeployment> verticleDeployments();
+
         WorkflowOperations operations();
 
-        WorkflowTimerRecoveryService recovery();
-
-        DelayedJobService delayedJobs();
+        WorkflowExecutionProbe executionProbe();
 
         ContextHolder holder();
 
@@ -281,12 +216,7 @@ public class WorkflowDurableScopeTimerContextIT {
 
         @Component.Factory
         interface Factory {
-            TimerGraph create(
-                    @BindsInstance Pool pool,
-                    @BindsInstance Clock clock,
-                    @BindsInstance Probe probe,
-                    @BindsInstance JobRepository jobs,
-                    @BindsInstance WorkflowTimerFireJob fireJob);
+            TimerGraph create(@BindsInstance Pool pool, @BindsInstance Clock clock, @BindsInstance Probe probe);
         }
     }
 
@@ -295,7 +225,7 @@ public class WorkflowDurableScopeTimerContextIT {
         vertx = injectedVertx;
         DbPoolConfig config = db.toPoolConfig();
         pool = PgBuilder.pool()
-                .with(new PoolOptions().setMaxSize(4))
+                .with(new PoolOptions().setMaxSize(6))
                 .connectingTo(new PgConnectOptions()
                         .setHost(config.host())
                         .setPort(config.port())
@@ -304,158 +234,119 @@ public class WorkflowDurableScopeTimerContextIT {
                         .setPassword(config.password()))
                 .using(vertx)
                 .build();
-        JobRepository jobs = mock(JobRepository.class);
-        when(jobs.findById(any()))
-                .thenAnswer(invocation -> Future.succeededFuture(
-                        probe.orphan ? Optional.empty() : Optional.of(deadLetter(invocation.getArgument(0)))));
-        WorkflowTimerFireJob fireJob = mock(WorkflowTimerFireJob.class);
-        when(fireJob.enqueue(any(), any(DelayedJobOptions.class), any(SqlClient.class)))
-                .thenAnswer(invocation -> {
-                    probe.enqueuedScopes.add(graph.holder().current(ScopeContext.class));
-                    DelayedJobOptions options = invocation.getArgument(1);
-                    return graph.delayedJobs()
-                            .enqueue(
-                                    DelayedJob.builder()
-                                            .handler("timer-scope")
-                                            .payload(invocation.getArgument(0))
-                                            .runAt(options.runAt())
-                                            .build(),
-                                    invocation.getArgument(2));
-                });
-        graph = DaggerWorkflowDurableScopeTimerContextIT_TimerGraph.factory()
-                .create(pool, Clock.fixed(NOW, ZoneOffset.UTC), probe, jobs, fireJob);
+        graph = DaggerWorkflowDurableScopeTimerContextIT_TimerGraph.factory().create(pool, Clock.systemUTC(), probe);
+        // The graph runs no deployer: only its workflow executor is deployed
+        executor = await(ExecutorDeployment.deploy(vertx, graph.verticleDeployments()));
         DefaultVersionSeed.recordAndActivate(graph.definitionStore(), graph.definitionLifecycle(), graph.registry());
     }
 
     @BeforeEach
-    void reset() throws Exception {
-        await(pool.query("TRUNCATE workflow_branch_tokens, workflow_join_states, workflow_timers, workflow_history,"
-                        + " workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
+    void reset() {
+        await(WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE workflow_branch_tokens, workflow_join_states, workflow_timers, workflow_tasks,"
+                                + " workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute());
         probe.reset();
     }
 
     @AfterAll
-    static void tearDown() throws Exception {
+    static void tearDown() {
+        if (executor != null) {
+            await(executor.undeploy());
+        }
         if (pool != null) {
             await(pool.close());
         }
     }
 
     @Test
-    @DisplayName(
-            "a timer persists captured scope, restores it for orphan re-enqueue, and exposes it to recovery callbacks")
-    void restoresScopeAfterTimerRecoveryAndReenqueue(VertxTestContext ctx) {
-        startTimer(ACME)
-                .compose(id -> timerRow(id).map(row -> {
-                    assertEquals(
-                            savedScope().toCarrier(),
-                            row.getJsonObject("metadata"),
-                            "the production timer recorder must persist the exact captured scope");
-                    return id;
-                }))
-                .compose(id -> makeRecoverable(id, null).map(id))
-                .compose(id -> {
-                    probe.reset();
-                    return onFreshDuplicate(() -> graph.recovery().reconcile()).map(id);
-                })
-                .compose(id -> {
-                    assertEquals(
-                            List.of(Optional.of(ACME)),
-                            probe.enqueuedScopes,
-                            "orphan re-enqueue must observe the restored timer scope");
-                    assertEquals(
-                            savedScope().toJson(),
-                            probe.enqueuedMetadata.getFirst().toJson(),
-                            "re-enqueue must capture scope from its callback context");
-                    probe.orphan = false;
-                    return onFreshDuplicate(() -> graph.recovery().reconcile());
-                })
-                .onComplete(ctx.succeeding(ignored -> ctx.verify(() -> {
-                    assertEquals(
-                            List.of(Optional.of(ACME)),
-                            probe.callbackScopes,
-                            "the terminal timer callback must observe persisted acme");
-                    assertTrue(probe.callbackSettled);
-                    assertFalse(probe.callbackFailed);
-                    ctx.completeNow();
-                })));
-    }
+    @DisplayName("a timer persists the scope captured when it was scheduled and its step runs under that scope")
+    void timerPersistsScheduledScopeAndRunsItsStepUnderIt() {
+        // Given a workflow started under the acme scope, whose executor-scheduled timer is waiting
+        WorkflowInstanceId id = await(start("timer", ACME));
+        await(graph.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
+        UUID timerId = await(TimerCommandRows.onlyTimerId(pool, id, TimerPurpose.STANDALONE));
 
-    record TerminalObservation(
-            boolean failing,
-            Optional<ScopeContext> installed,
-            Optional<ScopeContext> restored,
-            boolean settled,
-            boolean failed) {}
+        // Then the timer row holds exactly the captured scope
+        assertThat(timerMetadata(timerId))
+                .as("the recorded timer must persist the exact captured scope")
+                .isEqualTo(saved("acme").toCarrier());
+        assertThat(probe.scopesOf(id))
+                .as("the step must not run before the timer fires")
+                .isEmpty();
+
+        // When the timer command is due and the executor fires it
+        await(TimerCommandRows.makeDue(pool, timerId));
+        await(graph.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
+
+        // Then the step after the timer ran under the scope the timer captured, not under the executor's ambient one
+        assertThat(probe.scopesOf(id)).containsExactly(Optional.of(ACME));
+        assertThat(instanceStatus(id)).isEqualTo("COMPLETED");
+        assertThat(await(TimerCommandRows.status(pool, timerId))).isEqualTo("FIRED");
+    }
 
     @Test
-    @DisplayName("timer success and asynchronous failure both unwind an installed saved scope to the previous binding")
-    void restoresPreviousBindingAfterTimerSuccessAndFailure(VertxTestContext ctx) {
-        List<TerminalObservation> outcomes = new ArrayList<>();
-        terminalScenario(false)
-                .compose(success -> {
-                    outcomes.add(success);
-                    return terminalScenario(true);
-                })
-                .onComplete(ctx.succeeding(failure -> ctx.verify(() -> {
-                    outcomes.add(failure);
-                    assertAll(outcomes.stream().map(outcome -> (org.junit.jupiter.api.function.Executable) () -> {
-                        assertEquals(
-                                Optional.of(ACME),
-                                outcome.installed(),
-                                "saved scope must be installed inside the timer callback before "
-                                        + (outcome.failing() ? "failure" : "success"));
-                        assertEquals(
-                                Optional.of(PREVIOUS),
-                                outcome.restored(),
-                                "timer completion must restore the previous holder value");
-                        assertTrue(
-                                outcome.settled(), "the asynchronous callback must settle before cleanup is credited");
-                        assertEquals(outcome.failing(), outcome.failed());
-                    }));
-                    ctx.completeNow();
-                })));
+    @DisplayName("a timer scheduled without a scope persists none and its step runs with none bound")
+    void timerScheduledWithoutScopeRunsWithoutScope() {
+        // Given a workflow started with no scope bound, whose timer is waiting
+        WorkflowInstanceId id = await(start("timer", null));
+        await(graph.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
+        UUID timerId = await(TimerCommandRows.onlyTimerId(pool, id, TimerPurpose.STANDALONE));
+        assertThat(timerMetadata(timerId)).isNull();
+
+        // When the timer fires
+        await(TimerCommandRows.makeDue(pool, timerId));
+        await(graph.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
+
+        // Then the step saw no scope
+        assertThat(probe.scopesOf(id)).containsExactly(Optional.empty());
+        assertThat(instanceStatus(id)).isEqualTo("COMPLETED");
     }
 
-    private static Future<TerminalObservation> terminalScenario(boolean failing) {
-        return pool.query("TRUNCATE workflow_timers, workflow_history, workflow_dedup, workflow_instances CASCADE")
-                .execute()
-                .compose(ignored -> startTimer(null))
-                .compose(id -> makeRecoverable(id, savedScope()).map(id))
-                .compose(id -> {
-                    probe.reset();
-                    probe.orphan = false;
-                    probe.asynchronousCallback = true;
-                    probe.failCallback = failing;
-                    return onFreshDuplicate(() -> {
-                        ContextHolder.Scope previous = graph.holder().bind(ScopeContext.class, PREVIOUS);
-                        try {
-                            return graph.recovery()
-                                    .reconcile()
-                                    .map(ignored -> new TerminalObservation(
-                                            failing,
-                                            probe.callbackScopes.getFirst(),
-                                            graph.holder().current(ScopeContext.class),
-                                            probe.callbackSettled,
-                                            probe.callbackFailed))
-                                    .eventually(() -> {
-                                        previous.close();
-                                        return Future.succeededFuture();
-                                    });
-                        } catch (Throwable failure) {
-                            previous.close();
-                            return Future.failedFuture(failure);
-                        }
-                    });
-                });
+    @Test
+    @DisplayName("a persisted timer scope is decoded by the durable codec and unwound after a step success and failure")
+    void persistedTimerScopeIsDecodedAndUnwoundAfterSuccessAndAsynchronousFailure() {
+        // Given a timer whose persisted scope is the scope-only document of saved-only, run to a successful step
+        WorkflowInstanceId success = await(start("timer-success", null));
+        fireWithPersistedScope(success, saved("saved-only"));
+
+        // And a timer of the same shape whose step fails asynchronously
+        WorkflowInstanceId failure = await(start(FAIL_KEY_PREFIX + "timer", null));
+        fireWithPersistedScope(failure, saved("saved-only"));
+
+        // Then both steps ran under the decoded persisted scope, and the failure reached the executor
+        assertThat(probe.scopesOf(success)).containsExactly(Optional.of(scope("saved-only")));
+        assertThat(probe.scopesOf(failure))
+                .isNotEmpty()
+                .allMatch(scope -> scope.equals(Optional.of(scope("saved-only"))));
+        assertThat(instanceStatus(success)).isEqualTo("COMPLETED");
+        assertThat(instanceStatus(failure)).isNotEqualTo("COMPLETED");
+
+        // When timers without any persisted scope fire afterwards on the same executor
+        WorkflowInstanceId afterSuccess = await(start("timer-after", null));
+        fireWithPersistedScope(afterSuccess, null);
+
+        // Then no scope of the earlier steps stays bound for them, neither after the success nor the failure
+        assertThat(probe.scopesOf(afterSuccess)).containsExactly(Optional.empty());
     }
 
-    private static Future<WorkflowInstanceId> startTimer(ScopeContext scope) {
+    private static void fireWithPersistedScope(WorkflowInstanceId id, DurableMetadata persisted) {
+        await(graph.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
+        UUID timerId = await(TimerCommandRows.onlyTimerId(pool, id, TimerPurpose.STANDALONE));
+        if (persisted != null) {
+            await(pool.preparedQuery("UPDATE workflow_timers SET metadata = $1 WHERE timer_id = $2")
+                    .execute(Tuple.of(persisted.toCarrier(), timerId)));
+        }
+        await(TimerCommandRows.makeDue(pool, timerId));
+        await(graph.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
+    }
+
+    private static Future<WorkflowInstanceId> start(String key, ScopeContext ambient) {
         StartCommand command = new StartCommand(
                 "durable-scope-timer",
                 Contract.class.getName(),
-                new State("timer"),
+                new State(key),
                 UUID.randomUUID().toString(),
                 null,
                 null,
@@ -464,7 +355,7 @@ public class WorkflowDurableScopeTimerContextIT {
                 null);
         return onFreshDuplicate(() -> {
             ContextHolder.Scope binding =
-                    scope == null ? () -> {} : graph.holder().bind(ScopeContext.class, scope);
+                    ambient == null ? () -> {} : graph.holder().bind(ScopeContext.class, ambient);
             try {
                 return graph.operations().start(command).eventually(() -> {
                     binding.close();
@@ -477,52 +368,28 @@ public class WorkflowDurableScopeTimerContextIT {
         });
     }
 
-    private static Future<Row> timerRow(WorkflowInstanceId id) {
-        return pool.preparedQuery(
-                        "SELECT metadata, delayed_job_execution_id FROM workflow_timers WHERE workflow_id = $1")
-                .execute(Tuple.of(id.value()))
-                .map(rows -> rows.iterator().next());
+    private static JsonObject timerMetadata(UUID timerId) {
+        return await(pool.preparedQuery("SELECT metadata FROM workflow_timers WHERE timer_id = $1")
+                        .execute(Tuple.of(timerId)))
+                .iterator()
+                .next()
+                .getJsonObject("metadata");
     }
 
-    private static Future<Void> makeRecoverable(WorkflowInstanceId id, DurableMetadata seededMetadata) {
-        OffsetDateTime overdue = OffsetDateTime.ofInstant(NOW.minusSeconds(120), ZoneOffset.UTC);
-        if (seededMetadata == null) {
-            return pool.preparedQuery("UPDATE workflow_timers SET fire_at = $1 WHERE workflow_id = $2")
-                    .execute(Tuple.of(overdue, id.value()))
-                    .mapEmpty();
-        }
-        return pool.preparedQuery("UPDATE workflow_timers SET fire_at = $1, metadata = $2 WHERE workflow_id = $3")
-                .execute(Tuple.of(overdue, seededMetadata.toCarrier(), id.value()))
-                .mapEmpty();
+    private static String instanceStatus(WorkflowInstanceId id) {
+        return await(pool.preparedQuery("SELECT status FROM workflow_instances WHERE id = $1")
+                        .execute(Tuple.of(id.value())))
+                .iterator()
+                .next()
+                .getString("status");
     }
 
-    private static DurableMetadata savedScope() {
-        return DurableMetadata.of("scope", new JsonObject().put("scopeKey", "acme"));
+    private static ScopeContext scope(String key) {
+        return new ScopeContext(new ScopeKey(key));
     }
 
-    private static JobExecution deadLetter(UUID id) {
-        return new JobExecution(
-                id,
-                "timer",
-                JobType.DELAYED,
-                "timer-handler",
-                "default",
-                JobState.DEAD_LETTER,
-                3,
-                3,
-                null,
-                0,
-                null,
-                NOW,
-                NOW,
-                NOW,
-                NOW,
-                null,
-                null,
-                ProgressSnapshot.EMPTY,
-                Map.of(),
-                Map.of(),
-                DurableMetadata.empty());
+    private static DurableMetadata saved(String key) {
+        return DurableMetadata.of("scope", new JsonObject().put("scopeKey", key));
     }
 
     private static <T> Future<T> onFreshDuplicate(Supplier<Future<T>> action) {
@@ -538,7 +405,11 @@ public class WorkflowDurableScopeTimerContextIT {
         return result.future();
     }
 
-    private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+    private static <T> T await(Future<T> future) {
+        try {
+            return future.toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new AssertionError("future did not complete: " + e, e);
+        }
     }
 }

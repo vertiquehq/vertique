@@ -4,12 +4,11 @@
 package dev.vertique.workflow.ops;
 
 /**
- * Result returned by {@link TransactionalTimerCallbacks} after a timer-fire or timer-failure
- * event is processed.
+ * Result of firing a workflow timer.
  *
- * <p>The two constants allow callers (i.e., the timer executor in
- * {@code vertique-workflow-delayed}) to distinguish between a first-delivery success and a
- * duplicate-delivery no-op without throwing an exception.
+ * <p>The two constants allow the workflow executor, which fires a timer when its timer command
+ * comes due, to distinguish between a first-delivery success and a duplicate-delivery no-op
+ * without throwing an exception.
  */
 public enum TimerFiringResult {
 
@@ -23,7 +22,7 @@ public enum TimerFiringResult {
      * The timer event was a no-op because the timer is no longer in {@link
      * dev.vertique.workflow.timer.TimerStatus#SCHEDULED} status. This happens when a duplicate
      * delivery races with a prior successful fire or a concurrent cancellation. The caller should
-     * treat this as a successful idempotent delivery and acknowledge the job.
+     * treat this as a successful idempotent delivery and settle the command.
      */
     STALE_NOOP
 }

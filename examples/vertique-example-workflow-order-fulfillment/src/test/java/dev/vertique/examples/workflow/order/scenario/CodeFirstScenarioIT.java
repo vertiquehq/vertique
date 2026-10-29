@@ -51,6 +51,7 @@ class CodeFirstScenarioIT {
             OrderFulfillmentWorkflow client =
                     first.graph().workflowClientFactory().create(OrderFulfillmentDefinition.class);
             versionOneInstance = await(client.start(order("order-1")));
+            first.awaitIdle(versionOneInstance);
             assertEquals(defaultPin(1), first.pin(versionOneInstance));
             assertEquals("WAITING", first.status(versionOneInstance));
         }
@@ -61,13 +62,14 @@ class CodeFirstScenarioIT {
             OrderFulfillmentWorkflow client =
                     second.graph().workflowClientFactory().create(OrderFulfillmentDefinition.class);
             WorkflowInstanceId versionTwoInstance = await(client.start(order("order-2")));
+            second.awaitIdle(versionTwoInstance);
 
             // Then the new instance is pinned to version 2, the current version
             assertInstanceOf(OrderFulfillmentWorkflow.class, client);
             assertEquals(defaultPin(2), second.pin(versionTwoInstance));
 
             // And the version 1 instance resumes on version 1 and completes
-            finish(client, versionOneInstance, "order-1");
+            finish(second, client, versionOneInstance, "order-1");
             assertEquals("COMPLETED", second.status(versionOneInstance));
             assertEquals(defaultPin(1), second.pin(versionOneInstance));
             assertEquals("WAITING", second.status(versionTwoInstance));

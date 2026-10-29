@@ -8,6 +8,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
 import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.workflow.engine.WorkflowExceptionMapper;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
@@ -33,6 +34,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
+import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Tuple;
 import jakarta.annotation.Nullable;
@@ -65,12 +67,12 @@ import org.slf4j.LoggerFactory;
  */
 @Singleton
 public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
-        implements WorkflowDefinitionRegistryStore {
+        implements WorkflowDefinitionRegistryStore, TransactionalDefinitionReads<SqlClient> {
     private static final Logger log = LoggerFactory.getLogger(PgWorkflowDefinitionRegistryStore.class);
 
     private static final String COLUMNS =
             "scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, name_binding, status, document_format, "
-                    + "source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, created_at, status_changed_at, failure_reason";
+                    + "source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, created_at, status_changed_at, failure_reason, signal_names_json, start_schema_json";
     private static final String LOCKED_COLUMNS = COLUMNS + ", document_digest";
     private static final String KEY = "scope_key = $1 AND definition_id = $2 AND definition_version = $3";
 
@@ -79,12 +81,15 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
     private final String sqlFind;
     private final String sqlFindDocument;
+    private final String sqlFindStoredDocument;
+    private final String sqlPinnedContract;
     private final String sqlList;
     private final String sqlInsert;
     private final String sqlInsertCode;
     private final String sqlUpdateCodeProvenance;
     private final String sqlRehashCode;
     private final String sqlRecordFailure;
+    private final String sqlFillSignalSchemas;
     private final String sqlResetStale;
     private final String sqlUpdateProvenance;
     private final String sqlClaim;
@@ -92,13 +97,13 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private final String sqlRelease;
     private final String sqlTransition;
     private final String sqlRetire;
-    private final String sqlCooling;
     private final String sqlCountNonTerminal;
     private final String sqlLockRows;
     private final String sqlPutActivation;
     private final String sqlRemoveActivation;
     private final String sqlListActivations;
     private final String sqlDefaultCurrent;
+    private final StartSelectionRead startSelection;
     private final String sqlActivateDefault;
     private final WorkflowDefinitionsConfig config;
     private final WorkflowExceptionMapper workflowMapper = new WorkflowExceptionMapper();
@@ -149,6 +154,15 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                              THEN document ELSE NULL END AS document
                     FROM""" + " " + definitions + " WHERE " + KEY + " AND kind = 'DOCUMENT'";
 
+        this.sqlFindStoredDocument = "SELECT " + COLUMNS + ", document_digest,"
+                + " octet_length(convert_to(document, 'UTF8')) AS document_size_bytes,"
+                + " char_length(document) AS document_code_points,"
+                + " CASE WHEN octet_length(convert_to(document, 'UTF8')) <= $4 AND char_length(document) <= $5"
+                + " THEN document ELSE NULL END AS document FROM " + definitions + " WHERE " + KEY
+                + " AND kind = 'DOCUMENT'";
+
+        this.sqlPinnedContract = "SELECT contract_name FROM " + definitions + " WHERE " + KEY;
+
         // The filter is applied by the database: each parameter is null when its criterion is absent.
         this.sqlList = "SELECT " + COLUMNS + " FROM " + definitions
                 + " WHERE ($1::varchar IS NULL OR scope_key = $1) AND ($2::varchar IS NULL OR definition_id = $2)"
@@ -156,25 +170,30 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " ORDER BY definition_id, scope_key, definition_version";
 
         this.sqlInsert = "INSERT INTO " + definitions
-                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)";
+                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding, signal_names_json, start_schema_json) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb,$19::jsonb)";
 
         this.sqlInsertCode = "INSERT INTO " + definitions
-                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding) VALUES ($1,$2,$3,'CODE',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)";
+                + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding, signal_names_json, start_schema_json) VALUES ($1,$2,$3,'CODE',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb)";
 
         this.sqlUpdateCodeProvenance = "UPDATE " + definitions
                 + " SET source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$9, contract_name=$10, state_type_name=$11 WHERE "
                 + KEY + " AND kind='CODE'";
 
-        // The only statement that replaces a stored plan hash; it replaces the name binding with it.
+        // The only statement that replaces a stored plan hash; it replaces the name binding, the signal names and the
+        // start schema with it.
         this.sqlRehashCode = "UPDATE " + definitions
-                + " SET plan_hash=$4, name_binding=$5::jsonb, source_type=$6, source_uri=$7, source_revision=$8, source_author=$9, source_upload_id=$10, loaded_at=$11, contract_name=$12, state_type_name=$13 WHERE "
+                + " SET plan_hash=$4, name_binding=$5::jsonb, source_type=$6, source_uri=$7, source_revision=$8, source_author=$9, source_upload_id=$10, loaded_at=$11, contract_name=$12, state_type_name=$13, signal_names_json=$14::jsonb, start_schema_json=$15::jsonb WHERE "
                 + KEY + " AND kind='CODE'";
 
+        this.sqlFillSignalSchemas = "UPDATE " + definitions
+                + " SET signal_names_json=$4::jsonb, start_schema_json=$5::jsonb WHERE " + KEY
+                + " AND signal_names_json IS NULL AND plan_hash = $6";
+
         this.sqlRecordFailure = "UPDATE " + definitions + " SET failure_reason=$4 WHERE " + KEY
-                + " AND kind='DOCUMENT' AND scope_key <> 'default'";
+                + " AND kind='DOCUMENT' AND scope_key <> 'default' AND status <> 'RETIRED'";
 
         this.sqlResetStale = "UPDATE " + definitions
-                + " SET status='CANDIDATE', publish_token=NULL, status_changed_at=clock_timestamp() WHERE definition_id=$1 AND status='PUBLISHING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2)";
+                + " SET status='CANDIDATE', publish_token=NULL, status_changed_at=clock_timestamp() WHERE definition_id=$1 AND status='PUBLISHING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= $2::numeric";
 
         this.sqlUpdateProvenance = "UPDATE " + definitions
                 + " SET source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$9 WHERE "
@@ -197,15 +216,11 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         this.sqlRetire = "UPDATE " + definitions + " SET status='RETIRED', status_changed_at=clock_timestamp() WHERE "
                 + KEY + " AND status=$4";
 
-        this.sqlCooling =
-                "SELECT (clock_timestamp() - status_changed_at) < ($4::bigint * interval '1 second') AS cooling FROM "
-                        + definitions + " WHERE " + KEY;
-
         this.sqlCountNonTerminal = "SELECT count(*) AS total FROM " + instances
-                + " WHERE definition_id = $1 AND definition_version = $2 AND definition_scope_key = $3 AND status IN ('RUNNING','WAITING','COMPENSATING')";
+                + " WHERE definition_id = $1 AND definition_version = $2 AND definition_scope_key = $3 AND status IN ('PENDING','RUNNING','WAITING','COMPENSATING')";
 
         this.sqlLockRows = "SELECT " + LOCKED_COLUMNS
-                + ", publish_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM "
+                + ", publish_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= $2::numeric AS stale FROM "
                 + definitions
                 + " WHERE definition_id=$1 ORDER BY scope_key, definition_version FOR UPDATE";
 
@@ -236,6 +251,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + " definition_version=EXCLUDED.definition_version, activated_at=EXCLUDED.activated_at"
                 + " WHERE existing.definition_version < EXCLUDED.definition_version";
 
+        this.startSelection = new StartSelectionRead(definitions, activations);
+
         this.sqlDefaultCurrent = "SELECT 1 FROM " + activations + " WHERE scope_key='" + WorkflowScopes.DEFAULT
                 + "' AND definition_id=$1 AND target_scope_key='" + WorkflowScopes.DEFAULT
                 + "' AND definition_version=$2";
@@ -249,6 +266,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             return mutate(record.key(), (tx, rows) -> encoding(tx).compose(ignored -> {
                 if (row(rows, record.key()).isPresent()) throw invalid(record.key(), "definition already exists");
                 requireDefaultContract(rows, record);
+                requireScopeRules(rows, record);
                 return insert(tx, record, document, DefinitionStatus.CANDIDATE);
             }));
         });
@@ -275,26 +293,88 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     .execute(parameters(key)
                             .addInteger(config.maxStoredDocumentSizeBytes())
                             .addInteger(config.maxDocumentSizeBytes()))
-                    .map(rows -> {
-                        if (!rows.iterator().hasNext()) return Optional.empty();
-                        Row r = rows.iterator().next();
-                        long bytes = ((Number) r.getValue("document_size_bytes")).longValue();
-                        long points = ((Number) r.getValue("document_code_points")).longValue();
-                        if (bytes > config.maxStoredDocumentSizeBytes() || points > config.maxDocumentSizeBytes())
-                            throw new WorkflowDefinitionException(
-                                    "Stored document " + key + " exceeds source envelope: UTF8 bytes " + bytes + "/"
-                                            + config.maxStoredDocumentSizeBytes() + ", code points " + points + "/"
-                                            + config.maxDocumentSizeBytes());
-                        String text = r.getString("document");
-                        if (!sha256Hex(text).equals(r.getString("document_digest")))
-                            throw new WorkflowDefinitionLifecycleException(
-                                    Reason.DRIFT,
-                                    key,
-                                    "Definition " + key
-                                            + ": stored text digest differs from the recorded digest, so the stored text was changed after it was recorded");
-                        return Optional.of(new WorkflowDefinitionDocument(key, text, r.getString("document_format")));
-                    })));
+                    .map(rows -> rows.iterator().hasNext()
+                            ? Optional.of(documentOf(key, rows.iterator().next()))
+                            : Optional.<WorkflowDefinitionDocument>empty())));
         });
+    }
+
+    /**
+     * Reads the record and the text of a document row on the caller's transaction, with the same checks of the text
+     * as {@link #findDocument(DefinitionKey)}. It takes no connection of its own, and a failure is translated like
+     * the failure of any other read of this store.
+     */
+    @Override
+    public Future<Optional<StoredDocument>> findDocument(DefinitionKey key, SqlClient tx) {
+        return attempt(() -> {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(tx, "tx");
+            return encoding(tx)
+                    .compose(ignored -> tx.preparedQuery(sqlFindStoredDocument)
+                            .execute(parameters(key)
+                                    .addInteger(config.maxStoredDocumentSizeBytes())
+                                    .addInteger(config.maxDocumentSizeBytes())))
+                    .map(rows -> {
+                        if (!rows.iterator().hasNext()) return Optional.<StoredDocument>empty();
+                        Row r = rows.iterator().next();
+                        return Optional.of(new StoredDocument(metadata(r), documentOf(key, r)));
+                    })
+                    .recover(failure -> Future.failedFuture(translated(failure, key.definitionId())));
+        });
+    }
+
+    /**
+     * Reads the contract name of a definition row on the caller's transaction. It takes no connection of its own, and a
+     * failure is translated like the failure of any other read of this store.
+     */
+    @Override
+    public Future<Optional<String>> pinnedContract(DefinitionKey key, SqlClient tx) {
+        return attempt(() -> {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(tx, "tx");
+            return tx.preparedQuery(sqlPinnedContract)
+                    .execute(parameters(key))
+                    .map(rows -> rows.iterator().hasNext()
+                            ? Optional.of(rows.iterator().next().getString("contract_name"))
+                            : Optional.<String>empty())
+                    .recover(failure -> Future.failedFuture(translated(failure, key.definitionId())));
+        });
+    }
+
+    /**
+     * Reads the versions of the id in the start scope and the default scope, and the activation records of both
+     * scopes, in one statement on the caller's transaction. It takes no connection, lock or timeout of its own, and a
+     * failure is translated like the failure of any other read of this store.
+     */
+    @Override
+    public Future<StartSelection> selectionRead(String startScope, String definitionId, SqlClient tx) {
+        return attempt(() -> {
+            Objects.requireNonNull(startScope, "startScope");
+            Objects.requireNonNull(definitionId, "definitionId");
+            Objects.requireNonNull(tx, "tx");
+            return startSelection
+                    .read(tx, startScope, definitionId)
+                    .recover(failure -> Future.failedFuture(translated(failure, definitionId)));
+        });
+    }
+
+    /** Checks the size and the digest of the text a row holds and returns it. */
+    private WorkflowDefinitionDocument documentOf(DefinitionKey key, Row r) {
+        long bytes = ((Number) r.getValue("document_size_bytes")).longValue();
+        long points = ((Number) r.getValue("document_code_points")).longValue();
+        if (bytes > config.maxStoredDocumentSizeBytes() || points > config.maxDocumentSizeBytes())
+            throw new WorkflowDefinitionException(
+                    "Stored document " + key + " exceeds source envelope: UTF8 bytes " + bytes + "/"
+                            + config.maxStoredDocumentSizeBytes() + ", code points " + points + "/"
+                            + config.maxDocumentSizeBytes());
+        String text = r.getString("document");
+        if (!sha256Hex(text).equals(r.getString("document_digest")))
+            throw new WorkflowDefinitionLifecycleException(
+                    Reason.DRIFT,
+                    key,
+                    "Definition " + key
+                            + ": stored text digest differs from the recorded digest, so the stored text was changed after it was recorded");
+        return new WorkflowDefinitionDocument(key, text, r.getString("document_format"));
     }
 
     @Override
@@ -321,10 +401,12 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             validateDocument(record, document);
             return mutate(record.key(), (tx, rows) -> encoding(tx).compose(ignored -> {
                 Optional<Row> current = row(rows, record.key());
-                if (current.isEmpty())
+                if (current.isEmpty()) {
+                    requireScopeRules(rows, record);
                     return insert(tx, record, document, DefinitionStatus.AVAILABLE)
                             .compose(inserted -> activateFirstPublication(tx, record.key(), activateDefault))
                             .map(ReconcileOutcome.INSERTED);
+                }
                 Row old = current.orElseThrow();
                 if (!"DOCUMENT".equals(old.getString("kind")))
                     return Future.succeededFuture(ReconcileOutcome.KIND_CONFLICT);
@@ -354,10 +436,12 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             // Read committed, so that the pinned count taken after the lock wait sees everything committed meanwhile.
             return mutate(key.definitionId(), (tx, rows) -> {
                 Optional<Row> current = row(rows, key);
-                if (current.isEmpty())
+                if (current.isEmpty()) {
+                    requireScopeRules(rows, record);
                     return insertCode(tx, record, DefinitionStatus.AVAILABLE)
                             .compose(inserted -> activateFirstPublication(tx, key, activateDefault))
                             .map(ReconcileOutcome.INSERTED);
+                }
                 Row old = current.orElseThrow();
                 if (!"CODE".equals(old.getString("kind")))
                     return Future.succeededFuture(ReconcileOutcome.KIND_CONFLICT);
@@ -365,10 +449,12 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     return updateCodeProvenance(tx, record).map(ReconcileOutcome.UNCHANGED);
                 // The hash differs: only an exact version without a live pinned instance may take the new hash,
                 // and it takes the name binding the new hash was computed with.
-                return countNonTerminal(tx, key)
-                        .compose(pinned -> pinned > 0
-                                ? Future.succeededFuture(ReconcileOutcome.DRIFT)
-                                : rehashCode(tx, record).map(ReconcileOutcome.REHASHED));
+                return countNonTerminal(tx, key).compose(pinned -> {
+                    if (pinned > 0) return Future.succeededFuture(ReconcileOutcome.DRIFT);
+                    // The rehash may change the contract and the state type of the row.
+                    requireScopeRules(rows, record);
+                    return rehashCode(tx, record).map(ReconcileOutcome.REHASHED);
+                });
             });
         });
     }
@@ -380,7 +466,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             // DefinitionKey enforces the id constraints; the scope and version are irrelevant here.
             new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
             return mutate(definitionId, (tx, rows) -> tx.preparedQuery(sqlResetStale)
-                    .execute(Tuple.of(definitionId, config.maxStalenessSeconds()))
+                    .execute(Tuple.of(definitionId, config.publicationClaimTimeoutSeconds()))
                     .mapEmpty());
         });
     }
@@ -444,6 +530,12 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 Row current = row(rows, key).orElseThrow(() -> invalid(key, "definition not found"));
                 String status = current.getString("status");
                 if (!from.name().equals(status)) throw invalid(key, "expected status " + from + " but found " + status);
+                if (from == DefinitionStatus.RETIRED) {
+                    // Retired rows are outside the rules, so another version may have come since the retirement.
+                    String contract = current.getString("contract_name");
+                    requireDefaultContractForReinstatement(rows, key, contract);
+                    requireScopeRules(rows, key, contract, current.getString("state_type_name"));
+                }
                 Future<Void> guard =
                         to == DefinitionStatus.DEPRECATED ? guardDefaultCurrent(tx, key) : Future.succeededFuture();
                 return guard.compose(ignored -> tx.preparedQuery(sqlTransition)
@@ -467,7 +559,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 if (!"CANDIDATE".equals(status) && !"DEPRECATED".equals(status))
                     throw invalid(key, "cannot retire status " + status);
                 // The default-current guard comes first. Only a deprecated version can be pinned by instances, so a
-                // candidate skips cooling and the count.
+                // candidate skips the count.
                 return guardDefaultCurrent(tx, key)
                         .compose(ignored ->
                                 "DEPRECATED".equals(status) ? guardDeprecated(tx, key) : Future.<Void>succeededFuture())
@@ -512,23 +604,73 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
      * id across every scope, read after the lock was granted.
      */
     private static void requireDefaultContract(RowSet<Row> rows, WorkflowDefinitionRecord record) {
-        String scope = record.key().scopeKey();
-        if (WorkflowScopes.DEFAULT.equals(scope)) return;
         List<Row> all = new ArrayList<>();
         rows.forEach(all::add);
-        if (all.stream().anyMatch(r -> scope.equals(r.getString("scope_key")))) return;
+        if (all.stream().anyMatch(r -> record.key().scopeKey().equals(r.getString("scope_key")))) return;
+        requireDefaultContract(all, record.key(), record.contractName());
+    }
+
+    /**
+     * Refuses the reinstatement of a retired version under another contract than the default scope's, when no other
+     * version of the scope remains to hold the contract; the versions that remain are compared by the scope rules.
+     */
+    private static void requireDefaultContractForReinstatement(RowSet<Row> rows, DefinitionKey key, String contract) {
+        List<Row> all = new ArrayList<>();
+        rows.forEach(all::add);
+        boolean otherLiveVersion = all.stream()
+                .anyMatch(r -> key.scopeKey().equals(r.getString("scope_key"))
+                        && key.definitionVersion() != r.getLong("definition_version")
+                        && !DefinitionStatus.RETIRED.name().equals(r.getString("status")));
+        if (!otherLiveVersion) requireDefaultContract(all, key, contract);
+    }
+
+    private static void requireDefaultContract(List<Row> all, DefinitionKey key, String contractName) {
+        String scope = key.scopeKey();
+        if (WorkflowScopes.DEFAULT.equals(scope)) return;
         all.stream()
                 .filter(r -> WorkflowScopes.DEFAULT.equals(r.getString("scope_key")))
-                .filter(r -> !record.contractName().equals(r.getString("contract_name")))
+                .filter(r -> !contractName.equals(r.getString("contract_name")))
                 .findFirst()
                 .ifPresent(defaultRow -> {
                     throw new WorkflowDefinitionContractMismatchException(
-                            record.key(),
-                            "Scope '" + scope + "' cannot load '" + record.key().definitionId()
-                                    + "' under contract '" + EchoedNames.bounded(record.contractName())
+                            key,
+                            "Scope '" + scope + "' cannot load '" + key.definitionId()
+                                    + "' under contract '" + EchoedNames.bounded(contractName)
                                     + "': the default scope holds it under contract '"
                                     + EchoedNames.bounded(defaultRow.getString("contract_name")) + "'");
                 });
+    }
+
+    /**
+     * Refuses a version whose contract or state type differs from the other versions of its scope and id. The rows
+     * are the locked rows of the id across every scope; only the same scope's rows in a status other than RETIRED
+     * take part, and a retired version leaves the rules to the versions that remain.
+     */
+    private static void requireScopeRules(RowSet<Row> rows, WorkflowDefinitionRecord record) {
+        requireScopeRules(rows, record.key(), record.contractName(), record.stateTypeName());
+    }
+
+    private static void requireScopeRules(
+            RowSet<Row> rows, DefinitionKey key, String contractName, String stateTypeName) {
+        for (Row r : rows) {
+            if (!key.scopeKey().equals(r.getString("scope_key"))
+                    || key.definitionVersion() == r.getLong("definition_version")
+                    || DefinitionStatus.RETIRED.name().equals(r.getString("status"))) continue;
+            String described = "definition '" + EchoedNames.bounded(key.definitionId()) + "' v"
+                    + key.definitionVersion() + " in scope '" + EchoedNames.bounded(key.scopeKey()) + "'";
+            if (!contractName.equals(r.getString("contract_name")))
+                throw new WorkflowDefinitionException(described + " names contract '"
+                        + EchoedNames.bounded(contractName) + "' but earlier versions of '"
+                        + EchoedNames.bounded(key.definitionId()) + "' in that scope name contract '"
+                        + EchoedNames.bounded(r.getString("contract_name"))
+                        + "'; every version of a definition in a scope must name the same contract");
+            if (!stateTypeName.equals(r.getString("state_type_name")))
+                throw new WorkflowDefinitionException(described + " has state type '"
+                        + EchoedNames.bounded(stateTypeName) + "' but earlier versions of '"
+                        + EchoedNames.bounded(key.definitionId()) + "' in that scope have state type '"
+                        + EchoedNames.bounded(r.getString("state_type_name"))
+                        + "'; every version of a definition in a scope must have the same state type");
+        }
     }
 
     /**
@@ -577,6 +719,24 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
+    public Future<Void> fillSignalSchemas(
+            DefinitionKey key, String planHash, JsonObject signalNames, @Nullable JsonObject startSchema) {
+        return attempt(() -> {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(planHash, "planHash");
+            Objects.requireNonNull(signalNames, "signalNames");
+            // Guarded by the null column and the expected plan hash, so a row another node has filled meanwhile, or
+            // whose hash changed since the plan was read, is left as it is; the plan hash is never written here.
+            return mutate(key, (tx, rows) -> tx.preparedQuery(sqlFillSignalSchemas)
+                    .execute(parameters(key)
+                            .addValue(signalNames)
+                            .addValue(startSchema)
+                            .addString(planHash))
+                    .mapEmpty());
+        });
+    }
+
+    @Override
     public Future<List<DefinitionActivation>> listActivations(@Nullable String scopeKey) {
         return attempt(() -> {
             if (scopeKey != null) new DefinitionKey(scopeKey, WorkflowScopes.DEFAULT, 1);
@@ -621,27 +781,15 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     /**
-     * Refuses a deprecated row that is still cooling, then one that is still pinned. Both reads run after the
-     * locks were acquired, so they see everything committed while the lock was awaited.
+     * Refuses a deprecated row that is still pinned. The read runs after the locks were acquired, so it sees
+     * everything committed while the lock was awaited.
      */
     private Future<Void> guardDeprecated(SqlConnection tx, DefinitionKey key) {
-        return tx.preparedQuery(sqlCooling)
-                .execute(parameters(key).addLong(config.maxStalenessSeconds()))
-                .compose(result -> {
-                    if (result.iterator().next().getBoolean("cooling"))
-                        throw conflict(
-                                Reason.COOLING,
-                                key,
-                                "deprecated less than " + config.maxStalenessSeconds()
-                                        + " seconds ago, so it is still cooling");
-                    return countNonTerminal(tx, key);
-                })
-                .map(pinned -> {
-                    if (pinned > 0)
-                        throw conflict(
-                                Reason.PINNED_INSTANCES, key, "pinned by " + pinned + " non-terminal instance(s)");
-                    return (Void) null;
-                });
+        return countNonTerminal(tx, key).map(pinned -> {
+            if (pinned > 0)
+                throw conflict(Reason.PINNED_INSTANCES, key, "pinned by " + pinned + " non-terminal instance(s)");
+            return (Void) null;
+        });
     }
 
     /**
@@ -655,7 +803,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 .map(result -> result.iterator().next().getLong("total"));
     }
 
-    private Future<Void> encoding(SqlConnection tx) {
+    private Future<Void> encoding(SqlClient tx) {
         if (utf8Confirmed) return Future.succeededFuture();
         return tx.query("SELECT current_setting('server_encoding') AS encoding")
                 .execute()
@@ -707,7 +855,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .addString(p.author())
                         .addString(p.uploadId())
                         .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC))
-                        .addValue(bindingValue(record)))
+                        .addValue(bindingValue(record))
+                        .addValue(record.signalNames())
+                        .addValue(record.startSchema()))
                 .mapEmpty();
     }
 
@@ -741,7 +891,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .addString(p.uploadId())
                         .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC))
                         .addString(record.contractName())
-                        .addString(record.stateTypeName()))
+                        .addString(record.stateTypeName())
+                        .addValue(record.signalNames())
+                        .addValue(record.startSchema()))
                 .mapEmpty();
     }
 
@@ -818,7 +970,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .addString(p.author())
                         .addString(p.uploadId())
                         .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC))
-                        .addValue(bindingValue(record)))
+                        .addValue(bindingValue(record))
+                        .addValue(record.signalNames())
+                        .addValue(record.startSchema()))
                 .mapEmpty();
     }
 
@@ -851,16 +1005,18 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
     private Future<RowSet<Row>> lockedRows(SqlConnection tx, String definitionId) {
         return DefinitionIdLock.acquire(tx, definitionId).compose(ignored -> tx.preparedQuery(sqlLockRows)
-                .execute(Tuple.of(definitionId, config.maxStalenessSeconds())));
+                .execute(Tuple.of(definitionId, config.publicationClaimTimeoutSeconds())));
     }
 
     private <T> Future<T> transaction(String id, Function<SqlConnection, Future<T>> action) {
-        return pool.withTransaction(action).recover(failure -> {
-            Throwable mapped = failure instanceof VertxException
-                    ? exceptionMapper.translate(failure, "definition registry " + id)
-                    : failure;
-            return Future.failedFuture(workflowMapper.translate(mapped, "definition registry " + id));
-        });
+        return pool.withTransaction(action).recover(failure -> Future.failedFuture(translated(failure, id)));
+    }
+
+    private Throwable translated(Throwable failure, String id) {
+        Throwable mapped = failure instanceof VertxException
+                ? exceptionMapper.translate(failure, "definition registry " + id)
+                : failure;
+        return workflowMapper.translate(mapped, "definition registry " + id);
     }
 
     private static <T> Future<T> attempt(Supplier<Future<T>> action) {
@@ -908,11 +1064,22 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 r.getOffsetDateTime("created_at").toInstant(),
                 r.getOffsetDateTime("status_changed_at").toInstant(),
                 storedBinding(r),
-                storedFailure(r));
+                storedFailure(r),
+                storedObject(r, "signal_names_json"),
+                storedObject(r, "start_schema_json"));
+    }
+
+    /** Reads a stored JSON object column; a value that is not an object reads as absent and is never echoed. */
+    static @Nullable JsonObject storedObject(Row r, String column) {
+        try {
+            return r.getJsonObject(column);
+        } catch (ClassCastException notAnObject) {
+            return null;
+        }
     }
 
     /** The failure the row is marked with; a reason this release does not know reads as no failure. */
-    private static @Nullable DefinitionFailure storedFailure(Row r) {
+    static @Nullable DefinitionFailure storedFailure(Row r) {
         String reason = r.getString("failure_reason");
         if (reason == null) return null;
         try {
@@ -922,7 +1089,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         }
     }
 
-    private static DefinitionActivation activation(Row r) {
+    static DefinitionActivation activation(Row r) {
         return new DefinitionActivation(
                 r.getString("scope_key"),
                 r.getString("definition_id"),

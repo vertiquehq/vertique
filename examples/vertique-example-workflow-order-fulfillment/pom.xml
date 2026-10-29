@@ -36,22 +36,22 @@ SPDX-License-Identifier: EUPL-1.2
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-workflow-services</artifactId>
+            <artifactId>vertique-workflow-schema</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-workflow-delayed</artifactId>
+            <artifactId>vertique-json</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-workflow-services</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-workflow-tasks</artifactId>
         </dependency>
 
-        <!-- Job modules (transitive via vertique-workflow-delayed, declared explicitly) -->
-        <dependency>
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-job-delayed</artifactId>
-        </dependency>
+        <!-- Job modules (the inbox/outbox relay needs the cron scheduler and the job repository) -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-job-cron</artifactId>

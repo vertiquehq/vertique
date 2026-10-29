@@ -7,11 +7,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.ExpensePayloads;
 import dev.vertique.workflow.schema.fixtures.Payloads;
+import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,7 +38,7 @@ class WorkflowPayloadSchemasDescribeTest {
         // Given: a registry with the validator and the expense definition
         DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.expense());
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
 
         // When: the definition is described
         Optional<WorkflowDefinitionDescriptor> described =
@@ -76,17 +79,18 @@ class WorkflowPayloadSchemasDescribeTest {
     @DisplayName("describe and decision are keyed by the definition scope")
     void describeIsKeyedByTheDefinitionScope() {
         // Given: purchase-approval v1 in the default scope whose review offers approve, and purchase-approval v1
-        // in the acme scope whose review offers approve and escalate
+        // as a plan of the acme scope whose review offers approve and escalate
         DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
         Map<String, Class<?>> defaultDecisions = Map.of("approve", ExpensePayloads.ApprovalComment.class);
         Map<String, Class<?>> acmeDecisions = new LinkedHashMap<>();
         acmeDecisions.put("approve", ExpensePayloads.ApprovalComment.class);
         acmeDecisions.put("escalate", ExpensePayloads.AuditNote.class);
         registry.register(Definitions.withDecisions(PURCHASE, 1L, defaultDecisions));
-        registry.register("acme", Definitions.withDecisions(PURCHASE, 1L, acmeDecisions));
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
         DefinitionKey defaultKey = new DefinitionKey(WorkflowScopes.DEFAULT, PURCHASE, 1L);
         DefinitionKey acmeKey = new DefinitionKey("acme", PURCHASE, 1L);
+        registry.bindDocumentPlanSource(new FixedPlanSource(Map.of(
+                acmeKey, registry.build("acme", Definitions.withDecisions(PURCHASE, 1L, acmeDecisions), Map.of()))));
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
         DefinitionKey globexKey = new DefinitionKey("globex", PURCHASE, 1L);
 
         // When: each key is described and asked for the decision only the acme version declares
@@ -127,7 +131,7 @@ class WorkflowPayloadSchemasDescribeTest {
         // Given: the registry of the expense definition
         DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.expense());
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
 
         // When: an unknown id, an unknown version, an unknown step and an unknown decision are asked for
         // Then: every result is empty and nothing is thrown
@@ -157,7 +161,7 @@ class WorkflowPayloadSchemasDescribeTest {
         registry.register(Definitions.expense());
         assertThat(loader.loads.get()).isPositive();
         loader.loads.set(0);
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
 
         // When: describe and decision run for the registered key and for unknown keys, with the counting loader as
         // the thread's context loader as well
@@ -190,7 +194,7 @@ class WorkflowPayloadSchemasDescribeTest {
         // Given: the expense descriptor
         DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.expense());
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
         List<DecisionDescriptor> decisions = schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, EXPENSE, 1L))
                 .orElseThrow()
                 .humanTasks()
@@ -230,7 +234,7 @@ class WorkflowPayloadSchemasDescribeTest {
         // Given: a definition whose tasks and decisions are declared against alphabetical order
         DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.expenseWithAudit());
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
 
         // When: it is described
         WorkflowDefinitionDescriptor descriptor = schemas.describe(
@@ -266,7 +270,7 @@ class WorkflowPayloadSchemasDescribeTest {
         DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.withDecision("void-start", 1L, Payloads.PlainRecord.class));
         registry.register(Definitions.withDecisionUnderSecondContract("all-void", 1L, void.class));
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
 
         // When / Then: the void start has no payload while its decision does
         WorkflowDefinitionDescriptor voidStart = schemas.describe(
@@ -290,7 +294,7 @@ class WorkflowPayloadSchemasDescribeTest {
         DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
         assertThatThrownBy(() -> registry.register(Definitions.withDecision("scalar", 1L, String.class)))
                 .isInstanceOf(WorkflowDefinitionException.class);
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
 
         // When / Then: neither the definition nor its decision can be read
         assertThat(schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, "scalar", 1L)))
@@ -305,7 +309,7 @@ class WorkflowPayloadSchemasDescribeTest {
         // Given: a registry without the schema validator, so no entry was ever generated, and a registered definition
         DefaultWorkflowRegistry registry = Registries.withoutSchemaValidator();
         registry.register(Definitions.expense());
-        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        AwaitedSchemas schemas = AwaitedSchemas.of(registry, cache);
         String remedy = "the schema module's registration validator did not run for this registry:"
                 + " install WorkflowSchemaModule in the component that provides WorkflowRegistry";
 
@@ -325,6 +329,110 @@ class WorkflowPayloadSchemasDescribeTest {
         // And: unknown coordinates are still empty rather than a violation
         assertThat(schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, "nope", 1L)))
                 .isEmpty();
+    }
+
+    @Test
+    @DisplayName("describe loads a version that is not resident and completes after the plan is loaded")
+    void describeLoadsANonResidentVersion() {
+        // Given: a plan for acme/order v2 built elsewhere, and a registry that does not hold it and loads it on a
+        // worker thread once released; the plan's review step offers approve
+        DefaultWorkflowRegistry source = Registries.withSchemaValidator(cache);
+        DefinitionKey key = new DefinitionKey("acme", "order", 2L);
+        RuntimeWorkflow built = source.build(
+                "acme",
+                Definitions.withDecisions("order", 2L, Map.of("approve", ExpensePayloads.ApprovalComment.class)),
+                Map.of());
+        DeferredRegistry registry = DeferredRegistry.loadsLater(key, built);
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+
+        // When: the version is described
+        Future<Optional<WorkflowDefinitionDescriptor>> described = schemas.describe(key);
+
+        // Then: the future is not complete when the call returns
+        assertThat(described.isComplete()).isFalse();
+
+        // And: once the load finishes it completes with a descriptor listing review and approve
+        registry.release();
+        WorkflowDefinitionDescriptor descriptor =
+                AwaitedSchemas.await(described).orElseThrow();
+        assertThat(descriptor.definitionId()).isEqualTo("order");
+        assertThat(descriptor.definitionVersion()).isEqualTo(2L);
+        assertThat(descriptor.humanTasks())
+                .extracting(HumanTaskStepDescriptor::stepId)
+                .containsExactly("review");
+        assertThat(descriptor.humanTasks().get(0).decisions())
+                .extracting(DecisionDescriptor::name)
+                .containsExactly("approve");
+
+        // And: the plan came from exactly one load and was never looked up in the resident set
+        assertThat(registry.loads()).isEqualTo(1);
+        assertThat(registry.lookups()).isZero();
+    }
+
+    @Test
+    @DisplayName("an absent row completes describe and decision empty and validation with a definition violation")
+    void anAbsentRowCompletesEmptyAndValidationReportsTheDefinition() {
+        // Given: a registry whose load of the key fails because no row supplies the version
+        DefinitionKey key = new DefinitionKey("acme", "order", 3L);
+        DeferredRegistry registry = DeferredRegistry.failsLater(key, new WorkflowDefinitionNotFoundException(key));
+        registry.release();
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+
+        // When / Then: describe and decision complete with an empty result rather than failing
+        assertThat(AwaitedSchemas.await(schemas.describe(key))).isEmpty();
+        assertThat(AwaitedSchemas.await(schemas.decision(key, "review", "approve")))
+                .isEmpty();
+
+        // And: validation answers the single definition violation of an unknown version
+        PayloadValidationResult decision =
+                AwaitedSchemas.await(schemas.validateDecision(key, "review", "approve", new JsonObject()));
+        assertThat(decision.violations()).hasSize(1);
+        assertThat(decision.violations().get(0).type()).isEqualTo("definition");
+        PayloadValidationResult start = AwaitedSchemas.await(schemas.validateStart(key, null));
+        assertThat(start.violations()).hasSize(1);
+        assertThat(start.violations().get(0).type()).isEqualTo("definition");
+    }
+
+    @Test
+    @DisplayName("a definition whose stored source does not build is answered as unknown without its cause")
+    void aDefinitionThatDoesNotBuildIsAnsweredAsUnknown() {
+        // Given: a registry whose load fails with a definition refusal that carries a detail
+        DefinitionKey key = new DefinitionKey("acme", "order", 4L);
+        DeferredRegistry registry = DeferredRegistry.failsLater(
+                key, new dev.vertique.workflow.exception.WorkflowDefinitionException("secret-detail of the document"));
+        registry.release();
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+
+        // When / Then: describe and decision complete empty, as for an absent row
+        assertThat(AwaitedSchemas.await(schemas.describe(key))).isEmpty();
+        assertThat(AwaitedSchemas.await(schemas.decision(key, "review", "approve")))
+                .isEmpty();
+
+        // And: validation answers the single definition violation, which does not repeat the cause
+        PayloadValidationResult start = AwaitedSchemas.await(schemas.validateStart(key, null));
+        assertThat(start.violations()).hasSize(1);
+        assertThat(start.violations().get(0).type()).isEqualTo("definition");
+        assertThat(start.violations().toString()).doesNotContain("secret-detail");
+    }
+
+    @Test
+    @DisplayName("a load failure other than an absent row fails the returned future")
+    void aLoadFailureFailsTheFuture() {
+        // Given: a registry whose load fails with a persistence error
+        DefinitionKey key = new DefinitionKey("acme", "order", 2L);
+        IllegalStateException cause = new IllegalStateException("database unavailable");
+        DeferredRegistry registry = DeferredRegistry.failsLater(key, cause);
+        registry.release();
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+
+        // When / Then: every method fails its future with that cause instead of answering empty
+        assertThatThrownBy(() -> AwaitedSchemas.await(schemas.describe(key))).isSameAs(cause);
+        assertThatThrownBy(() -> AwaitedSchemas.await(schemas.decision(key, "review", "approve")))
+                .isSameAs(cause);
+        assertThatThrownBy(() -> AwaitedSchemas.await(schemas.validateDecision(key, "review", "approve", null)))
+                .isSameAs(cause);
+        assertThatThrownBy(() -> AwaitedSchemas.await(schemas.validateStart(key, null)))
+                .isSameAs(cause);
     }
 
     /** A class loader that delegates to its parent and counts every class it is asked to load. */

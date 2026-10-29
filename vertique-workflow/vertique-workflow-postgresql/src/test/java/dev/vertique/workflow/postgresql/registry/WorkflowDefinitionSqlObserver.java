@@ -10,6 +10,7 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.RowSet;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.SqlConnection;
+import io.vertx.sqlclient.Tuple;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -20,12 +21,14 @@ import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 /** Records the result shape of definition-body SQL without changing the application-facing graph. */
 final class WorkflowDefinitionSqlObserver {
 
     private final List<ObservedQuery> queries = new CopyOnWriteArrayList<>();
     private final List<String> statements = new CopyOnWriteArrayList<>();
+    private final List<Execution> executions = new CopyOnWriteArrayList<>();
     private final AtomicBoolean shortenDefinitionLockTimeout = new AtomicBoolean();
     private volatile long shortenedLockTimeoutMillis = 500;
     private volatile long stickyShortenedLockTimeoutMillis;
@@ -38,11 +41,19 @@ final class WorkflowDefinitionSqlObserver {
     private volatile CompletionFailureGate completionFailureGate;
     private volatile CompletionLockGate completionLockGate;
     private volatile CompletionResponseLossGate completionResponseLossGate;
+    private volatile StatementGate statementGate;
     private final AtomicBoolean failNextActivationWrite = new AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicInteger injectedActivationFailures =
             new java.util.concurrent.atomic.AtomicInteger();
     private final java.util.concurrent.atomic.AtomicInteger activationWrites =
             new java.util.concurrent.atomic.AtomicInteger();
+    private final AtomicBoolean failNextFailureMarkWrite = new AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicInteger injectedFailureMarkWrites =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger failureMarkWrites =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.regex.Pattern FAILURE_MARK_WRITE = java.util.regex.Pattern.compile(
+            "update\\s+(?:\"?[\\w$]+\"?\\.)?\"?workflow_definitions\"?\\s+set\\s+failure_reason\\b");
     private static final java.util.regex.Pattern ACTIVATION_WRITE = java.util.regex.Pattern.compile(
             "(insert\\s+into|update|merge\\s+into)\\s+(?:\"?[\\w$]+\"?\\.)?\"?workflow_definition_activations\"?\\b");
 
@@ -56,6 +67,11 @@ final class WorkflowDefinitionSqlObserver {
 
     List<String> statements() {
         return List.copyOf(statements);
+    }
+
+    /** Every statement execution seen, in order, with the values bound to its parameters. */
+    List<Execution> executions() {
+        return List.copyOf(executions);
     }
 
     void shortenNextDefinitionLockTimeout() {
@@ -94,6 +110,30 @@ final class WorkflowDefinitionSqlObserver {
     /** How many statements that insert or update an activation record this observer has seen issued. */
     int activationWrites() {
         return activationWrites.get();
+    }
+
+    /**
+     * Fails the next statement that writes a definition row's failing mark, once, with a non-transient database error.
+     * Other statements, among them the executor's own, are not affected.
+     */
+    void failNextFailureMarkWrite() {
+        failNextFailureMarkWrite.set(true);
+    }
+
+    /** How many times {@link #failNextFailureMarkWrite} has made a statement fail. */
+    int injectedFailureMarkWrites() {
+        return injectedFailureMarkWrites.get();
+    }
+
+    /** How many statements that write a failing mark this observer has seen issued, the failed ones included. */
+    int failureMarkWrites() {
+        return failureMarkWrites.get();
+    }
+
+    private static boolean isFailureMarkWrite(String sql) {
+        return FAILURE_MARK_WRITE
+                .matcher(sql.toLowerCase(Locale.ROOT).replaceAll("\\s+", " "))
+                .find();
     }
 
     private static boolean isActivationWrite(String sql) {
@@ -135,6 +175,16 @@ final class WorkflowDefinitionSqlObserver {
         return gate;
     }
 
+    /**
+     * Holds the result of the next execution of a statement the matcher accepts: the statement runs on the database,
+     * and its caller receives the result only after the gate is released. Other statements are not affected.
+     */
+    StatementGate holdNextResultOf(Predicate<String> matcher) {
+        StatementGate gate = new StatementGate(matcher);
+        statementGate = gate;
+        return gate;
+    }
+
     private Object wrapClient(Object delegate, Class<?> clientType) {
         InvocationHandler handler = (proxy, method, args) -> invokeClient(delegate, method, args);
         return Proxy.newProxyInstance(clientType.getClassLoader(), new Class<?>[] {clientType}, handler);
@@ -155,6 +205,7 @@ final class WorkflowDefinitionSqlObserver {
         if (sql != null) {
             statements.add(sql);
             if (isActivationWrite(sql)) activationWrites.incrementAndGet();
+            if (isFailureMarkWrite(sql)) failureMarkWrites.incrementAndGet();
             long sticky = stickyShortenedLockTimeoutMillis;
             if (isDefinitionLockTimeout(sql)
                     && (sticky > 0 || shortenDefinitionLockTimeout.compareAndSet(true, false))) {
@@ -209,12 +260,20 @@ final class WorkflowDefinitionSqlObserver {
     @SuppressWarnings({"rawtypes", "unchecked"})
     private Object wrapStatement(Object delegate, Class<?> statementType, String sql) {
         InvocationHandler handler = (proxy, method, args) -> {
+            recordExecution(sql, method, args);
             if (method.getName().equals("execute")
                     && isActivationWrite(sql)
                     && failNextActivationWrite.compareAndSet(true, false)) {
                 injectedActivationFailures.incrementAndGet();
                 return Future.failedFuture(
                         new PgException("controlled activation write failure", "ERROR", "XX000", null));
+            }
+            if (method.getName().equals("execute")
+                    && isFailureMarkWrite(sql)
+                    && failNextFailureMarkWrite.compareAndSet(true, false)) {
+                injectedFailureMarkWrites.incrementAndGet();
+                return Future.failedFuture(
+                        new PgException("controlled failure mark write failure", "ERROR", "XX000", null));
             }
             if (method.getName().equals("execute")
                     && sql.toLowerCase(Locale.ROOT).contains("pg_advisory_xact_lock")
@@ -224,6 +283,15 @@ final class WorkflowDefinitionSqlObserver {
                     return gate.released().compose(ignored -> executeAndObserveFuture(delegate, method, args, sql));
                 }
             }
+            StatementGate held = statementGate;
+            if (held != null && method.getName().equals("execute") && held.capture(sql)) {
+                @SuppressWarnings("unchecked")
+                Future<Object> executed = (Future<Object>) executeAndObserveFuture(delegate, method, args, sql);
+                return executed.compose(rows -> {
+                    held.markReached();
+                    return held.released().map(ignored -> rows);
+                });
+            }
             if (sql.toLowerCase(Locale.ROOT).contains("server_encoding")
                     && method.getName().equals("execute")
                     && failNextEncodingLookup.compareAndSet(true, false)) {
@@ -232,6 +300,24 @@ final class WorkflowDefinitionSqlObserver {
             return executeAndObserve(delegate, method, args, sql);
         };
         return Proxy.newProxyInstance(statementType.getClassLoader(), new Class<?>[] {statementType}, handler);
+    }
+
+    private void recordExecution(String sql, Method method, Object[] args) {
+        if (method.getName().equals("execute")) {
+            executions.add(new Execution(
+                    sql, args != null && args.length > 0 && args[0] instanceof Tuple t ? values(t) : List.of()));
+        } else if (method.getName().equals("executeBatch") && args != null && args[0] instanceof List<?> batch) {
+            for (Object tuple : batch) if (tuple instanceof Tuple t) executions.add(new Execution(sql, values(t)));
+        }
+    }
+
+    private static List<Object> values(Tuple tuple) {
+        List<Object> values = new ArrayList<>();
+        for (int i = 0; i < tuple.size(); i++) {
+            Object value = tuple.getValue(i);
+            values.add(value instanceof Object[] array ? java.util.Arrays.asList(array) : value);
+        }
+        return values;
     }
 
     private Object executeAndObserve(Object delegate, Method method, Object[] args, String sql) throws Throwable {
@@ -338,6 +424,9 @@ final class WorkflowDefinitionSqlObserver {
         }
     }
 
+    /** One execution of a statement with the values bound to its parameters, arrays as lists. */
+    record Execution(String sql, List<Object> parameters) {}
+
     record ObservedQuery(String sql, List<ObservedRow> rows) {}
 
     record ObservedRow(String definitionId, Object documentBody, Object documentSizeBytes, Object documentCodePoints) {}
@@ -380,6 +469,40 @@ final class WorkflowDefinitionSqlObserver {
                 }
             }
             return false;
+        }
+    }
+
+    /** Holds the result of one statement execution until released. */
+    static final class StatementGate {
+
+        private final Predicate<String> matcher;
+        private final io.vertx.core.Promise<Void> reached = io.vertx.core.Promise.promise();
+        private final io.vertx.core.Promise<Void> release = io.vertx.core.Promise.promise();
+        private final AtomicBoolean captured = new AtomicBoolean();
+
+        private StatementGate(Predicate<String> matcher) {
+            this.matcher = matcher;
+        }
+
+        /** Completes once the statement has run on the database and its result is being held. */
+        Future<Void> reached() {
+            return reached.future();
+        }
+
+        void release() {
+            release.tryComplete();
+        }
+
+        private Future<Void> released() {
+            return release.future();
+        }
+
+        private boolean capture(String sql) {
+            return matcher.test(sql) && captured.compareAndSet(false, true);
+        }
+
+        private void markReached() {
+            reached.tryComplete();
         }
     }
 

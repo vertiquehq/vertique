@@ -41,7 +41,6 @@ SPDX-License-Identifier: EUPL-1.2
                                         <exclude>dev.vertique:vertique-workflow-postgresql</exclude>
                                         <exclude>dev.vertique:vertique-workflow-engine</exclude>
                                         <exclude>dev.vertique:vertique-workflow-services</exclude>
-                                        <exclude>dev.vertique:vertique-workflow-delayed</exclude>
                                         <exclude>dev.vertique:vertique-workflow-tasks</exclude>
                                         <exclude>dev.vertique:vertique-inbox-outbox-services</exclude>
                                         <exclude>dev.vertique:vertique-inbox-outbox-postgresql</exclude>
@@ -51,7 +50,7 @@ SPDX-License-Identifier: EUPL-1.2
                                     </excludes>
                                     <message>
                                         workflow-events must not depend on sibling adapter modules
-                                        (workflow-postgresql, workflow-services, workflow-delayed, workflow-tasks,
+                                        (workflow-postgresql, workflow-services, workflow-tasks,
                                         inbox-outbox-services, inbox-outbox-postgresql, inbox-outbox-kafka,
                                         inbox-outbox-delayed-job, vertique-services). It must consume only
                                         workflow-core + inbox-outbox-core + vertx-sql-client. The specific outbox

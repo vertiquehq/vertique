@@ -11,9 +11,8 @@ import java.util.Optional;
  *
  * <p>The default implementation, {@link DefaultWorkflowMigrationRegistry}, is populated at
  * Dagger construction time from the {@code Set<WorkflowMigrationHandler<?, ?>>} multibinding
- * declared by {@link WorkflowMigrationModule}. All handlers are validated against the
- * {@link dev.vertique.workflow.registry.WorkflowRegistry} at construction — the registry is
- * read-only after construction.
+ * declared by {@link WorkflowMigrationModule}. The registry is
+ * read-only after construction and answers from the handler index alone: it resolves no plan.
  *
  * <p>The engine consults this registry during instance migration triggered by
  * {@link dev.vertique.workflow.ops.WorkflowOperations#migrate}.
@@ -22,7 +21,8 @@ public interface WorkflowMigrationRegistry {
 
     /**
      * Finds the handler registered for the given
-     * {@code (sourceScope, definitionId, sourceVersion, targetScope, targetVersion)} key.
+     * {@code (sourceScope, definitionId, sourceVersion, targetScope, targetVersion)} key. The handler is returned
+     * whether or not either definition version is resident; the state-type check happens where the migration executes.
      *
      * @param sourceScope the scope of the definition version the instance is currently pinned to; non-null
      * @param definitionId workflow definition id; non-null

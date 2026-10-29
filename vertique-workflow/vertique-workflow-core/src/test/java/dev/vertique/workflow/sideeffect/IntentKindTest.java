@@ -15,11 +15,11 @@ import org.junit.jupiter.api.Test;
 class IntentKindTest {
 
     @Test
-    @DisplayName("all 5 expected constants are present including WORKFLOW_EVENT")
+    @DisplayName("all 4 expected constants are present including WORKFLOW_EVENT")
     void allConstantsPresent() {
         assertThat(IntentKind.values())
                 .extracting(IntentKind::name)
-                .containsExactlyInAnyOrder("SERVICE", "WORKFLOW_TIMER", "DELAYED_JOB", "KAFKA", "WORKFLOW_EVENT");
+                .containsExactlyInAnyOrder("SERVICE", "DELAYED_JOB", "KAFKA", "WORKFLOW_EVENT");
     }
 
     @Test

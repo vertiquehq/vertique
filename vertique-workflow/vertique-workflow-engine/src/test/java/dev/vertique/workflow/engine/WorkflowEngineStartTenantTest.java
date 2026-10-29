@@ -16,6 +16,8 @@ import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.context.InboundDispatchScope;
 import dev.vertique.context.InboundExecutionContextScope;
+import dev.vertique.workflow.engine.history.DecisionLog;
+import dev.vertique.workflow.engine.history.JsonPatchDiff;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
@@ -23,9 +25,13 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.CompleteNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
@@ -116,9 +122,8 @@ class WorkflowEngineStartTenantTest {
         TaskStore<SqlClient> taskStore = mock();
 
         DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
-        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
-        when(registry.isDeployed(currentKey)).thenReturn(true);
-        when(registry.resolve(currentKey)).thenReturn(minimalRuntimeWorkflow());
+        RuntimeWorkflow current = minimalRuntimeWorkflow();
+        when(registry.resolve(currentKey)).thenReturn(current);
         when(dedup.findStart(any(), eq(DEFINITION_ID), any(), any()))
                 .thenReturn(Future.succeededFuture(Optional.empty()));
         when(dedup.claimOrResolveStart(any(), eq(DEFINITION_ID), any(), any(), any(), any()))
@@ -127,27 +132,31 @@ class WorkflowEngineStartTenantTest {
         when(instances.updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
         when(history.nextSequence(any(), any())).thenReturn(Future.succeededFuture(1L));
         when(history.append(any(), any())).thenReturn(Future.succeededFuture());
+        when(history.appendDecision(any(), any())).thenReturn(Future.succeededFuture());
 
         Set<WorkflowSideEffectRecorder<SqlClient>> recorders = Set.of();
-        WorkflowReminderComposeValidator complianceCheck = new WorkflowReminderComposeValidator(registry, recorders);
         RecorderRouter recorderRouter =
-                new RecorderRouter(recorders, WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS, complianceCheck);
+                new RecorderRouter(recorders, WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS);
         WorkflowEventEmitter eventEmitter = new WorkflowEventEmitter(recorderRouter, FIXED_CLOCK);
-        WorkflowHistoryRecorder historyRecorder = new WorkflowHistoryRecorder(history, eventEmitter, FIXED_CLOCK);
-        ReminderScheduler reminderScheduler = new ReminderScheduler(history, recorderRouter, timerStore, FIXED_CLOCK);
+        DecisionLog decisionLog = new DecisionLog(new JsonPatchDiff(), history, Optional.empty(), FIXED_CLOCK);
+        WorkflowHistoryRecorder historyRecorder =
+                new WorkflowHistoryRecorder(history, eventEmitter, FIXED_CLOCK, decisionLog);
+        EmptyCommandRepository commands = new EmptyCommandRepository();
+        ReminderScheduler reminderScheduler = new ReminderScheduler(history, commands, timerStore, FIXED_CLOCK);
         CompensationService compensationService =
-                new CompensationService(instances, history, recorderRouter, eventEmitter, FIXED_CLOCK);
+                new CompensationService(instances, history, recorderRouter, eventEmitter, FIXED_CLOCK, decisionLog);
         InboundExecutionContextScope inboundExecScope = propagator == null
                 ? null
                 : new InboundExecutionContextScope(new InboundDispatchScope(), propagator, Set.of());
         BranchTransitionEngine branchEngine = inboundExecScope == null
                 ? new BranchTransitionEngine(
-                        branchTokens, dedup, history, recorderRouter, taskStore, FIXED_CLOCK, propagator)
+                        branchTokens, dedup, history, recorderRouter, commands, taskStore, FIXED_CLOCK, propagator)
                 : new BranchTransitionEngine(
                         branchTokens,
                         dedup,
                         history,
                         recorderRouter,
+                        commands,
                         taskStore,
                         FIXED_CLOCK,
                         propagator,
@@ -155,6 +164,9 @@ class WorkflowEngineStartTenantTest {
         BranchCompensationOrchestrator branchCompensation =
                 new BranchCompensationOrchestrator(history, recorderRouter, FIXED_CLOCK);
 
+        // The version a start selects is the one the rows name as current
+        InMemoryWorkflowDefinitionRegistryStore definitions =
+                new InMemoryWorkflowDefinitionRegistryStore().seedCode(current);
         WorkflowEngine engine = new WorkflowEngine(
                 txRunner,
                 registry,
@@ -177,7 +189,14 @@ class WorkflowEngineStartTenantTest {
                 reminderScheduler,
                 compensationService,
                 inboundExecScope,
-                new PayloadConstraintCheck(Optional.empty()));
+                new PayloadConstraintCheck(Optional.empty()),
+                WorkflowEngineFactory.registryTypeNames(registry),
+                Optional.empty(),
+                mock(WorkflowExecutionProbe.class),
+                commands,
+                new AcceptingTaskReservations(),
+                () -> null,
+                definitions);
         return new Rig(engine, instances, history, taskStore);
     }
 

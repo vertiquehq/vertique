@@ -61,7 +61,9 @@ final class PurchaseScenarios {
 
     /** Starts a purchase in the scope with the business key; the client is made from the contract and the id. */
     static WorkflowInstanceId startPurchase(ScenarioNode node, String scope, String purchaseId, String poNumber) {
-        return await(purchaseClient(node, scope).start(new StartPurchase(purchaseId, poNumber)));
+        WorkflowInstanceId instance = await(purchaseClient(node, scope).start(new StartPurchase(purchaseId, poNumber)));
+        node.awaitIdle(instance);
+        return instance;
     }
 
     static PurchaseApprovalWorkflow purchaseClient(ScenarioNode node, String scope) {
@@ -82,6 +84,7 @@ final class PurchaseScenarios {
                 new WorkflowActor.User("carol"),
                 null);
         await(node.graph().taskService().complete(approve));
+        node.awaitIdle(instance);
     }
 
     static Pin pin(String startScope, String definitionScope) {

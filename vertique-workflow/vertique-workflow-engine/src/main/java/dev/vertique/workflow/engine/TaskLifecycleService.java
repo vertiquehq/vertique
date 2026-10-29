@@ -3,10 +3,26 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.actor.WorkflowActorMaps;
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
+import dev.vertique.workflow.engine.executor.ClaimLostException;
+import dev.vertique.workflow.engine.executor.CommandActors;
+import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
+import dev.vertique.workflow.engine.executor.Savepoints;
+import dev.vertique.workflow.engine.executor.WorkflowSegments;
+import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.ClaimedCommand;
+import dev.vertique.workflow.engine.spi.CommandActor;
+import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.DedupClaim;
+import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.TaskReservations;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -28,6 +44,7 @@ import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.HumanTaskNode.AssignmentSpec;
 import dev.vertique.workflow.plan.ReminderSpec;
 import dev.vertique.workflow.plan.WorkflowNode;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.state.BranchStatus;
@@ -44,24 +61,31 @@ import dev.vertique.workflow.state.payload.TaskExpiredHistoryPayload;
 import dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload;
 import dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload;
 import dev.vertique.workflow.tasks.TaskAssignment;
+import dev.vertique.workflow.tasks.TaskDecisionDescriptor;
 import dev.vertique.workflow.tasks.TaskReassignmentResult;
 import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.tasks.TaskTransition;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -73,12 +97,13 @@ import org.slf4j.LoggerFactory;
  * (PRD-WF-006, Slice C7). It absorbs the {@code TransactionalTaskCallbacks} bodies and their
  * supporting helpers:
  * <ul>
- *   <li>{@link #taskCompleted} / {@link #doCompleteTask} / {@link #doCompleteTaskBound} /
- *       {@link #doBranchCompleteTask} — task completion (single-path and branch-owned).</li>
- *   <li>{@link #taskDueFired} / {@link #doTaskDueFiredBound} / {@link #advanceForDueExpired} /
+ *   <li>{@link #taskCompleted} — records a task completion behind a reservation of the task; {@link #runCompletion}
+ *       applies it in an executor segment through {@link #doCompleteTaskBound} (single-path) or
+ *       {@link #doBranchCompleteTask} (branch-owned).</li>
+ *   <li>{@link #dueFired} / {@link #doTaskDueFiredBound} / {@link #advanceForDueExpired} /
  *       {@link #doBranchTaskDueFired} — due-date expiry.</li>
  *   <li>{@link #taskReassigned} — task reassignment.</li>
- *   <li>{@link #taskReminderFired} / {@link #doTaskReminderFiredBound} /
+ *   <li>{@link #reminderFired} / {@link #doTaskReminderFiredBound} /
  *       {@link #doBranchTaskReminderFired} — reminder firing.</li>
  *   <li>The task helpers {@link #buildTaskRecord} (static), {@link #resolveAssignment},
  *       {@link #cancelTaskOwnedTimers}, {@link #appendTaskCreatedHistory},
@@ -86,8 +111,8 @@ import org.slf4j.LoggerFactory;
  * </ul>
  *
  * <p>The facade's {@code TransactionalTaskCallbacks} entrypoints
- * ({@code taskCompleted}/{@code taskDueFired}/{@code taskReassigned}/{@code taskReminderFired})
- * delegate their bodies to this service. Payload validation/coercion and plan-hash checks reuse the
+ * ({@code taskCompleted}/{@code taskReassigned}) delegate their bodies to this service, and
+ * the executor runs {@link #dueFired} and {@link #reminderFired} for the timer commands of a task. Payload validation/coercion and plan-hash checks reuse the
  * shared {@link WorkflowPayloads} utilities.
  *
  * <p><b>Driver↔task cycle-break.</b> This service drives the state machine forward after a task
@@ -140,7 +165,7 @@ final class TaskLifecycleService {
     /**
      * Binder-row seam for the instance-owned (non-branch) task drives: {@link #doCompleteTask},
      * {@link #taskReassigned} (which has no branch fork at all — every reassignment is
-     * instance-owned), {@link #taskDueFired}, and {@link #taskReminderFired}. The branch-owned
+     * instance-owned), {@link #dueFired}, and {@link #reminderFired}. The branch-owned
      * paths ({@link #doBranchCompleteTask} and the due/reminder branch forks) MUST NOT use this
      * binder — the bind-once routing rule reserves branch-owned drives for the
      * {@link BranchTransitionEngine} carrier seam. Never {@code null} — the engine assembly seam
@@ -160,6 +185,26 @@ final class TaskLifecycleService {
 
     /** Resolves the logical decision payload type names the plan holds. */
     private final WorkflowTypeNames typeNames;
+
+    /** Takes the execution lock of a task's instance before a completion or a reassignment writes. */
+    private final WorkflowCommandRepository<SqlClient> commands;
+
+    /** Reserves a task for a recorded completion and reopens it when the completion is rejected. */
+    private final TaskReservations<SqlClient> reservations;
+
+    /** Writes the history of what became of a recorded completion. */
+    private final WorkflowHistoryRecorder historyRecorder;
+
+    private final DecisionLog decisions;
+
+    /** Takes the actor of a recorded completion and of a reassignment from the identity of the caller. */
+    private final CommandActors actors;
+
+    /** The size, depth and schema checks a completion meets before it is recorded. */
+    private final RecordTimePayloadValidator recordValidator;
+
+    /** Produces the payload schema of each decision a new task offers; absent when no schema module is installed. */
+    private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
 
     /**
      * Constructs a new task-lifecycle service.
@@ -188,6 +233,15 @@ final class TaskLifecycleService {
      * @param payloadConstraintCheck the opt-in constraint check applied to coerced decision payloads
      * @param typeNames the type-name index the registry fills as definitions register; a decision
      *     payload name the index does not know is resolved as a binary class name
+     * @param commands the command repository whose execution lock a completion or a reassignment takes after it has
+     *     found the task's instance
+     * @param reservations the reservations through which a recorded completion owns its task
+     * @param historyRecorder the recorder of the history entries of command outcomes
+     * @param recording the recording configuration whose bounds a completion's payload must meet, or empty for the
+     *     defaults
+     * @param schemaProducer the producer of the payload schemas a new task's decision snapshot stores, if any
+     * @param actors takes the actor a recorded completion and a reassignment are logged with from the caller's
+     *     identity
      */
     @Inject
     TaskLifecycleService(
@@ -207,7 +261,20 @@ final class TaskLifecycleService {
             Provider<TimerLifecycleService> timerPvd,
             WorkflowContextBinder contextBinder,
             PayloadConstraintCheck payloadConstraintCheck,
-            WorkflowTypeNames typeNames) {
+            WorkflowTypeNames typeNames,
+            WorkflowCommandRepository<SqlClient> commands,
+            TaskReservations<SqlClient> reservations,
+            WorkflowHistoryRecorder historyRecorder,
+            Optional<WorkflowRecordingConfig> recording,
+            Optional<WorkflowPlanSchemaProducer> schemaProducer,
+            CommandActors actors) {
+        this.actors = actors;
+        this.commands = commands;
+        this.reservations = reservations;
+        this.historyRecorder = historyRecorder;
+        this.decisions = historyRecorder == null ? null : historyRecorder.decisions();
+        this.recordValidator = new RecordTimePayloadValidator(recording.orElseGet(WorkflowRecordingConfig::defaults));
+        this.schemaProducer = schemaProducer;
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -287,7 +354,8 @@ final class TaskLifecycleService {
      * @param subjectVersionAtCreation  snapshot of the subject version at creation time, or
      *                                  {@code null} when the instance has no versioned subject ref
      * @param now                       the creation timestamp
-     * @return a new {@link TaskRecord} ready for {@link TaskStore#insertOpen}
+     * @return a new {@link TaskRecord} ready for {@link TaskStore#insertOpen}; it records the node's
+     *     {@code requireVersionStability} so the requirement can be checked from the row
      */
     static TaskRecord buildTaskRecord(
             UUID taskId,
@@ -323,7 +391,22 @@ final class TaskLifecycleService {
                 null, // branchTokenId
                 null, // forkStepId
                 null, // branchId
-                inst.scopeKey());
+                inst.scopeKey(),
+                htn.requireVersionStability(),
+                null); // reservationCommandId
+    }
+
+    /**
+     * Builds the decision snapshot a new task stores: each decision's name, payload type and next step, and the JSON
+     * Schema of its payload when a schema producer is installed. A task whose snapshot carries no schemas is validated
+     * by the executor alone.
+     *
+     * @param htn the human task node the task is created for
+     * @param rw  the resolved runtime workflow the node belongs to
+     * @return the descriptors, one per decision of the node
+     */
+    List<TaskDecisionDescriptor> decisionSnapshot(HumanTaskNode htn, RuntimeWorkflow rw) {
+        return DecisionSnapshots.of(htn, rw, schemaProducer);
     }
 
     /**
@@ -407,115 +490,515 @@ final class TaskLifecycleService {
     // --- Task completion ---
 
     /**
-     * Completes a human task.
+     * Records the completion of a human task and returns once it is recorded; an executor applies it afterwards.
      *
-     * <p>Implementation steps:
+     * <p>Everything here reads the task row alone, never the plan:
      * <ol>
-     *   <li>Non-locking task lookup to discover workflowId and decisionsSnapshot.</li>
-     *   <li>Fingerprint computation and idempotency dedup claim.</li>
-     *   <li>Decision validation and payload coercion.</li>
-     *   <li>Non-locking instance read; validates WAITING/TASK/wait-key slot.</li>
-     *   <li>Cancel the due-date timer (if present) — lock order: timers before tasks.</li>
-     *   <li>Lock the task row for completion; a supplied {@code expectedAssignment} must still match.</li>
-     *   <li>Write completion columns.</li>
-     *   <li>Apply decision applicator to state.</li>
-     *   <li>Optimistic UPDATE on workflow_instances.</li>
-     *   <li>Append TASK_COMPLETED history.</li>
-     *   <li>Drive transitions from the decision's next step.</li>
+     *   <li>A committed duplicate (the same key and fingerprint) returns its earlier result at once, before any other
+     *       check.</li>
+     *   <li>Then, without a lock, the payload's size and depth bounds and, when the task's decision snapshot carries a
+     *       schema for the requested decision, the payload's conformance to it. A refusal writes nothing and takes no
+     *       lock.</li>
+     *   <li>Under the execution lock: the duplicate again (a key with another fingerprint is a conflict), the task
+     *       still {@code OPEN}, the expected assignment, the reviewed subject version when the task requires
+     *       stability, and the decision.</li>
+     *   <li>Then the deduplication claim, the {@code COMPLETION} command and the reservation of the task
+     *       ({@code OPEN} to {@code COMPLETING}, owned by the command).</li>
      * </ol>
+     *
+     * <p>A task created before decision schemas and the stability flag were stored skips the checks that need them; the
+     * executor runs them from the plan.
      *
      * @param cmd the completion command; must not be null
      * @param tx  the active transaction context
-     * @return a {@link Future} resolving to the mutation result
+     * @return a {@link Future} resolving to {@link TaskMutationResult#APPLIED} once the completion is recorded, and also
+     *     for a committed duplicate, which returns its earlier result
      */
     Future<TaskMutationResult> taskCompleted(TaskCompletionCommand cmd, SqlClient tx) {
-        // Step 1: Non-locking task lookup.
-        return taskStore.findById(cmd.taskId(), tx).compose(optTask -> {
-            if (optTask.isEmpty()) {
-                return Future.failedFuture(new WorkflowTaskNotFoundException(cmd.taskId()));
+        String oversized = oversizedIdentifier(cmd);
+        if (oversized != null) {
+            // The value is stored with the command: refuse it before any lock is taken, and echo none of it.
+            return Future.failedFuture(new WorkflowInvalidPayloadException(
+                    "Completion of task '" + cmd.taskId() + "' is refused: the " + oversized + " exceeds "
+                            + MAX_IDENTIFIER_LENGTH + " characters",
+                    List.of(ViolationDetail.unlocated("the " + oversized + " is too long", "payload"))));
+        }
+        String fingerprint;
+        try {
+            fingerprint = fingerprintCanonicalizer.fingerprintCompletion(cmd);
+        } catch (Exception e) {
+            return Future.failedFuture(e);
+        }
+        return dedup.findTaskCompletion(cmd.taskId(), cmd.idempotencyKey(), tx).compose(committed -> {
+            if (committed.isPresent() && fingerprint.equals(committed.get())) {
+                return Future.succeededFuture(TaskMutationResult.APPLIED);
             }
-            TaskRecord task = optTask.get();
+            return taskStore.findById(cmd.taskId(), tx).compose(optTask -> {
+                if (optTask.isEmpty()) {
+                    return Future.<TaskMutationResult>failedFuture(new WorkflowTaskNotFoundException(cmd.taskId()));
+                }
+                TaskRecord task = optTask.get();
+                try {
+                    checkPayload(cmd, task);
+                } catch (WorkflowInvalidPayloadException e) {
+                    return Future.<TaskMutationResult>failedFuture(e);
+                }
+                return recordCompletion(cmd, fingerprint, task, tx);
+            });
+        });
+    }
 
-            // Step 2: Fingerprint and dedup.
-            String fingerprint;
+    /** The longest reviewed subject version or actor id a recorded completion carries, in characters. */
+    private static final int MAX_IDENTIFIER_LENGTH = 255;
+
+    /** Names the first caller-supplied identifier of the completion that is too long to store, or {@code null}. */
+    private static @Nullable String oversizedIdentifier(TaskCompletionCommand cmd) {
+        if (cmd.reviewedSubjectVersion() != null && cmd.reviewedSubjectVersion().length() > MAX_IDENTIFIER_LENGTH) {
+            return "reviewed subject version";
+        }
+        String actorId = WorkflowActorMaps.toMap(cmd.completedBy()).get("value");
+        return actorId != null && actorId.length() > MAX_IDENTIFIER_LENGTH ? "completing actor id" : null;
+    }
+
+    /**
+     * Checks the payload's bounds and, when the task's snapshot holds a schema for the requested decision, its
+     * conformance to that schema. A decision the snapshot does not hold, or one without a schema, is left to the checks
+     * under the lock and to the executor.
+     */
+    private void checkPayload(TaskCompletionCommand cmd, TaskRecord task) {
+        JsonObject schema = task.decisions().stream()
+                .filter(decision -> decision.name().equals(cmd.decisionName()))
+                .map(TaskDecisionDescriptor::payloadSchema)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+        try {
+            if (schema == null) {
+                recordValidator.validate(cmd.payload());
+            } else {
+                recordValidator.validate(
+                        cmd.payload(), schema, "decision '" + EchoedNames.bounded(cmd.decisionName()) + "'");
+            }
+        } catch (WorkflowInvalidPayloadException e) {
+            throw new WorkflowInvalidPayloadException(
+                    "Completion of task '" + task.taskId() + "' of instance '"
+                            + task.workflowId().value() + "' is refused: " + e.getMessage(),
+                    e.violations());
+        }
+    }
+
+    /** The part of the recording that runs under the instance's execution lock. */
+    private Future<TaskMutationResult> recordCompletion(
+            TaskCompletionCommand cmd, String fingerprint, TaskRecord task, SqlClient tx) {
+        return commands.lockInstance(task.workflowId(), tx)
+                .compose(locked -> dedup.findTaskCompletion(cmd.taskId(), cmd.idempotencyKey(), tx))
+                .compose(committed -> {
+                    if (committed.isPresent()) {
+                        return duplicateOf(cmd, fingerprint, committed.get());
+                    }
+                    return taskStore.lockForCompletion(cmd.taskId(), tx).compose(optLocked -> {
+                        if (optLocked.isEmpty()) {
+                            return Future.<TaskMutationResult>failedFuture(
+                                    new WorkflowTaskNotFoundException(cmd.taskId()));
+                        }
+                        TaskRecord locked = optLocked.get();
+                        RuntimeException refusal = refusalOf(cmd, locked);
+                        if (refusal != null) {
+                            return Future.<TaskMutationResult>failedFuture(refusal);
+                        }
+                        return reserve(cmd, fingerprint, locked, tx);
+                    });
+                });
+    }
+
+    /** The result of a completion whose key is already committed: the earlier result, or a conflict. */
+    private static Future<TaskMutationResult> duplicateOf(
+            TaskCompletionCommand cmd, String fingerprint, String existingFingerprint) {
+        if (fingerprint.equals(existingFingerprint)) {
+            return Future.succeededFuture(TaskMutationResult.APPLIED);
+        }
+        return Future.failedFuture(new WorkflowIdempotencyConflictException(
+                "task-complete", cmd.idempotencyKey(), existingFingerprint, fingerprint));
+    }
+
+    /**
+     * Why the locked task row cannot take the completion, in the order the checks run, or {@code null} when it can:
+     * the task is not {@code OPEN}, the caller's expected assignment is stale, the reviewed subject version is missing or
+     * different on a task that requires stability, or the decision is not in the snapshot.
+     */
+    @Nullable
+    private static RuntimeException refusalOf(TaskCompletionCommand cmd, TaskRecord locked) {
+        if (locked.status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
+            return new WorkflowTaskNotWaitingException(cmd.taskId());
+        }
+        if (cmd.expectedAssignment() != null && !cmd.expectedAssignment().equals(locked.assignment())) {
+            return new WorkflowStaleAssignmentException(cmd.taskId(), cmd.expectedAssignment(), locked.assignment());
+        }
+        if (Boolean.TRUE.equals(locked.requireVersionStability())) {
+            if (cmd.reviewedSubjectVersion() == null) {
+                return new WorkflowStaleSubjectVersionException("Task '" + cmd.taskId() + "' (step '" + locked.stepId()
+                        + "') requires a reviewedSubjectVersion but the caller did not supply one");
+            }
+            if (!Objects.equals(cmd.reviewedSubjectVersion(), locked.subjectVersionAtCreation())) {
+                return new WorkflowStaleSubjectVersionException("Task '" + cmd.taskId() + "' (step '"
+                        + locked.stepId() + "'): reviewed version '" + EchoedNames.bounded(cmd.reviewedSubjectVersion())
+                        + "' is not the version the task was created for");
+            }
+        }
+        boolean offered =
+                locked.decisions().stream().anyMatch(decision -> decision.name().equals(cmd.decisionName()));
+        return offered ? null : WorkflowPayloads.unknownDecision();
+    }
+
+    /** The deduplication claim, the {@code COMPLETION} command and the reservation, under the execution lock. */
+    private Future<TaskMutationResult> reserve(
+            TaskCompletionCommand cmd, String fingerprint, TaskRecord task, SqlClient tx) {
+        return dedup.claimOrResolveTaskCompletion(
+                        cmd.taskId(), cmd.idempotencyKey(), task.workflowId(), fingerprint, tx)
+                .compose((DedupClaim claim) -> {
+                    if (!claim.inserted()) {
+                        return duplicateOf(cmd, fingerprint, claim.existingFingerprint());
+                    }
+                    String payloadJson = cmd.payload() == null ? null : Json.encode(cmd.payload());
+                    return actors.recording(
+                                    "COMPLETION",
+                                    actor -> commands.recordCompletion(
+                                            task.workflowId(),
+                                            cmd.taskId(),
+                                            cmd.idempotencyKey(),
+                                            payloadJson,
+                                            CompletionTarget.of(cmd).encode(),
+                                            actor,
+                                            tx))
+                            .compose(commandId ->
+                                    reservations.markCompleting(cmd.taskId().toString(), commandId, tx))
+                            .compose(reserved -> reserved
+                                    ? Future.succeededFuture(TaskMutationResult.APPLIED)
+                                    : Future.<TaskMutationResult>failedFuture(
+                                            new WorkflowTaskNotWaitingException(cmd.taskId())));
+                });
+    }
+
+    /**
+     * What a recorded completion carries beyond its payload: the task, the decision, the reviewed subject version and
+     * the completing actor. Stored as the command's target and read back by the executor.
+     *
+     * @param taskId                the task the completion reserves
+     * @param decisionName          the decision
+     * @param reviewedSubjectVersion the subject version the reviewer saw, or {@code null}
+     * @param completedBy           the actor completing the task
+     */
+    private record CompletionTarget(
+            UUID taskId, String decisionName, @Nullable String reviewedSubjectVersion, WorkflowActor completedBy) {
+
+        static CompletionTarget of(TaskCompletionCommand cmd) {
+            return new CompletionTarget(
+                    cmd.taskId(), cmd.decisionName(), cmd.reviewedSubjectVersion(), cmd.completedBy());
+        }
+
+        String encode() {
+            JsonObject target = new JsonObject()
+                    .put("taskId", taskId.toString())
+                    .put("decision", decisionName)
+                    .put("completedBy", new JsonObject(new LinkedHashMap<>(WorkflowActorMaps.toMap(completedBy))));
+            if (reviewedSubjectVersion != null) {
+                target.put("reviewedSubjectVersion", reviewedSubjectVersion);
+            }
+            return target.encode();
+        }
+
+        static CompletionTarget of(SegmentCommand command) {
+            JsonObject target = new JsonObject(command.targetJson());
+            JsonObject actor = target.getJsonObject("completedBy");
+            String value = actor.getString("value");
+            WorkflowActor completedBy =
+                    switch (actor.getString("kind")) {
+                        case "USER" -> new WorkflowActor.User(value);
+                        case "SERVICE" -> new WorkflowActor.Service(value);
+                        default -> new WorkflowActor.System(value);
+                    };
+            return new CompletionTarget(
+                    UUID.fromString(target.getString("taskId")),
+                    target.getString("decision"),
+                    target.getString("reviewedSubjectVersion"),
+                    completedBy);
+        }
+
+        TaskCompletionCommand toCommand(@Nullable String payloadJson, String idempotencyKey) {
+            Object payload = payloadJson == null ? null : Json.decodeValue(payloadJson);
+            return new TaskCompletionCommand(
+                    taskId, decisionName, payload, idempotencyKey, completedBy, reviewedSubjectVersion);
+        }
+    }
+
+    // --- Recorded completions in a segment ---
+
+    /**
+     * Runs the work of a claimed {@code COMPLETION} command inside the segment's transaction and settles it, except when
+     * its application succeeds: then the executor completes it.
+     *
+     * <ul>
+     *   <li>The instance has ended: the command is rejected and the task, no longer completable, is cancelled.</li>
+     *   <li>The task is not {@code COMPLETING} under this command: the command is stale and no task is touched.</li>
+     *   <li>The instance has failed, or no longer waits for the task: the command is rejected and the task reopened.</li>
+     *   <li>Otherwise the decision is applied under a savepoint: the task is completed and the instance advances. A
+     *       deterministic failure or a step-limit overrun rolls back to the savepoint, the command is rejected with a
+     *       sanitized reason and the task is reopened; the instance is unchanged.</li>
+     * </ul>
+     *
+     * @param head    the peeked head the claim came from
+     * @param claim   the claim
+     * @param command the fenced command
+     * @param tx      the segment's transaction handle
+     * @return the outcome the executor acts on
+     */
+    Future<WorkflowSegments.Outcome> runCompletion(
+            CommandHead head, ClaimedCommand claim, SegmentCommand command, SqlClient tx) {
+        CompletionTarget target;
+        try {
+            target = CompletionTarget.of(command);
+        } catch (RuntimeException e) {
+            return Future.failedFuture(
+                    new IllegalStateException("The recorded completion " + command.commandId() + " cannot be read"));
+        }
+        CompletionTarget recorded = target;
+        return instances.findById(command.workflowId(), tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.<WorkflowSegments.Outcome>failedFuture(
+                        new dev.vertique.workflow.exception.WorkflowInstanceNotFoundException(command.workflowId()));
+            }
+            WorkflowInstance inst = found.get();
+            if (EndedInstanceOutcomes.isEnded(inst.status())) {
+                return settleEnded(
+                        claim,
+                        command,
+                        recorded,
+                        EndedInstanceOutcomes.of(
+                                        command.kind(),
+                                        inst.status().name(),
+                                        EndedInstanceOutcomes.Target.completion(recorded.decisionName()))
+                                .orElseThrow(),
+                        tx);
+            }
+            if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
+                    || !inst.definitionId().equals(head.definitionId())
+                    || inst.definitionVersion() != head.definitionVersion()
+                    || !Objects.equals(inst.planHash(), head.planHash())) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
+            }
+            RuntimeWorkflow rw;
             try {
-                fingerprint = fingerprintCanonicalizer.fingerprintCompletion(cmd);
+                rw = resolveAndCheckPlanHash(inst);
+            } catch (dev.vertique.workflow.exception.WorkflowVersionNotRunnableException
+                    | WorkflowPlanHashDriftException e) {
+                return Future.succeededFuture(WorkflowSegments.Outcome.PIN_MISMATCH);
             } catch (Exception e) {
                 return Future.failedFuture(e);
             }
-
-            return dedup.claimOrResolveTaskCompletion(
-                            cmd.taskId(), cmd.idempotencyKey(), task.workflowId(), fingerprint, tx)
-                    .compose((DedupClaim claim) -> {
-                        if (!claim.inserted()) {
-                            if (fingerprint.equals(claim.existingFingerprint())) {
-                                // Idempotent retry — same key, same fingerprint. The original
-                                // command already advanced the workflow; surface as LOST_TO_RACE
-                                // so the public TaskService.complete(...) caller observes
-                                // success. STALE_NOOP is reserved for stale due-date / no-wait
-                                // cases where the workflow has legitimately moved past the task.
-                                return Future.succeededFuture(TaskMutationResult.LOST_TO_RACE);
-                            }
-                            // Conflict — same key, different fingerprint.
-                            return Future.failedFuture(new WorkflowIdempotencyConflictException(
-                                    "task-complete", cmd.idempotencyKey(), claim.existingFingerprint(), fingerprint));
-                        }
-                        return doCompleteTask(cmd, task, fingerprint, tx);
-                    });
+            return taskStore.findById(recorded.taskId(), tx).compose(optTask -> {
+                if (optTask.isEmpty()
+                        || optTask.get().status() != dev.vertique.workflow.tasks.TaskStatus.COMPLETING
+                        || !Objects.equals(optTask.get().reservationCommandId(), command.commandId())) {
+                    return settleStale(
+                            claim,
+                            command,
+                            recorded,
+                            CommandErrors.completionNotReserved(recorded.decisionName()),
+                            false,
+                            tx);
+                }
+                TaskRecord task = optTask.get();
+                if (inst.status() == WorkflowStatus.FAILED) {
+                    return settleRejected(
+                            claim,
+                            command,
+                            recorded,
+                            EndedInstanceOutcomes.of(
+                                            command.kind(),
+                                            inst.status().name(),
+                                            EndedInstanceOutcomes.Target.completion(recorded.decisionName()))
+                                    .orElseThrow()
+                                    .reason(),
+                            tx);
+                }
+                if (task.branchTokenId() == null && !waitsForTask(inst, recorded.taskId())) {
+                    return settleRejected(
+                            claim, command, recorded, CommandErrors.completionFailure(recorded.decisionName()), tx);
+                }
+                return applyCompletion(claim, command, recorded, task, inst, rw, tx);
+            });
         });
     }
 
-    /**
-     * Performs the actual task-completion writes after the dedup claim has been won.
-     *
-     * <p>Branch-forks on {@link TaskRecord#branchTokenId()}: when the task is branch-owned,
-     * delegates to {@link #doBranchCompleteTask} which gates on the branch token's wait state
-     * instead of the parent instance's.
-     *
-     * @param cmd         the completion command
-     * @param task        the task record fetched in step 1
-     * @param fingerprint the computed fingerprint (unused after claim, kept for context)
-     * @param tx          the active transaction
-     * @return a {@link Future} resolving to the mutation result
-     */
-    private Future<TaskMutationResult> doCompleteTask(
-            TaskCompletionCommand cmd, TaskRecord task, String fingerprint, SqlClient tx) {
-        // Branch fork: route branch-owned tasks through the branch-specific path. The branch-owned
-        // path (doBranchCompleteTask) MUST NOT be binder-bound — bind-once routing rule, C2.
-        if (task.branchTokenId() != null) {
-            return doBranchCompleteTask(cmd, task, tx);
+    private static boolean waitsForTask(WorkflowInstance inst, UUID taskId) {
+        return inst.status() == WorkflowStatus.WAITING
+                && inst.waitType() == WaitType.TASK
+                && taskId.toString().equals(inst.waitKey());
+    }
+
+    private Future<WorkflowSegments.Outcome> applyCompletion(
+            ClaimedCommand claim,
+            SegmentCommand command,
+            CompletionTarget target,
+            TaskRecord task,
+            WorkflowInstance inst,
+            RuntimeWorkflow rw,
+            SqlClient tx) {
+        TaskCompletionCommand cmd;
+        DurableMetadata recorded;
+        try {
+            cmd = target.toCommand(command.payloadJson(), command.dedupKey());
+            recorded = WorkflowContextBinder.decodeCarrier(command.contextJson());
+        } catch (RuntimeException e) {
+            return Future.failedFuture(
+                    new IllegalStateException("The recorded completion " + command.commandId() + " cannot be read"));
         }
+        return historyRecorder
+                .appendCommandHistory(
+                        inst.id(), WorkflowEntryType.COMMAND_RECEIVED, command.commandId(), command.kind(), tx)
+                .compose(received -> Savepoints.attempt(tx, () -> {
+                    if (task.branchTokenId() != null) {
+                        // A branch drive never binds the recorded context: the branch token's own carrier is bound.
+                        return doBranchCompleteTask(cmd, task, command.commandId(), tx);
+                    }
+                    return contextBinder.withRecordedBase(
+                            inst, command.commandId(), null, recorded, () -> doCompleteTaskBound(cmd, task, inst, tx));
+                }))
+                .compose(attempt -> switch (attempt) {
+                    case Savepoints.Attempt.Applied<TaskMutationResult> applied ->
+                        applied.value() == TaskMutationResult.APPLIED
+                                ? historyRecorder
+                                        .appendCommandHistory(
+                                                inst.id(),
+                                                WorkflowEntryType.COMMAND_COMPLETED,
+                                                command.commandId(),
+                                                command.kind(),
+                                                tx)
+                                        .map(done -> WorkflowSegments.Outcome.APPLIED)
+                                : settleStale(
+                                        claim,
+                                        command,
+                                        target,
+                                        CommandErrors.completionNotReserved(target.decisionName()),
+                                        true,
+                                        tx);
+                    case Savepoints.Attempt.Contained<TaskMutationResult> contained -> {
+                        log.warn(
+                                "Completion of task {} (command {}) of instance {} failed and was rejected: {}",
+                                target.taskId(),
+                                command.commandId(),
+                                inst.id().value(),
+                                contained.cause().getClass().getName());
+                        String reason = contained.kind() == Savepoints.Containment.STEP_LIMIT
+                                ? CommandErrors.completionStepLimit(target.decisionName(), driver.stepCap(tx))
+                                : CommandErrors.completionFailure(target.decisionName());
+                        yield settleRejected(claim, command, target, reason, tx);
+                    }
+                });
+    }
 
-        // Load the plan to get the applicator callback and payload type.
-        // The decisions snapshot on the task record carries name/payloadTypeName/nextStepId but
-        // not the applicatorCallbackId — that lives in the plan. We resolve the plan below.
-        WorkflowInstanceId workflowId = task.workflowId();
-
-        return instances.findById(workflowId, tx).compose(optInst -> {
-            if (optInst.isEmpty()
-                    || optInst.get().status() != WorkflowStatus.WAITING
-                    || optInst.get().waitType() != WaitType.TASK
-                    || !cmd.taskId().toString().equals(optInst.get().waitKey())) {
-                // Roll back the dedup row by failing the future (transaction will roll back).
-                return Future.failedFuture(new WorkflowTaskNotWaitingException(cmd.taskId()));
-            }
-            WorkflowInstance inst = optInst.get();
-
-            // Binder-row bind (Contract Appendix C2): instance-owned (no branch) task-completion
-            // drive.
-            return contextBinder.withBound(inst, null, () -> doCompleteTaskBound(cmd, task, inst, tx));
-        });
+    /** Rejects the command and reopens its task, in the segment's transaction. */
+    private Future<WorkflowSegments.Outcome> settleRejected(
+            ClaimedCommand claim, SegmentCommand command, CompletionTarget target, String reason, SqlClient tx) {
+        return commands.reject(command.commandId(), claim.token(), reason, tx)
+                .compose(ClaimLostException::requireRow)
+                .compose(done -> reservations.reopen(target.taskId().toString(), command.commandId(), tx))
+                .compose(reopened -> {
+                    if (!reopened) {
+                        log.warn(
+                                "The task {} was not reserved by its rejected completion {}",
+                                target.taskId(),
+                                command.commandId());
+                    }
+                    return historyRecorder.appendCompletionCommandHistory(
+                            command.workflowId(),
+                            WorkflowEntryType.COMMAND_REJECTED,
+                            command.commandId(),
+                            target.taskId(),
+                            target.decisionName(),
+                            reason,
+                            tx);
+                })
+                .map(done -> WorkflowSegments.Outcome.SETTLED_REJECTED);
     }
 
     /**
-     * Executes the task-completion drive body after the instance-owned binder-row bind is in
-     * effect. Extracted so {@link #doCompleteTask} can pass it to
-     * {@link WorkflowContextBinder#withBound} as a {@link java.util.function.Supplier}.
+     * Settles the command as stale, in the segment's transaction. When {@code reopen} is set, the task it still
+     * reserves is reopened; a stale command never touches a task another command reserves.
+     */
+    private Future<WorkflowSegments.Outcome> settleStale(
+            ClaimedCommand claim,
+            SegmentCommand command,
+            CompletionTarget target,
+            String reason,
+            boolean reopen,
+            SqlClient tx) {
+        Future<Boolean> released = reopen
+                ? reservations.reopen(target.taskId().toString(), command.commandId(), tx)
+                : Future.succeededFuture(false);
+        return released.compose(ignored -> commands.stale(command.commandId(), claim.token(), reason, tx))
+                .compose(ClaimLostException::requireRow)
+                .compose(done -> historyRecorder.appendCompletionCommandHistory(
+                        command.workflowId(),
+                        WorkflowEntryType.COMMAND_STALE,
+                        command.commandId(),
+                        target.taskId(),
+                        target.decisionName(),
+                        reason,
+                        tx))
+                .map(done -> WorkflowSegments.Outcome.SETTLED_STALE);
+    }
+
+    /**
+     * Settles the command of an ended instance as the outcome table states, rejected or cancelled, and cancels the task
+     * it reserved.
+     */
+    private Future<WorkflowSegments.Outcome> settleEnded(
+            ClaimedCommand claim,
+            SegmentCommand command,
+            CompletionTarget target,
+            EndedInstanceOutcomes.Outcome outcome,
+            SqlClient tx) {
+        boolean cancelled = outcome.settlement() == EndedInstanceOutcomes.Settlement.CANCELLED;
+        Instant now = clock.instant();
+        return reservations
+                .reopen(target.taskId().toString(), command.commandId(), tx)
+                .compose(reopened -> reopened
+                        ? taskStore
+                                .markCancelled(
+                                        target.taskId(),
+                                        "INSTANCE_ENDED",
+                                        now,
+                                        new WorkflowActor.System("INSTANCE_ENDED"),
+                                        tx)
+                                .<Void>mapEmpty()
+                        : Future.<Void>succeededFuture())
+                .compose(done -> cancelled
+                        ? commands.cancel(command.commandId(), claim.token(), outcome.reason(), tx)
+                        : commands.reject(command.commandId(), claim.token(), outcome.reason(), tx))
+                .compose(ClaimLostException::requireRow)
+                .compose(done -> historyRecorder.appendCompletionCommandHistory(
+                        command.workflowId(),
+                        cancelled ? WorkflowEntryType.COMMAND_CANCELLED : WorkflowEntryType.COMMAND_REJECTED,
+                        command.commandId(),
+                        target.taskId(),
+                        target.decisionName(),
+                        outcome.reason(),
+                        tx))
+                .map(done -> cancelled
+                        ? WorkflowSegments.Outcome.SETTLED_CANCELLED
+                        : WorkflowSegments.Outcome.SETTLED_REJECTED);
+    }
+
+    /**
+     * Applies a recorded single-path completion after the instance-owned binder-row bind is in effect: the decision is
+     * validated against the plan, the due-date and reminder timers are cancelled, the task is completed, the
+     * applicator runs and the instance advances to the decision's next step.
      *
-     * @param cmd  the completion command
-     * @param task the task record fetched in step 1
+     * @param cmd  the completion command, rebuilt from the recorded command
+     * @param task the task row, {@code COMPLETING} under this completion
      * @param inst the loaded (WAITING/TASK-slot-matched) instance snapshot
-     * @param tx   the active transaction
+     * @param tx   the segment's transaction
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> doCompleteTaskBound(
@@ -539,8 +1022,7 @@ final class TaskLifecycleService {
                             + (node == null ? "null" : node.getClass().getSimpleName())));
         }
 
-        // Step 3a: Version-stability check (cycle 5, §B.3).
-        // Runs after plan-node load and before any row mutations so it does not hold locks.
+        // Version-stability check from the plan, for tasks whose row does not record the requirement.
         if (htn.requireVersionStability()) {
             if (cmd.reviewedSubjectVersion() == null) {
                 return Future.failedFuture(
@@ -550,9 +1032,8 @@ final class TaskLifecycleService {
             if (!Objects.equals(cmd.reviewedSubjectVersion(), task.subjectVersionAtCreation())) {
                 return Future.failedFuture(
                         new WorkflowStaleSubjectVersionException("Task '" + cmd.taskId() + "' (step '" + htn.stepId()
-                                + "'): reviewed version '" + cmd.reviewedSubjectVersion()
-                                + "' did not match snapshot '"
-                                + task.subjectVersionAtCreation() + "'"));
+                                + "'): reviewed version '" + EchoedNames.bounded(cmd.reviewedSubjectVersion())
+                                + "' is not the version the task was created for"));
             }
         }
 
@@ -565,7 +1046,7 @@ final class TaskLifecycleService {
             return Future.failedFuture(WorkflowPayloads.unknownDecision());
         }
 
-        // Step 3b: Payload-nullability validation + coercion.
+        // Payload-nullability validation + coercion.
         Object coercedPayload;
         try {
             coercedPayload = WorkflowPayloads.validateAndCoerceTaskPayload(
@@ -576,7 +1057,8 @@ final class TaskLifecycleService {
             return Future.failedFuture(e);
         }
 
-        // Step 5: Cancel the due-date timer if present (timers before tasks, lock order).
+        // Cancel the due-date timer if present (timers before tasks, lock order). A due-date timer that already fired
+        // against the reserved task settled itself as stale and holds nothing back.
         UUID dueDateTimerId = inst.waitAuxId();
         Future<Void> cancelTimerFuture = Future.succeededFuture();
         if (dueDateTimerId != null) {
@@ -585,12 +1067,7 @@ final class TaskLifecycleService {
                     .compose(transition -> switch (transition) {
                         case APPLIED, LOST_TO_CANCELLED ->
                             appendTimerCancelledHistory(inst, dueDateTimerId, TimerCancelledCause.TASK_COMPLETED, tx);
-                        case LOST_TO_FIRED ->
-                            Future.failedFuture(new WorkflowConflictException("Due-date timer '" + dueDateTimerId
-                                    + "' already fired; cannot complete task '" + cmd.taskId() + "'"));
-                        case LOST_TO_FAILED ->
-                            Future.failedFuture(new WorkflowConflictException("Due-date timer '" + dueDateTimerId
-                                    + "' is in FAILED state; cannot complete task '" + cmd.taskId() + "'"));
+                        case LOST_TO_FIRED, LOST_TO_FAILED -> Future.<Void>succeededFuture();
                     });
         }
 
@@ -598,29 +1075,21 @@ final class TaskLifecycleService {
         HumanTaskNode.TaskDecision finalDecision = planDecision;
 
         return cancelTimerFuture
-                // Step 5b: Cancel pending reminder timers (lock order: timers before tasks).
+                // Cancel pending reminder timers (lock order: timers before tasks).
                 .compose(v -> reminderScheduler.cancelPendingReminders(cmd.taskId(), inst, tx))
-                // Step 6: Lock the task row.
+                // Lock the task row.
                 .compose(v -> taskStore.lockForCompletion(cmd.taskId(), tx))
                 .compose(optLocked -> {
                     if (optLocked.isEmpty()
-                            || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
+                            || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.COMPLETING) {
                         return Future.<TaskMutationResult>failedFuture(
-                                new WorkflowConflictException("Task '" + cmd.taskId() + "' is no longer OPEN"));
-                    }
-                    // Precondition: the assignment the caller saw must still match the locked row.
-                    if (cmd.expectedAssignment() != null
-                            && !cmd.expectedAssignment().equals(optLocked.get().assignment())) {
-                        return Future.<TaskMutationResult>failedFuture(new WorkflowStaleAssignmentException(
-                                cmd.taskId(),
-                                cmd.expectedAssignment(),
-                                optLocked.get().assignment()));
+                                new WorkflowConflictException("Task '" + cmd.taskId() + "' is no longer COMPLETING"));
                     }
 
                     Instant now = clock.instant();
                     String payloadJson = finalCoercedPayload != null ? Json.encode(finalCoercedPayload) : null;
 
-                    // Step 7: Mark completed.
+                    // Mark completed.
                     return taskStore
                             .markCompleted(cmd.taskId(), cmd.decisionName(), payloadJson, now, cmd.completedBy(), tx)
                             .compose(transition -> {
@@ -629,7 +1098,7 @@ final class TaskLifecycleService {
                                             + "' completion lost to concurrent terminal transition"));
                                 }
 
-                                // Step 8: Apply decision applicator.
+                                // Apply decision applicator.
                                 Object stateObj = Json.decodeValue(Buffer.buffer(inst.stateJson()), rw.stateType());
                                 Object newState;
                                 try {
@@ -643,7 +1112,7 @@ final class TaskLifecycleService {
                                             "decisionApplicator threw for decision '" + cmd.decisionName() + "'", e));
                                 }
 
-                                // Step 9: Optimistic UPDATE on workflow_instances.
+                                // Optimistic UPDATE on workflow_instances.
                                 long prevVersion = inst.version();
                                 WorkflowInstance advanced = inst.withVersion(prevVersion + 1)
                                         .withStatus(WorkflowStatus.RUNNING)
@@ -661,8 +1130,10 @@ final class TaskLifecycleService {
                                                         "Optimistic concurrency conflict completing task '"
                                                                 + cmd.taskId() + "'"));
                                             }
-                                            // Step 10: Append TASK_COMPLETED history + emit event.
-                                            return history.nextSequence(inst.id(), tx)
+                                            // Log the decision, then append TASK_COMPLETED history + emit event.
+                                            return decisions
+                                                    .record(inst, advanced, htn.stepId(), "task-decided", tx)
+                                                    .compose(logged -> history.nextSequence(inst.id(), tx))
                                                     .compose(seq -> {
                                                         String hp = Json.encode(new TaskCompletedHistoryPayload(
                                                                 htn.stepId(),
@@ -695,7 +1166,7 @@ final class TaskLifecycleService {
                                                                         tx));
                                                     });
                                         })
-                                        // Step 11: Drive transitions from the next step.
+                                        // Drive transitions from the next step.
                                         .compose(v -> driver.driveTransitions(advanced, rw, tx))
                                         .map(v -> TaskMutationResult.APPLIED);
                             });
@@ -730,10 +1201,12 @@ final class TaskLifecycleService {
      *
      * @param cmd  the completion command
      * @param task the non-locking task snapshot obtained in step 1 of {@link #taskCompleted}
+     * @param commandId the id of the executor command that applies the completion
      * @param tx   the active transaction
      * @return a {@link Future} resolving to the mutation result
      */
-    private Future<TaskMutationResult> doBranchCompleteTask(TaskCompletionCommand cmd, TaskRecord task, SqlClient tx) {
+    private Future<TaskMutationResult> doBranchCompleteTask(
+            TaskCompletionCommand cmd, TaskRecord task, long commandId, SqlClient tx) {
         UUID taskId = cmd.taskId();
         UUID branchTokenId = task.branchTokenId();
         WorkflowInstanceId workflowId = task.workflowId();
@@ -745,16 +1218,8 @@ final class TaskLifecycleService {
                 .compose(v -> taskStore.lockForCompletion(taskId, tx))
                 .compose(optLocked -> {
                     if (optLocked.isEmpty()
-                            || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
+                            || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.COMPLETING) {
                         return Future.<TaskMutationResult>succeededFuture(TaskMutationResult.STALE_NOOP);
-                    }
-                    // Precondition: the assignment the caller saw must still match the locked row.
-                    if (cmd.expectedAssignment() != null
-                            && !cmd.expectedAssignment().equals(optLocked.get().assignment())) {
-                        return Future.<TaskMutationResult>failedFuture(new WorkflowStaleAssignmentException(
-                                taskId,
-                                cmd.expectedAssignment(),
-                                optLocked.get().assignment()));
                     }
                     // Step 3: Lock the branch token.
                     return branchTokens.findByIdForUpdate(branchTokenId, tx).compose(optBranch -> {
@@ -805,9 +1270,8 @@ final class TaskLifecycleService {
                                     return Future.failedFuture(new WorkflowStaleSubjectVersionException(
                                             "Branch task '" + taskId + "' (step '" + htn.stepId()
                                                     + "'): reviewed version '"
-                                                    + cmd.reviewedSubjectVersion()
-                                                    + "' did not match snapshot '"
-                                                    + task.subjectVersionAtCreation() + "'"));
+                                                    + EchoedNames.bounded(cmd.reviewedSubjectVersion())
+                                                    + "' is not the version the task was created for"));
                                 }
                             }
 
@@ -895,24 +1359,49 @@ final class TaskLifecycleService {
                                                                                             + " branch task completion for task '"
                                                                                             + taskId + "'"));
                                                                 }
-
-                                                                // Step 14: Append BRANCH_TASK_COMPLETED history.
-                                                                return appendBranchTaskCompletedHistory(
-                                                                                workflowId,
-                                                                                task.stepId(),
-                                                                                taskId,
-                                                                                cmd,
-                                                                                now,
+                                                                return decisions
+                                                                        .record(
                                                                                 inst,
+                                                                                updatedInst,
+                                                                                task.stepId(),
+                                                                                "task-decided",
                                                                                 tx)
-                                                                        // Step 15-16: Drive transitions from the
-                                                                        // cleared token (already RUNNING) and, if it
-                                                                        // reaches a terminal status, evaluate the
-                                                                        // owning join. updatedInst carries newStateJson
-                                                                        // and the post-applicator subject ref.
-                                                                        .compose(v2 -> forkJoin.driveAndMaybeJoin(
-                                                                                updatedInst, cleared, rw, tx))
-                                                                        .map(v2 -> TaskMutationResult.APPLIED);
+                                                                        .compose(logged -> {
+
+                                                                            // Step 14: Append BRANCH_TASK_COMPLETED
+                                                                            // history.
+                                                                            return appendBranchTaskCompletedHistory(
+                                                                                            workflowId,
+                                                                                            task.stepId(),
+                                                                                            taskId,
+                                                                                            cmd,
+                                                                                            now,
+                                                                                            inst,
+                                                                                            tx)
+                                                                                    // Step 15-16: Drive transitions
+                                                                                    // from the
+                                                                                    // cleared token (already RUNNING)
+                                                                                    // and, if it
+                                                                                    // reaches a terminal status,
+                                                                                    // evaluate the
+                                                                                    // owning join. updatedInst carries
+                                                                                    // newStateJson
+                                                                                    // and the post-applicator subject
+                                                                                    // ref.
+                                                                                    .compose(
+                                                                                            v2 ->
+                                                                                                    forkJoin
+                                                                                                            .driveAndMaybeJoin(
+                                                                                                                    updatedInst,
+                                                                                                                    cleared,
+                                                                                                                    rw,
+                                                                                                                    commandId,
+                                                                                                                    tx))
+                                                                                    .map(
+                                                                                            v2 ->
+                                                                                                    TaskMutationResult
+                                                                                                            .APPLIED);
+                                                                        });
                                                             });
                                                 });
                                     });
@@ -955,10 +1444,10 @@ final class TaskLifecycleService {
     }
 
     /**
-     * Branch path for {@link #taskDueFired}: fires a branch-owned task's due-date timer.
+     * Branch path for {@link #dueFired}: fires a branch-owned task's due-date timer.
      *
      * <p>The due-date timer is identified by {@link TaskRecord#dueDateTimerId()}, which the caller
-     * matched to route here. The timer row is already locked by {@code WorkflowTimerFireExecutor}.
+     * matched to route here. The timer row is already locked by the timer command that runs this path.
      *
      * <p>Lock order: {@code workflow_timers} (already locked by the executor) →
      * {@code workflow_tasks} → {@code workflow_branch_tokens} → {@code workflow_instances}
@@ -966,11 +1455,12 @@ final class TaskLifecycleService {
      *
      * @param workflowId the owning workflow instance id
      * @param task       the task record (non-locking snapshot from the caller)
+     * @param commandId  the id of the executor command that fires the due date
      * @param tx         the active transaction
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> doBranchTaskDueFired(
-            WorkflowInstanceId workflowId, TaskRecord task, SqlClient tx) {
+            WorkflowInstanceId workflowId, TaskRecord task, long commandId, SqlClient tx) {
         // Resolve the pinned plan BEFORE any write: a node that cannot run the pinned version must
         // leave the reminders and the task untouched so the timer can be re-queued for a node that can.
         // The body acts on this instance snapshot and plan; it resolves nothing after its first write.
@@ -985,7 +1475,7 @@ final class TaskLifecycleService {
             } catch (Exception e) {
                 return Future.<TaskMutationResult>failedFuture(e);
             }
-            return doBranchTaskDueFiredResolved(workflowId, task, inst, rw, tx);
+            return doBranchTaskDueFiredResolved(workflowId, task, inst, rw, commandId, tx);
         });
     }
 
@@ -996,11 +1486,17 @@ final class TaskLifecycleService {
      * @param task       the task record (non-locking snapshot from the caller)
      * @param inst       the instance snapshot the plan was resolved for
      * @param rw         the plan resolved for {@code inst} and checked against its stored hash
+     * @param commandId  the id of the executor command that fires the due date
      * @param tx         the active transaction
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> doBranchTaskDueFiredResolved(
-            WorkflowInstanceId workflowId, TaskRecord task, WorkflowInstance inst, RuntimeWorkflow rw, SqlClient tx) {
+            WorkflowInstanceId workflowId,
+            TaskRecord task,
+            WorkflowInstance inst,
+            RuntimeWorkflow rw,
+            long commandId,
+            SqlClient tx) {
         UUID taskId = task.taskId();
         UUID branchTokenId = task.branchTokenId();
 
@@ -1048,7 +1544,7 @@ final class TaskLifecycleService {
                                 return Future.<TaskMutationResult>failedFuture(
                                         new WorkflowDefinitionException("Expected HumanTaskNode with due-date at step '"
                                                 + task.stepId()
-                                                + "' during branch taskDueFired"));
+                                                + "' during branch dueFired"));
                             }
 
                             // Apply onDueMutator to parent state — mirrors single-path
@@ -1098,7 +1594,7 @@ final class TaskLifecycleService {
                                                                     new WorkflowConflictException(
                                                                             "Optimistic concurrency conflict"
                                                                                     + " on branch token"
-                                                                                    + " during taskDueFired"));
+                                                                                    + " during dueFired"));
                                                         }
                                                         // Update parent instance state.
                                                         return instances
@@ -1111,13 +1607,26 @@ final class TaskLifecycleService {
                                                                                         "Optimistic concurrency"
                                                                                                 + " conflict on parent"
                                                                                                 + " instance during"
-                                                                                                + " branch taskDueFired"));
+                                                                                                + " branch dueFired"));
                                                                     }
                                                                     // updatedInstForDue carries the
                                                                     // post-onDueMutator
                                                                     // state and the current subject ref.
-                                                                    return forkJoin.driveAndMaybeJoin(
-                                                                            updatedInstForDue, cleared, rw, tx);
+                                                                    return decisions
+                                                                            .record(
+                                                                                    inst,
+                                                                                    updatedInstForDue,
+                                                                                    task.stepId(),
+                                                                                    "task-expired",
+                                                                                    tx)
+                                                                            .compose(
+                                                                                    logged ->
+                                                                                            forkJoin.driveAndMaybeJoin(
+                                                                                                    updatedInstForDue,
+                                                                                                    cleared,
+                                                                                                    rw,
+                                                                                                    commandId,
+                                                                                                    tx));
                                                                 });
                                                     });
                                         })
@@ -1129,7 +1638,7 @@ final class TaskLifecycleService {
     }
 
     /**
-     * Branch path for {@link #taskReminderFired}: appends a
+     * Branch path for {@link #reminderFired}: appends a
      * {@link WorkflowEntryType#BRANCH_TASK_REMINDER_FIRED} history entry when a reminder fires on
      * a branch-owned task.
      *
@@ -1186,9 +1695,8 @@ final class TaskLifecycleService {
                     // Resolve the HumanTaskNode to get reminder spec for next scheduling.
                     WorkflowNode node = rw.nodeById().get(task.stepId());
                     if (!(node instanceof HumanTaskNode htn)) {
-                        return Future.<Void>failedFuture(
-                                new WorkflowDefinitionException("Expected HumanTaskNode at step '" + task.stepId()
-                                        + "' during branch taskReminderFired"));
+                        return Future.<Void>failedFuture(new WorkflowDefinitionException(
+                                "Expected HumanTaskNode at step '" + task.stepId() + "' during branch reminderFired"));
                     }
                     ReminderSpec spec = htn.reminders();
                     if (spec == null) {
@@ -1207,7 +1715,7 @@ final class TaskLifecycleService {
                                     tx)
                             .compose(v -> {
                                 // Build the same TASK_REMINDER emission shape the single-path produces
-                                // (taskReminderFired single-path branch). Branch-owned task reminders
+                                // (reminderFired single-path branch). Branch-owned task reminders
                                 // must be observable to external consumers identically to single-path;
                                 // only the history-entry type differs.
                                 ReminderScheduler.ReminderEmission emission =
@@ -1316,25 +1824,17 @@ final class TaskLifecycleService {
     // --- Task due-date expiry ---
 
     /**
-     * Fires a task's due-date timer.
-     *
-     * <p>Steps:
-     * <ol>
-     *   <li>Lock the task row for completion.</li>
-     *   <li>If not OPEN → return {@link TaskMutationResult#STALE_NOOP}.</li>
-     *   <li>Mark task EXPIRED.</li>
-     *   <li>Apply the {@code onDueMutator} to the workflow state.</li>
-     *   <li>Optimistic UPDATE on workflow_instances to {@code dueNextStepId}.</li>
-     *   <li>Append {@code TASK_EXPIRED} history.</li>
-     *   <li>Drive transitions.</li>
-     * </ol>
+     * Fires a task's due date, binding the durable context of an instance-owned expiry with
+     * the given binding.
      *
      * @param workflowId the workflow instance this task belongs to
-     * @param taskId     the stable UUID of the task whose due-date timer fired
+     * @param taskId     the stable UUID of the task whose due date passed
+     * @param binding    binds the context of the instance-owned expiry drive
      * @param tx         the active transaction context
      * @return a {@link Future} resolving to the mutation result
      */
-    Future<TaskMutationResult> taskDueFired(WorkflowInstanceId workflowId, UUID taskId, SqlClient tx) {
+    Future<TaskMutationResult> dueFired(
+            WorkflowInstanceId workflowId, UUID taskId, DriveBinding binding, SqlClient tx) {
         // Lock order: workflow_timers BEFORE workflow_tasks (matches taskCompleted/cancel and the
         // reminder-fire executor — preserves the cycle-4 workflow-wide lock-order invariant).
         // Step sequence: (1) non-locking task read for the slot validation, (2) branch-fork on
@@ -1353,7 +1853,7 @@ final class TaskLifecycleService {
 
             // Branch fork: route branch-owned tasks through the branch-specific path.
             if (task.branchTokenId() != null) {
-                return doBranchTaskDueFired(workflowId, task, tx);
+                return doBranchTaskDueFired(workflowId, task, binding.commandId(), tx);
             }
 
             return instances.findById(workflowId, tx).compose(optInst -> {
@@ -1371,16 +1871,15 @@ final class TaskLifecycleService {
                     return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
                 }
 
-                // Binder-row bind (Contract Appendix C2): instance-owned (no branch) due-date
-                // expiry drive.
-                return contextBinder.withBound(inst, null, () -> doTaskDueFiredBound(taskId, inst, tx));
+                // Instance-owned (no branch) due-date expiry drive.
+                return binding.run(inst, () -> doTaskDueFiredBound(taskId, inst, tx));
             });
         });
     }
 
     /**
      * Executes the due-date expiry drive body after the instance-owned binder-row bind is in
-     * effect. Extracted so {@link #taskDueFired} can pass it to
+     * effect. Extracted so {@link #dueFired} can pass it to
      * {@link WorkflowContextBinder#withBound} as a {@link java.util.function.Supplier}.
      *
      * <p>Step 2: cancel pending reminder timers FIRST (acquires REMINDER timer row locks ahead of
@@ -1421,7 +1920,7 @@ final class TaskLifecycleService {
     }
 
     /**
-     * Helper for {@link #taskDueFired}: applies the {@code onDueMutator} to state, advances the
+     * Helper for {@link #dueFired}: applies the {@code onDueMutator} to state, advances the
      * instance to {@code dueNextStepId}, appends {@code TASK_EXPIRED} history, and drives further
      * transitions. Called only after the wait-slot match has been validated.
      *
@@ -1462,31 +1961,35 @@ final class TaskLifecycleService {
                 .withError(null, null)
                 .withUpdatedAt(now);
 
-        // Reminder timers were already cancelled by the caller (taskDueFired) BEFORE the task row
-        // lock was acquired — see taskDueFired for the lock-order rationale.
+        // Reminder timers were already cancelled by the caller (dueFired) BEFORE the task row
+        // lock was acquired — see dueFired for the lock-order rationale.
         return instances
                 .updateOptimistic(advanced, prevVersion, tx)
                 .compose(rowCount -> {
                     if (rowCount == 0) {
                         return Future.<Void>failedFuture(new WorkflowConflictException(
-                                "Optimistic concurrency conflict during taskDueFired for task '" + taskId + "'"));
+                                "Optimistic concurrency conflict during dueFired for task '" + taskId + "'"));
                     }
                     WorkflowActor expiredBy = new WorkflowActor.System("due-date-expired");
-                    return history.nextSequence(inst.id(), tx).compose(seq -> {
-                        String hp = Json.encode(new TaskExpiredHistoryPayload(htn.stepId(), taskId, now, expiredBy));
-                        return history.append(
-                                        new WorkflowHistoryEntry(
-                                                inst.id(), seq, WorkflowEntryType.TASK_EXPIRED, hp, now),
-                                        tx)
-                                .compose(v2 -> eventEmitter.emitEvent(
-                                        inst,
-                                        WorkflowEventType.TASK_EXPIRED,
-                                        seq,
-                                        taskId,
-                                        htn.stepId(),
-                                        Map.of("expiredBy", WorkflowActorMaps.toMap(expiredBy)),
-                                        tx));
-                    });
+                    return decisions
+                            .record(inst, advanced, htn.stepId(), "task-expired", tx)
+                            .compose(logged -> history.nextSequence(inst.id(), tx))
+                            .compose(seq -> {
+                                String hp = Json.encode(
+                                        new TaskExpiredHistoryPayload(htn.stepId(), taskId, now, expiredBy));
+                                return history.append(
+                                                new WorkflowHistoryEntry(
+                                                        inst.id(), seq, WorkflowEntryType.TASK_EXPIRED, hp, now),
+                                                tx)
+                                        .compose(v2 -> eventEmitter.emitEvent(
+                                                inst,
+                                                WorkflowEventType.TASK_EXPIRED,
+                                                seq,
+                                                taskId,
+                                                htn.stepId(),
+                                                Map.of("expiredBy", WorkflowActorMaps.toMap(expiredBy)),
+                                                tx));
+                            });
                 })
                 .compose(v -> driver.driveTransitions(advanced, rw, tx))
                 .map(v -> TaskMutationResult.APPLIED);
@@ -1510,6 +2013,11 @@ final class TaskLifecycleService {
      * @return a {@link Future} resolving to the mutation result
      */
     Future<TaskMutationResult> taskReassigned(TaskReassignmentCommand cmd, SqlClient tx) {
+        // The reassigner is the caller's identity; the command's own reassignedBy is application data.
+        return actors.captured().compose(reassigner -> reassign(cmd, reassigner, tx));
+    }
+
+    private Future<TaskMutationResult> reassign(TaskReassignmentCommand cmd, CommandActor reassigner, SqlClient tx) {
         return taskStore.findById(cmd.taskId(), tx).compose(optTask -> {
             if (optTask.isEmpty()) {
                 return Future.failedFuture(new WorkflowTaskNotFoundException(cmd.taskId()));
@@ -1523,8 +2031,10 @@ final class TaskLifecycleService {
                 return Future.failedFuture(e);
             }
 
-            return dedup.claimOrResolveTaskReassignment(
-                            cmd.taskId(), cmd.idempotencyKey(), task.workflowId(), fingerprint, tx)
+            // The execution lock comes before the dedup claim, the first write.
+            return commands.lockInstance(task.workflowId(), tx)
+                    .compose(locked -> dedup.claimOrResolveTaskReassignment(
+                            cmd.taskId(), cmd.idempotencyKey(), task.workflowId(), fingerprint, tx))
                     .compose((DedupClaim claim) -> {
                         if (!claim.inserted()) {
                             if (fingerprint.equals(claim.existingFingerprint())) {
@@ -1548,7 +2058,8 @@ final class TaskLifecycleService {
                                                 task.workflowId()));
                             }
                             WorkflowInstance inst = optInst.get();
-                            return contextBinder.withBound(inst, null, () -> doReassignBound(cmd, task, inst, tx));
+                            return contextBinder.withBound(
+                                    inst, null, () -> doReassignBound(cmd, task, inst, reassigner, tx));
                         });
                     });
         });
@@ -1562,17 +2073,28 @@ final class TaskLifecycleService {
      * @param cmd  the reassignment command
      * @param task the task record fetched in step 1
      * @param inst the loaded instance snapshot (reused for event emission)
+     * @param reassigner who reassigned the task, logged on the {@code TASK_REASSIGNED} entry
      * @param tx   the active transaction
      * @return a {@link Future} resolving to the mutation result
      */
     private Future<TaskMutationResult> doReassignBound(
-            TaskReassignmentCommand cmd, TaskRecord task, WorkflowInstance inst, SqlClient tx) {
+            TaskReassignmentCommand cmd,
+            TaskRecord task,
+            WorkflowInstance inst,
+            CommandActor reassigner,
+            SqlClient tx) {
         Instant now = clock.instant();
         // Lock the task row first so the expectedAssignment precondition is checked against the
         // row the reassignment then mutates.
         return taskStore
                 .lockForCompletion(cmd.taskId(), tx)
                 .compose(optLocked -> {
+                    if (optLocked.isPresent()
+                            && optLocked.get().status() == dev.vertique.workflow.tasks.TaskStatus.COMPLETING) {
+                        // A task being completed is reserved by its recorded completion and cannot move.
+                        return Future.<TaskReassignmentResult>failedFuture(
+                                new WorkflowTaskNotWaitingException(cmd.taskId()));
+                    }
                     if (optLocked.isEmpty()
                             || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
                         return Future.<TaskReassignmentResult>failedFuture(new WorkflowConflictException(
@@ -1612,6 +2134,8 @@ final class TaskLifecycleService {
                                                             hp,
                                                             now),
                                                     tx)
+                                            .compose(v ->
+                                                    commands.attributeHistory(task.workflowId(), seq, reassigner, tx))
                                             .compose(v -> eventEmitter.emitEvent(
                                                     inst,
                                                     WorkflowEventType.TASK_REASSIGNED,
@@ -1636,68 +2160,70 @@ final class TaskLifecycleService {
     // --- Task reminder firing ---
 
     /**
-     * Fires a task reminder.
+     * Fires a task reminder, binding the durable context of an instance-owned reminder
+     * with the given binding, and tells whether the reminder applied to a task that is still open and awaited.
      *
-     * <p>Cycle-4 reminder-fire handling: appends a {@code TASK_REMINDER_FIRED} history entry and
-     * emits a {@code WORKFLOW_EVENT} side-effect when the task is still
-     * {@link dev.vertique.workflow.tasks.TaskStatus#OPEN}. Returns a succeeded future for both
-     * the applied and no-op (task already closed) paths; the executor marks the timer
-     * {@code FIRED} unconditionally on a succeeded future.
-     *
-     * @param workflowId the owning workflow instance id
-     * @param taskId     the stable UUID of the task
-     * @param timerId    the UUID of the firing reminder timer
+     * @param workflowId      the owning workflow instance id
+     * @param taskId          the stable UUID of the task
+     * @param timerId         the UUID of the firing reminder timer
      * @param scheduledFireAt the {@code fire_at} of the firing timer (anchors the next interval)
-     * @param tx         the active transaction context
-     * @return succeeded future on both applied and no-op paths; failed future on transient errors
+     * @param binding         binds the context of the instance-owned reminder drive
+     * @param tx              the active transaction context
+     * @return {@link TaskMutationResult#APPLIED} when the reminder fired, {@link TaskMutationResult#STALE_NOOP} when its
+     *     task is closed or no longer awaited
      */
-    Future<Void> taskReminderFired(
-            WorkflowInstanceId workflowId, UUID taskId, UUID timerId, Instant scheduledFireAt, SqlClient tx) {
+    Future<TaskMutationResult> reminderFired(
+            WorkflowInstanceId workflowId,
+            UUID taskId,
+            UUID timerId,
+            Instant scheduledFireAt,
+            DriveBinding binding,
+            SqlClient tx) {
         // Non-locking task read to discover branch ownership.
         return taskStore.findById(taskId, tx).compose(maybeTask -> {
             if (maybeTask.isEmpty() || maybeTask.get().status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
                 // Task already closed or not found — no-op; executor marks timer FIRED.
-                return Future.succeededFuture();
+                return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
             }
             TaskRecord task = maybeTask.get();
 
             // Branch fork: route branch-owned tasks through the branch-specific path.
             if (task.branchTokenId() != null) {
-                return doBranchTaskReminderFired(workflowId, task, timerId, scheduledFireAt, tx);
+                return doBranchTaskReminderFired(workflowId, task, timerId, scheduledFireAt, tx)
+                        .map(done -> TaskMutationResult.APPLIED);
             }
 
             // Single-path: verify the parent instance is WAITING on this task.
             return instances.findById(workflowId, tx).compose(maybeInst -> {
                 if (maybeInst.isEmpty()) {
                     // Workflow purged — no-op; executor marks the timer FIRED.
-                    return Future.succeededFuture();
+                    return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
                 }
                 WorkflowInstance inst = maybeInst.get();
                 if (inst.status() != WorkflowStatus.WAITING || inst.waitType() != WaitType.TASK) {
-                    return Future.succeededFuture();
+                    return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
                 }
                 // Verify this reminder belongs to the task the workflow is currently waiting on.
                 if (!taskId.toString().equals(inst.waitKey())) {
-                    return Future.succeededFuture();
+                    return Future.succeededFuture(TaskMutationResult.STALE_NOOP);
                 }
 
-                // Binder-row bind (Contract Appendix C2): instance-owned (no branch) reminder-fire
-                // drive.
-                return contextBinder.withBound(
-                        inst,
-                        null,
-                        () -> doTaskReminderFiredBound(workflowId, task, inst, timerId, scheduledFireAt, tx));
+                // Instance-owned (no branch) reminder-fire drive.
+                return binding.run(
+                                inst,
+                                () -> doTaskReminderFiredBound(workflowId, task, inst, timerId, scheduledFireAt, tx))
+                        .map(done -> TaskMutationResult.APPLIED);
             });
         });
     }
 
     /**
      * Executes the reminder-fire drive body after the instance-owned binder-row bind is in effect.
-     * Extracted so {@link #taskReminderFired} can pass it to
+     * Extracted so {@link #reminderFired} can pass it to
      * {@link WorkflowContextBinder#withBound} as a {@link java.util.function.Supplier}.
      *
      * @param workflowId      the owning workflow instance id
-     * @param task            the task record fetched by {@link #taskReminderFired}
+     * @param task            the task record fetched by {@link #reminderFired}
      * @param inst            the loaded (WAITING/TASK-slot-matched) instance snapshot
      * @param timerId         the UUID of the firing reminder timer
      * @param scheduledFireAt the {@code fire_at} of the firing timer (anchors the next interval)
@@ -1727,7 +2253,7 @@ final class TaskLifecycleService {
         WorkflowNode node = rw.nodeById().get(task.stepId());
         if (!(node instanceof HumanTaskNode htn)) {
             return Future.failedFuture(new WorkflowDefinitionException(
-                    "Expected HumanTaskNode at step '" + task.stepId() + "' during taskReminderFired"));
+                    "Expected HumanTaskNode at step '" + task.stepId() + "' during reminderFired"));
         }
         ReminderSpec spec = htn.reminders();
         if (spec == null) {

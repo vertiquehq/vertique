@@ -4,7 +4,7 @@
 definitionId: purchase-approval
 definitionVersion: 1
 stateType: dev.vertique.workflow.definition.it.fixture.OrderDocState
-contract: dev.vertique.workflow.postgresql.registry.ActivationPropagationIT$PropagationContract
+contract: dev.vertique.workflow.postgresql.registry.ActivationVisibilityIT$PropagationContract
 startPayloadType: dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc
 initialStateMapper: doc.order.fromPlaceOrder
 initialStep: finished

@@ -17,40 +17,44 @@ import dev.vertique.inboxoutbox.OutboxEnvelope;
 import dev.vertique.inboxoutbox.OutboxPublishResult;
 import dev.vertique.services.ResolvedServiceTarget;
 import dev.vertique.services.ServiceTargetResolver;
+import dev.vertique.workflow.dsl.WorkflowBuilder;
+import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
+import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import io.vertx.core.Future;
+import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Integration test that verifies the optional early-fail-fast accessor for
- * {@link WorkflowOutboxComposeValidator}.
+ * Integration test that verifies the startup contract of {@link WorkflowOutboxComposeValidator}.
  *
- * <p>In production the validator is enforced through
- * {@link dev.vertique.workflow.services.recorder.OutboxSideEffectRecorder}'s constructor and
- * runs at Dagger graph construction whenever the workflow engine is built. Applications can
- * additionally expose {@code WorkflowOutboxComposeValidator workflowComposeValidator()} on their
- * {@code AppComponent} and call it during {@code MainVerticle.start()} to fail fast before any
- * verticle deploys; this test exercises that optional accessor surface.
+ * <p>In production the validator is contributed into the {@code Set<WorkflowDefinitionValidator>}
+ * multibinding, so the workflow registry runs it once for every plan it builds. A code plan that
+ * dispatches to a service aborts startup with an {@link IllegalStateException} when no
+ * {@code SERVICE} handler is bound; a graph whose plans dispatch to no service starts without one.
  *
- * <p>The component variants in this test do NOT include the recorder binding (which is what
- * normally forces validation at graph build time), so they isolate the accessor pathway:
+ * <p>The components in this test use a real {@link DefaultWorkflowRegistry} that resolves the
+ * validators per build, as the production module does:
  * <ol>
- *   <li>Constructing the component does NOT throw — the validator is a lazy
- *       {@code @Singleton}.</li>
- *   <li>Calling the accessor on a component composed WITHOUT a {@code SERVICE} handler throws
- *       {@link IllegalStateException} with the documented message.</li>
- *   <li>Calling the accessor on a component composed WITH a {@code SERVICE} handler returns the
- *       validator without error.</li>
+ *   <li>Constructing the component does NOT throw — the registry is a lazy {@code @Singleton}.</li>
+ *   <li>Requesting the registry of a component composed WITHOUT a {@code SERVICE} handler, whose
+ *       code definition dispatches to a service, throws {@link IllegalStateException} with the
+ *       documented message.</li>
+ *   <li>Requesting the validator of a component composed WITH a {@code SERVICE} handler returns it
+ *       without error.</li>
  * </ol>
  *
  * <p>This naming suffix {@code IT} reflects that the test exercises Dagger annotation-processor
@@ -66,10 +70,10 @@ public class WorkflowComposeStartupContractIT {
 
     /**
      * Dagger module that contributes only a {@link DestinationType#DELAYED_JOB} handler. No
-     * {@code SERVICE} handler is registered — simulates a misconfigured application. Also provides
-     * empty stubs for the new {@link WorkflowRegistry} and {@link ServiceTargetResolver}
-     * dependencies so the validator's plan-target walk has nothing to inspect; the test focus is
-     * the SERVICE-handler check.
+     * {@code SERVICE} handler is registered — simulates a misconfigured application. It provides a
+     * real registry that resolves the contributed validators per build and registers a code
+     * definition that dispatches to a service, plus a {@link ServiceTargetResolver} stub; the test
+     * focus is the SERVICE-handler check.
      */
     @Module
     abstract static class DelayedJobOnlyModule {
@@ -82,8 +86,18 @@ public class WorkflowComposeStartupContractIT {
 
         @Provides
         @Singleton
-        static WorkflowRegistry registry() {
-            return new EmptyWorkflowRegistry();
+        @IntoSet
+        static WorkflowDefinitionValidator outboxValidator(WorkflowOutboxComposeValidator impl) {
+            return impl;
+        }
+
+        @Provides
+        @Singleton
+        static WorkflowRegistry registry(Provider<Set<WorkflowDefinitionValidator>> validators) {
+            DefaultWorkflowRegistry registry =
+                    new DefaultWorkflowRegistry(null, validators, new DefaultWorkflowTypeNames(), Optional.empty());
+            registry.register(new ServiceDispatchDefinition());
+            return registry;
         }
 
         @Provides
@@ -96,14 +110,13 @@ public class WorkflowComposeStartupContractIT {
     /**
      * Test Dagger component with only a {@link DestinationType#DELAYED_JOB} handler.
      *
-     * <p>Exposes {@link #workflowComposeValidator()} as the accessor to invoke for the startup
-     * contract check. This mirrors the required {@code AppComponent} accessor pattern documented
-     * in {@link WorkflowOutboxComposeValidator}.
+     * <p>Exposes {@link #workflowRegistry()}: building the registry registers the code definition
+     * that dispatches to a service, which the contributed validator refuses.
      */
     @Singleton
     @Component(modules = DelayedJobOnlyModule.class)
     interface ComponentWithoutServiceHandler {
-        WorkflowOutboxComposeValidator workflowComposeValidator();
+        WorkflowRegistry workflowRegistry();
     }
 
     // --- Component: with SERVICE handler ---
@@ -151,19 +164,20 @@ public class WorkflowComposeStartupContractIT {
     @DisplayName("component builds successfully even without SERVICE handler (lazy @Singleton)")
     void buildingComponent_withoutServiceHandler_doesNotThrow() {
         // This documents the key invariant: component construction is safe.
-        // The validator is only constructed on first accessor call.
+        // The registry, and with it the validation, is only built on first accessor call.
         ComponentWithoutServiceHandler component =
                 DaggerWorkflowComposeStartupContractIT_ComponentWithoutServiceHandler.create();
         assertThat(component).isNotNull();
     }
 
     @Test
-    @DisplayName("calling accessor without SERVICE handler throws IllegalStateException with documented message")
-    void accessor_withoutServiceHandler_throws() {
+    @DisplayName(
+            "building the registry with a service-dispatching plan and no SERVICE handler throws the documented message")
+    void registry_withoutServiceHandler_throws() {
         ComponentWithoutServiceHandler component =
                 DaggerWorkflowComposeStartupContractIT_ComponentWithoutServiceHandler.create();
 
-        assertThatThrownBy(component::workflowComposeValidator)
+        assertThatThrownBy(component::workflowRegistry)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("vertique-workflow-services requires a SERVICE OutboxDestinationHandler")
                 .hasMessageContaining("TransactionalMessagingServiceModule");
@@ -220,18 +234,12 @@ public class WorkflowComposeStartupContractIT {
     // --- Stub registry / resolver ---
 
     /**
-     * Empty {@link WorkflowRegistry} that has no registered workflows. The validator's plan-target
-     * walk iterates an empty collection, which is fine for these tests — the focus is the
-     * SERVICE-handler check.
+     * Empty {@link WorkflowRegistry} that has no registered workflows, for the component that has a
+     * SERVICE handler and only exposes the validator.
      */
     private static final class EmptyWorkflowRegistry implements WorkflowRegistry {
         @Override
         public void register(dev.vertique.workflow.dsl.WorkflowDefinition<?, ?> def) {
-            throw new UnsupportedOperationException("not used in startup-contract test");
-        }
-
-        @Override
-        public void register(String scopeKey, dev.vertique.workflow.dsl.WorkflowDefinition<?, ?> def) {
             throw new UnsupportedOperationException("not used in startup-contract test");
         }
 
@@ -246,8 +254,11 @@ public class WorkflowComposeStartupContractIT {
         }
 
         @Override
-        public List<DefinitionKey> keysFor(String definitionId) {
-            return List.of();
+        public io.vertx.core.Future<RuntimeWorkflow> load(DefinitionKey key) {
+            return find(key)
+                    .map(io.vertx.core.Future::succeededFuture)
+                    .orElseGet(() -> io.vertx.core.Future.failedFuture(
+                            new dev.vertique.workflow.exception.WorkflowDefinitionNotFoundException(key)));
         }
 
         @Override
@@ -256,10 +267,48 @@ public class WorkflowComposeStartupContractIT {
         }
 
         @Override
-        public Collection<RuntimeWorkflow> allRegistered() {
+        public Collection<RuntimeWorkflow> codeDefinitions() {
             return List.of();
         }
     }
+
+    /** Code definition with one service-dispatch step. */
+    private static final class ServiceDispatchDefinition
+            implements WorkflowDefinition<DispatchState, DispatchContract> {
+        @Override
+        public Class<DispatchContract> contract() {
+            return DispatchContract.class;
+        }
+
+        @Override
+        public Class<DispatchState> stateType() {
+            return DispatchState.class;
+        }
+
+        @Override
+        public String definitionId() {
+            return "startup-contract-dispatch";
+        }
+
+        @Override
+        public long definitionVersion() {
+            return 1L;
+        }
+
+        @Override
+        public void define(WorkflowBuilder<DispatchState> wf) {
+            wf.init(DispatchState.class, s -> s)
+                    .initialStep("charge")
+                    .dispatch("charge", "billing.charge", state -> state, "done")
+                    .complete("done");
+        }
+    }
+
+    /** State of {@link ServiceDispatchDefinition}. */
+    record DispatchState(String id) {}
+
+    /** Contract of {@link ServiceDispatchDefinition}. */
+    interface DispatchContract {}
 
     /**
      * Stub {@link ServiceTargetResolver} that throws on every call. The empty registry ensures

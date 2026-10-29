@@ -33,15 +33,18 @@ import java.util.Objects;
  * @param version optimistic-concurrency token; incremented on every successful state mutation
  * @param status current lifecycle status
  * @param businessKey optional application-defined unique key within the definition scope
- * @param subjectRef optional reference to the domain entity this workflow is acting on
- * @param currentStepId the step id the instance is currently at or last completed
+ * @param subjectRef optional reference to the domain entity this workflow is acting on; null for a
+ *     {@link WorkflowStatus#PENDING} instance or one that failed before initialization
+ * @param currentStepId the step id the instance is currently at or last completed; null for a
+ *     {@link WorkflowStatus#PENDING} instance or one that failed before initialization
  * @param waitType typed discriminator identifying what the instance is waiting for ({@link
  *     WaitType#SIGNAL}, {@link WaitType#TIMER}, {@link WaitType#TASK}); null when not waiting
  * @param waitKey the value the instance is waiting on (e.g., signal name); null when not waiting
  * @param waitAuxId auxiliary UUID associated with the current wait state; used by timer waits to
  *     store the timer id so the timer can be cancelled when the wait resolves (e.g., a signal
  *     arrives before the timeout); null when not waiting or when the wait has no associated timer
- * @param stateJson JSON-encoded application state object
+ * @param stateJson JSON-encoded application state object; null for a {@link WorkflowStatus#PENDING}
+ *     instance or one that failed before initialization
  * @param errorType application-defined error category when {@code status} is {@code FAILED} or
  *     {@code COMPENSATED}; null otherwise
  * @param errorMessage human-readable error description; null when no error
@@ -67,11 +70,11 @@ public record WorkflowInstance(
         WorkflowStatus status,
         @Nullable String businessKey,
         @Nullable WorkflowSubjectRef subjectRef,
-        String currentStepId,
+        @Nullable String currentStepId,
         @Nullable WaitType waitType,
         @Nullable String waitKey,
         @Nullable java.util.UUID waitAuxId,
-        String stateJson,
+        @Nullable String stateJson,
         @Nullable String errorType,
         @Nullable String errorMessage,
         Instant createdAt,

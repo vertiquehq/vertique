@@ -3,71 +3,97 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.executor.CommandActors;
+import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
+import dev.vertique.workflow.engine.executor.Savepoints;
+import dev.vertique.workflow.engine.history.DecisionLog;
+import dev.vertique.workflow.engine.registry.FailingMarks;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.CommandHead;
+import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
-import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.inject.Inject;
+import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Package-private collaborator owning the instance-migration flow (PRD-WF-006, Slice C9).
+ * Package-private collaborator owning the instance-migration flow.
  *
- * <p>This class is extracted from {@link WorkflowEngine} as part of the Phase-1 decomposition. It
- * absorbs the tx-aware migration algorithm ({@link #migrate}, {@link #doMigrate}) and the pinned
- * source-definition resolver ({@link #resolvePinnedForInstance}), which is used only by the migration
- * path.
+ * <p>{@link #record} writes a {@code MIGRATION} command in the caller's transaction and runs no workflow code.
+ * {@link #prepare} and {@link #execute} run a claimed command in an executor segment: the first re-checks the pin and
+ * the plans the executor made resident, the second runs the checks, the migration handler and the re-pin under a
+ * savepoint, so that an invalid migration is rejected with the instance unchanged on its previous version.
  *
  * <p>Migration is <b>opt-in</b>: the {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry}
  * binding is declared via {@link WorkflowEngineModule#optionalMigrationRegistry()}, so the injected
  * {@link Optional} is empty when the application did not install
  * {@link dev.vertique.workflow.migration.WorkflowMigrationModule}. When the registry is absent,
- * {@link #migrate} fails immediately with {@link UnsupportedOperationException} before any database
- * work, keeping the fail-fast guard co-located with the registry it guards. Apps that never call
- * {@code migrate} need not wire the module.
+ * {@link #record} fails immediately with {@link UnsupportedOperationException} before any database
+ * work. Apps that never call {@code migrate} need not wire the module.
  *
  * <p>This service drives the state machine forward after applying a migration via
  * {@link WorkflowTransitionDriver#driveTransitions}, so it injects the driver <em>eagerly</em>.
  * Nothing references this service back, so it is a leaf in the construction order and forms no Dagger
  * cycle.
  *
- * <p>Plan-hash checks and the row-updated guard reuse the shared {@link WorkflowPayloads} utilities.
- *
  * <p>Instances are {@code @Singleton} and constructed by Dagger via {@code @Inject}.
  */
 @Singleton
 final class MigrationExecutor {
+
+    private static final Logger log = LoggerFactory.getLogger(MigrationExecutor.class);
+
+    /** The longest target scope a recording accepts, in characters. */
+    private static final int MAX_SCOPE_LENGTH = 255;
 
     // --- Dependencies ---
 
     /**
      * Optional migration registry — {@code null} when the application did not install
      * {@link dev.vertique.workflow.migration.WorkflowMigrationModule}. When {@code null},
-     * {@link #migrate} fails immediately with {@link UnsupportedOperationException}.
+     * {@link #record} fails immediately with {@link UnsupportedOperationException}.
      */
     @jakarta.annotation.Nullable
     private final dev.vertique.workflow.migration.WorkflowMigrationRegistry migrationRegistry;
 
     private final WorkflowRegistry registry;
-    private final FailingDefinitions failing;
+    private final Function<DefinitionKey, Optional<DefinitionFailure>> failing;
+
+    /**
+     * The reads of definition rows on the migration's transaction, which tell whether the target is deprecated;
+     * {@code null} when the store cannot read on a transaction, which leaves no stored status to refuse a target by.
+     */
+    @jakarta.annotation.Nullable
+    private final TransactionalDefinitionReads<SqlClient> definitionReads;
+
     private final WorkflowInstanceRepository<SqlClient> instances;
     private final WorkflowHistoryRepository<SqlClient> history;
+    private final WorkflowCommandRepository<SqlClient> commands;
 
     /**
      * Branch-token repository used to reject migration of instances with active fork-branch state.
@@ -86,12 +112,17 @@ final class MigrationExecutor {
     private final Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility;
 
     /**
-     * Binder-row seam for the instance-owned migrate drive (Contract Appendix C2). Never
-     * {@code null} — the engine assembly seam substitutes {@link WorkflowContextBinder#noop()}
-     * when durable-context wiring is not exercised, so {@link #migrate} always calls
-     * {@link WorkflowContextBinder#withBound} directly.
+     * Binder-row seam for the migration drive. Never {@code null} — the engine assembly seam substitutes
+     * {@link WorkflowContextBinder#noop()} when durable-context wiring is not exercised, so {@link #execute} always calls
+     * {@link WorkflowContextBinder#withRecordedBase} directly.
      */
     private final WorkflowContextBinder contextBinder;
+
+    /** Takes the actor a recorded migration is logged with from the identity of the caller. */
+    private final CommandActors actors;
+
+    /** Logs the migration: its own patch and the full state after it. */
+    private final DecisionLog decisions;
 
     /**
      * Constructs a new migration executor.
@@ -114,8 +145,65 @@ final class MigrationExecutor {
      *     when durable-context wiring is not exercised)
      * @param stateCompatibility the state comparison applied when the source and target state classes differ;
      *     empty refuses such a migration
-     * @param failing this node's evaluation of the scope rows that deployed code conflicts with; a migration into
-     *     a version it holds is refused
+     * @param failing this node's evaluation of the versions of the scopes other than the default one that deployed code
+     *     conflicts with; a migration into a version it reports as failing is refused
+     * @param commands the command repository whose execution lock a migration takes before it reads or writes the
+     *     instance
+     * @param definitionReads the reads of definition rows on the migration's transaction, by which a deprecated target
+     *     is refused; may be {@code null}
+     * @param actors takes the actor a recorded migration is logged with from the caller's identity
+     * @param decisions the decision log that records the migration's patch and baseline
+     */
+    MigrationExecutor(
+            Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
+            WorkflowRegistry registry,
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            @jakarta.annotation.Nullable BranchTokenRepository<SqlClient> branchTokens,
+            WorkflowTransitionDriver driver,
+            Clock clock,
+            WorkflowContextBinder contextBinder,
+            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
+            Function<DefinitionKey, Optional<DefinitionFailure>> failing,
+            WorkflowCommandRepository<SqlClient> commands,
+            @jakarta.annotation.Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
+            CommandActors actors,
+            DecisionLog decisions) {
+        this.decisions = decisions;
+        this.actors = actors;
+        // migrationRegistryOpt is null only from test-only constructors that delegate with null;
+        // Dagger always provides a non-null Optional via @BindsOptionalOf.
+        this.migrationRegistry = migrationRegistryOpt != null ? migrationRegistryOpt.orElse(null) : null;
+        this.registry = registry;
+        this.failing = failing;
+        this.definitionReads = definitionReads;
+        this.instances = instances;
+        this.history = history;
+        this.commands = commands;
+        this.branchTokens = branchTokens;
+        this.driver = driver;
+        this.clock = clock;
+        this.contextBinder = contextBinder;
+        this.stateCompatibility = stateCompatibility != null ? stateCompatibility : Optional.empty();
+    }
+
+    /**
+     * Constructs the migration executor with the failing marks of the node's plan cache, read when a migration runs.
+     *
+     * @param migrationRegistryOpt the optional migration registry
+     * @param registry the workflow registry
+     * @param instances the instance repository
+     * @param history the history repository
+     * @param branchTokens the branch-token repository; may be {@code null}
+     * @param driver the transition driver
+     * @param clock the clock
+     * @param contextBinder the binder-row seam
+     * @param stateCompatibility the state comparison; empty refuses a migration between differing state classes
+     * @param marks the failing marks, resolved when a migration runs because building them builds the plan cache
+     * @param commands the command repository whose execution lock a migration takes
+     * @param definitionReads the reads of definition rows on a transaction, when the store offers them
+     * @param actors takes the actor a recorded migration is logged with from the caller's identity
+     * @param decisions the decision log that records the migration's patch and baseline
      */
     @Inject
     MigrationExecutor(
@@ -128,19 +216,26 @@ final class MigrationExecutor {
             Clock clock,
             WorkflowContextBinder contextBinder,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
-            FailingDefinitions failing) {
-        // migrationRegistryOpt is null only from test-only constructors that delegate with null;
-        // Dagger always provides a non-null Optional via @BindsOptionalOf.
-        this.migrationRegistry = migrationRegistryOpt != null ? migrationRegistryOpt.orElse(null) : null;
-        this.registry = registry;
-        this.failing = failing;
-        this.instances = instances;
-        this.history = history;
-        this.branchTokens = branchTokens;
-        this.driver = driver;
-        this.clock = clock;
-        this.contextBinder = contextBinder;
-        this.stateCompatibility = stateCompatibility != null ? stateCompatibility : Optional.empty();
+            Provider<FailingMarks> marks,
+            WorkflowCommandRepository<SqlClient> commands,
+            Optional<TransactionalDefinitionReads<SqlClient>> definitionReads,
+            CommandActors actors,
+            DecisionLog decisions) {
+        this(
+                migrationRegistryOpt,
+                registry,
+                instances,
+                history,
+                branchTokens,
+                driver,
+                clock,
+                contextBinder,
+                stateCompatibility,
+                key -> marks.get().find(key),
+                commands,
+                definitionReads.orElse(null),
+                actors,
+                decisions);
     }
 
     /**
@@ -155,6 +250,8 @@ final class MigrationExecutor {
      * @param clock the clock
      * @param contextBinder the binder-row seam
      * @param stateCompatibility the state comparison; empty refuses a migration between differing state classes
+     * @param commands the command repository whose execution lock a migration takes
+     * @param decisions the decision log that records the migration's patch and baseline
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -165,7 +262,9 @@ final class MigrationExecutor {
             WorkflowTransitionDriver driver,
             Clock clock,
             WorkflowContextBinder contextBinder,
-            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility) {
+            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
+            WorkflowCommandRepository<SqlClient> commands,
+            DecisionLog decisions) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -176,7 +275,11 @@ final class MigrationExecutor {
                 clock,
                 contextBinder,
                 stateCompatibility,
-                new FailingDefinitions());
+                key -> Optional.empty(),
+                commands,
+                null,
+                CommandActors.ambient(),
+                decisions);
     }
 
     /**
@@ -191,6 +294,8 @@ final class MigrationExecutor {
      * @param driver the transition driver
      * @param clock the clock
      * @param contextBinder the binder-row seam
+     * @param commands the command repository whose execution lock a migration takes
+     * @param decisions the decision log that records the migration's patch and baseline
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -200,7 +305,9 @@ final class MigrationExecutor {
             @jakarta.annotation.Nullable BranchTokenRepository<SqlClient> branchTokens,
             WorkflowTransitionDriver driver,
             Clock clock,
-            WorkflowContextBinder contextBinder) {
+            WorkflowContextBinder contextBinder,
+            WorkflowCommandRepository<SqlClient> commands,
+            DecisionLog decisions) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -210,236 +317,370 @@ final class MigrationExecutor {
                 driver,
                 clock,
                 contextBinder,
-                Optional.empty());
+                Optional.empty(),
+                commands,
+                decisions);
     }
 
-    // --- Migration flow ---
+    // --- Recording ---
 
     /**
-     * Migrates a running instance to {@code targetVersion} within the caller's transaction.
+     * Records a migration of an instance to {@code targetVersion} in the caller's transaction and returns once it is
+     * recorded. Under the instance's execution lock, an ended instance is refused; nothing else is checked here, and no
+     * workflow code runs. An executor runs the migration afterwards, in its own segment, in queue order, and rejects it
+     * with the instance unchanged when it is not valid.
      *
-     * <p>Migration algorithm (PRD-WF-003 §7.4):
-     * <ol>
-     *   <li>Load the instance row (non-locking read; optimistic version bump guards concurrency).</li>
-     *   <li>Resolve the source {@link RuntimeWorkflow} via {@link #resolvePinnedForInstance}
-     *       (fails with {@link dev.vertique.workflow.exception.WorkflowVersionNotRunnableException} carrying
-     *       the instance id when this node holds no code for the pin). Assert plan-hash matches.</li>
-     *   <li>Resolve the target {@link RuntimeWorkflow} for the key of the instance's definition scope, id and the
-     *       target version; a target this node holds no code for fails the same way.</li>
-     *   <li>Reject a deprecated target version with a typed deprecated-version failure before any
-     *       handler call or write.</li>
-     *   <li>Look up the migration handler from the registry; throw
-     *       {@link dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException} if
-     *       absent.</li>
-     *   <li>Reject terminal source status → throw
-     *       {@link dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException}.</li>
-     *   <li>Reject instances with active fork-branch state → same exception.</li>
-     *   <li>Decode state, build {@link dev.vertique.workflow.migration.MigrationContext} (last 50
-     *       history entries), invoke the handler.</li>
-     *   <li>Determine the resume step id from the {@link dev.vertique.workflow.migration.MigrationResult}
-     *       variant; validate it exists in the target plan for
-     *       {@link dev.vertique.workflow.migration.MigrationResult.ContinueAt}.</li>
-     *   <li>Persist the re-pinned snapshot via
-     *       {@link dev.vertique.workflow.engine.spi.WorkflowInstanceRepository#migratePinAndState}.</li>
-     *   <li>Append {@code WORKFLOW_MIGRATED} history.</li>
-     *   <li>Drive transitions from the resume step in the target plan.</li>
-     * </ol>
-     *
-     * <p>If no {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} was provided (the
-     * migration module was not installed), the call immediately fails with
-     * {@link UnsupportedOperationException} before any database work.
-     *
-     * @param id            the workflow instance id; must not be null
-     * @param targetVersion the definition version to migrate to
-     * @param tx            the active SQL transaction; must not be null
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
-     */
-    Future<Void> migrate(WorkflowInstanceId id, long targetVersion, SqlClient tx) {
-        return migrate(id, null, targetVersion, tx);
-    }
-
-    /**
-     * Migrates a running instance to {@code targetVersion} of the definition of its id in {@code targetScope}
-     * within the caller's transaction; the steps of {@link #migrate(WorkflowInstanceId, long, SqlClient)} apply.
-     *
-     * <p>The target scope must be the instance's start scope or the default scope, else the migration fails
-     * with {@link dev.vertique.workflow.exception.WorkflowDefinitionException} naming both scopes. The target
-     * definition must name the contract of the definition the instance is pinned to, else it fails with
-     * {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException}. When the two state
-     * classes differ, the target's must extend the source's, as the state comparison decides; without a
-     * comparison such a migration is refused. These checks run before the handler is looked up or called.
+     * <p>If no {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} was provided (the migration module was
+     * not installed), the call immediately fails with {@link UnsupportedOperationException} before any database work.
      *
      * @param id            the workflow instance id; must not be null
      * @param targetScope   the scope of the target definition; {@code null} means the scope of the definition the
      *     instance is pinned to
      * @param targetVersion the definition version to migrate to
      * @param tx            the active SQL transaction; must not be null
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     * @return a {@link Future} that completes when the migration is recorded
      */
-    Future<Void> migrate(
+    Future<Void> record(
             WorkflowInstanceId id, @jakarta.annotation.Nullable String targetScope, long targetVersion, SqlClient tx) {
         if (migrationRegistry == null) {
             return Future.failedFuture(
                     new UnsupportedOperationException(
                             "migrate() requires WorkflowMigrationRegistry; install WorkflowMigrationModule in your Dagger component"));
         }
-        return instances.findById(id, tx).compose((Optional<WorkflowInstance> optInst) -> {
-            if (optInst.isEmpty()) {
-                return Future.failedFuture(new WorkflowInstanceNotFoundException(id));
-            }
-            WorkflowInstance inst = optInst.get();
+        if (targetScope != null && targetScope.length() > MAX_SCOPE_LENGTH) {
+            // The scope is stored with the command: bound it, and echo none of it
+            return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowDefinitionException(
+                    "migration of instance '" + id.value() + "' is refused: the target scope is longer than "
+                            + MAX_SCOPE_LENGTH + " characters"));
+        }
+        // The execution lock comes first, before the instance is read and before any write.
+        return commands.lockInstance(id, tx)
+                .compose(locked -> instances.findById(id, tx))
+                .compose((Optional<WorkflowInstance> optInst) -> {
+                    if (optInst.isEmpty()) {
+                        return Future.<Void>failedFuture(new WorkflowInstanceNotFoundException(id));
+                    }
+                    WorkflowInstance inst = optInst.get();
+                    if (EndedInstanceOutcomes.isEnded(inst.status())) {
+                        return Future.<Void>failedFuture(
+                                new dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException(
+                                        id, "source instance is in terminal status: " + inst.status()));
+                    }
+                    if (targetScope != null
+                            && !targetScope.equals(inst.definitionScopeKey())
+                            && !targetScope.equals(inst.scopeKey())
+                            && !WorkflowScopes.DEFAULT.equals(targetScope)) {
+                        // a scope the instance can never migrate into: no row is stored and no plan of it is built
+                        return Future.<Void>failedFuture(
+                                new dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException(
+                                        id, "target scope not admitted"));
+                    }
+                    return commands.unsettledTargets(id, "MIGRATION", tx).compose(pending -> {
+                        if (pending.isEmpty()) {
+                            return actors.recording(
+                                            "MIGRATION",
+                                            actor ->
+                                                    commands.recordMigration(id, targetVersion, targetScope, actor, tx))
+                                    .<Void>mapEmpty();
+                        }
+                        // A migration is on its way: the same one is recorded once, another one waits for it
+                        boolean same =
+                                pending.stream().anyMatch(stored -> isTarget(stored, targetScope, targetVersion));
+                        return same
+                                ? Future.<Void>succeededFuture()
+                                : Future.<Void>failedFuture(
+                                        new dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException(
+                                                id, "another migration of the instance is already pending"));
+                    });
+                });
+    }
 
-            // Binder-row bind (Contract Appendix C2): instance-owned migrate drive.
-            return contextBinder.withBound(inst, null, () -> doMigrateSteps(id, targetScope, targetVersion, inst, tx));
-        });
+    /** Whether the stored target of a recorded migration is the given target. */
+    private static boolean isTarget(String stored, @jakarta.annotation.Nullable String scope, long version) {
+        try {
+            io.vertx.core.json.JsonObject json = new io.vertx.core.json.JsonObject(stored);
+            Long storedVersion = json.getLong("version");
+            return storedVersion != null
+                    && storedVersion == version
+                    && java.util.Objects.equals(json.getString("scope"), scope);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    // --- Execution in a segment ---
+
+    /** What the segment of a {@code MIGRATION} command came to. */
+    sealed interface Result {
+
+        /**
+         * The instance is re-pinned to the target and driven to its next wait.
+         *
+         * @param target the target plan the instance is pinned to now
+         */
+        record Applied(RuntimeWorkflow target) implements Result {}
+
+        /**
+         * The migration was rolled back to its savepoint and the instance is unchanged.
+         *
+         * @param reason the sanitized reason
+         */
+        record Rejected(String reason) implements Result {}
     }
 
     /**
-     * Executes steps 2–6 and the {@link #doMigrate} call after the instance-owned binder-row bind
-     * is in effect. Extracted so {@link #migrate} can pass it to
-     * {@link WorkflowContextBinder#withBound} as a {@link java.util.function.Supplier}.
+     * A migration whose pin and plans are what the executor made resident, ready to run.
      *
-     * @param id            the workflow instance id
-     * @param requestedScope the scope of the target definition; {@code null} means the instance's definition scope
-     * @param targetVersion the definition version to migrate to
-     * @param inst          the loaded source instance snapshot
-     * @param tx            the active transaction
-     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     * @param inst      the instance, read under the execution lock
+     * @param command   the fenced command
+     * @param source    the plan the instance is pinned to
+     * @param targetKey the definition the instance moves to, or {@code null} when the recorded target names none
+     * @param target    the plan of the target, or {@code null} when {@code targetKey} is
+     * @param recorded  the durable context recorded with the command
      */
-    private Future<Void> doMigrateSteps(
-            WorkflowInstanceId id,
-            @jakarta.annotation.Nullable String requestedScope,
-            long targetVersion,
+    record Prepared(
             WorkflowInstance inst,
-            SqlClient tx) {
-        // --- Step 2: Resolve source RuntimeWorkflow + plan-hash check ---
+            SegmentCommand command,
+            RuntimeWorkflow source,
+            @jakarta.annotation.Nullable DefinitionKey targetKey,
+            @jakarta.annotation.Nullable RuntimeWorkflow target,
+            @jakarta.annotation.Nullable dev.vertique.core.context.DurableMetadata recorded) {}
+
+    /** The target of a recorded migration. */
+    private record Target(@jakarta.annotation.Nullable String scope, long version) {}
+
+    /** A migration refusal found by a check, with the fixed statement of why; never carries a failure's text. */
+    private static final class Refused extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+        private final transient CommandErrors.MigrationRejection rejection;
+
+        Refused(CommandErrors.MigrationRejection rejection) {
+            super(rejection.name(), null, false, false);
+            this.rejection = rejection;
+        }
+    }
+
+    /**
+     * Checks, without any I/O, that the instance is still pinned to the plan the executor made resident and that the
+     * source and target plans resolve now. Nothing is written for a migration that is not prepared, so the caller
+     * releases the claim.
+     *
+     * @param head    the peeked head the claim came from
+     * @param command the fenced command
+     * @param inst    the instance, read under the execution lock
+     * @return the prepared migration, or empty when the pin changed since the executor warmed the plans, or a plan no
+     *     longer resolves
+     * @throws IllegalStateException when the recorded migration cannot be read
+     */
+    Optional<Prepared> prepare(CommandHead head, SegmentCommand command, WorkflowInstance inst) {
+        if (!inst.definitionScopeKey().equals(head.definitionScopeKey())
+                || !inst.definitionId().equals(head.definitionId())
+                || inst.definitionVersion() != head.definitionVersion()
+                || !java.util.Objects.equals(inst.planHash(), head.planHash())) {
+            return Optional.empty();
+        }
+        Target target;
+        dev.vertique.core.context.DurableMetadata recorded;
+        try {
+            io.vertx.core.json.JsonObject json = new io.vertx.core.json.JsonObject(command.targetJson());
+            target = new Target(json.getString("scope"), json.getLong("version"));
+            recorded = WorkflowContextBinder.decodeCarrier(command.contextJson());
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("The recorded migration " + command.commandId() + " of workflow instance "
+                    + inst.id().value() + " cannot be read");
+        }
         RuntimeWorkflow sourceRw;
         try {
             sourceRw = resolvePinnedForInstance(inst);
             WorkflowPayloads.requirePlanHashMatches(inst, sourceRw);
-        } catch (Exception e) {
-            return Future.failedFuture(e);
-        }
-
-        // --- Step 3: Resolve target RuntimeWorkflow in the target scope ---
-        String targetScope = requestedScope != null ? requestedScope : inst.definitionScopeKey();
-        if (!targetScope.equals(inst.definitionScopeKey())
-                && !targetScope.equals(inst.scopeKey())
-                && !WorkflowScopes.DEFAULT.equals(targetScope)) {
-            return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowDefinitionException(
-                    "migration of instance '" + id.value() + "' to scope '" + EchoedNames.bounded(targetScope)
-                            + "' is refused: scope '" + EchoedNames.bounded(targetScope)
-                            + "' is not visible from the instance's start scope '"
-                            + EchoedNames.bounded(inst.scopeKey())
-                            + "'; an instance migrates only to its start scope or the default scope"));
+        } catch (dev.vertique.workflow.exception.WorkflowVersionNotRunnableException
+                | dev.vertique.workflow.exception.WorkflowPlanHashDriftException e) {
+            return Optional.empty();
         }
         DefinitionKey targetKey;
         try {
-            targetKey = new DefinitionKey(targetScope, inst.definitionId(), targetVersion);
+            targetKey = new DefinitionKey(
+                    target.scope() != null ? target.scope() : inst.definitionScopeKey(),
+                    inst.definitionId(),
+                    target.version());
         } catch (IllegalArgumentException e) {
-            // A version no key can hold is not registered.
-            return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException(
-                    targetScope, inst.definitionId(), targetVersion, inst.id()));
-        }
-        // A version this node evaluated as failing admits no new work either; refuse before anything is resolved,
-        // looked up or written.
-        Optional<dev.vertique.workflow.registry.store.DefinitionFailure> failure = failing.find(targetKey);
-        if (failure.isPresent()) {
-            return Future.failedFuture(
-                    new dev.vertique.workflow.exception.WorkflowDefinitionFailingException(targetKey, failure.get()));
+            // A scope or version no key can hold names no definition: the migration is rejected.
+            return Optional.of(new Prepared(inst, command, sourceRw, null, null, recorded));
         }
         RuntimeWorkflow targetRw;
         try {
             targetRw = PinnedPlans.resolve(registry, targetKey);
-        } catch (Exception e) {
-            return Future.failedFuture(e);
+        } catch (dev.vertique.workflow.exception.WorkflowVersionNotRunnableException
+                | dev.vertique.workflow.exception.WorkflowPlanHashDriftException e) {
+            return Optional.empty();
         }
-
-        // A deprecated target admits no new work; refuse before any handler call or write.
-        if (registry.isDeprecated(targetKey)) {
-            return Future.failedFuture(WorkflowEngine.deprecatedRefusal(targetKey));
-        }
-
-        // The target must name the source's contract and, when its state class differs, extend the source's;
-        // refuse before any handler call or write.
-        Future<Void> incompatible = refuseIncompatibleTarget(inst, sourceRw, targetRw, targetKey);
-        if (incompatible != null) {
-            return incompatible;
-        }
-
-        // --- Step 4: Look up migration handler ---
-        String defId = inst.definitionId();
-        long fromVersion = inst.definitionVersion();
-        Optional<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>> handlerOpt =
-                migrationRegistry.find(inst.definitionScopeKey(), defId, fromVersion, targetScope, targetVersion);
-        if (handlerOpt.isEmpty()) {
-            return Future.failedFuture(new dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException(
-                    id, defId, fromVersion, targetVersion));
-        }
-        dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?> handler = handlerOpt.get();
-
-        // --- Step 5: Reject terminal source status ---
-        if (isTerminal(inst.status())) {
-            return Future.failedFuture(new dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException(
-                    id, "source instance is in terminal status: " + inst.status()));
-        }
-
-        // --- Step 6: Reject instances with active fork-branch state ---
-        Future<Void> branchCheck;
-        if (branchTokens != null) {
-            branchCheck = branchTokens.findActiveByWorkflow(id, tx).compose(activeBranches -> {
-                if (!activeBranches.isEmpty()) {
-                    return Future.failedFuture(
-                            new dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException(
-                                    id, "source instance has active fork-branch state"));
-                }
-                return Future.succeededFuture();
-            });
-        } else {
-            branchCheck = Future.succeededFuture();
-        }
-
-        return branchCheck.compose(v -> doMigrate(inst, sourceRw, targetRw, targetKey.scopeKey(), handler, tx));
+        return Optional.of(new Prepared(inst, command, sourceRw, targetKey, targetRw, recorded));
     }
 
     /**
-     * Checks that the target definition names the source's contract and that its state class is the source's or
-     * extends it.
+     * Runs a prepared migration in the segment's transaction, with the recorded context bound. Everything runs under a
+     * savepoint: a missing handler, a handler whose state types are not those of the definitions, a deprecated or
+     * inadmissible target, a source that cannot be migrated, a handler or re-pin that fails, and an overrun of the step
+     * cap roll back to it and reject the command with the instance unchanged.
      *
-     * @return a failed future describing the refusal, or {@code null} when the target is acceptable
+     * @param prepared the prepared migration
+     * @param tx       the segment's transaction handle
+     * @return the result the engine settles the command by
      */
-    private Future<Void> refuseIncompatibleTarget(
-            WorkflowInstance inst, RuntimeWorkflow sourceRw, RuntimeWorkflow targetRw, DefinitionKey targetKey) {
-        String subject = "migration of instance '" + inst.id().value() + "' from '"
-                + EchoedNames.bounded(inst.definitionId()) + "' v" + inst.definitionVersion() + " in scope '"
-                + EchoedNames.bounded(inst.definitionScopeKey()) + "' to v" + targetKey.definitionVersion()
-                + " in scope '" + EchoedNames.bounded(targetKey.scopeKey()) + "' is refused: ";
+    Future<Result> execute(Prepared prepared, SqlClient tx) {
+        WorkflowInstance inst = prepared.inst();
+        if (prepared.targetKey() == null) {
+            return Future.succeededFuture(new Result.Rejected(
+                    CommandErrors.migrationRejected(CommandErrors.MigrationRejection.TARGET_NOT_ADMITTED)));
+        }
+        return contextBinder.withRecordedBase(
+                inst, prepared.command().commandId(), null, prepared.recorded(), () -> Savepoints.attemptAnyFailure(
+                                tx,
+                                () -> migrateUnderSavepoint(
+                                        inst, prepared.source(), prepared.target(), prepared.targetKey(), tx))
+                        .map(attempt -> switch (attempt) {
+                            case Savepoints.Attempt.Applied<Void> applied -> new Result.Applied(prepared.target());
+                            case Savepoints.Attempt.Contained<Void> contained -> {
+                                log.warn(
+                                        "Migration (command {}) of instance {} failed and was rejected: {}",
+                                        prepared.command().commandId(),
+                                        inst.id().value(),
+                                        contained.cause().getClass().getName());
+                                log.debug("Migration failure", contained.cause());
+                                yield new Result.Rejected(reasonOf(contained, tx));
+                            }
+                        }));
+    }
+
+    private String reasonOf(Savepoints.Attempt.Contained<Void> contained, SqlClient tx) {
+        if (contained.kind() == Savepoints.Containment.STEP_LIMIT) {
+            return CommandErrors.migrationStepLimit(driver.stepCap(tx));
+        }
+        Throwable cause = contained.cause();
+        for (int depth = 0; cause != null && depth < 16; depth++) {
+            if (cause instanceof Refused refused) {
+                return CommandErrors.migrationRejected(refused.rejection);
+            }
+            cause = cause.getCause() == cause ? null : cause.getCause();
+        }
+        return CommandErrors.migrationRejected(CommandErrors.MigrationRejection.FAILED);
+    }
+
+    /**
+     * The checks that need the plans and the handler, and the migration itself: the target must be visible to the
+     * instance, admitted, available (not deprecated or retired), of the source's contract and, when its state class differs, an extension of
+     * the source's; a handler must exist and name the definitions' state types; the source must be neither ended nor
+     * failed and must hold no active branch. Then the handler is invoked, the instance is re-pinned through pin
+     * admission and driven from the resume step in the target plan.
+     */
+    private Future<Void> migrateUnderSavepoint(
+            WorkflowInstance inst,
+            RuntimeWorkflow sourceRw,
+            RuntimeWorkflow targetRw,
+            DefinitionKey targetKey,
+            SqlClient tx) {
+        WorkflowInstanceId id = inst.id();
+        String targetScope = targetKey.scopeKey();
+        if (!targetScope.equals(inst.definitionScopeKey())
+                && !targetScope.equals(inst.scopeKey())
+                && !WorkflowScopes.DEFAULT.equals(targetScope)) {
+            return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_NOT_ADMITTED));
+        }
+        // A version this node evaluated as failing admits no new work either.
+        if (failing.apply(targetKey).isPresent()) {
+            return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_NOT_ADMITTED));
+        }
+        // A target that is not available admits no new work, whatever plan this node still holds for it; refuse before
+        // any handler call or write.
+        return targetStatus(targetKey, tx)
+                .compose(status -> status == DefinitionStatus.DEPRECATED
+                        ? Future.<Void>failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_DEPRECATED))
+                        : status != null && status != DefinitionStatus.AVAILABLE
+                                ? Future.<Void>failedFuture(
+                                        new Refused(CommandErrors.MigrationRejection.TARGET_NOT_ADMITTED))
+                                : migrateToAdmittedTarget(inst, sourceRw, targetRw, targetKey, tx));
+    }
+
+    /** The status of the stored row of the target, read on the migration's transaction; {@code null} when none. */
+    private Future<DefinitionStatus> targetStatus(DefinitionKey target, SqlClient tx) {
+        if (definitionReads == null) {
+            return Future.succeededFuture(null);
+        }
+        return definitionReads
+                .selectionRead(target.scopeKey(), target.definitionId(), tx)
+                .map(read -> read.versions().stream()
+                        .filter(row -> row.key().equals(target))
+                        .map(row -> row.status())
+                        .findFirst()
+                        .orElse(null));
+    }
+
+    private Future<Void> migrateToAdmittedTarget(
+            WorkflowInstance inst,
+            RuntimeWorkflow sourceRw,
+            RuntimeWorkflow targetRw,
+            DefinitionKey targetKey,
+            SqlClient tx) {
+        WorkflowInstanceId id = inst.id();
+        String targetScope = targetKey.scopeKey();
+        // The target must name the source's contract and, when its state class differs, extend the source's.
+        if (!incompatibilityFree(sourceRw, targetRw)) {
+            return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.TARGET_NOT_ADMITTED));
+        }
+        if (migrationRegistry == null) {
+            return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.HANDLER_MISSING));
+        }
+        Optional<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>> handlerOpt;
+        try {
+            handlerOpt = migrationRegistry.find(
+                    inst.definitionScopeKey(),
+                    inst.definitionId(),
+                    inst.definitionVersion(),
+                    targetScope,
+                    targetKey.definitionVersion());
+        } catch (dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException e) {
+            return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.STATE_TYPE_MISMATCH));
+        }
+        if (handlerOpt.isEmpty()) {
+            return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.HANDLER_MISSING));
+        }
+        dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?> handler = handlerOpt.get();
+        if (!handler.sourceStateType().equals(sourceRw.stateType())
+                || !handler.targetStateType().equals(targetRw.stateType())) {
+            return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.STATE_TYPE_MISMATCH));
+        }
+        // A source that has failed or ended cannot be migrated.
+        if (isTerminal(inst.status())) {
+            return Future.failedFuture(new Refused(CommandErrors.MigrationRejection.INSTANCE_STATE));
+        }
+        Future<Void> branchCheck;
+        if (branchTokens != null) {
+            branchCheck = branchTokens
+                    .findActiveByWorkflow(id, tx)
+                    .compose(activeBranches -> activeBranches.isEmpty()
+                            ? Future.<Void>succeededFuture()
+                            : Future.<Void>failedFuture(new Refused(CommandErrors.MigrationRejection.INSTANCE_STATE)));
+        } else {
+            branchCheck = Future.succeededFuture();
+        }
+        return branchCheck.compose(v -> doMigrate(inst, sourceRw, targetRw, targetScope, handler, tx));
+    }
+
+    /** Whether the target names the source's contract and its state class is the source's or extends it. */
+    private boolean incompatibilityFree(RuntimeWorkflow sourceRw, RuntimeWorkflow targetRw) {
         if (!sourceRw.contractName().equals(targetRw.contractName())) {
-            return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException(
-                    targetKey,
-                    subject + "the target names contract '" + targetRw.contractName() + "' but the source names '"
-                            + sourceRw.contractName() + "'"));
+            return false;
         }
         if (sourceRw.stateType().equals(targetRw.stateType())) {
-            return null;
+            return true;
         }
-        String states = "the target state type differs from the source's";
         if (stateCompatibility.isEmpty()) {
-            return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowDefinitionException(subject + states
-                    + " and the state comparison is unavailable (no WorkflowStateCompatibility is" + " bound)"));
+            return false;
         }
-        try {
-            Optional<String> path =
-                    stateCompatibility.orElseThrow().firstIncompatibility(sourceRw.stateType(), targetRw.stateType());
-            if (path.isPresent()) {
-                return Future.failedFuture(new dev.vertique.workflow.exception.WorkflowDefinitionException(
-                        subject + states + " and does not extend it: property '" + path.orElseThrow()
-                                + "' is removed or has another type"));
-            }
-        } catch (RuntimeException e) {
-            return Future.failedFuture(e);
-        }
-        return null;
+        return stateCompatibility
+                .orElseThrow()
+                .firstIncompatibility(sourceRw.stateType(), targetRw.stateType())
+                .isEmpty();
     }
 
     /**
@@ -464,7 +705,7 @@ final class MigrationExecutor {
             SqlClient tx) {
         WorkflowInstanceId id = inst.id();
 
-        // --- Step 7: Decode state and build MigrationContext ---
+        // --- Decode state and build MigrationContext ---
         return history.listRecentByInstance(id, 50, tx).compose(recentRaw -> {
             // recentRaw is DESC; convert to ascending WorkflowHistoryEntrySummary list.
             List<dev.vertique.workflow.state.WorkflowHistoryEntrySummary> recentHistory = recentRaw.stream()
@@ -496,7 +737,7 @@ final class MigrationExecutor {
                         e));
             }
 
-            // --- Step 8 & 9: Invoke handler ---
+            // --- Invoke handler ---
             dev.vertique.workflow.migration.MigrationResult<?> result;
             try {
                 @SuppressWarnings("unchecked")
@@ -510,7 +751,7 @@ final class MigrationExecutor {
                         e));
             }
 
-            // --- Step 10: Resolve resume step ---
+            // --- Resolve resume step ---
             String sourceStepId = inst.currentStepId();
             String newStepId =
                     switch (result) {
@@ -552,8 +793,8 @@ final class MigrationExecutor {
                     null,
                     inst.createdAt(),
                     clock.instant(),
-                    // AC-6/FR-WF-CTX-011 immutability: migrate must never re-capture or alter
-                    // metadata — carry the pre-migration instance's captured context unchanged.
+                    // A migration never re-captures or alters the metadata: it carries the pre-migration
+                    // instance's captured context unchanged.
                     inst.metadata(),
                     inst.scopeKey(),
                     targetScope);
@@ -571,12 +812,14 @@ final class MigrationExecutor {
                     now,
                     WorkflowPayloads.commandCorrelationId());
 
-            // --- Step 11: Persist re-pinned snapshot ---
+            // --- Persist re-pinned snapshot ---
             return instances
                     .migratePinAndState(migrated, prevVersion, tx)
                     .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                             rowCount, "instance '" + id.value() + "' during migrate"))
-                    // --- Step 12: Append WORKFLOW_MIGRATED history ---
+                    // --- Log the migration: its patch under both versions' redaction, then the full state ---
+                    .compose(v -> logMigration(inst, migrated, sourceStepId, tx))
+                    // --- Append WORKFLOW_MIGRATED history ---
                     .compose(v -> history.nextSequence(id, tx))
                     .compose(seq -> history.append(
                             new dev.vertique.workflow.state.WorkflowHistoryEntry(
@@ -586,9 +829,38 @@ final class MigrationExecutor {
                                     Json.encode(histPayload),
                                     now),
                             tx))
-                    // --- Step 13: Drive transitions in the target plan ---
+                    // --- Drive transitions in the target plan ---
                     .compose(v -> driver.driveTransitions(migrated, targetRw, tx));
         });
+    }
+
+    /** Logs a migration to the decision log: the patch of its state change, then the full state after it. */
+    private Future<Void> logMigration(
+            WorkflowInstance source,
+            WorkflowInstance migrated,
+            @jakarta.annotation.Nullable String stepId,
+            SqlClient tx) {
+        DefinitionKey sourceKey =
+                new DefinitionKey(source.definitionScopeKey(), source.definitionId(), source.definitionVersion());
+        DefinitionKey targetKey =
+                new DefinitionKey(migrated.definitionScopeKey(), migrated.definitionId(), migrated.definitionVersion());
+        SegmentCommand command = decisions.commandOf(tx);
+        DecisionLog.Decision decision = new DecisionLog.Decision(
+                migrated.id(),
+                command == null ? null : command.commandId(),
+                stepId == null ? "start" : stepId,
+                "migrated",
+                targetKey,
+                migrated.planHash(),
+                source.version(),
+                migrated.version(),
+                null);
+        return decisions.logMigration(
+                decision,
+                sourceKey,
+                DecisionLog.parseState(source.stateJson()),
+                DecisionLog.parseState(migrated.stateJson()),
+                tx);
     }
 
     // --- Internal helpers ---
@@ -621,13 +893,6 @@ final class MigrationExecutor {
         }
     }
 
-    /**
-     * Returns {@code true} if the given status is a terminal state (no further transitions
-     * possible).
-     *
-     * @param status the status to check
-     * @return {@code true} for terminal statuses
-     */
     private static boolean isTerminal(WorkflowStatus status) {
         return switch (status) {
             case COMPLETED, FAILED, COMPENSATED, CANCELLED, EXPIRED -> true;

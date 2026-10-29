@@ -11,16 +11,15 @@
  *   <li>{@link dev.vertique.workflow.definition.service.DefaultWorkflowDefinitionService} — the
  *       singleton implementation; uses {@code Provider<WorkflowRegistry>} to break the Dagger
  *       cycle.</li>
- *   <li>{@link dev.vertique.workflow.definition.service.WorkflowDefinitionStore} — thread-safe
- *       candidate/available status tracking for loaded definitions.</li>
  *   <li>{@link dev.vertique.workflow.definition.service.CompiledDefinitionRef} — a safe,
  *       non-generic projection of a stored definition for external callers.</li>
  *   <li>{@link dev.vertique.workflow.definition.service.ActivationStatus} — lifecycle state
  *       for management surfaces; never overrides registry semantics.</li>
  *   <li>{@link dev.vertique.workflow.definition.service.WorkflowDefinitionBootstrap} — startup
  *       {@link dev.vertique.workflow.registry.WorkflowContributor} that iterates
- *       {@code Set<WorkflowDefinitionSource>} and populates the registry before the application
- *       starts serving traffic.</li>
+ *       {@code Set<WorkflowDefinitionSource>} and compiles the packaged documents before the application
+ *       starts serving traffic. It registers nothing; the engine's startup records the documents in the
+ *       definition store.</li>
  * </ul>
  */
 package dev.vertique.workflow.definition.service;

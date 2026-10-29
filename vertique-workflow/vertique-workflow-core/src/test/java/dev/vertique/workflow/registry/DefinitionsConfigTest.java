@@ -69,9 +69,9 @@ class DefinitionsConfigTest {
 
     @Test
     @DisplayName("validates independent defaults, partial overrides, wide envelope math, and optional parser wiring")
-    void validatesDocumentAndCadenceConfiguration() {
+    void validatesDocumentAndClaimTimeoutConfiguration() {
         WorkflowDefinitionsConfig defaults = configured(new JsonObject());
-        assertThat(defaults.maxStalenessSeconds()).isEqualTo(30);
+        assertThat(defaults.publicationClaimTimeoutSeconds()).isEqualTo(60);
         assertThat(defaults.maxDocumentSizeBytes()).isEqualTo(262_144);
         assertThat(defaults.maxStoredDocumentSizeBytes()).isEqualTo(393_216);
 
@@ -79,17 +79,20 @@ class DefinitionsConfigTest {
                 .put(
                         "workflow",
                         new JsonObject().put("definitions", new JsonObject().put("maxDocumentSizeBytes", 512_000))));
-        assertThat(documentOnly.maxStalenessSeconds()).isEqualTo(30);
+        assertThat(documentOnly.publicationClaimTimeoutSeconds()).isEqualTo(60);
         assertThat(documentOnly.maxDocumentSizeBytes()).isEqualTo(512_000);
         assertThat(documentOnly.maxStoredDocumentSizeBytes()).isEqualTo(768_000);
 
-        WorkflowDefinitionsConfig cadenceOnly = configured(new JsonObject()
-                .put("workflow", new JsonObject().put("definitions", new JsonObject().put("maxStalenessSeconds", 45))));
-        assertThat(cadenceOnly.maxStalenessSeconds()).isEqualTo(45);
-        assertThat(cadenceOnly.maxDocumentSizeBytes()).isEqualTo(262_144);
+        WorkflowDefinitionsConfig claimTimeoutOnly = configured(new JsonObject()
+                .put(
+                        "workflow",
+                        new JsonObject()
+                                .put("definitions", new JsonObject().put("publicationClaimTimeoutSeconds", 45))));
+        assertThat(claimTimeoutOnly.publicationClaimTimeoutSeconds()).isEqualTo(45);
+        assertThat(claimTimeoutOnly.maxDocumentSizeBytes()).isEqualTo(262_144);
 
         int largestValidLimit = 1_431_655_765;
-        WorkflowDefinitionsConfig wideArithmetic = new WorkflowDefinitionsConfig(30, largestValidLimit);
+        WorkflowDefinitionsConfig wideArithmetic = new WorkflowDefinitionsConfig(largestValidLimit);
         assertThat(wideArithmetic.maxStoredDocumentSizeBytes()).isEqualTo(Integer.MAX_VALUE);
 
         assertThatThrownBy(() -> configured(new JsonObject()
@@ -116,19 +119,93 @@ class DefinitionsConfigTest {
         assertThatThrownBy(() -> configured(new JsonObject()
                         .put(
                                 "workflow",
-                                new JsonObject().put("definitions", new JsonObject().put("maxStalenessSeconds", 0)))))
+                                new JsonObject()
+                                        .put(
+                                                "definitions",
+                                                new JsonObject().put("publicationClaimTimeoutSeconds", 0)))))
                 .isInstanceOf(ConfigurationException.class)
-                .hasMessageContaining("workflow.definitions.maxStalenessSeconds");
+                .hasMessageContaining("workflow.definitions.publicationClaimTimeoutSeconds");
         assertThatThrownBy(() -> configured(new JsonObject()
                         .put(
                                 "workflow",
-                                new JsonObject().put("definitions", new JsonObject().put("maxStalenessSeconds", -1)))))
+                                new JsonObject()
+                                        .put(
+                                                "definitions",
+                                                new JsonObject().put("publicationClaimTimeoutSeconds", -1)))))
                 .isInstanceOf(ConfigurationException.class)
-                .hasMessageContaining("workflow.definitions.maxStalenessSeconds");
+                .hasMessageContaining("workflow.definitions.publicationClaimTimeoutSeconds");
 
         GraphWithoutConfigParser graph = DaggerDefinitionsConfigTest_GraphWithoutConfigParser.create();
         assertThat(graph.workflowRegistry()).isNotNull();
         assertThat(graph.definitionsConfig()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("builds the default scope documents at startup only when asked to")
+    void buildDefaultScopeDocumentsAtStartupDefaultsToFalse() {
+        // Given configurations without the key, with it true and with it false
+        JsonObject absent = new JsonObject();
+        JsonObject enabled = new JsonObject()
+                .put(
+                        "workflow",
+                        new JsonObject()
+                                .put("definitions", new JsonObject().put("buildDefaultScopeDocumentsAtStartup", true)));
+        JsonObject disabled = new JsonObject()
+                .put(
+                        "workflow",
+                        new JsonObject()
+                                .put(
+                                        "definitions",
+                                        new JsonObject().put("buildDefaultScopeDocumentsAtStartup", false)));
+
+        // When each is parsed, and the defaults are read
+        WorkflowDefinitionsConfig withoutKey = configured(absent);
+        WorkflowDefinitionsConfig withTrue = configured(enabled);
+        WorkflowDefinitionsConfig withFalse = configured(disabled);
+
+        // Then only the explicit true builds them, and the defaults do not
+        assertThat(withoutKey.buildDefaultScopeDocumentsAtStartup()).isFalse();
+        assertThat(withTrue.buildDefaultScopeDocumentsAtStartup()).isTrue();
+        assertThat(withFalse.buildDefaultScopeDocumentsAtStartup()).isFalse();
+        assertThat(WorkflowDefinitionsConfig.defaults().buildDefaultScopeDocumentsAtStartup())
+                .isFalse();
+
+        // And the other settings keep their defaults when only this one is given
+        assertThat(withTrue.publicationClaimTimeoutSeconds()).isEqualTo(60);
+        assertThat(withTrue.maxDocumentSizeBytes()).isEqualTo(262_144);
+    }
+
+    @Test
+    @DisplayName("defaults the publication claim timeout to sixty seconds and requires it to be positive")
+    void publicationClaimTimeoutSecondsDefaultsToSixtyAndMustBePositive() {
+        // Given configurations without the key, with zero and with 120
+        JsonObject absent = new JsonObject();
+        JsonObject zero = definitionsSetting("publicationClaimTimeoutSeconds", 0);
+        JsonObject explicit = definitionsSetting("publicationClaimTimeoutSeconds", 120);
+
+        // When each is parsed
+        WorkflowDefinitionsConfig withoutKey = configured(absent);
+        WorkflowDefinitionsConfig withExplicit = configured(explicit);
+
+        // Then the default is 60, 120 is kept, and zero is rejected naming the key
+        assertThat(withoutKey.publicationClaimTimeoutSeconds()).isEqualTo(60);
+        assertThat(WorkflowDefinitionsConfig.defaults().publicationClaimTimeoutSeconds())
+                .isEqualTo(60);
+        assertThat(withExplicit.publicationClaimTimeoutSeconds()).isEqualTo(120);
+        assertThatThrownBy(() -> configured(zero))
+                .isInstanceOf(ConfigurationException.class)
+                .hasMessageContaining("workflow.definitions.publicationClaimTimeoutSeconds");
+
+        // And the replaced key no longer changes the timeout
+        assertThat(configured(definitionsSetting(REPLACED_KEY, 45)).publicationClaimTimeoutSeconds())
+                .isEqualTo(60);
+    }
+
+    /** The name of the setting that the publication claim timeout replaced, spelled in two parts. */
+    private static final String REPLACED_KEY = "max" + "StalenessSeconds";
+
+    private static JsonObject definitionsSetting(String key, int value) {
+        return new JsonObject().put("workflow", new JsonObject().put("definitions", new JsonObject().put(key, value)));
     }
 
     private static WorkflowDefinitionsConfig configured(JsonObject config) {

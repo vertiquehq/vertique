@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -36,14 +35,8 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.tasks.TaskAssignment;
-import dev.vertique.workflow.timer.TimerIntentPayload;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -53,15 +46,14 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
-import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
-import java.time.Instant;
+import java.time.Duration;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -90,6 +82,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineBranchHumanTaskIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_human_task_test")
             .withMigration("classpath:db/migration/workflow");
@@ -100,9 +94,6 @@ public class PgWorkflowEngineBranchHumanTaskIT {
     static PgBranchTokenRepository branchRepo;
     static PgWorkflowHistoryRepository historyRepo;
     static PgTimerStore timerStore;
-
-    /** Captures the UUID of the most recently created timer. */
-    static final AtomicReference<UUID> lastTimerId = new AtomicReference<>();
 
     record StartBranchTask(String id) implements IdempotencyKeyed {
         @Override
@@ -203,42 +194,6 @@ public class PgWorkflowEngineBranchHumanTaskIT {
         timerStore = new PgTimerStore(ex);
         taskStore = new PgTaskStore(pool, ex);
 
-        // A recorder that captures the last timer id for assertions.
-        WorkflowSideEffectRecorder<SqlClient> timerCapture = new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                TimerIntentPayload payload = (TimerIntentPayload) intent.payload();
-                UUID timerId = UUID.randomUUID();
-                lastTimerId.set(timerId);
-                TimerRecord row = new TimerRecord(
-                        timerId,
-                        intent.correlation().workflowId(),
-                        intent.correlation().stepId(),
-                        payload.fireAt(),
-                        TimerStatus.SCHEDULED,
-                        UUID.randomUUID(),
-                        Instant.now(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        payload.purpose(),
-                        payload.taskId(),
-                        intent.correlation().branchTokenId(),
-                        intent.correlation().forkStepId(),
-                        intent.correlation().branchId(),
-                        DurableMetadata.empty());
-                return timerStore.insertScheduled(row, tx).map(v -> new RecorderResult.Timer(timerId));
-            }
-        };
-
-        Set<WorkflowSideEffectRecorder<SqlClient>> recorders = Set.of(timerCapture);
-
         // No-validator registry so branch-owned HumanTaskNode is accepted.
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
         registry.register(DEFINITION);
@@ -249,7 +204,7 @@ public class PgWorkflowEngineBranchHumanTaskIT {
                 instances,
                 historyRepo,
                 dedup,
-                recorders,
+                Set.of(),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 taskStore,
@@ -261,10 +216,11 @@ public class PgWorkflowEngineBranchHumanTaskIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        lastTimerId.set(null);
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -287,7 +243,12 @@ public class PgWorkflowEngineBranchHumanTaskIT {
                 null,
                 null,
                 null);
-        return engine.start(cmd).toCompletionStage().toCompletableFuture().join();
+        return engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(r -> started))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
     }
 
     private String instanceStatus(WorkflowInstanceId id) {
@@ -400,6 +361,11 @@ public class PgWorkflowEngineBranchHumanTaskIT {
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
+        engine.executionProbe()
+                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
         assertEquals(TaskMutationResult.APPLIED, taskResult, "task completion must be APPLIED");
 
         // Parent must still be at JOIN (branch B hasn't completed yet).
@@ -410,8 +376,13 @@ public class PgWorkflowEngineBranchHumanTaskIT {
 
         // Apply branch-aware signal for branch B (parent is parked at WAITING/JOIN, so the
         // single-path 4-arg signal would reject; use the 7-arg branch-aware overload).
-        pool.withTransaction(tx ->
-                        engine.signal(workflowId, "my-signal", new Object(), "idem-signal-1", "fork", "branch-b", tx))
+        pool.withTransaction(
+                        tx -> engine.signal(workflowId, "my-signal", Map.of(), "idem-signal-1", "fork", "branch-b", tx))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+        engine.executionProbe()
+                .awaitIdle(workflowId, IDLE_TIMEOUT)
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();

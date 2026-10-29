@@ -34,9 +34,6 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
@@ -50,13 +47,12 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
-import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -86,7 +82,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>Disabled ignores reviewed version: non-stability task accepts any reviewed value.</li>
  *   <li>History records reviewed version: {@code TASK_COMPLETED} payload carries the
  *       caller-supplied value.</li>
- *   <li>Idempotent retry: same key + same reviewed version → LOST_TO_RACE; only one history
+ *   <li>Idempotent retry: same key + same reviewed version → the earlier result; only one history
  *       entry.</li>
  *   <li>Idempotency conflict: same key + different reviewed version →
  *       {@link WorkflowIdempotencyConflictException}.</li>
@@ -95,6 +91,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class RequireVersionStabilityIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -107,9 +105,6 @@ public class RequireVersionStabilityIT {
     static PgWorkflowInstanceRepository instanceRepo;
     static PgWorkflowHistoryRepository historyRepo;
     static PgTimerStore timerStore;
-
-    /** Last timer id recorded by the fake recorder (set by fakeTimerRecorder). */
-    static final AtomicReference<UUID> lastTimerId = new AtomicReference<>();
 
     // --- Domain types ---
 
@@ -349,19 +344,6 @@ public class RequireVersionStabilityIT {
         PgWorkflowDedupRepository dedupRepo = new PgWorkflowDedupRepository(pool, exMapper);
         timerStore = new PgTimerStore(exMapper);
 
-        // Minimal no-op timer recorder (no timers are needed in these tests).
-        WorkflowSideEffectRecorder<SqlClient> noopTimerRecorder = new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                return Future.succeededFuture(RecorderResult.empty());
-            }
-        };
-
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
         registry.register(STABILITY_REQUIRED_DEF);
         registry.register(STABILITY_NOT_REQUIRED_DEF);
@@ -374,7 +356,7 @@ public class RequireVersionStabilityIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(noopTimerRecorder),
+                Set.of(),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -385,9 +367,10 @@ public class RequireVersionStabilityIT {
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        lastTimerId.set(null);
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
-                        + " workflow_instances RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_tasks, workflow_history, workflow_dedup,"
+                                + " workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -421,7 +404,9 @@ public class RequireVersionStabilityIT {
                 null,
                 null,
                 null);
-        return engine.start(cmd);
+        return engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started));
     }
 
     /**
@@ -560,6 +545,9 @@ public class RequireVersionStabilityIT {
                                                 new WorkflowActor.User("alice"),
                                                 "v3");
                                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                                .compose(applied -> engine.executionProbe()
+                                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                        .map(idle -> applied))
                                                 .compose(result -> {
                                                     ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
                                                     // Workflow must now be COMPLETED.
@@ -724,10 +712,10 @@ public class RequireVersionStabilityIT {
 
         @Test
         @DisplayName(
-                "null subjectRef.version during start tx fails with WorkflowSubjectVersionUnavailableException; no instance row inserted")
-        void nullSnapshotFailsAtTaskCreationDuringStartTx(VertxTestContext ctx) {
+                "null subjectRef.version fails the first segment with WorkflowSubjectVersionUnavailableException; the instance fails")
+        void nullSnapshotFailsAtTaskCreationInTheFirstSegment(VertxTestContext ctx) {
             StabilityState state = StabilityState.of("null-snap-start-" + UUID.randomUUID());
-            // subjectRef with null version — fails per-task stability guard during start tx.
+            // subjectRef with null version — fails per-task stability guard in the first segment.
             WorkflowSubjectRef refNoVersion = new WorkflowSubjectRef("Article", "art-10", null);
 
             engine.start(new StartCommand(
@@ -740,32 +728,41 @@ public class RequireVersionStabilityIT {
                             null,
                             null,
                             null))
-                    .map(id -> {
-                        ctx.verify(() -> ctx.failNow(new AssertionError(
-                                "Start must have failed with WorkflowSubjectVersionUnavailableException")));
-                        return null;
-                    })
-                    .recover(t -> Future.succeededFuture(t)
-                            .compose(ex -> {
-                                ctx.verify(() -> assertInstanceOf(
-                                        WorkflowSubjectVersionUnavailableException.class,
-                                        ex,
-                                        "must fail with WorkflowSubjectVersionUnavailableException"));
-                                // The whole start tx must have rolled back — no instance row.
-                                return countInstances();
-                            })
-                            .map(count -> {
-                                ctx.verify(() -> assertEquals(
-                                        0L, count, "no workflow_instances row must exist after start-tx rollback"));
-                                return null;
-                            }))
+                    // The start only records; the executor claims it, its first segment fails and rolls back, and the
+                    // failure settles the start and fails the instance
+                    .compose(id -> awaitCommandState(id, "FAILED").map(ignored -> id))
+                    .compose(id -> pool.preparedQuery("SELECT status, state_json FROM workflow_instances WHERE id = $1")
+                            .execute(Tuple.of(id.value())))
                     .onComplete(ar -> {
                         if (ar.failed()) {
                             ctx.failNow(ar.cause());
-                        } else {
-                            ctx.completeNow();
+                            return;
                         }
+                        var row = ar.result().iterator().next();
+                        ctx.verify(() -> {
+                            assertEquals("FAILED", row.getString("status"), "the failed segment fails the instance");
+                            assertNull(row.getValue("state_json"), "the failed segment commits no state");
+                        });
+                        ctx.completeNow();
                     });
+        }
+
+        private Future<Void> awaitCommandState(WorkflowInstanceId id, String commandState) {
+            return pool.preparedQuery("SELECT state FROM workflow_commands WHERE workflow_id = $1")
+                    .execute(Tuple.of(id.value()))
+                    .compose(rows -> {
+                        if (rows.iterator().hasNext()
+                                && commandState.equals(rows.iterator().next().getString("state"))) {
+                            return Future.<Void>succeededFuture();
+                        }
+                        return sleep(50).compose(ignored -> awaitCommandState(id, commandState));
+                    });
+        }
+
+        private Future<Void> sleep(long millis) {
+            return pool.preparedQuery("SELECT pg_sleep($1)")
+                    .execute(Tuple.of(millis / 1000.0))
+                    .mapEmpty();
         }
 
         @Test
@@ -792,47 +789,45 @@ public class RequireVersionStabilityIT {
                                                 WaitType.SIGNAL, optInst.get().waitType(), "must be waiting on SIGNAL");
                                     });
 
-                                    // Send the signal — transition should fail at stability guard.
+                                    // Send the signal: it is recorded, and the executor's transition into the
+                                    // stability-required task fails at the stability guard, rejecting the signal.
                                     return engine.signal(workflowId, "advance", state, signalDedupKey)
-                                            .map(v -> {
+                                            .compose(recorded -> engine.executionProbe()
+                                                    .awaitIdle(workflowId, Duration.ofSeconds(10)))
+                                            .compose(idle -> pool.preparedQuery("SELECT state FROM workflow_commands"
+                                                            + " WHERE workflow_id = $1 AND kind = 'SIGNAL'")
+                                                    .execute(Tuple.of(workflowId.value())))
+                                            .compose(commands -> {
                                                 ctx.verify(
-                                                        () -> ctx.failNow(
-                                                                new AssertionError(
-                                                                        "Signal must have failed with WorkflowSubjectVersionUnavailableException")));
-                                                return null;
+                                                        () -> assertEquals(
+                                                                "REJECTED",
+                                                                commands.iterator()
+                                                                        .next()
+                                                                        .getString("state"),
+                                                                "the signal whose transition fails the stability guard must be rejected"));
+                                                // Workflow must still be WAITING on SIGNAL (prior step unchanged).
+                                                return pool.withTransaction(
+                                                        tx -> instanceRepo.findById(workflowId, tx));
                                             })
-                                            .recover(t -> Future.succeededFuture(t)
-                                                    .compose(ex -> {
-                                                        ctx.verify(
-                                                                () -> assertInstanceOf(
-                                                                        WorkflowSubjectVersionUnavailableException
-                                                                                .class,
-                                                                        ex,
-                                                                        "signal transition must fail with WorkflowSubjectVersionUnavailableException"));
-                                                        // Workflow must still be WAITING on SIGNAL (prior step
-                                                        // unchanged).
-                                                        return pool.withTransaction(
-                                                                tx -> instanceRepo.findById(workflowId, tx));
-                                                    })
-                                                    .map(optUpdated -> {
-                                                        ctx.verify(() -> {
-                                                            assertTrue(optUpdated.isPresent());
-                                                            var inst = optUpdated.get();
-                                                            assertEquals(
-                                                                    WorkflowStatus.WAITING,
-                                                                    inst.status(),
-                                                                    "workflow must still be WAITING after signal failure");
-                                                            assertEquals(
-                                                                    WaitType.SIGNAL,
-                                                                    inst.waitType(),
-                                                                    "workflow must still be waiting on SIGNAL");
-                                                            assertEquals(
-                                                                    "wait-signal",
-                                                                    inst.currentStepId(),
-                                                                    "current_step must remain at wait-signal");
-                                                        });
-                                                        return null;
-                                                    }));
+                                            .map(optUpdated -> {
+                                                ctx.verify(() -> {
+                                                    assertTrue(optUpdated.isPresent());
+                                                    var inst = optUpdated.get();
+                                                    assertEquals(
+                                                            WorkflowStatus.WAITING,
+                                                            inst.status(),
+                                                            "workflow must still be WAITING after signal failure");
+                                                    assertEquals(
+                                                            WaitType.SIGNAL,
+                                                            inst.waitType(),
+                                                            "workflow must still be waiting on SIGNAL");
+                                                    assertEquals(
+                                                            "wait-signal",
+                                                            inst.currentStepId(),
+                                                            "current_step must remain at wait-signal");
+                                                });
+                                                return null;
+                                            });
                                 });
                     })
                     .onComplete(ar -> {
@@ -912,6 +907,9 @@ public class RequireVersionStabilityIT {
                         TaskCompletionCommand cmd = new TaskCompletionCommand(
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), "v99");
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .map(result -> {
                                     ctx.verify(() -> assertEquals(
                                             TaskMutationResult.APPLIED,
@@ -954,6 +952,9 @@ public class RequireVersionStabilityIT {
                         TaskCompletionCommand cmd = new TaskCompletionCommand(
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), "v3");
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> findHistoryPayload(workflowId, WorkflowEntryType.TASK_COMPLETED))
                                 .map(payloadJson -> {
                                     ctx.verify(() -> {
@@ -989,6 +990,9 @@ public class RequireVersionStabilityIT {
                         TaskCompletionCommand cmd = new TaskCompletionCommand(
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), "v99");
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> findHistoryPayload(workflowId, WorkflowEntryType.TASK_COMPLETED))
                                 .map(payloadJson -> {
                                     ctx.verify(() -> {
@@ -1025,6 +1029,9 @@ public class RequireVersionStabilityIT {
                         TaskCompletionCommand cmd = new TaskCompletionCommand(
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), null);
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(r -> findHistoryPayload(workflowId, WorkflowEntryType.TASK_COMPLETED))
                                 .map(payloadJson -> {
                                     ctx.verify(() -> {
@@ -1061,8 +1068,8 @@ public class RequireVersionStabilityIT {
     class IdempotencyTests {
 
         @Test
-        @DisplayName("idempotent retry with same key and same reviewedSubjectVersion returns LOST_TO_RACE")
-        void idempotentRetryReturnsLostToRace(VertxTestContext ctx) {
+        @DisplayName("idempotent retry with same key and same reviewedSubjectVersion returns the earlier result")
+        void idempotentRetryReturnsTheEarlierResult(VertxTestContext ctx) {
             StabilityState state = StabilityState.of("idem-retry-" + UUID.randomUUID());
             WorkflowSubjectRef ref = new WorkflowSubjectRef("Article", "art-60", "v3");
             String idemKey = "idem-retry-key-" + UUID.randomUUID();
@@ -1073,16 +1080,22 @@ public class RequireVersionStabilityIT {
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), "v3");
 
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(firstResult -> {
                                     ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, firstResult));
                                     // Second call with identical command.
-                                    return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx));
+                                    return pool.withTransaction(tx -> engine.taskCompleted(cmd, tx))
+                                            .compose(replayed -> engine.executionProbe()
+                                                    .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                    .map(idle -> replayed));
                                 })
                                 .compose(secondResult -> {
                                     ctx.verify(() -> assertEquals(
-                                            TaskMutationResult.LOST_TO_RACE,
+                                            TaskMutationResult.APPLIED,
                                             secondResult,
-                                            "second call with same key+fingerprint must be LOST_TO_RACE"));
+                                            "second call with same key+fingerprint must return the earlier result"));
                                     // Only one TASK_COMPLETED history entry.
                                     return countHistoryEntries(workflowId, WorkflowEntryType.TASK_COMPLETED);
                                 })
@@ -1121,6 +1134,9 @@ public class RequireVersionStabilityIT {
                                 taskId, "approve", null, idemKey, new WorkflowActor.User("alice"), "v4");
 
                         return pool.withTransaction(tx -> engine.taskCompleted(cmd1, tx))
+                                .compose(applied -> engine.executionProbe()
+                                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                        .map(idle -> applied))
                                 .compose(firstResult -> {
                                     ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, firstResult));
                                     return pool.withTransaction(tx -> engine.taskCompleted(cmd2, tx));

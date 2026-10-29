@@ -26,5 +26,7 @@ public enum CacheOutcome {
     /** The complete canonical key exceeded the configured byte bound. */
     BYPASS_KEY_SIZE,
     /** An exact annotation eviction named a logical cache with no registered definition. */
-    UNRESOLVED_TARGET
+    UNRESOLVED_TARGET,
+    /** An entry was removed because the cache exceeded its size bound. */
+    SIZE_EVICTED
 }

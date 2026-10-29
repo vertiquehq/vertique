@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -24,6 +23,7 @@ import dev.vertique.workflow.contract.IdempotencyKeyed;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.engine.testsupport.ScopedDefinitions;
 import dev.vertique.workflow.events.WorkflowEventEnvelope;
 import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.events.binding.WorkflowEventOutboxBinding;
@@ -45,10 +45,6 @@ import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowStatus;
-import dev.vertique.workflow.timer.TimerIntentPayload;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
@@ -61,6 +57,7 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -69,7 +66,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
@@ -105,6 +101,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class WorkflowEventEmissionIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     // --- Constants ---
 
     /** Outbox destination used in all tests. */
@@ -126,9 +124,6 @@ public class WorkflowEventEmissionIT {
 
     /** Collects the service-dispatch intents the engine hands to the SERVICE recorder. */
     static final List<WorkflowSideEffectIntent> dispatchedIntents = new CopyOnWriteArrayList<>();
-
-    /** Captures the latest timer id from the WORKFLOW_TIMER recorder for task/timer tests. */
-    static final AtomicReference<UUID> lastTimerId = new AtomicReference<>();
 
     // --- Domain types ---
 
@@ -354,59 +349,12 @@ public class WorkflowEventEmissionIT {
         registry.register(FAIL_DEF);
         registry.register(TASK_DEF);
         registry.register(purchaseApproval("clerk"));
-        registry.register(ScopedApprovalFixture.ACME, purchaseApproval("finance"));
 
         // --- WorkflowEventsComposeValidator and recorder ---
         WorkflowEventsComposeValidator eventsValidator =
                 new WorkflowEventsComposeValidator(Set.of(testHandler), BINDING);
         WorkflowEventSideEffectRecorder eventRecorder =
                 new WorkflowEventSideEffectRecorder(outboxService, BINDING, eventsValidator);
-
-        // --- WORKFLOW_TIMER recorder (stub — just inserts timer rows) ---
-        WorkflowSideEffectRecorder<SqlClient> timerRecorder = new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                UUID timerId = UUID.randomUUID();
-                lastTimerId.set(timerId);
-                Object payload = intent.payload();
-                Instant fireAt;
-                TimerPurpose purpose;
-                UUID taskId;
-                if (payload instanceof TimerIntentPayload tip) {
-                    fireAt = tip.fireAt();
-                    purpose = tip.purpose();
-                    taskId = tip.taskId();
-                } else {
-                    fireAt = payload instanceof Instant fa ? fa : Instant.now().plusSeconds(3600);
-                    purpose = TimerPurpose.STANDALONE;
-                    taskId = null;
-                }
-                TimerRecord record = new TimerRecord(
-                        timerId,
-                        (WorkflowInstanceId) intent.correlation().workflowId(),
-                        intent.targetId(),
-                        fireAt,
-                        TimerStatus.SCHEDULED,
-                        UUID.randomUUID(),
-                        Instant.now(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        purpose,
-                        taskId,
-                        null, // branchTokenId
-                        null, // forkStepId
-                        null,
-                        DurableMetadata.empty()); // branchId
-                return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-            }
-        };
 
         // --- SERVICE recorder (stub, keeps the dispatched intents for the assertions) ---
         WorkflowSideEffectRecorder<SqlClient> serviceRecorder = new WorkflowSideEffectRecorder<>() {
@@ -429,21 +377,24 @@ public class WorkflowEventEmissionIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(eventRecorder, timerRecorder, serviceRecorder),
+                Set.of(eventRecorder, serviceRecorder),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
                 Clock.fixed(Instant.parse("2026-05-09T00:00:00Z"), ZoneOffset.UTC));
+        // The acme version is a stored version the node builds a plan for; the registry holds code only
+        ScopedDefinitions.of(registry).publish(ScopedApprovalFixture.ACME, purchaseApproval("finance"));
 
         ctx.completeNow();
     }
 
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        lastTimerId.set(null);
         dispatchedIntents.clear();
-        pool.query("TRUNCATE TABLE outbox, workflow_timers, workflow_tasks, workflow_history,"
-                        + " workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE outbox, workflow_timers, workflow_tasks, workflow_history,"
+                                + " workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -583,6 +534,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readOutboxRowsForWorkflow(workflowId.value())
                         .map(rows -> {
                             ctx.verify(() -> {
@@ -644,6 +597,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readOutboxRowsForWorkflow(workflowId.value())
                         .map(rows -> {
                             ctx.verify(() -> {
@@ -698,6 +653,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> {
                     // Assert instance is WAITING on TASK
                     return pool.withTransaction(tx -> instanceRepo.findById(workflowId, tx))
@@ -767,6 +724,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> {
                     // Read task id from wait_key
                     return pool.withTransaction(tx -> instanceRepo.findById(workflowId, tx))
@@ -781,6 +740,9 @@ public class WorkflowEventEmissionIT {
                                         null);
 
                                 return pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx))
+                                        .compose(applied -> engine.executionProbe()
+                                                .awaitIdle(workflowId, IDLE_TIMEOUT)
+                                                .map(idle -> applied))
                                         .compose(result -> {
                                             ctx.verify(() -> assertEquals(
                                                     dev.vertique.workflow.ops.TaskMutationResult.APPLIED, result));
@@ -844,6 +806,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> engine.cancel(workflowId, "test-cancel-reason")
                         .compose(v -> readOutboxRowsForWorkflow(workflowId.value()))
                         .map(rows -> {
@@ -914,6 +878,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> engine.cancel(workflowId, "test-task-cancel-reason")
                         .compose(v -> readOutboxRowsForWorkflow(workflowId.value())
                                 .compose(outboxRows -> readHistoryRowsForWorkflow(workflowId.value())
@@ -1022,6 +988,8 @@ public class WorkflowEventEmissionIT {
                 null);
 
         engine.start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .compose(workflowId -> readOutboxRowsForWorkflow(workflowId.value())
                         .map(rows -> {
                             ctx.verify(() -> assertEquals(
@@ -1050,14 +1018,15 @@ public class WorkflowEventEmissionIT {
 
         // When: the signal advances the instance through the dispatch step to the task, and the task completes
         await(engine.signal(id, "submit", "payload", "k-submit-" + id.value()));
+        await(engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
         UUID taskId = UUID.fromString(await(pool.withTransaction(tx -> instanceRepo.findById(id, tx)))
                 .orElseThrow()
                 .waitKey());
         TaskCompletionCommand completeCmd = new TaskCompletionCommand(
                 taskId, "approve", null, "idem-" + id.value(), new WorkflowActor.User("alice"), null);
-        assertEquals(
-                dev.vertique.workflow.ops.TaskMutationResult.APPLIED,
-                await(pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx))));
+        var completed = await(pool.withTransaction(tx -> engine.taskCompleted(completeCmd, tx)));
+        await(engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
+        assertEquals(dev.vertique.workflow.ops.TaskMutationResult.APPLIED, completed);
         List<Row> allRows = await(readOutboxRowsForWorkflow(id.value()));
         List<Row> rowsAfterStamp = allRows.subList(rowsAtStart.size(), allRows.size());
 
@@ -1103,6 +1072,7 @@ public class WorkflowEventEmissionIT {
 
         // When: the signal advances the instance through the dispatch step
         await(engine.signal(id, "submit", "payload", "k-submit-" + id.value()));
+        await(engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT));
 
         // Then: the one recorded dispatch names the instance's scopes and its definition id
         assertEquals(1, dispatchedIntents.size(), "one dispatch must be recorded");
@@ -1133,7 +1103,9 @@ public class WorkflowEventEmissionIT {
                 null,
                 null,
                 null);
-        return await(engine.start(command));
+        WorkflowInstanceId started = await(engine.start(command));
+        await(engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT));
+        return started;
     }
 
     private static <T> T await(Future<T> future) throws Exception {

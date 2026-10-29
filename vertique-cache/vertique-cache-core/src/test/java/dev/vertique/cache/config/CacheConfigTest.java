@@ -183,6 +183,14 @@ class CacheConfigTest {
         assertThrows(IllegalArgumentException.class, () -> new CacheEntryConfig(CacheMode.LOCAL, 1, " "));
     }
 
+    @Test
+    @DisplayName("ObjectCacheConfig needs at least one entry and a non-negative ttl, where zero means no expiry")
+    void objectCacheConfigBounds() {
+        assertEquals(0, new ObjectCacheConfig(1, 0).ttlSeconds());
+        assertThrows(IllegalArgumentException.class, () -> new ObjectCacheConfig(0, 0));
+        assertThrows(IllegalArgumentException.class, () -> new ObjectCacheConfig(1, -1));
+    }
+
     private static CacheConfig copy(CacheConfig base, Map<String, CacheEntryConfig> caches) {
         return new CacheConfig(
                 base.enabled(),

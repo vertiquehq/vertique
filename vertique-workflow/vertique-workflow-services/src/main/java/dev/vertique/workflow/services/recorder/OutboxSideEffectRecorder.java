@@ -51,31 +51,14 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
     /**
      * Creates a new recorder.
      *
-     * <p>Takes {@link dev.vertique.workflow.services.compose.WorkflowOutboxComposeValidator} as a
-     * required constructor parameter purely for its construction side-effect: when Dagger
-     * instantiates this recorder (which happens eagerly because it participates in the
-     * {@code @WorkflowRecorders Set<WorkflowSideEffectRecorder<SqlClient>>} multibinding consumed
-     * by {@code RecorderRouter} → {@code WorkflowEngine}), it must first instantiate the
-     * validator, which performs the SERVICE-handler-presence + plan-target-shape checks. Apps can
-     * no longer silently downgrade those checks to runtime by forgetting to expose an explicit
-     * {@code workflowComposeValidator()} accessor on their {@code AppComponent}; the recorder
-     * cannot exist without the validator having run.
-     *
      * @param outboxService outbox service used to persist the outbox entry within the caller's
      *     transaction
      * @param targetResolver resolver used to translate stable target ids into operation metadata
-     * @param composeValidator the startup compose validator; participates as a required
-     *     dependency to ensure it runs before any workflow side effect can be recorded
      */
     @Inject
-    public OutboxSideEffectRecorder(
-            OutboxService outboxService,
-            ServiceTargetResolver targetResolver,
-            dev.vertique.workflow.services.compose.WorkflowOutboxComposeValidator composeValidator) {
+    public OutboxSideEffectRecorder(OutboxService outboxService, ServiceTargetResolver targetResolver) {
         this.outboxService = outboxService;
         this.targetResolver = targetResolver;
-        // composeValidator is intentionally unused after construction; injection here forces the
-        // validator's checks to run during Dagger graph instantiation, not opt-in at app boot.
     }
 
     /**
@@ -100,6 +83,12 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
      * headers. A {@code null} header key or value fails the returned {@link Future} with an
      * {@link IllegalArgumentException} that names the key (never the value); nothing is thrown
      * synchronously and nothing is published.
+     *
+     * <p>An intent a workflow segment writes arrives with the attribution headers
+     * {@code x-workflow-actor-kind}, {@code x-workflow-actor-id}, {@code x-workflow-actor-reason},
+     * {@code x-workflow-on-behalf-of} and {@code x-workflow-attribution} (absent values omitted), added by the engine
+     * from the actor of the command the segment executes. They are copied to the outbox entry as they are. They are
+     * unauthenticated and are not an identity; nothing here reads them.
      *
      * @param intent the side-effect intent to record; must have {@code kind=SERVICE}
      * @param tx     the open database transaction to use for the outbox insert

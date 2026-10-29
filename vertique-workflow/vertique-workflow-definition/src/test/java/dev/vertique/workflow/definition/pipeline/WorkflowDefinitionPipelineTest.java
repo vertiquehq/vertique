@@ -31,12 +31,12 @@ import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParseException;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParser;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionBootstrap;
-import dev.vertique.workflow.definition.service.WorkflowDefinitionStore;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.validator.Violation;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentValidator;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadException;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
@@ -362,9 +362,8 @@ class WorkflowDefinitionPipelineTest {
                 new SourceMetadata("test", "test://parity/no-such-contract", null, null, null, Instant.now()));
         WorkflowDefinitionBootstrap bootstrap = new WorkflowDefinitionBootstrap(
                 indexed,
-                new WorkflowDefinitionStore(),
                 Set.of(() -> List.of(packaged)),
-                Optional.empty(),
+                new InMemoryWorkflowDefinitionRegistryStore(),
                 Optional.empty(),
                 index);
         assertThatThrownBy(() -> bootstrap.contribute(new DefaultWorkflowRegistry()))

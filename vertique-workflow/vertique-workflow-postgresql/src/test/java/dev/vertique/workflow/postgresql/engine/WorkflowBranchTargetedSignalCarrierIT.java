@@ -48,6 +48,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -72,15 +73,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * that transition only), with instance metadata filling only namespaces absent from the carrier.
  *
  * <p>Uses a single-branch fork ({@code wait-a} signal wait → {@code dispatch-a} service dispatch
- * → {@code complete-a} → join → {@code done}), mirroring {@code PgWorkflowBranchRecoveryServiceIT}'s
- * {@code AC2_DEFINITION} shape. A capturing {@code SERVICE} recorder reads the currently-bound
- * durable context via {@link DurableContextPropagator#mergeCaptured} — exactly like
- * {@code Ac2CapturingServiceRecorder} — so each test can assert on the effective document the
- * branch's dispatch actually saw.
+ * → {@code complete-a} → join → {@code done}). A capturing {@code SERVICE} recorder reads the
+ * currently-bound durable context via {@link DurableContextPropagator#mergeCaptured}, so each test can assert on the
+ * effective document the branch's dispatch actually saw.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class WorkflowBranchTargetedSignalCarrierIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_targeted_carrier_test")
@@ -303,8 +304,10 @@ public class WorkflowBranchTargetedSignalCarrierIT {
     void truncate(VertxTestContext ctx) {
         capturedServiceIntents.clear();
         lastCapturedContext = null;
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -344,7 +347,9 @@ public class WorkflowBranchTargetedSignalCarrierIT {
             WorkflowInstanceId id, String forkStepId, String branchId, String dedupKey, DurableMetadata carrier) {
         TransactionalWorkflowOperations<SqlClient> txOps = engine;
         return pool.withTransaction(
-                tx -> txOps.signal(id, "signal-a", "go", dedupKey, forkStepId, branchId, carrier, tx));
+                        tx -> txOps.signal(id, "signal-a", "go", dedupKey, forkStepId, branchId, carrier, tx))
+                .compose(v -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                .mapEmpty();
     }
 
     @Test
@@ -368,6 +373,8 @@ public class WorkflowBranchTargetedSignalCarrierIT {
 
         runOnDuplicatedContext(() -> ((WorkflowOperations) engine)
                 .start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 // Seed the branch token's own metadata directly — the branch was forked under a
                 // different tenant than the one the signal's explicit carrier will supply.
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET metadata = $1"
@@ -418,6 +425,8 @@ public class WorkflowBranchTargetedSignalCarrierIT {
 
         runOnDuplicatedContext(() -> ((WorkflowOperations) engine)
                 .start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 // Instance metadata carries a namespace (region) absent from both the explicit
                 // carrier and the branch token's own metadata.
                 .compose(id -> pool.preparedQuery("UPDATE workflow_instances SET metadata = $1 WHERE id = $2")
@@ -471,6 +480,8 @@ public class WorkflowBranchTargetedSignalCarrierIT {
 
         runOnDuplicatedContext(() -> ((WorkflowOperations) engine)
                 .start(cmd)
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 // instance.metadata() stays NULL (no ambient context bound at start()).
                 .compose(id -> pool.preparedQuery("SELECT metadata FROM workflow_instances WHERE id = $1")
                         .execute(io.vertx.sqlclient.Tuple.of(id.value()))

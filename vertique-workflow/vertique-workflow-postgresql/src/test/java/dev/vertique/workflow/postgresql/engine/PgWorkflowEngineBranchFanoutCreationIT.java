@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -58,12 +57,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <ul>
  *   <li>branch-a — {@code HumanTaskNode} with {@code dueIn(...)} + recurring reminders →
  *       exercises {@code branchHandleHumanTaskNodeWithDueDate}, {@code scheduleBranchReminder
- *       Timers}, and the {@code TASK_DUE} / {@code TASK_REMINDER} side-effect recorder paths.</li>
+ *       Timers}, and the {@code DUE} / {@code REMINDER} timer commands.</li>
  *   <li>branch-b — {@code TimerNode} → exercises {@code branchHandleTimerNode} and the
- *       {@code STANDALONE} timer side-effect recorder path.</li>
+ *       {@code FIRE} timer command.</li>
  *   <li>branch-c — {@code WaitSignalNode} with {@code timeoutAfter(...)} → exercises
- *       {@code branchHandleWaitSignalWithTimeout} and the {@code SIGNAL_TIMEOUT} timer
- *       side-effect recorder path.</li>
+ *       {@code branchHandleWaitSignalWithTimeout} and the {@code TIMEOUT} timer
+ *       command.</li>
  * </ul>
  *
  * Also fires the branch-A reminder timer to exercise the
@@ -73,6 +72,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineBranchFanoutCreationIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_branch_fanout_create_test")
@@ -193,7 +194,7 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
         // No-op WORKFLOW_EVENT recorder. The branch-a human task declares reminders, so the engine's
         // WorkflowReminderComposeValidator (built by WorkflowEngineFactory against the real registry)
         // requires a WORKFLOW_EVENT recorder to be registered. This IT exercises the reminder
-        // *re-schedule* loop (a WORKFLOW_TIMER) and branch fan-out, not event delivery, so the event
+        // *re-schedule* loop (a reminder command) and branch fan-out, not event delivery, so the event
         // recorder is a no-op that satisfies the validator and lets taskReminderFired emit.
         dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient> eventRecorder =
                 new dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<>() {
@@ -211,48 +212,6 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
                     }
                 };
 
-        // Real WORKFLOW_TIMER recorder — branchHandleTimerNode,
-        // branchHandleHumanTaskNodeWithDueDate, branchHandleWaitSignalWithTimeout, and the
-        // reminder scheduling all emit WORKFLOW_TIMER intents that must produce a persisted
-        // workflow_timers row plus a RecorderResult.Timer.
-        dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient> timerRecorder =
-                new dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<>() {
-                    @Override
-                    public IntentKind kind() {
-                        return IntentKind.WORKFLOW_TIMER;
-                    }
-
-                    @Override
-                    public io.vertx.core.Future<dev.vertique.workflow.sideeffect.RecorderResult> record(
-                            dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent intent,
-                            io.vertx.sqlclient.SqlClient tx) {
-                        dev.vertique.workflow.timer.TimerIntentPayload payload =
-                                (dev.vertique.workflow.timer.TimerIntentPayload) intent.payload();
-                        UUID timerId = UUID.randomUUID();
-                        dev.vertique.workflow.timer.TimerRecord row = new dev.vertique.workflow.timer.TimerRecord(
-                                timerId,
-                                intent.correlation().workflowId(),
-                                intent.correlation().stepId(),
-                                payload.fireAt(),
-                                dev.vertique.workflow.timer.TimerStatus.SCHEDULED,
-                                UUID.randomUUID(),
-                                java.time.Instant.now(),
-                                null,
-                                null,
-                                null,
-                                null,
-                                payload.purpose(),
-                                payload.taskId(),
-                                intent.correlation().branchTokenId(),
-                                intent.correlation().forkStepId(),
-                                intent.correlation().branchId(),
-                                DurableMetadata.empty());
-                        return timerStore
-                                .insertScheduled(row, tx)
-                                .map(v -> new dev.vertique.workflow.sideeffect.RecorderResult.Timer(timerId));
-                    }
-                };
-
         DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
         registry.register(DEFINITION);
 
@@ -262,7 +221,7 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
                 instances,
                 historyRepo,
                 dedup,
-                Set.of(timerRecorder, eventRecorder),
+                Set.of(eventRecorder),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 taskStore,
@@ -274,9 +233,11 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
 
     @BeforeEach
     void truncate(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -347,6 +308,9 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
                 long timeoutTimers) {}
 
         engine.start(cmd)
+                .compose(workflowId -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> workflowId))
                 .compose(workflowId -> branchWaitStateAsync(workflowId, "branch-a")
                         .compose(a -> branchWaitStateAsync(workflowId, "branch-b")
                                 .compose(b -> branchWaitStateAsync(workflowId, "branch-c")
@@ -418,40 +382,29 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
         record Outcome(long firedCount, long reminderTimers) {}
 
         engine.start(cmd)
+                .compose(workflowId -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> workflowId))
                 .compose(workflowId -> firstTimerIdAsync(
                                 workflowId, dev.vertique.workflow.timer.TimerPurpose.TASK_REMINDER, "branch-a")
                         .compose(reminderId -> {
                             assertNotNull(reminderId, "branch-a must have a reminder timer to fire");
-                            // Look up the task id + scheduled fire time so we can call the
-                            // executor-equivalent entry point. TASK_REMINDER timers route through
-                            // taskReminderFired in WorkflowTimerFireExecutor, not the generic
-                            // timerFired path.
-                            return pool.preparedQuery(
-                                            "SELECT task_id, fire_at FROM workflow_timers WHERE timer_id = $1")
-                                    .execute(Tuple.of(reminderId))
-                                    .compose(rs -> {
-                                        var row = rs.iterator().next();
-                                        UUID taskId = row.getUUID("task_id");
-                                        java.time.Instant fireAt =
-                                                row.getOffsetDateTime("fire_at").toInstant();
-                                        return pool.withTransaction(tx -> engine.taskReminderFired(
-                                                        workflowId, taskId, reminderId, fireAt, tx))
-                                                .compose(v -> pool.preparedQuery("SELECT COUNT(*) FROM workflow_history"
-                                                                + " WHERE workflow_id = $1 AND entry_type = $2")
-                                                        .execute(Tuple.of(
-                                                                workflowId.value(),
-                                                                dev.vertique.workflow.state.WorkflowEntryType
-                                                                        .BRANCH_TASK_REMINDER_FIRED
-                                                                        .name()))
-                                                        .map(r -> r.iterator()
-                                                                .next()
-                                                                .getLong(0)))
-                                                .compose(firedCount -> countTimersAsync(
-                                                                workflowId,
-                                                                dev.vertique.workflow.timer.TimerPurpose.TASK_REMINDER,
-                                                                "branch-a")
-                                                        .map(remCount -> new Outcome(firedCount, remCount)));
-                                    });
+                            // The reminder comes due: the executor runs its command as a segment.
+                            return TimerCommandRows.makeDue(pool, reminderId)
+                                    .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                                    .compose(v -> pool.preparedQuery("SELECT COUNT(*) FROM workflow_history"
+                                                    + " WHERE workflow_id = $1 AND entry_type = $2")
+                                            .execute(Tuple.of(
+                                                    workflowId.value(),
+                                                    dev.vertique.workflow.state.WorkflowEntryType
+                                                            .BRANCH_TASK_REMINDER_FIRED
+                                                            .name()))
+                                            .map(r -> r.iterator().next().getLong(0)))
+                                    .compose(firedCount -> countTimersAsync(
+                                                    workflowId,
+                                                    dev.vertique.workflow.timer.TimerPurpose.TASK_REMINDER,
+                                                    "branch-a")
+                                            .map(remCount -> new Outcome(firedCount, remCount)));
                         }))
                 .onComplete(ctx.succeeding(o -> ctx.verify(() -> {
                     assertTrue(o.firedCount() >= 1L, "BRANCH_TASK_REMINDER_FIRED history must be appended");
@@ -463,5 +416,80 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
                     ctx.completeNow();
                 })))
                 .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("the timer commands of the three branches fire as segments, each moving only its own branch")
+    void branchTimerCommandsFireAsSegments(VertxTestContext ctx) {
+        StartFanout payload = new StartFanout("fire-1");
+        dev.vertique.workflow.ops.StartCommand cmd = new dev.vertique.workflow.ops.StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
+
+        record Outcome(
+                String dueCommand,
+                String standaloneCommand,
+                String timeoutCommand,
+                String reminderCommand,
+                String reminderTimer,
+                String instanceStatus) {}
+
+        engine.start(cmd)
+                .compose(workflowId -> engine.executionProbe()
+                        .awaitIdle(workflowId, IDLE_TIMEOUT)
+                        .map(r -> workflowId))
+                .compose(workflowId -> TimerCommandRows.timerIds(
+                                pool, workflowId, dev.vertique.workflow.timer.TimerPurpose.TASK_REMINDER)
+                        .compose(reminders -> fireBranchTimer(
+                                        workflowId, dev.vertique.workflow.timer.TimerPurpose.STANDALONE)
+                                .compose(standalone -> fireBranchTimer(
+                                                workflowId, dev.vertique.workflow.timer.TimerPurpose.SIGNAL_TIMEOUT)
+                                        .compose(timeout -> fireBranchTimer(
+                                                        workflowId, dev.vertique.workflow.timer.TimerPurpose.TASK_DUE)
+                                                .compose(due -> TimerCommandRows.commandState(
+                                                                pool, reminders.getFirst())
+                                                        .compose(reminderCommand -> TimerCommandRows.status(
+                                                                        pool, reminders.getFirst())
+                                                                .compose(reminderTimer -> pool.preparedQuery(
+                                                                                "SELECT status FROM workflow_instances"
+                                                                                        + " WHERE id = $1")
+                                                                        .execute(Tuple.of(workflowId.value()))
+                                                                        .map(rows -> new Outcome(
+                                                                                due,
+                                                                                standalone,
+                                                                                timeout,
+                                                                                reminderCommand,
+                                                                                reminderTimer,
+                                                                                rows.iterator()
+                                                                                        .next()
+                                                                                        .getString("status"))))))))))
+                .onComplete(ctx.succeeding(o -> ctx.verify(() -> {
+                    assertEquals("COMPLETE", o.standaloneCommand(), "the branch timer node fires");
+                    assertEquals("COMPLETE", o.timeoutCommand(), "the branch timeout fires");
+                    assertEquals("COMPLETE", o.dueCommand(), "the branch due date fires");
+                    // the due date expired the task, which cancelled the task's reminder with its command
+                    assertEquals("CANCELLED", o.reminderTimer(), "expiry cancels the branch reminder");
+                    assertEquals("CANCELLED", o.reminderCommand(), "expiry cancels the branch reminder's command");
+                    // every branch moved on, so the join completed the instance
+                    assertEquals("COMPLETED", o.instanceStatus());
+                    ctx.completeNow();
+                })))
+                .onFailure(ctx::failNow);
+    }
+
+    /** Makes the only timer of the purpose due, waits until the executor ran it, and answers its command's state. */
+    private static Future<String> fireBranchTimer(
+            dev.vertique.workflow.ops.WorkflowInstanceId workflowId, dev.vertique.workflow.timer.TimerPurpose purpose) {
+        return TimerCommandRows.onlyTimerId(pool, workflowId, purpose)
+                .compose(timerId -> TimerCommandRows.makeDue(pool, timerId)
+                        .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                        .compose(idle -> TimerCommandRows.commandState(pool, timerId)));
     }
 }

@@ -14,5 +14,15 @@ package dev.vertique.workflow.engine;
  * @param dedupKey the caller-supplied dedup key used to prevent double delivery
  * @param payload the signal payload after type coercion; may be {@code null} for signals with no
  *     payload type declared
+ * @param commandId the row id of the recorded command the signal was applied for, or {@code null}
  */
-record SignalReceivedHistoryPayload(String signalName, String dedupKey, Object payload) {}
+record SignalReceivedHistoryPayload(
+        String signalName,
+        String dedupKey,
+        Object payload,
+        @jakarta.annotation.Nullable Long commandId) {
+
+    SignalReceivedHistoryPayload(String signalName, String dedupKey, Object payload) {
+        this(signalName, dedupKey, payload, null);
+    }
+}

@@ -4,19 +4,32 @@
 package dev.vertique.workflow.postgresql.engine;
 
 import dagger.Binds;
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
+import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.db.DbSchemas;
 import dev.vertique.db.DbSchemasModule;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.logging.LoggingContextModule;
+import dev.vertique.workflow.config.WorkflowExecutorConfig;
+import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.WorkflowEngineModule;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
+import dev.vertique.workflow.engine.spi.TaskReservations;
+import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.history.WorkflowInstanceHistoryService;
+import dev.vertique.workflow.postgresql.executor.CommandNotificationListener;
+import dev.vertique.workflow.postgresql.executor.PgWorkflowCommandRepository;
+import dev.vertique.workflow.postgresql.history.PgWorkflowInstanceHistoryService;
 import dev.vertique.workflow.postgresql.query.PgWorkflowInstanceQueryService;
 import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
@@ -26,6 +39,7 @@ import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionRepository;
 import dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionService;
+import dev.vertique.workflow.postgresql.tasks.PgTaskReservations;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.query.WorkflowInstanceQueryService;
@@ -34,10 +48,13 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.retention.WorkflowRetentionService;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerStore;
+import io.vertx.core.Vertx;
+import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.inject.Singleton;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Dagger module for the workflow-postgresql (dialect) layer.
@@ -48,7 +65,7 @@ import java.util.Optional;
  * optional {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} binding, and the
  * engine's {@code core}/{@code context} includes). This module contributes only the dialect-specific
  * bindings: the five repository SPIs, the task/timer/definition-registry stores, the transaction runner, and the
- * query/retention services — all bound to their PostgreSQL implementations.
+ * query, history and retention services — all bound to their PostgreSQL implementations.
  *
  * <p>Consumers install only {@code WorkflowPostgresqlModule}; the engine wiring arrives transitively
  * through the {@code include}, so application wiring is unchanged.
@@ -81,6 +98,53 @@ import java.util.Optional;
         })
 public abstract class WorkflowPostgresqlModule {
 
+    /** The time between two reads of the notification queue usage, in milliseconds. */
+    private static final long QUEUE_USAGE_INTERVAL_MS = 5_000;
+
+    // --- Executor wake-up ---
+
+    /**
+     * Provides the node's wake-up source: one {@link CommandNotificationListener} shared by the node's executor
+     * instances, which opens its connection with the pool's connect options when the first instance starts. A graph
+     * without a Vert.x instance, or without connect options, has no listening connection to open and gets a source
+     * that never wakes anyone, so its executors poll.
+     *
+     * @param vertx          the optional Vert.x instance
+     * @param connectOptions the pool's connect options, when bound
+     * @param pool           the PostgreSQL connection pool
+     * @param observers      the executor observers the notification queue usage is reported to
+     * @param config         the executor configuration, or empty for the defaults; its poll interval is the
+     *                       reconnect interval
+     * @return the wake-up source
+     */
+    @Provides
+    @Singleton
+    static CommandWakeups commandWakeups(
+            Optional<Vertx> vertx,
+            Optional<PgConnectOptions> connectOptions,
+            Pool pool,
+            Set<WorkflowExecutorObserver> observers,
+            Optional<WorkflowExecutorConfig> config) {
+        if (vertx.isEmpty() || connectOptions.isEmpty()) {
+            return CommandWakeups.none();
+        }
+        return new CommandNotificationListener(
+                vertx.get(),
+                connectOptions.get(),
+                pool,
+                observers,
+                config.orElseGet(WorkflowExecutorConfig::defaults).pollIntervalMs(),
+                QUEUE_USAGE_INTERVAL_MS);
+    }
+
+    /**
+     * Declares the pool's connect options as an optional binding; {@code DbPostgresqlModule} supplies them.
+     *
+     * @return the optional connect options declaration
+     */
+    @BindsOptionalOf
+    abstract PgConnectOptions optionalPgConnectOptions();
+
     // --- Scoped PostgreSQL implementations ---
 
     /**
@@ -110,6 +174,21 @@ public abstract class WorkflowPostgresqlModule {
     @Singleton
     static PgTaskStore pgTaskStore(Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
         return new PgTaskStore(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
+     * Provides the {@link PgTaskReservations}, applying the schema mapping for the {@code workflow}
+     * instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL task reservations
+     */
+    @Provides
+    @Singleton
+    static PgTaskReservations pgTaskReservations(Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgTaskReservations(pool, mapper, schemas.orElseGet(DbSchemas::empty));
     }
 
     /**
@@ -230,6 +309,33 @@ public abstract class WorkflowPostgresqlModule {
         return new PgWorkflowDefinitionRegistryStore(pool, mapper, config, schemas.orElseGet(DbSchemas::empty));
     }
 
+    /**
+     * Provides the {@link PgWorkflowCommandRepository}, applying the schema mapping for the {@code workflow}
+     * instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @param recording the optional recording configuration; defaults apply when absent
+     * @param propagator the propagator that captures the durable context stored with each recorded command
+     * @return the scoped PostgreSQL command repository
+     */
+    @Provides
+    @Singleton
+    static PgWorkflowCommandRepository pgWorkflowCommandRepository(
+            Pool pool,
+            PgDbExceptionMapper mapper,
+            Optional<DbSchemas> schemas,
+            Optional<WorkflowRecordingConfig> recording,
+            DurableContextPropagator propagator) {
+        return new PgWorkflowCommandRepository(
+                pool,
+                mapper,
+                schemas.orElseGet(DbSchemas::empty),
+                recording.orElseGet(WorkflowRecordingConfig::defaults),
+                propagator);
+    }
+
     // --- Store SPI bindings ---
 
     /**
@@ -254,6 +360,17 @@ public abstract class WorkflowPostgresqlModule {
     @Binds
     @Singleton
     abstract TaskStore<SqlClient> bindTaskStore(PgTaskStore impl);
+
+    /**
+     * Binds {@link PgTaskReservations} as the {@link TaskReservations} implementation for the
+     * {@link SqlClient}-typed stack.
+     *
+     * @param impl the task reservations singleton
+     * @return the reservations as the engine SPI interface
+     */
+    @Binds
+    @Singleton
+    abstract TaskReservations<SqlClient> bindTaskReservations(PgTaskReservations impl);
 
     // --- Repository SPI bindings ---
 
@@ -313,6 +430,17 @@ public abstract class WorkflowPostgresqlModule {
     abstract JoinStateRepository<SqlClient> bindJoinStateRepository(PgJoinStateRepository impl);
 
     /**
+     * Binds {@link PgWorkflowCommandRepository} as the {@link WorkflowCommandRepository} implementation for the
+     * {@link SqlClient}-typed stack.
+     *
+     * @param impl the command repository singleton
+     * @return the repository as the transaction-handle-generic SPI
+     */
+    @Binds
+    @Singleton
+    abstract WorkflowCommandRepository<SqlClient> bindCommandRepository(PgWorkflowCommandRepository impl);
+
+    /**
      * Binds {@link PgWorkflowTransactionRunner} as the {@link WorkflowTransactionRunner}
      * implementation for the {@link SqlClient}-typed stack.
      *
@@ -344,6 +472,23 @@ public abstract class WorkflowPostgresqlModule {
     abstract WorkflowInstanceQueryService bindQueryService(PgWorkflowInstanceQueryService impl);
 
     /**
+     * Provides the {@link WorkflowInstanceHistoryService}, reading through the scoped history repository and the
+     * command table of the same schema placement.
+     *
+     * @param history the scoped PostgreSQL history repository
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the history service
+     */
+    @Provides
+    @Singleton
+    static WorkflowInstanceHistoryService historyService(
+            PgWorkflowHistoryRepository history, Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgWorkflowInstanceHistoryService(history, pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
      * Binds {@link PgWorkflowRetentionService} as the {@link WorkflowRetentionService}
      * implementation.
      *
@@ -367,4 +512,14 @@ public abstract class WorkflowPostgresqlModule {
     @Binds
     @Singleton
     abstract WorkflowDefinitionRegistryStore definitionRegistryStore(PgWorkflowDefinitionRegistryStore store);
+
+    /**
+     * Binds {@link PgWorkflowDefinitionRegistryStore} as the engine's reads of definition rows on a caller's
+     * transaction, so that recording a start selects its version from the database on the caller's connection.
+     *
+     * @param store the definition registry store singleton
+     * @return the store as the engine-internal read interface
+     */
+    @Binds
+    abstract TransactionalDefinitionReads<SqlClient> definitionReads(PgWorkflowDefinitionRegistryStore store);
 }

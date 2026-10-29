@@ -372,11 +372,6 @@ SPDX-License-Identifier: EUPL-1.2
             </dependency>
             <dependency>
                 <groupId>dev.vertique</groupId>
-                <artifactId>vertique-workflow-delayed</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>dev.vertique</groupId>
                 <artifactId>vertique-workflow-tasks</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -548,6 +543,11 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-micrometer-services</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-micrometer-workflow</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

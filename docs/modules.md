@@ -79,6 +79,7 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-micrometer-rest` | [module.md](../vertique-micrometer/vertique-micrometer-rest/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-resilience` | [module.md](../vertique-micrometer/vertique-micrometer-resilience/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-micrometer-services` | [module.md](../vertique-micrometer/vertique-micrometer-services/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-micrometer-workflow` | [module.md](../vertique-micrometer/vertique-micrometer-workflow/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-cache` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-cache/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-core` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-opentelemetry-mcp` | [module.md](../vertique-opentelemetry/vertique-opentelemetry-mcp/src/main/resources/META-INF/vertique/module.md) |
@@ -116,7 +117,6 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-validation` | [module.md](../vertique-validation/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-workflow-core` | [module.md](../vertique-workflow/vertique-workflow-core/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-workflow-definition` | [module.md](../vertique-workflow/vertique-workflow-definition/src/main/resources/META-INF/vertique/module.md) |
-| `vertique-workflow-delayed` | [module.md](../vertique-workflow/vertique-workflow-delayed/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-workflow-engine` | [module.md](../vertique-workflow/vertique-workflow-engine/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-workflow-events` | [module.md](../vertique-workflow/vertique-workflow-events/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-workflow-postgresql` | [module.md](../vertique-workflow/vertique-workflow-postgresql/src/main/resources/META-INF/vertique/module.md) |

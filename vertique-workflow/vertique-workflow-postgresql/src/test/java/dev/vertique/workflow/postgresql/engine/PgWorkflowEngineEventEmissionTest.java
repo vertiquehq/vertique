@@ -13,10 +13,8 @@ import static org.mockito.Mockito.when;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
-import dev.vertique.workflow.engine.spi.StartDedupResult;
 import dev.vertique.workflow.events.WorkflowEventIntent;
 import dev.vertique.workflow.events.WorkflowEventType;
-import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
@@ -50,16 +48,15 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Unit-level tests asserting that {@link WorkflowEngineHandle} emits {@link WorkflowEventIntent}
- * payloads through the {@code WORKFLOW_EVENT} recorder at the correct lifecycle transition sites.
+ * payloads through the {@code WORKFLOW_EVENT} recorder at the correct lifecycle transition sites. The events of a
+ * start come from the executor's first segment and are covered by {@code PgWorkflowEngineStartEventsIT}.
  *
  * <p>Uses Mockito stubs for the database layer and an in-memory {@link WorkflowSideEffectRecorder}
  * that captures emitted intents. Tests call the transactional engine methods directly (passing a
  * mocked {@link SqlClient}) so no real database is needed.
  *
- * <p>Covers 4 representative emission sites: {@link WorkflowEventType#WORKFLOW_STARTED},
- * {@link WorkflowEventType#WORKFLOW_COMPLETED}, {@link WorkflowEventType#WORKFLOW_FAILED}, and
- * {@link WorkflowEventType#WORKFLOW_CANCELLED}. The remaining sites are covered by integration
- * tests in slice 6.
+ * <p>Covers the {@link WorkflowEventType#WORKFLOW_CANCELLED} emission site. The remaining sites are covered by
+ * integration tests.
  */
 class PgWorkflowEngineEventEmissionTest {
 
@@ -72,9 +69,6 @@ class PgWorkflowEngineEventEmissionTest {
 
     /** Contract marker for complete-immediately plans. */
     interface CompleteContract {}
-
-    /** Contract marker for fail-immediately plans. */
-    interface FailContract {}
 
     // --- Static workflow definitions ---
 
@@ -105,39 +99,6 @@ class PgWorkflowEngineEventEmissionTest {
         @Override
         public void define(WorkflowBuilder<State> wf) {
             wf.init(State.class, s -> s).initialStep("done").complete("done");
-        }
-    };
-
-    /**
-     * A workflow that reaches a {@link dev.vertique.workflow.plan.FailNode} with no compensable
-     * steps (instance stays {@code FAILED}).
-     */
-    static final WorkflowDefinition<State, FailContract> FAIL_DEF = new WorkflowDefinition<>() {
-        @Override
-        public Class<FailContract> contract() {
-            return FailContract.class;
-        }
-
-        @Override
-        public Class<State> stateType() {
-            return State.class;
-        }
-
-        @Override
-        public String definitionId() {
-            return "event-emit-fail";
-        }
-
-        @Override
-        public long definitionVersion() {
-            return 1L;
-        }
-
-        @Override
-        public void define(WorkflowBuilder<State> wf) {
-            wf.init(State.class, s -> s)
-                    .initialStep("fail-step")
-                    .fail("fail-step", "UNIT_TEST_ERROR", s -> "test failure");
         }
     };
 
@@ -235,7 +196,6 @@ class PgWorkflowEngineEventEmissionTest {
 
         registry = new DefaultWorkflowRegistry();
         registry.register(COMPLETE_DEF);
-        registry.register(FAIL_DEF);
 
         engine = PgWorkflowEngineTestSupport.create(
                 pool,
@@ -283,126 +243,7 @@ class PgWorkflowEngineEventEmissionTest {
                 null);
     }
 
-    /**
-     * Stubs the instance repository so that insert succeeds, findById returns {@code inst}, and
-     * updateOptimistic returns 1 (one row updated).
-     *
-     * @param id   the instance id
-     * @param inst the instance to return from {@code findById}
-     */
-    private void stubInstance(WorkflowInstanceId id, WorkflowInstance inst) {
-        when(instanceRepo.insert(any(WorkflowInstance.class), any(SqlClient.class)))
-                .thenReturn(Future.succeededFuture());
-        when(instanceRepo.findById(eq(id), any(SqlClient.class))).thenReturn(Future.succeededFuture(Optional.of(inst)));
-        when(instanceRepo.updateOptimistic(any(WorkflowInstance.class), any(Long.class), any(SqlClient.class)))
-                .thenReturn(Future.succeededFuture(1));
-    }
-
-    /**
-     * Stubs the dedup repository so that {@code claimOrResolveStart} inserts with the given id.
-     *
-     * @param id the workflow instance id to return
-     */
-    private void stubDedup(WorkflowInstanceId id) {
-        when(dedupRepo.findStart(any(String.class), any(String.class), any(String.class), any(SqlClient.class)))
-                .thenReturn(Future.succeededFuture(Optional.empty()));
-        when(dedupRepo.claimOrResolveStart(
-                        any(String.class),
-                        any(String.class),
-                        any(String.class),
-                        any(WorkflowInstanceId.class),
-                        any(String.class),
-                        any(SqlClient.class)))
-                .thenReturn(Future.succeededFuture(new StartDedupResult(id, true, "definitionVersion=1")));
-    }
-
     // --- Tests ---
-
-    @Test
-    @DisplayName("WORKFLOW_STARTED: start() emits event with idempotencyKey attribute")
-    void startEmitsWorkflowStartedEvent() {
-        WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
-        WorkflowInstance inst = instance(id, "event-emit-complete", "done", WorkflowStatus.RUNNING);
-        stubInstance(id, inst);
-        stubDedup(id);
-
-        Future<WorkflowInstanceId> result = engine.start(
-                new StartCommand(
-                        "event-emit-complete",
-                        CompleteContract.class.getName(),
-                        new State("s1"),
-                        "started-key-1",
-                        null,
-                        null,
-                        null,
-                        null,
-                        null),
-                tx);
-
-        assertTrue(result.succeeded(), "start() must succeed; cause: " + result.cause());
-
-        WorkflowEventIntent event = findEvent(WorkflowEventType.WORKFLOW_STARTED);
-        assertEquals(WorkflowEventType.WORKFLOW_STARTED, event.eventType());
-        assertEquals("started-key-1", event.attributes().get("idempotencyKey"));
-    }
-
-    @Test
-    @DisplayName("WORKFLOW_COMPLETED: start() that reaches a CompleteNode emits WORKFLOW_COMPLETED")
-    void handleCompleteEmitsWorkflowCompletedEvent() {
-        WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
-        WorkflowInstance inst = instance(id, "event-emit-complete", "done", WorkflowStatus.RUNNING);
-        stubInstance(id, inst);
-        stubDedup(id);
-
-        Future<WorkflowInstanceId> result = engine.start(
-                new StartCommand(
-                        "event-emit-complete",
-                        CompleteContract.class.getName(),
-                        new State("c1"),
-                        "completed-key-1",
-                        null,
-                        null,
-                        null,
-                        null,
-                        null),
-                tx);
-
-        assertTrue(result.succeeded(), "start() must succeed; cause: " + result.cause());
-
-        WorkflowEventIntent event = findEvent(WorkflowEventType.WORKFLOW_COMPLETED);
-        assertEquals(WorkflowEventType.WORKFLOW_COMPLETED, event.eventType());
-        // workflowId is the engine-assigned id (from dedup winner), verify it is non-null
-        assertTrue(event.workflowId() != null, "workflowId must not be null");
-        assertEquals("event-emit-complete", event.definitionId());
-    }
-
-    @Test
-    @DisplayName("WORKFLOW_FAILED: start() that reaches a FailNode emits WORKFLOW_FAILED with errorType")
-    void handleFailEmitsWorkflowFailedEvent() {
-        WorkflowInstanceId id = new WorkflowInstanceId(UUID.randomUUID());
-        WorkflowInstance inst = instance(id, "event-emit-fail", "fail-step", WorkflowStatus.RUNNING);
-        stubInstance(id, inst);
-        stubDedup(id);
-
-        Future<WorkflowInstanceId> result = engine.start(
-                new StartCommand(
-                        "event-emit-fail",
-                        FailContract.class.getName(),
-                        new State("f1"),
-                        "failed-key-1",
-                        null,
-                        null,
-                        null,
-                        null,
-                        null),
-                tx);
-
-        assertTrue(result.succeeded(), "start() must succeed; cause: " + result.cause());
-
-        WorkflowEventIntent event = findEvent(WorkflowEventType.WORKFLOW_FAILED);
-        assertEquals(WorkflowEventType.WORKFLOW_FAILED, event.eventType());
-        assertEquals("UNIT_TEST_ERROR", event.attributes().get("errorType"));
-    }
 
     @Test
     @DisplayName("WORKFLOW_CANCELLED: cancel() emits WORKFLOW_CANCELLED with reason attribute")

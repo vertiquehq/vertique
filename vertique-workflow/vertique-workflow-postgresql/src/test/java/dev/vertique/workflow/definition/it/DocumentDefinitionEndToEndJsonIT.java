@@ -44,6 +44,7 @@ import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
+import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
@@ -125,6 +126,7 @@ public class DocumentDefinitionEndToEndJsonIT {
 
     static Pool pool;
     static WorkflowOperations engine;
+    static dev.vertique.workflow.ops.WorkflowExecutionProbe probe;
     static WorkflowDefinitionService definitionService;
     static VertiqueApplicationHandle<?> application;
 
@@ -411,6 +413,7 @@ public class DocumentDefinitionEndToEndJsonIT {
                     }
                     application = started.result();
                     engine = component.workflowOperations();
+                    probe = component.executionProbe();
                     definitionService = component.definitionService();
                     ctx.completeNow();
                 });
@@ -419,8 +422,10 @@ public class DocumentDefinitionEndToEndJsonIT {
     /** Truncates all workflow tables before each test so tests are isolated. */
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -461,6 +466,9 @@ public class DocumentDefinitionEndToEndJsonIT {
                 null);
 
         engine.start(cmd)
+                // The start only records: the signals need the instance to have reached its first wait
+                .compose(started -> probe.awaitIdle(started, java.time.Duration.ofSeconds(10))
+                        .map(idle -> started))
                 .compose(this::driveToCompletion)
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
@@ -517,6 +525,7 @@ public class DocumentDefinitionEndToEndJsonIT {
                         id, "payment.captured", new PaymentCapturedDoc("auth-def"), "pay-" + UUID.randomUUID()))
                 .compose(v -> engine.signal(
                         id, "shipment.created", new ShipmentCreatedDoc("track-ghi"), "ship-" + UUID.randomUUID()))
-                .map(v -> id);
+                .compose(v -> probe.awaitIdle(id, java.time.Duration.ofSeconds(10)))
+                .map(idle -> id);
     }
 }

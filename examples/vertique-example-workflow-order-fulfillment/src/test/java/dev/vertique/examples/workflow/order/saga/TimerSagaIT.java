@@ -7,10 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.examples.workflow.order.TimerWorkflowDefinition;
-import dev.vertique.job.DefaultJobContext;
-import dev.vertique.job.JobState;
-import dev.vertique.job.JobType;
-import dev.vertique.workflow.delayed.job.TimerFirePayload;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.state.WaitType;
@@ -18,14 +14,10 @@ import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.json.Json;
-import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,10 +40,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *       either completes via the signal path or the timeout path.</li>
  * </ul>
  *
- * <p>The delayed-job poller is not deployed. Instead the tests claim the enqueued timer job from
- * the database and invoke {@link dev.vertique.workflow.delayed.job.WorkflowTimerFireExecutor}
- * directly, mirroring the production dispatch path without requiring a running event-bus poller
- * verticle.
+ * <p>Timers are {@code TIMER} commands that the workflow executor runs when they come due. The tests move the fire time
+ * of the pending commands to the database clock instead of waiting for the wall clock.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -75,9 +65,7 @@ public class TimerSagaIT extends SagaTestBase {
 
     @AfterAll
     static void tearDown() {
-        if (component != null && component.pgInboxOutboxRepository() != null) {
-            component.pgInboxOutboxRepository().pool().close();
-        }
+        closeComponent();
     }
 
     // --- Test 1: standalone timer fires and advances the workflow ---
@@ -100,6 +88,7 @@ public class TimerSagaIT extends SagaTestBase {
                         null,
                         null,
                         null))
+                .compose(id -> awaitIdle(id))
                 .compose(id -> {
                     // Workflow should be WAITING on the timer step
                     return component.workflowOperations().query(id).map(view -> {
@@ -108,7 +97,7 @@ public class TimerSagaIT extends SagaTestBase {
                         return id;
                     });
                 })
-                .compose(id -> driveTimerJob(id).map(v -> id))
+                .compose(id -> fireDueTimers(id).map(v -> id))
                 .compose(id -> component.workflowOperations().query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "workflow query must succeed: " + ar.cause());
@@ -149,6 +138,7 @@ public class TimerSagaIT extends SagaTestBase {
                         null,
                         null,
                         null))
+                .compose(id -> awaitIdle(id))
                 .compose(id -> {
                     // Workflow should be WAITING on the signal/timeout step
                     return component.workflowOperations().query(id).map(view -> {
@@ -157,7 +147,7 @@ public class TimerSagaIT extends SagaTestBase {
                     });
                 })
                 // Drive the timer job WITHOUT sending the signal — timeout path fires
-                .compose(id -> driveTimerJob(id).map(v -> id))
+                .compose(id -> fireDueTimers(id).map(v -> id))
                 .compose(id -> component.workflowOperations().query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "workflow query must succeed: " + ar.cause());
@@ -199,13 +189,14 @@ public class TimerSagaIT extends SagaTestBase {
                         null,
                         null,
                         null))
+                .compose(id -> awaitIdle(id))
                 .compose(id -> {
                     // Send the signal immediately — before any timer fires
                     var sig = new TimerWorkflowDefinition.OkSignal(testId);
                     return component
                             .workflowOperations()
                             .signal(id, "ok-signal", sig, testId + ":ok")
-                            .map(v -> id);
+                            .compose(v -> awaitIdle(id));
                 })
                 .compose(id -> component.workflowOperations().query(id))
                 .onComplete(ar -> ctx.verify(() -> {
@@ -252,6 +243,7 @@ public class TimerSagaIT extends SagaTestBase {
                         null,
                         null,
                         null))
+                .compose(id -> awaitIdle(id))
                 .compose(id -> {
                     // Immediately cancel the workflow while it waits on the timer
                     return component
@@ -283,53 +275,24 @@ public class TimerSagaIT extends SagaTestBase {
     // --- Helpers ---
 
     /**
-     * Finds and directly executes all ENQUEUED timer-fire jobs in the database, bypassing the
-     * {@code scheduled_at <= NOW()} gate used by the normal poller.
+     * Makes the timers of the workflow due now and waits until the executor has run them.
      *
-     * <p>Timer jobs are scheduled 2 seconds in the future so the standard
-     * {@code claimNextJob} path (which applies {@code scheduled_at <= NOW()}) would block them.
-     * Tests bypass this by issuing a raw UPDATE that moves ENQUEUED timer-fire jobs straight to
-     * PROCESSING, then invoke the executor with the recovered payload. This faithfully exercises
-     * the full executor code path without requiring real wall-clock delays.
+     * <p>The timers are recorded as {@code TIMER} commands that fire 2 seconds after they were recorded. The test moves
+     * the fire time of the pending timer commands, and of their timer rows, to the database clock so that it does not
+     * wait for the wall clock; the executor of the component then runs the commands as segments.
      *
-     * @param workflowId the workflow instance whose timer job should be fired; scopes the error
-     *     message when no job is found
-     * @return a {@link Future} that completes when all matching timer jobs have been executed
+     * @param workflowId the workflow instance whose timers fire
+     * @return a {@link Future} that completes when the instance is idle again
      */
-    private static Future<Void> driveTimerJob(WorkflowInstanceId workflowId) {
+    private static Future<Void> fireDueTimers(WorkflowInstanceId workflowId) {
         var pool = component.pgInboxOutboxRepository().pool();
-        var executor = component.workflowTimerFireExecutor();
-        var jobRepo = component.jobRepository();
-
-        // Lock and transition all ENQUEUED timer-fire jobs to PROCESSING, regardless of
-        // scheduled_at, to bypass the future-date gate without waiting for the real clock.
-        // The handler column stores the event bus address: jobs/delayed/{name}/execute.
-        String sql = "UPDATE job_executions"
-                + " SET state = 'PROCESSING', started_at = NOW(), updated_at = NOW(),"
-                + " locked_by = 'test-timer-driver'"
-                + " WHERE handler = 'jobs/delayed/vertique.workflow.timer.fire/execute'"
-                + " AND state = 'ENQUEUED'"
-                + " RETURNING id, job_id, attempt, payload";
-
-        return pool.query(sql).execute().compose(rows -> {
-            var futures = StreamSupport.stream(rows.spliterator(), false)
-                    .map(row -> {
-                        UUID execId = row.getUUID("id");
-                        String jobId = row.getString("job_id");
-                        int attempt = row.getInteger("attempt");
-                        JsonObject rawPayload = row.getJsonObject("payload");
-                        TimerFirePayload payload = Json.decodeValue(rawPayload.encode(), TimerFirePayload.class);
-                        DefaultJobContext ctx = new DefaultJobContext(jobId, execId, attempt, JobType.DELAYED);
-                        return executor.execute(payload, ctx)
-                                .compose(v -> jobRepo.completeExecution(execId, JobState.SUCCEEDED, null, null, null)
-                                        .mapEmpty());
-                    })
-                    .collect(Collectors.toList());
-            if (futures.isEmpty()) {
-                return Future.failedFuture(
-                        new AssertionError("No ENQUEUED timer-fire jobs found for workflow " + workflowId.value()));
-            }
-            return Future.all(futures).mapEmpty();
-        });
+        String sql = "WITH due AS (UPDATE workflow_commands SET fire_at = clock_timestamp(),"
+                + " available_at = clock_timestamp() WHERE workflow_id = $1 AND kind = 'TIMER' AND state = 'PENDING'"
+                + " RETURNING fire_at, timer_id) UPDATE workflow_timers t SET fire_at = due.fire_at FROM due"
+                + " WHERE t.timer_id = due.timer_id";
+        return pool.preparedQuery(sql)
+                .execute(io.vertx.sqlclient.Tuple.of(workflowId.value()))
+                .compose(rows -> awaitIdle(workflowId))
+                .mapEmpty();
     }
 }

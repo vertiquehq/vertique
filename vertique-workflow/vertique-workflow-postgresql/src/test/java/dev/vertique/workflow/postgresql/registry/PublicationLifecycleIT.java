@@ -31,15 +31,18 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Transaction;
 import io.vertx.sqlclient.Tuple;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -58,6 +61,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PublicationLifecycleIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     /** The one contract that every document and code definition of these tests names. */
     @WorkflowContract
@@ -104,7 +109,9 @@ public class PublicationLifecycleIT {
                 assertThat(row.publishToken()).isNull();
                 assertThat(row.planHash()).isEqualTo(loaded.planHash());
             });
-            assertThat(node.app().workflowRegistry().resolve(key).plan().planHash())
+            assertThat(DefinitionScenario.planOf(node.app().workflowRegistry(), key)
+                            .plan()
+                            .planHash())
                     .isEqualTo(loaded.planHash());
 
             // When the same key is published again
@@ -161,11 +168,15 @@ public class PublicationLifecycleIT {
 
             // And every node whose publication succeeded resolves the key
             if (failureA == null) {
-                assertThat(nodeA.app().workflowRegistry().resolve(key).plan().planHash())
+                assertThat(DefinitionScenario.planOf(nodeA.app().workflowRegistry(), key)
+                                .plan()
+                                .planHash())
                         .isEqualTo(loaded.planHash());
             }
             if (failureB == null) {
-                assertThat(nodeB.app().workflowRegistry().resolve(key).plan().planHash())
+                assertThat(DefinitionScenario.planOf(nodeB.app().workflowRegistry(), key)
+                                .plan()
+                                .planHash())
                         .isEqualTo(loaded.planHash());
             }
         }
@@ -199,15 +210,15 @@ public class PublicationLifecycleIT {
 
             // And both code versions resolve
             WorkflowRegistry registry = node.app().workflowRegistry();
-            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, codeId, 1))
+            assertThat(DefinitionScenario.planOf(registry, new DefinitionKey(WorkflowScopes.DEFAULT, codeId, 1))
                             .plan()
                             .definitionVersion())
                     .isEqualTo(1);
-            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, codeId, 2))
+            assertThat(DefinitionScenario.planOf(registry, new DefinitionKey(WorkflowScopes.DEFAULT, codeId, 2))
                             .plan()
                             .definitionVersion())
                     .isEqualTo(2);
-            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, packagedId, 1)))
+            assertThat(DefinitionScenario.planOf(registry, new DefinitionKey(WorkflowScopes.DEFAULT, packagedId, 1)))
                     .isNotNull();
         }
     }
@@ -243,8 +254,10 @@ public class PublicationLifecycleIT {
 
             // And the registry resolves each scope's own plan
             WorkflowRegistry registry = node.app().workflowRegistry();
-            assertThat(registry.resolve(defaultKey).plan().planHash()).isEqualTo(defaultLoaded.planHash());
-            assertThat(registry.resolve(acmeKey).plan().planHash()).isEqualTo(acmeLoaded.planHash());
+            assertThat(DefinitionScenario.planOf(registry, defaultKey).plan().planHash())
+                    .isEqualTo(defaultLoaded.planHash());
+            assertThat(DefinitionScenario.planOf(registry, acmeKey).plan().planHash())
+                    .isEqualTo(acmeLoaded.planHash());
             assertThat(defaultLoaded.planHash()).isNotEqualTo(acmeLoaded.planHash());
         }
     }
@@ -301,6 +314,7 @@ public class PublicationLifecycleIT {
                 await(service.publish(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)));
             }
             WorkflowInstanceId original = await(node.app().workflowOperations().start(start(id, "K", 1, null)));
+            await(node.app().executionProbe().awaitIdle(original, IDLE_TIMEOUT));
             assertThat(scenario.instanceCount(id)).isEqualTo(1);
 
             // And version 1 is deprecated through the lifecycle
@@ -324,6 +338,70 @@ public class PublicationLifecycleIT {
     }
 
     @Test
+    @DisplayName("a publishing claim older than the claim timeout is taken over and a younger one is not")
+    void expiredPublishingClaimIsTakenOverByAnotherNode(Vertx vertx) {
+        String id = "claim-timeout-doc";
+        DefinitionKey expiredKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 1);
+        DefinitionKey youngKey = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
+        JsonObject config = new JsonObject()
+                .put(
+                        "workflow",
+                        new JsonObject().put("definitions", new JsonObject().put("publicationClaimTimeoutSeconds", 5)));
+
+        try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
+            scenario.ownRows(id);
+
+            // Given two nodes with a claim timeout of 5 seconds and two candidates
+            Boot nodeA = scenario.node(none(), unobserved(), List.of(), config);
+            Boot nodeB = scenario.node(none(), unobserved(), List.of(), config);
+            await(nodeA.app()
+                    .definitionService()
+                    .load(WorkflowScopes.DEFAULT, document(id, 1), DocumentFormat.YAML, source("claim-1", LOADED_AT)));
+            await(nodeA.app()
+                    .definitionService()
+                    .load(WorkflowScopes.DEFAULT, document(id, 2), DocumentFormat.YAML, source("claim-2", LOADED_AT)));
+
+            // And node A claims both and leaves them PUBLISHING, one claimed 6 seconds ago and one 2 seconds ago
+            ActivationClaim expiredClaim =
+                    await(nodeA.app().definitionRegistryStore().claim(expiredKey));
+            ActivationClaim youngClaim =
+                    await(nodeA.app().definitionRegistryStore().claim(youngKey));
+            ageClaim(scenario, expiredKey, Duration.ofSeconds(6));
+            ageClaim(scenario, youngKey, Duration.ofSeconds(2));
+            Row youngBefore = row(scenario, id, 2);
+            assertThat(row(scenario, id, 1).status()).isEqualTo("PUBLISHING");
+            assertThat(youngBefore.status()).isEqualTo("PUBLISHING");
+
+            // When node B publishes each
+            Throwable takeover = failureOf(nodeB.app().definitionService().publish(expiredKey));
+            Throwable refusal = failureOf(nodeB.app().definitionService().publish(youngKey));
+
+            // Then the expired claim is taken over: the row is available, the claim is released and node A's claim is
+            // obsolete
+            assertThat(takeover).isNull();
+            assertThat(row(scenario, id, 1)).satisfies(row -> {
+                assertThat(row.status()).isEqualTo("AVAILABLE");
+                assertThat(row.publishToken()).isNull();
+            });
+            Throwable obsolete = failureOf(nodeA.app().definitionRegistryStore().complete(expiredClaim));
+            assertThat(obsolete).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
+                assertThat(failure.reason()).isEqualTo(Reason.STALE_CLAIM);
+                assertThat(failure.key()).isEqualTo(expiredKey);
+            });
+
+            // And the younger claim is refused as still held, and its row and claim are untouched
+            assertThat(refusal).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
+                assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
+                assertThat(failure.key()).isEqualTo(youngKey);
+                assertThat(failure.getMessage()).contains("cannot claim status PUBLISHING");
+            });
+            assertThat(row(scenario, id, 2)).isEqualTo(youngBefore);
+            assertThat(row(scenario, id, 2).publishToken())
+                    .isEqualTo(youngClaim.token().toString());
+        }
+    }
+
+    @Test
     @DisplayName("a retired version reinstates to available and leaves its sibling alone")
     void retiredVersionReinstatesToAvailable(Vertx vertx) {
         String id = "ret-doc";
@@ -333,7 +411,7 @@ public class PublicationLifecycleIT {
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
             scenario.ownRows(id);
 
-            // Given versions 1 and 2 available, and version 1 deprecated, cooled and retired
+            // Given versions 1 and 2 available, and version 1 deprecated and retired
             Boot node = scenario.node(none(), unobserved());
             WorkflowDefinitionService service = node.app().definitionService();
             CompiledDefinitionRef loadedOne = await(service.load(
@@ -343,8 +421,6 @@ public class PublicationLifecycleIT {
             await(service.publish(versionOne));
             await(service.publish(versionTwo));
             await(service.deprecate(versionOne));
-            scenario.ageStatus(
-                    versionOne, node.app().workflowDefinitionsConfig().maxStalenessSeconds() + 60);
             await(service.retire(versionOne));
             Row siblingBefore = row(scenario, id, 2);
             assertThat(row(scenario, id, 1).status()).isEqualTo("RETIRED");
@@ -357,7 +433,9 @@ public class PublicationLifecycleIT {
                 assertThat(row.status()).isEqualTo("AVAILABLE");
                 assertThat(row.publishToken()).isNull();
             });
-            assertThat(node.app().workflowRegistry().resolve(versionOne).plan().planHash())
+            assertThat(DefinitionScenario.planOf(node.app().workflowRegistry(), versionOne)
+                            .plan()
+                            .planHash())
                     .isEqualTo(loadedOne.planHash());
 
             // And version 2 is unchanged
@@ -481,7 +559,6 @@ public class PublicationLifecycleIT {
             // Given a component whose code provides a version that is later retired
             Boot node = scenario.node(none(), unobserved(), List.of(new CodeWorkflow(codeId, 1)));
             WorkflowDefinitionService service = node.app().definitionService();
-            long coolingSeconds = node.app().workflowDefinitionsConfig().maxStalenessSeconds();
 
             for (Start start : Start.values()) {
                 for (Operation operation : Operation.values()) {
@@ -491,7 +568,7 @@ public class PublicationLifecycleIT {
                     // Given a document row in the starting state
                     CompiledDefinitionRef loaded = await(service.load(
                             WorkflowScopes.DEFAULT, document(id, 1), DocumentFormat.YAML, source(id, LOADED_AT)));
-                    reach(scenario, node, start, key, loaded.planHash(), coolingSeconds);
+                    reach(scenario, node, start, key, loaded.planHash());
                     Row before = row(scenario, id, 1);
                     assertThat(before.status())
                             .as("%s row before %s", start, operation)
@@ -531,7 +608,6 @@ public class PublicationLifecycleIT {
             DefinitionKey codeKey = new DefinitionKey(WorkflowScopes.DEFAULT, codeId, 1);
             await(service.deactivateDefault(codeId));
             await(service.deprecate(codeKey));
-            scenario.ageStatus(codeKey, coolingSeconds + 60);
             await(service.retire(codeKey));
             Boot withoutClass = scenario.node(none(), unobserved());
             Row retiredCode = row(scenario, codeId, 1);
@@ -589,8 +665,7 @@ public class PublicationLifecycleIT {
         CANDIDATE("CANDIDATE"),
         PUBLISHING("PUBLISHING"),
         AVAILABLE("AVAILABLE"),
-        DEPRECATED_COOLED("DEPRECATED"),
-        DEPRECATED_COOLING("DEPRECATED"),
+        DEPRECATED_UNPINNED("DEPRECATED"),
         DEPRECATED_PINNED("DEPRECATED"),
         RETIRED("RETIRED");
 
@@ -640,17 +715,10 @@ public class PublicationLifecycleIT {
                     case DEPRECATE -> becomes("DEPRECATED");
                     default -> invalid;
                 };
-            case DEPRECATED_COOLED ->
+            case DEPRECATED_UNPINNED ->
                 switch (operation) {
                     case DEPRECATE -> repeats();
                     case RETIRE -> becomes("RETIRED");
-                    case REINSTATE -> becomes("AVAILABLE");
-                    default -> invalid;
-                };
-            case DEPRECATED_COOLING ->
-                switch (operation) {
-                    case DEPRECATE -> repeats();
-                    case RETIRE -> refused(Reason.COOLING);
                     case REINSTATE -> becomes("AVAILABLE");
                     default -> invalid;
                 };
@@ -676,32 +744,24 @@ public class PublicationLifecycleIT {
     }
 
     /** Brings the loaded candidate to the starting state through the public operations and the store's claim. */
-    private static void reach(
-            DefinitionScenario scenario, Boot node, Start start, DefinitionKey key, String planHash, long cooling) {
+    private static void reach(DefinitionScenario scenario, Boot node, Start start, DefinitionKey key, String planHash) {
         WorkflowDefinitionService service = node.app().definitionService();
         switch (start) {
             case CANDIDATE -> {}
             case PUBLISHING -> await(node.app().definitionRegistryStore().claim(key));
             case AVAILABLE -> await(service.publish(key));
-            case DEPRECATED_COOLING -> {
+            case DEPRECATED_UNPINNED -> {
                 await(service.publish(key));
                 await(service.deprecate(key));
-            }
-            case DEPRECATED_COOLED -> {
-                await(service.publish(key));
-                await(service.deprecate(key));
-                scenario.ageStatus(key, cooling + 60);
             }
             case DEPRECATED_PINNED -> {
                 await(service.publish(key));
                 await(service.deprecate(key));
-                scenario.ageStatus(key, cooling + 60);
                 scenario.insertInstance(key.definitionId(), key.definitionVersion(), planHash, "RUNNING");
             }
             case RETIRED -> {
                 await(service.publish(key));
                 await(service.deprecate(key));
-                scenario.ageStatus(key, cooling + 60);
                 await(service.retire(key));
             }
         }
@@ -780,6 +840,11 @@ public class PublicationLifecycleIT {
             statuses.add(row.getString("status"));
         }
         return statuses;
+    }
+
+    /** Moves one outstanding claim's start to the given age, measured by the database clock. */
+    private static void ageClaim(DefinitionScenario scenario, DefinitionKey key, Duration age) {
+        scenario.ageStatus(key, age.toSeconds());
     }
 
     /** A document that completes as soon as it starts, so a started instance finishes at once. */

@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -16,7 +15,6 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
 import ch.qos.logback.core.read.ListAppender;
-import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -24,6 +22,7 @@ import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.ops.StartCommand;
@@ -45,6 +44,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -77,6 +77,8 @@ import org.slf4j.LoggerFactory;
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineStartPayloadIT {
 
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
+
     // --- Testcontainers setup ---
 
     static final PostgresContainer db = new PostgresContainer()
@@ -98,10 +100,8 @@ public class PgWorkflowEngineStartPayloadIT {
     private static final String VOID_DEFINITION_ID = "start-payload-void";
     private static final String THROWING_DEFINITION_ID = "start-payload-throwing";
 
-    private static final String REQUIRED_MESSAGE = "payload is required";
-    private static final String VOID_START_MESSAGE = "payload is not accepted for a start type without a payload";
-    private static final String BINDING_MESSAGE = "payload does not bind to the declared type";
-    private static final String REJECTION_MESSAGE = "invalid start payload";
+    private static final String SCHEMA_REFUSAL =
+            "Start of definition 'start-payload-typed' version 1 payload does not satisfy its schema";
 
     // --- Domain types ---
 
@@ -240,6 +240,8 @@ public class PgWorkflowEngineStartPayloadIT {
         registry.register(TYPED_DEF);
         registry.register(VOID_DEF);
         registry.register(THROWING_DEF);
+        // A start is checked against the start schema its row stores, so the rows the engine selects from carry it
+        InMemoryWorkflowDefinitionRegistryStore.of(registry).withSchemas(PlanSchemas.producer());
 
         engine = PgWorkflowEngineTestSupport.create(
                 pool,
@@ -257,8 +259,10 @@ public class PgWorkflowEngineStartPayloadIT {
 
     @BeforeEach
     void truncateTables() {
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute()
                 .toCompletionStage()
                 .toCompletableFuture()
@@ -294,13 +298,12 @@ public class PgWorkflowEngineStartPayloadIT {
         WorkflowInvalidPayloadException rejection =
                 startExpectingInvalidPayload(TYPED_DEFINITION_ID, unbindableSeats(), key);
 
-        // Then: one binding detail, the decode failure as cause, no payload value anywhere
-        assertEquals(REJECTION_MESSAGE, rejection.getMessage());
-        assertSingleDetail(rejection, BINDING_MESSAGE, "binding");
-        assertInstanceOf(DecodeException.class, rejection.getCause(), "the decode failure must be the cause");
+        // Then: the stored schema refuses it at the offending property, with no payload value anywhere
         assertTrue(
-                rejection.getCause().getMessage().contains(SENTINEL),
-                "precondition: the decode cause message echoes the payload value, so interpolating it would leak");
+                rejection.getMessage().startsWith(SCHEMA_REFUSAL),
+                "the refusal must name the definition version, was: " + rejection.getMessage());
+        assertTrue(rejection.getMessage().contains("/seats"), "the refusal must name the property");
+        assertFalse(rejection.violations().isEmpty(), "the refusal must carry its violations");
         assertFalse(rejection.getMessage().contains(SENTINEL), "message must not carry the payload value");
         assertFalse(rejection.violations().toString().contains(SENTINEL), "no detail may carry the payload value");
 
@@ -324,28 +327,18 @@ public class PgWorkflowEngineStartPayloadIT {
         String key = "idem-" + UUID.randomUUID();
         WorkflowInvalidPayloadException rejection = startExpectingInvalidPayload(TYPED_DEFINITION_ID, null, key);
 
-        // Then: one payload-required detail (and not a definition exception), no instance, no claim
-        assertEquals(REJECTION_MESSAGE, rejection.getMessage());
-        assertSingleDetail(rejection, REQUIRED_MESSAGE, "payload");
+        // Then: the stored schema refuses it (and not a definition exception), no instance, no claim
+        assertTrue(
+                rejection.getMessage().startsWith(SCHEMA_REFUSAL),
+                "the refusal must name the definition version, was: " + rejection.getMessage());
         assertEquals(0L, instanceRows(TYPED_DEFINITION_ID), "a rejected start must not create an instance");
         assertEquals(0L, startDedupRows(TYPED_DEFINITION_ID, key), "a rejected start must not retain the claim");
     }
 
     @Test
-    @DisplayName("a payload for a void start type fails with the invalid-payload exception")
-    void payloadForAVoidStartTypeFailsWithInvalidPayload() {
-        // Given: a start type without a payload; When: it is started with a payload
-        String rejectedKey = "idem-reject-" + UUID.randomUUID();
-        WorkflowInvalidPayloadException rejection =
-                startExpectingInvalidPayload(VOID_DEFINITION_ID, Map.of("x", 1), rejectedKey);
-
-        // Then: one payload detail, no instance, no claim
-        assertEquals(REJECTION_MESSAGE, rejection.getMessage());
-        assertSingleDetail(rejection, VOID_START_MESSAGE, "payload");
-        assertEquals(0L, instanceRows(VOID_DEFINITION_ID), "a rejected start must not create an instance");
-        assertEquals(0L, startDedupRows(VOID_DEFINITION_ID, rejectedKey), "a rejected start must not retain the claim");
-
-        // When: the same start type is started with a null payload
+    @DisplayName("a null payload starts a void start type")
+    void nullPayloadStartsAVoidStartType() {
+        // Given: a start type without a payload; When: it is started with a null payload
         WorkflowInstanceId created = start(VOID_DEFINITION_ID, null, "idem-ok-" + UUID.randomUUID());
 
         // Then: it succeeds and creates an instance
@@ -354,80 +347,96 @@ public class PgWorkflowEngineStartPayloadIT {
     }
 
     @Test
-    @DisplayName("an initialState throw stays a definition exception that chains the cause")
-    void initialStateThrowStaysADefinitionException() {
-        // Given: a start whose initial-state function throws for a valid payload
+    @DisplayName("an initialState throw fails the first segment, not the start, and fails the instance")
+    void initialStateThrowFailsTheFirstSegmentAndTheInstance() throws Exception {
+        // Given: a start whose initial-state function throws for a valid payload, and a capture of the warnings
+        logs = CapturedLogs.attach(Level.WARN);
         String key = "idem-" + UUID.randomUUID();
 
-        // When: it is started with a valid payload
-        CompletionException failure = assertThrows(
-                CompletionException.class,
-                () -> start(THROWING_DEFINITION_ID, Map.of("requester", "ann", "seats", 2), key));
+        // When: it is started with a valid payload; the start only records
+        WorkflowInstanceId id = engine.start(new StartCommand(
+                        THROWING_DEFINITION_ID,
+                        contractNameOf(THROWING_DEFINITION_ID),
+                        Map.of("requester", "ann", "seats", 2),
+                        key,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
 
-        // Then: a definition exception (not the new type) naming the definition, not the application text
-        WorkflowDefinitionException definitionFailure = assertInstanceOf(
-                WorkflowDefinitionException.class,
-                failure.getCause(),
-                "an initial-state failure stays a definition failure");
+        // Then: the executor's segment fails and logs the definition failure by class, never the application text
+        ILoggingEvent warning = awaitSegmentWarning();
         assertTrue(
-                definitionFailure.getMessage().contains(THROWING_DEFINITION_ID),
-                "message must name the definition, was: " + definitionFailure.getMessage());
+                warning.getFormattedMessage().contains(WorkflowDefinitionException.class.getName()),
+                "the warning must name the definition failure, was: " + warning.getFormattedMessage());
         assertFalse(
-                definitionFailure.getMessage().contains(INITIALIZER_SENTINEL),
-                "message must not copy the application exception message");
+                warning.getFormattedMessage().contains(INITIALIZER_SENTINEL),
+                "the warning must not copy the application exception message");
 
-        // And: the thrown exception is the cause, and no instance row remains
-        IllegalStateException cause = assertInstanceOf(
-                IllegalStateException.class,
-                definitionFailure.getCause(),
-                "the initializer exception must be chained as the cause");
-        assertTrue(cause.getMessage().contains(INITIALIZER_SENTINEL));
-        assertEquals(0L, instanceRows(THROWING_DEFINITION_ID), "a failed start must not create an instance");
+        // And: nothing of the segment committed, so the failed instance has no state; the failure disposition runs in
+        // a transaction after the warning is logged, so the status is awaited
+        assertEquals("FAILED", awaitStatusOtherThan(id, "PENDING"));
+        assertEquals(
+                0L,
+                count(
+                        "SELECT count(*) FROM workflow_instances WHERE id = $1 AND state_json IS NOT NULL",
+                        Tuple.of(id.value())));
+    }
+
+    /** Reads the instance status until it is not the given one, for at most ten seconds, and returns the last read. */
+    private static String awaitStatusOtherThan(WorkflowInstanceId id, String unwanted) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        String status;
+        do {
+            status = pool.preparedQuery("SELECT status FROM workflow_instances WHERE id = $1")
+                    .execute(Tuple.of(id.value()))
+                    .map(rs -> rs.iterator().next().getString("status"))
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .join();
+            if (!unwanted.equals(status)) {
+                return status;
+            }
+            Thread.sleep(50);
+        } while (System.nanoTime() < deadline);
+        return status;
+    }
+
+    /** Waits for the warning that the executor logs when a segment fails and rolls back. */
+    private ILoggingEvent awaitSegmentWarning() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            for (ILoggingEvent event : logs.events()) {
+                if (event.getFormattedMessage().contains("failed and rolled back")) {
+                    return event;
+                }
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("The failed segment was not logged");
     }
 
     @Test
-    @DisplayName("the rejected start payload cause is never logged above DEBUG")
-    void rejectedStartPayloadCauseIsNeverLoggedAboveDebug() {
-        // Given: an engine logger capture at INFO
-        logs = CapturedLogs.attach(Level.INFO);
+    @DisplayName("a rejected start payload value is never logged")
+    void rejectedStartPayloadValueIsNeverLogged() {
+        // Given: an engine logger capture at DEBUG
+        logs = CapturedLogs.attach(Level.DEBUG);
 
         // When: an unbindable start payload is rejected
-        WorkflowInvalidPayloadException rejection =
-                startExpectingInvalidPayload(TYPED_DEFINITION_ID, unbindableSeats(), "idem-info-" + UUID.randomUUID());
+        startExpectingInvalidPayload(TYPED_DEFINITION_ID, unbindableSeats(), "idem-log-" + UUID.randomUUID());
 
-        // Then: no event at INFO or above carries the decode cause or the payload value
-        assertInstanceOf(DecodeException.class, rejection.getCause());
-        assertTrue(
-                rejection.getCause().getMessage().contains(SENTINEL),
-                "precondition: the decode cause message echoes the payload value, so interpolating it would leak");
+        // Then: no log line at any level carries the payload value or a decode cause
         for (ILoggingEvent event : logs.events()) {
-            if (event.getLevel().isGreaterOrEqual(Level.INFO)) {
-                assertFalse(
-                        CapturedLogs.carriesDecodeException(event),
-                        "the decode cause must not be logged at " + event.getLevel());
-                assertFalse(
-                        event.getFormattedMessage().contains(SENTINEL),
-                        "no log line at " + event.getLevel() + " may carry the payload value");
-            }
+            assertFalse(
+                    event.getFormattedMessage().contains(SENTINEL),
+                    "no log line at " + event.getLevel() + " may carry the payload value");
+            assertFalse(
+                    CapturedLogs.carriesDecodeException(event), "no decode cause may be logged at " + event.getLevel());
         }
-
-        // When: the same rejection runs with DEBUG enabled
-        logs.setLevel(Level.DEBUG);
-        logs.clear();
-        startExpectingInvalidPayload(TYPED_DEFINITION_ID, unbindableSeats(), "idem-debug-" + UUID.randomUUID());
-
-        // Then: exactly one event carries the decode cause, at DEBUG, and no message carries the value
-        List<ILoggingEvent> events = logs.events();
-        assertEquals(
-                1L,
-                events.stream().filter(CapturedLogs::carriesDecodeException).count(),
-                "exactly one DEBUG event must carry the decode cause");
-        events.stream()
-                .filter(CapturedLogs::carriesDecodeException)
-                .forEach(event -> assertEquals(Level.DEBUG, event.getLevel(), "the cause is logged at DEBUG only"));
-        assertTrue(
-                events.stream().noneMatch(event -> event.getFormattedMessage().contains(SENTINEL)),
-                "no log line may carry the payload value");
     }
 
     // =========================================================================
@@ -453,6 +462,8 @@ public class PgWorkflowEngineStartPayloadIT {
     private static WorkflowInstanceId start(String definitionId, Object payload, String key) {
         return engine.start(new StartCommand(
                         definitionId, contractNameOf(definitionId), payload, key, null, null, null, null, null))
+                .compose(started ->
+                        engine.executionProbe().awaitIdle(started, IDLE_TIMEOUT).map(idle -> started))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
@@ -488,15 +499,6 @@ public class PgWorkflowEngineStartPayloadIT {
                 WorkflowInvalidPayloadException.class,
                 failure.getCause(),
                 "start must fail with WorkflowInvalidPayloadException");
-    }
-
-    private static void assertSingleDetail(WorkflowInvalidPayloadException rejection, String message, String type) {
-        List<ViolationDetail> violations = rejection.violations();
-        assertEquals(1, violations.size(), "exactly one detail expected, got " + violations);
-        ViolationDetail detail = violations.get(0);
-        assertNull(detail.path());
-        assertEquals(message, detail.message());
-        assertEquals(type, detail.type());
     }
 
     private static long instanceRows(String definitionId) {

@@ -15,11 +15,14 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.ops.StartCommand;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -40,7 +43,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Verifies the contract a start replay compares against on an engine with a durable registry, when its node has no
  * plan for the pinned version: the stored row read through the start transaction, and a refusal when there is no
- * row, without a fallback to another registered version.
+ * row, without a fallback to another version.
  */
 class WorkflowEngineReplayStoredContractTest {
 
@@ -74,9 +77,8 @@ class WorkflowEngineReplayStoredContractTest {
     }
 
     @Test
-    @DisplayName("a replay whose pin has no stored row is refused even when another version is registered")
-    void missingRowIsNotRunnableDespiteASibling() {
-        when(registry.contractOf(WorkflowScopes.DEFAULT, ID)).thenReturn(Optional.of("orders"));
+    @DisplayName("a replay whose pin has no stored row is refused")
+    void missingRowIsNotRunnable() {
         when(instances.findDefinitionContract(PIN, tx)).thenReturn(Future.succeededFuture(Optional.empty()));
 
         assertThat(engine.start(start("orders"), tx).cause())
@@ -138,8 +140,11 @@ class WorkflowEngineReplayStoredContractTest {
                 null,
                 new PayloadConstraintCheck(Optional.empty()),
                 WorkflowEngineFactory.registryTypeNames(registry),
-                new DefinitionActivations(Optional.of(store)),
                 Optional.<WorkflowStateCompatibility>empty(),
-                new FailingDefinitions());
+                mock(WorkflowExecutionProbe.class),
+                new EmptyCommandRepository(),
+                new AcceptingTaskReservations(),
+                () -> null,
+                null);
     }
 }

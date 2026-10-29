@@ -59,6 +59,33 @@ Install it in the application component for local caching. Annotation apps also 
 - `CaffeineCacheStore(CacheConfig)` — direct use without a Dagger graph (empty JSON profile set)
 - `CaffeineCacheStore(CacheConfig, JsonMapperProfileRegistry)` — Dagger-injected form
 
+### ObjectCache and CaffeineObjectCache
+
+`new CaffeineObjectCache<>(name, objectCacheConfig, cacheFailure, observers)` builds an `ObjectCache<K, V>`
+directly; there is no factory. It is a by-reference, size-bounded, single-flight cache for runtime objects
+that cannot or should not be serialized. It is independent of `cache.enabled` and reads no `CacheConfig`:
+the owner of a cache passes it an `ObjectCacheConfig` (`dev.vertique.cache.config`, from `vertique-cache-core`)
+holding `maximumEntries` (at least 1) and `ttlSeconds` (`0` for no time expiry; the global
+`cache.defaultTtlSeconds` does not apply). The owner also decides where the values come from and which defaults
+apply to members the application leaves unset. As for the `CacheStore` providers, an entry expires a fixed time
+after it was created, not after its last read, and the expiry counts from the start of a load, so a load
+that outlasts it leaves no entry to share. There is no identity dimension and no serialization, so
+`getOrLoad` returns the identical instance on every hit.
+
+- `getOrLoad(key, loader)` runs the loader once per key across concurrent callers. Each caller gets
+  its own future over the shared in-flight load, completed on that caller's current Vert.x context,
+  or on the completing thread when there is none.
+- A failed load is dropped so the next call loads again, unless `cacheFailure` accepts the error;
+  accepted failures stay cached as failed futures until evicted or invalidated.
+- `getIfPresent`, `invalidate`, `size` and `name` complete the API. A blank
+  name or a null argument is refused at creation, and an `ObjectCacheConfig` with `maximumEntries` below 1 or
+  a negative `ttlSeconds` cannot be built.
+
+Events go to the supplied observers under provider id `"caffeine-object"`: a miss emits
+`GET`/`MISS`, a finished load emits `LOAD`/`SUCCESS` or `LOAD`/`ERROR` with the load duration, and a
+size eviction emits `EVICT`/`SIZE_EVICTED` with zero elapsed time. A time expiry emits nothing (it is not a size eviction), and neither do hits and `invalidate`,
+and observer failures are swallowed.
+
 ## Module Dagger Bindings
 
 | Binding | Kind | Description |

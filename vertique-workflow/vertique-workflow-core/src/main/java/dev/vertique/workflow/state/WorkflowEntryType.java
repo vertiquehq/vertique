@@ -187,5 +187,44 @@ public enum WorkflowEntryType {
      * An instance was migrated from one definition version to another by an application-registered
      * {@link dev.vertique.workflow.migration.WorkflowMigrationHandler}.
      */
-    WORKFLOW_MIGRATED
+    WORKFLOW_MIGRATED,
+
+    /** A command was durably recorded for later execution. */
+    COMMAND_RECORDED,
+
+    /** A recorded command was received by its executor. */
+    COMMAND_RECEIVED,
+
+    /** A recorded command was applied to completion. */
+    COMMAND_COMPLETED,
+
+    /** A recorded command was rejected without being applied. */
+    COMMAND_REJECTED,
+
+    /** A recorded command was discarded because the state it targeted had moved on. */
+    COMMAND_STALE,
+
+    /** A recorded command was deferred for a later attempt. */
+    COMMAND_DEFERRED,
+
+    /** A recorded command exhausted its attempts and was dead-lettered. */
+    COMMAND_DEAD_LETTERED,
+
+    /** A recorded command was cancelled before it was applied. */
+    COMMAND_CANCELLED,
+
+    /** A recorded command was superseded by a later command. */
+    COMMAND_SUPERSEDED,
+
+    /** A signal arrived before its step was waiting and was parked. */
+    SIGNAL_PARKED,
+
+    /** A parked signal was applied to its step. */
+    SIGNAL_APPLIED,
+
+    /** A task decision was recorded. */
+    DECISION,
+
+    /** A baseline snapshot of the instance state was recorded. */
+    STATE_BASELINE
 }

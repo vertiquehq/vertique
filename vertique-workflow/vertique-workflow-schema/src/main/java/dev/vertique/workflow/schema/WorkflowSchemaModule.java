@@ -8,6 +8,7 @@ import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.multibindings.IntoSet;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
+import dev.vertique.workflow.plan.WorkflowPlanSchemaProducer;
 import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
 
 /**
@@ -27,6 +28,9 @@ import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
  * <p>It also binds {@link WorkflowPayloadSchemas}, which reads the cached schemas back as descriptors for clients,
  * and {@link WorkflowStateCompatibility}, which compares the state classes of definitions that share an id across
  * scopes by their JSON Schemas: added properties are allowed, removed or retyped properties are not.
+ *
+ * <p>It also binds the {@link WorkflowPlanSchemaProducer} that lets the engine store each version's start schema and
+ * declared signal names on its definition row.
  *
  * <p>Registration validators run synchronously on the registering thread; call {@code activate} off the event loop.
  */
@@ -62,6 +66,16 @@ public abstract class WorkflowSchemaModule {
      */
     @Binds
     abstract WorkflowStateCompatibility stateCompatibility(SchemaStateCompatibility compatibility);
+
+    /**
+     * Binds the producer of the start and decision schemas that definition rows store, so a node with this module
+     * writes the signal names and the start schema of a version together with its plan hash.
+     *
+     * @param producer the default implementation
+     * @return the producer as the framework-internal interface
+     */
+    @Binds
+    abstract WorkflowPlanSchemaProducer planSchemaProducer(DefaultWorkflowPlanSchemaProducer producer);
 
     /**
      * Declares the optional bean validator the schema generator reads constraints from.

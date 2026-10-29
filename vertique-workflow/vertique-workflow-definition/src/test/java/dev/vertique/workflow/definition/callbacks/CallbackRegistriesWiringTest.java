@@ -10,6 +10,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
+import dev.vertique.workflow.engine.testsupport.InMemoryDefinitionRegistryModule;
 import dev.vertique.workflow.plan.BranchResult;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import dev.vertique.workflow.tasks.TaskAssignment;
@@ -110,7 +111,12 @@ class CallbackRegistriesWiringTest {
     // --- Dagger component ---
 
     @Singleton
-    @Component(modules = {WorkflowDefinitionModule.class, TestContributorModule.class})
+    @Component(
+            modules = {
+                WorkflowDefinitionModule.class,
+                InMemoryDefinitionRegistryModule.class,
+                TestContributorModule.class
+            })
     interface TestComponent {
 
         RegisteredIdentifierLookup registeredIdentifierLookup();

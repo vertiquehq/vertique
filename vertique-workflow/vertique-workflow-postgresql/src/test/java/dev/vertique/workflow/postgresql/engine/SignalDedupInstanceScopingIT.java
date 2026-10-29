@@ -43,6 +43,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -94,6 +95,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class SignalDedupInstanceScopingIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Container: needs both workflow and inbox-outbox tables.
     // We run two Flyway migrations manually in @BeforeAll: one for workflow, one for inbox-outbox.
@@ -262,7 +265,8 @@ public class SignalDedupInstanceScopingIT {
     @BeforeEach
     void truncate(VertxTestContext ctx) {
         capturedIntents.clear();
-        pool.query(
+        WorkflowTestTables.truncating(
+                        pool,
                         "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances, inbox RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
@@ -293,12 +297,14 @@ public class SignalDedupInstanceScopingIT {
             WorkflowInstanceId workflowId, String signalName, Object payload, String dedupKey) {
         String inboxMessageId = workflowId.value() + ":" + dedupKey;
         return pool.withTransaction(tx -> inboxService
-                .processOnce(
-                        inboxMessageId,
-                        "workflow-signals",
-                        tx,
-                        () -> engine.signal(workflowId, signalName, payload, dedupKey, tx))
-                .mapEmpty());
+                        .processOnce(
+                                inboxMessageId,
+                                "workflow-signals",
+                                tx,
+                                () -> engine.signal(workflowId, signalName, payload, dedupKey, tx))
+                        .mapEmpty())
+                .compose(v -> engine.executionProbe().awaitIdle(workflowId, IDLE_TIMEOUT))
+                .mapEmpty();
     }
 
     // --- Tests ---
@@ -338,7 +344,11 @@ public class SignalDedupInstanceScopingIT {
                 null);
 
         engine.start(cmdA)
-                .compose(idA -> engine.start(cmdB).map(idB -> new WorkflowInstanceId[] {idA, idB}))
+                .compose(idA ->
+                        engine.executionProbe().awaitIdle(idA, IDLE_TIMEOUT).map(idle -> idA))
+                .compose(idA -> engine.start(cmdB).compose(idB -> engine.executionProbe()
+                        .awaitIdle(idB, IDLE_TIMEOUT)
+                        .map(idle -> new WorkflowInstanceId[] {idA, idB})))
                 .compose(ids -> {
                     WorkflowInstanceId idA = ids[0];
                     WorkflowInstanceId idB = ids[1];

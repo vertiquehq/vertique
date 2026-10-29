@@ -47,6 +47,7 @@ public class ScopeMigrationIT {
     private static final String V1_SCRIPT = "V1__create_workflow_tables.sql";
     private static final String V002_SCRIPT = "V002__workflow_definitions_and_scopes.sql";
     private static final String RETIRED_V002_SCRIPT = "V002__create_workflow_definitions_and_tenant_key.sql";
+    private static final String V003_SCRIPT = "V003__recorded_execution.sql";
 
     private static final UUID FIRST_INSTANCE = UUID.fromString("00000000-0000-0000-0000-0000000000a1");
     private static final UUID SECOND_INSTANCE = UUID.fromString("00000000-0000-0000-0000-0000000000a2");
@@ -76,8 +77,8 @@ public class ScopeMigrationIT {
             v1ChecksumBefore = scriptChecksum(connection, V1_SCRIPT);
         }
 
-        // When the upgrade runs through the real Flyway run
-        Flyway latest = flyway(upgradeDb).load();
+        // When the upgrade to version 2 runs through the real Flyway run
+        Flyway latest = flyway(upgradeDb).target("2").load();
         latest.migrate();
 
         try (Connection connection = connection(upgradeDb)) {
@@ -207,13 +208,14 @@ public class ScopeMigrationIT {
                             """))
                     .containsExactly("activated_at|timestamp with time zone|NO", "definition_version|bigint|NO");
 
-            // And exactly versions 1 and 2 are applied, and the location holds no other script
+            // And exactly versions 1 and 2 are applied (version 3 stays above the target), and the location holds no
+            // other script
             assertThat(latest.info().applied())
                     .extracting(MigrationInfo::getVersion)
                     .containsExactly(MigrationVersion.fromVersion("1"), MigrationVersion.fromVersion("2"));
             assertThat(latest.info().all())
                     .extracting(MigrationInfo::getScript)
-                    .containsExactly(V1_SCRIPT, V002_SCRIPT)
+                    .containsExactly(V1_SCRIPT, V002_SCRIPT, V003_SCRIPT)
                     .doesNotContain(RETIRED_V002_SCRIPT);
 
             // And the first migration keeps its recorded checksum and the new one records the shipped file's

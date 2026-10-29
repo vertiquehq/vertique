@@ -41,6 +41,7 @@ import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -90,6 +91,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class CompensationLoopMatchingIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("comp_loop_matching_test")
@@ -229,7 +232,8 @@ public class CompensationLoopMatchingIT {
     @BeforeEach
     void truncate(VertxTestContext ctx) {
         capturedIntents.clear();
-        pool.query(
+        WorkflowTestTables.truncating(
+                        pool,
                         "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup, workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
@@ -268,11 +272,15 @@ public class CompensationLoopMatchingIT {
 
         engine.start(cmd)
                 .compose(id ->
+                        engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT).map(r -> id))
+                .compose(id ->
                         // First loop: signal "x" → decide → back to s1 → wait1
                         engine.signal(id, "x", new XPayload("first"), "dedup-x-1")
+                                .compose(v -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
                                 // Second loop: signal "x" → decide → fail-step → compensation
-                                .compose(v -> engine.signal(id, "x", new XPayload("second"), "dedup-x-2"))
-                                .map(v -> id))
+                                .compose(r -> engine.signal(id, "x", new XPayload("second"), "dedup-x-2"))
+                                .compose(v -> engine.executionProbe().awaitIdle(id, IDLE_TIMEOUT))
+                                .map(r -> id))
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {
                     assertTrue(ar.succeeded(), "saga must succeed end-to-end; got: " + ar.cause());

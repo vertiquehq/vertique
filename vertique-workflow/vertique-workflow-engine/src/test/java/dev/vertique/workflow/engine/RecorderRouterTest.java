@@ -66,22 +66,12 @@ class RecorderRouterTest {
         return recorder;
     }
 
-    /**
-     * Creates a no-op mock {@link WorkflowReminderComposeValidator} for test purposes.
-     * The validator is mocked so that no startup check runs during construction.
-     *
-     * @return a mocked validator
-     */
-    private static WorkflowReminderComposeValidator mockValidator() {
-        return mock(WorkflowReminderComposeValidator.class);
-    }
-
     // --- Empty set routing (mandatory kind) ---
 
     @Test
     @DisplayName("empty recorder set: routing mandatory kind fails with documented message")
     void emptyRecorderSetRoutingFailsWithDocumentedMessage() {
-        RecorderRouter router = new RecorderRouter(Set.of(), Set.of(), mockValidator());
+        RecorderRouter router = new RecorderRouter(Set.of(), Set.of());
         WorkflowSideEffectIntent serviceIntent = intent(IntentKind.SERVICE);
         SqlClient tx = mock(SqlClient.class);
 
@@ -100,7 +90,7 @@ class RecorderRouterTest {
     @Test
     @DisplayName("optional kind with no recorder: routing returns succeeded empty future")
     void optionalKindMissingRecorderReturnsSucceededEmpty() {
-        RecorderRouter router = new RecorderRouter(Set.of(), Set.of(IntentKind.WORKFLOW_EVENT), mockValidator());
+        RecorderRouter router = new RecorderRouter(Set.of(), Set.of(IntentKind.WORKFLOW_EVENT));
         WorkflowSideEffectIntent eventIntent = intent(IntentKind.WORKFLOW_EVENT);
         SqlClient tx = mock(SqlClient.class);
 
@@ -120,8 +110,7 @@ class RecorderRouterTest {
         WorkflowSideEffectIntent eventIntent = intent(IntentKind.WORKFLOW_EVENT);
         when(recorder.record(eventIntent, tx)).thenReturn(Future.succeededFuture(RecorderResult.empty()));
 
-        RecorderRouter router =
-                new RecorderRouter(Set.of(recorder), Set.of(IntentKind.WORKFLOW_EVENT), mockValidator());
+        RecorderRouter router = new RecorderRouter(Set.of(recorder), Set.of(IntentKind.WORKFLOW_EVENT));
         Future<RecorderResult> result = router.route(eventIntent, tx);
 
         assertTrue(result.succeeded(), "Future must succeed");
@@ -138,7 +127,7 @@ class RecorderRouterTest {
         WorkflowSideEffectIntent intent = intent(IntentKind.SERVICE);
         when(recorder.record(intent, tx)).thenReturn(Future.succeededFuture(RecorderResult.empty()));
 
-        RecorderRouter router = new RecorderRouter(Set.of(recorder), Set.of(), mockValidator());
+        RecorderRouter router = new RecorderRouter(Set.of(recorder), Set.of());
         Future<RecorderResult> result = router.route(intent, tx);
 
         assertTrue(result.succeeded(), "Future must succeed");
@@ -155,7 +144,7 @@ class RecorderRouterTest {
         WorkflowSideEffectIntent intent = intent(IntentKind.DELAYED_JOB);
         when(recorder.record(intent, tx)).thenReturn(Future.succeededFuture(RecorderResult.empty()));
 
-        RecorderRouter router = new RecorderRouter(Set.of(recorder), Set.of(), mockValidator());
+        RecorderRouter router = new RecorderRouter(Set.of(recorder), Set.of());
         Future<RecorderResult> result = router.route(intent, tx);
 
         assertTrue(result.failed(), "Future must be failed");
@@ -175,8 +164,7 @@ class RecorderRouterTest {
         WorkflowSideEffectRecorder<SqlClient> recorder2 = recorderFor(IntentKind.SERVICE);
 
         IllegalStateException ex = assertThrows(
-                IllegalStateException.class,
-                () -> new RecorderRouter(Set.of(recorder1, recorder2), Set.of(), mockValidator()));
+                IllegalStateException.class, () -> new RecorderRouter(Set.of(recorder1, recorder2), Set.of()));
 
         assertTrue(
                 ex.getMessage().startsWith("Duplicate WorkflowSideEffectRecorder for kind SERVICE"),
@@ -197,8 +185,7 @@ class RecorderRouterTest {
         when(delayedJobRecorder.record(delayedJobIntent, tx))
                 .thenReturn(Future.succeededFuture(RecorderResult.empty()));
 
-        RecorderRouter router =
-                new RecorderRouter(Set.of(serviceRecorder, delayedJobRecorder), Set.of(), mockValidator());
+        RecorderRouter router = new RecorderRouter(Set.of(serviceRecorder, delayedJobRecorder), Set.of());
 
         Future<RecorderResult> serviceResult = router.route(serviceIntent, tx);
         Future<RecorderResult> delayedJobResult = router.route(delayedJobIntent, tx);

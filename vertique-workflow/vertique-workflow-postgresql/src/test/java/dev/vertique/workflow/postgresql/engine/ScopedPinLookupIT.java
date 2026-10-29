@@ -15,45 +15,37 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.context.ContextRuntimeModule;
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.workflow.actor.WorkflowActor;
-import dev.vertique.workflow.engine.WorkflowRecoveryBridge;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.ScopedDefinitions;
 import dev.vertique.workflow.migration.WorkflowMigrationHandler;
 import dev.vertique.workflow.migration.WorkflowMigrationModule;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
-import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
-import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
+import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
+import dev.vertique.workflow.ops.WorkflowExecutionProbe;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
-import dev.vertique.workflow.postgresql.timer.PgTimerStore;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowRecorders;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
-import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -69,9 +61,7 @@ import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Singleton;
 import java.time.Clock;
-import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
+import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -98,6 +88,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class ScopedPinLookupIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     static final PostgresContainer db = new PostgresContainer()
             .withDatabaseName("workflow_scoped_pin_test")
@@ -131,45 +123,6 @@ public class ScopedPinLookupIT {
         }
 
         @Provides
-        @IntoSet
-        @WorkflowRecorders
-        static WorkflowSideEffectRecorder<SqlClient> timerRecorder(PgTimerStore timerStore) {
-            return new WorkflowSideEffectRecorder<>() {
-                @Override
-                public IntentKind kind() {
-                    return IntentKind.WORKFLOW_TIMER;
-                }
-
-                @Override
-                public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                    UUID timerId = UUID.randomUUID();
-                    Instant fireAt = intent.payload() instanceof Instant instant
-                            ? instant
-                            : Instant.now().plusSeconds(300);
-                    TimerRecord record = new TimerRecord(
-                            timerId,
-                            (WorkflowInstanceId) intent.correlation().workflowId(),
-                            intent.targetId(),
-                            fireAt,
-                            TimerStatus.SCHEDULED,
-                            UUID.randomUUID(),
-                            Instant.now(),
-                            null,
-                            null,
-                            null,
-                            null,
-                            TimerPurpose.STANDALONE,
-                            null,
-                            null,
-                            null,
-                            null,
-                            DurableMetadata.empty());
-                    return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-                }
-            };
-        }
-
-        @Provides
         @Singleton
         static WorkflowPlanValidator planValidator() {
             return new WorkflowPlanValidator(new DefaultRaceSafetyTargetRegistry(Set.of()));
@@ -190,25 +143,32 @@ public class ScopedPinLookupIT {
                 WorkflowMigrationModule.class,
                 ContextRuntimeModule.class,
                 LoggingContextModule.class,
+                ExecutorDeployment.FastPolling.class,
                 ApprovalHostModule.class
             })
     interface ApprovalHost {
 
+        Set<dev.vertique.deploy.VerticleDeployment> verticleDeployments();
+
         WorkflowOperations workflowOperations();
+
+        WorkflowExecutionProbe workflowExecutionProbe();
 
         TransactionalTaskCallbacks<SqlClient> taskCallbacks();
 
-        TransactionalTimerCallbacks<SqlClient> timerCallbacks();
+        TransactionalWorkflowOperations<SqlClient> txWorkflowOperations();
 
         WorkflowTransactionRunner<SqlClient> transactionRunner();
 
         BranchTokenRepository<SqlClient> branchTokenRepository();
 
+        WorkflowCommandRepository<SqlClient> commandRepository();
+
         WorkflowInstanceRepository<SqlClient> instanceRepository();
 
-        WorkflowRecoveryBridge recoveryBridge();
-
         WorkflowRegistry workflowRegistry();
+
+        dev.vertique.workflow.engine.registry.PlanCache planCache();
 
         dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
 
@@ -220,25 +180,65 @@ public class ScopedPinLookupIT {
         }
     }
 
-    /** An engine generation and the recovery sweep wired over it. */
-    private record Engine(ApprovalHost host, PgWorkflowBranchRecoveryService recovery) {}
+    /** An engine generation. */
+    private record Engine(ApprovalHost host) {}
+
+    /** The executor of the latest engine generation; an earlier generation's executor would run the later code's work. */
+    private static ExecutorDeployment liveExecutor;
 
     private static Engine newEngine() {
         ApprovalHost host = DaggerScopedPinLookupIT_ApprovalHost.factory().create(pool, Clock.systemUTC());
+        // The plan cache binds itself as the plan source of the registry when it is built; build it first, so that the
+        // scoped versions bound next stay the source
+        host.planCache();
+        ScopedApprovalFixture.publishAcme(ScopedDefinitions.of((DefaultWorkflowRegistry) host.workflowRegistry()));
+        try {
+            for (DefinitionKey key : List.of(
+                    new DefinitionKey(ACME, APPROVAL_ID, 1),
+                    new DefinitionKey(ACME, FORK_ID, 1),
+                    new DefinitionKey(ACME, ScopedApprovalFixture.MIGRATION_ID, 1),
+                    new DefinitionKey(ACME, ScopedApprovalFixture.MIGRATION_ID, 2))) {
+                recordAcmeRow(host, key);
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("The stored versions of acme were not recorded", e);
+        }
         DefaultVersionSeed.recordAndActivate(
                 host.pgWorkflowDefinitionRegistryStore(),
                 host.definitionLifecycle(),
                 host.workflowRegistry(),
                 APPROVAL_ID,
-                FORK_ID);
-        PgWorkflowBranchRecoveryService recovery = new PgWorkflowBranchRecoveryService(
-                host.transactionRunner(),
-                host.branchTokenRepository(),
-                host.instanceRepository(),
-                host.recoveryBridge(),
-                host.workflowRegistry(),
-                Clock.systemUTC());
-        return new Engine(host, recovery);
+                FORK_ID,
+                ScopedApprovalFixture.MIGRATION_ID);
+        try {
+            if (liveExecutor != null) {
+                await(liveExecutor.undeploy());
+            }
+            liveExecutor = await(ExecutorDeployment.deploy(vertxRef, host.verticleDeployments()));
+        } catch (Exception e) {
+            throw new IllegalStateException("The executor of the engine generation did not deploy", e);
+        }
+        return new Engine(host);
+    }
+
+    /** Records the available document row that admits a pin on the acme version whose plan the node was given. */
+    private static void recordAcmeRow(ApprovalHost host, DefinitionKey key) throws Exception {
+        var plan = await(host.workflowRegistry().load(key));
+        await(pool.preparedQuery("""
+                        INSERT INTO workflow_definitions
+                            (scope_key, definition_id, definition_version, kind, contract_name, state_type_name,
+                             plan_hash, status, document, document_format, document_digest, source_type, loaded_at)
+                        VALUES ($1, $2, $3, 'DOCUMENT', $4, $5, $6, 'AVAILABLE', '{}', 'YAML',
+                                encode(sha256(convert_to('{}', 'UTF8')), 'hex'), 'test', now())
+                        ON CONFLICT DO NOTHING
+                        """)
+                .execute(Tuple.of(
+                        key.scopeKey(),
+                        key.definitionId(),
+                        key.definitionVersion(),
+                        plan.contractName(),
+                        plan.stateType().getName(),
+                        plan.plan().planHash())));
     }
 
     @BeforeAll
@@ -260,14 +260,20 @@ public class ScopedPinLookupIT {
 
     @BeforeEach
     void truncateTables() throws Exception {
-        await(pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
-                        + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
-                        + " RESTART IDENTITY CASCADE")
+        await(WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
+                                + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
+                                + " RESTART IDENTITY CASCADE")
                 .execute());
     }
 
     @AfterAll
-    static void tearDown() {
+    static void tearDown() throws Exception {
+        if (liveExecutor != null) {
+            await(liveExecutor.undeploy());
+            liveExecutor = null;
+        }
         if (pool != null) {
             pool.close();
         }
@@ -288,7 +294,7 @@ public class ScopedPinLookupIT {
         ScopedApprovalFixture.stampScope(pool, acmeInstance, ACME, acmeHash);
 
         // When: both receive submit, the engine is rebuilt on the same database, both tasks complete with
-        // approve, and both timers fire
+        // approve, and both timers come due
         signal(first, defaultInstance, "submit", "k-submit-d");
         signal(first, acmeInstance, "submit", "k-submit-a");
         String defaultRole = openTaskRole(defaultInstance);
@@ -298,8 +304,8 @@ public class ScopedPinLookupIT {
                 .isEqualTo(TaskMutationResult.APPLIED);
         assertThat(completeTask(second, openTaskId(acmeInstance), "k-approve-a"))
                 .isEqualTo(TaskMutationResult.APPLIED);
-        assertThat(fireTimer(second, defaultInstance)).isEqualTo(TimerFiringResult.APPLIED);
-        assertThat(fireTimer(second, acmeInstance)).isEqualTo(TimerFiringResult.APPLIED);
+        fireTimer(second, defaultInstance);
+        fireTimer(second, acmeInstance);
 
         // Then: each task had the role of its own plan
         assertThat(defaultRole).isEqualTo("clerk");
@@ -326,15 +332,13 @@ public class ScopedPinLookupIT {
     }
 
     @Test
-    @DisplayName("fork/join recovery and migration follow the definition scope")
-    void forkJoinRecoveryAndMigrationFollowTheDefinitionScope() throws Exception {
-        // Given: fork instances D and A parked for branch recovery, A stamped as pinned to the acme plan
+    @DisplayName("fork/join and migration follow the definition scope")
+    void forkJoinAndMigrationFollowTheDefinitionScope() throws Exception {
+        // Given: fork instances D and A, branch b waiting for its signal, A stamped as pinned to the acme plan
         Engine engine = newEngine();
         WorkflowInstanceId defaultFork = start(engine, FORK_ID, "fd", null);
         WorkflowInstanceId acmeFork = start(engine, FORK_ID, "fa", null);
         ScopedApprovalFixture.stampScope(pool, acmeFork, ACME, planHash(engine, ACME, FORK_ID, 1L));
-        parkBranchB(defaultFork);
-        parkBranchB(acmeFork);
 
         // and: instances D2 and A2 on version 1 of the migrated definition, A2 stamped as pinned to the acme plan,
         // with version 2 present in both scopes and a handler from version 1 to version 2
@@ -345,10 +349,13 @@ public class ScopedPinLookupIT {
         String acmeV2Hash = planHash(engine, ACME, MIGRATION_ID, 2L);
         assertThat(acmeV2Hash).isNotEqualTo(defaultV2Hash);
 
-        // When: the branch recovery sweep runs, and then D2 and A2 are migrated to version 2
-        await(inContext(() -> engine.recovery().sweepOnce(Instant.now(), 10)));
+        // When: branch b of D and of A receives its signal, and then D2 and A2 are migrated to version 2
+        signalBranchB(engine, defaultFork);
+        signalBranchB(engine, acmeFork);
         await(inContext(() -> engine.host().workflowOperations().migrate(defaultMigrating, 2L)));
+        await(engine.host().workflowExecutionProbe().awaitIdle(defaultMigrating, IDLE_TIMEOUT));
         await(inContext(() -> engine.host().workflowOperations().migrate(acmeMigrating, 2L)));
+        await(engine.host().workflowExecutionProbe().awaitIdle(acmeMigrating, IDLE_TIMEOUT));
 
         // Then: D joined into notify-default and A into notify-acme
         WorkflowInstance defaultForkRow = row(engine, defaultFork);
@@ -411,33 +418,39 @@ public class ScopedPinLookupIT {
                 version,
                 null,
                 null);
-        return await(inContext(() -> engine.host().workflowOperations().start(command)));
+        WorkflowInstanceId started =
+                await(inContext(() -> engine.host().workflowOperations().start(command)));
+        await(engine.host().workflowExecutionProbe().awaitIdle(started, IDLE_TIMEOUT));
+        return started;
     }
 
     private static void signal(Engine engine, WorkflowInstanceId id, String signalName, String dedupKey)
             throws Exception {
         await(inContext(() -> engine.host().workflowOperations().signal(id, signalName, "payload", dedupKey)));
+        await(engine.host().workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
     }
 
     private static TaskMutationResult completeTask(Engine engine, UUID taskId, String idempotencyKey) throws Exception {
         TaskCompletionCommand command = new TaskCompletionCommand(
                 taskId, "approve", null, idempotencyKey, new WorkflowActor.User("user-1"), null);
-        return await(inContext(
+        TaskMutationResult completed = await(inContext(
                 () -> pool.withTransaction(tx -> engine.host().taskCallbacks().taskCompleted(command, tx))));
+        await(engine.host().workflowExecutionProbe().awaitAllIdle(IDLE_TIMEOUT));
+        return completed;
     }
 
-    private static TimerFiringResult fireTimer(Engine engine, WorkflowInstanceId id) throws Exception {
+    /** Makes the timer the instance waits on due and waits until the executor has run its command. */
+    private static void fireTimer(Engine engine, WorkflowInstanceId id) throws Exception {
         WorkflowInstance waiting = row(engine, id);
         assertThat(waiting.waitType()).isEqualTo(WaitType.TIMER);
         UUID timerId = UUID.fromString(waiting.waitKey());
-        return await(inContext(
-                () -> pool.withTransaction(tx -> engine.host().timerCallbacks().timerFired(id, timerId, tx))));
+        await(TimerCommandRows.makeDue(pool, timerId));
+        await(engine.host().workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
+        assertThat(await(TimerCommandRows.status(pool, timerId))).isEqualTo("FIRED");
     }
 
-    private static String planHash(Engine engine, String scopeKey, String definitionId, long version) {
-        return engine.host()
-                .workflowRegistry()
-                .resolve(new DefinitionKey(scopeKey, definitionId, version))
+    private static String planHash(Engine engine, String scopeKey, String definitionId, long version) throws Exception {
+        return await(engine.host().workflowRegistry().load(new DefinitionKey(scopeKey, definitionId, version)))
                 .plan()
                 .planHash();
     }
@@ -451,13 +464,11 @@ public class ScopedPinLookupIT {
                 .getJsonArray("trail").stream().map(String::valueOf).toList();
     }
 
-    private static void parkBranchB(WorkflowInstanceId id) throws Exception {
-        await(pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
-                        + " current_step_id = 'b-done', wait_type = NULL, wait_key = NULL,"
-                        + " next_retry_at = $1, version = version + 1"
-                        + " WHERE workflow_id = $2 AND branch_id = 'b'")
-                .execute(Tuple.of(
-                        OffsetDateTime.ofInstant(Instant.now().minusSeconds(60), ZoneOffset.UTC), id.value())));
+    private static void signalBranchB(Engine engine, WorkflowInstanceId id) throws Exception {
+        await(inContext(() -> pool.withTransaction(tx -> engine.host()
+                .txWorkflowOperations()
+                .signal(id, "sig-b", "go", "k-sig-b-" + id.value(), "fork", "b", tx))));
+        await(engine.host().workflowExecutionProbe().awaitIdle(id, IDLE_TIMEOUT));
     }
 
     private static String definitionScopeColumn(WorkflowInstanceId id) throws Exception {

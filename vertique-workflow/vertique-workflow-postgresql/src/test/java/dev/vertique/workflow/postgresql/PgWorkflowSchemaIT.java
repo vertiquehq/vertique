@@ -59,17 +59,13 @@ import dev.vertique.workflow.engine.spi.StartDedupResult;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
-import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
-import dev.vertique.workflow.postgresql.engine.PgWorkflowBranchRecoveryService;
 import dev.vertique.workflow.postgresql.engine.WorkflowMigrationsModule;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
 import dev.vertique.workflow.postgresql.query.PgBranchTokenQueryService;
 import dev.vertique.workflow.postgresql.query.PgWorkflowInstanceQueryService;
-import dev.vertique.workflow.postgresql.recovery.PgWorkflowBranchRecoveryCron;
-import dev.vertique.workflow.postgresql.recovery.WorkflowBranchRecoveryModule;
 import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
 import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
@@ -131,7 +127,6 @@ import io.vertx.sqlclient.Row;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Tuple;
-import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -172,8 +167,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * End-to-end proof that the neutral schema placement setting places the workflow migration and every
- * statement of the PostgreSQL workflow stores in the mapped schema, including the query, retention and
- * branch-recovery paths, and that workflow writes share one caller transaction with application and
+ * statement of the PostgreSQL workflow stores in the mapped schema, including the query and retention
+ * paths, and that workflow writes share one caller transaction with application and
  * outbox work.
  *
  * <p>Each scenario starts from a decoy default schema whose tables carry the real workflow table names
@@ -184,7 +179,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *
  * <p>Generated Dagger components share one configuration: a migration-only graph with the shipped
  * migration declarations and the public named runner, and a runtime-only graph with the shipped workflow
- * module, the documented branch-recovery module and the PostgreSQL inbox/outbox module, without any
+ * module and the PostgreSQL inbox/outbox module, without any
  * Flyway module. The placement binding reaches the stores only through the shipped modules.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
@@ -214,7 +209,9 @@ public class PgWorkflowSchemaIT {
             "workflow_branch_tokens",
             "workflow_join_states",
             "workflow_definitions",
-            "workflow_definition_activations");
+            "workflow_definition_activations",
+            "workflow_commands",
+            "workflow_command_queues");
     private static final Set<String> TRANSACTION_DECOY_TABLES = with(WORKFLOW_TABLES, "outbox", "inbox", "orders");
 
     private static final Set<String> MIGRATED_INDEXES = Set.of(
@@ -267,14 +264,13 @@ public class PgWorkflowSchemaIT {
     private static final String OTHER_SCOPE_KEY = "scope-b";
     private static final List<TaskDecisionDescriptor> DECISIONS =
             List.of(new TaskDecisionDescriptor("approve", "java.lang.String", "done"));
-    private static final Instant LONG_OVERDUE = Instant.parse("2001-01-01T00:00:00Z");
     private static final int PAGE_SIZE = 20;
 
     static final PostgresContainer db = new PostgresContainer().withDatabaseName("workflow_schema");
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
-    @DisplayName("workflow migration and every store, query, retention and recovery operation use the mapped schema")
+    @DisplayName("workflow migration and every store, query and retention operation use the mapped schema")
     void routesLifecycleAndMaintenanceToMappedSchema(Vertx vertx) throws Exception {
         // Given: a decoy default schema with the real workflow table names, no mapped schema yet, and a
         // migration-only plus a runtime-only component sharing one placement configuration
@@ -317,7 +313,7 @@ public class PgWorkflowSchemaIT {
             assertEachStoreIsOneScopedInstance(runtime);
             assertServicesReuseScopedStores(runtime);
 
-            // When: every public store, query, retention and recovery operation runs while the decoy exists
+            // When: every public store, query and retention operation runs while the decoy exists
             // Then: each succeeds against the mapped objects, which the decoy's shape would not allow
             LifecycleInstances instances = exerciseInstanceRepository(runtime);
             exerciseHistoryRepository(runtime, instances);
@@ -326,7 +322,6 @@ public class PgWorkflowSchemaIT {
             exerciseJoinStateRepository(runtime, instances, branches);
             UUID openTask = exerciseTaskStore(runtime, instances, branches);
             exerciseTimerStore(runtime, instances, branches, openTask);
-            exerciseRecoveryCron(runtime, branches);
             exerciseDefinitionRegistry(runtime);
             exerciseRetentionAndArchivedFilters(runtime);
 
@@ -445,10 +440,8 @@ public class PgWorkflowSchemaIT {
     }
 
     /**
-     * Runtime-only graph: the PostgreSQL runtime, the shipped workflow module, the documented branch-recovery
-     * module and the PostgreSQL inbox/outbox module, deliberately without any Flyway module. The recovery cron
-     * is reached directly; the cron registry is not part of this graph, so its service contribution is never
-     * requested.
+     * Runtime-only graph: the PostgreSQL runtime, the shipped workflow module and the PostgreSQL inbox/outbox
+     * module, deliberately without any Flyway module.
      */
     @Singleton
     @Component(
@@ -457,7 +450,6 @@ public class PgWorkflowSchemaIT {
                 DbPostgresqlModule.class,
                 ConfigParsingModule.class,
                 WorkflowPostgresqlModule.class,
-                WorkflowBranchRecoveryModule.class,
                 TransactionalMessagingPostgresqlModule.class,
                 AbsentFlywayProbeModule.class,
                 ForkJoinDefinitionModule.class
@@ -517,10 +509,6 @@ public class PgWorkflowSchemaIT {
         WorkflowRetentionService workflowRetentionService();
 
         PgBranchTokenQueryService branchTokenQueryService();
-
-        PgWorkflowBranchRecoveryService branchRecoveryService();
-
-        PgWorkflowBranchRecoveryCron branchRecoveryCron();
 
         OutboxService outboxService();
 
@@ -594,7 +582,7 @@ public class PgWorkflowSchemaIT {
         Future<Void> signalB(WorkflowInstanceId id, String payload, @SignalDedupKey String dedupKey);
     }
 
-    /** Fork with two signal-wait branches under an all-required join, the shape the recovery sweep serves. */
+    /** Fork with two signal-wait branches under an all-required join, the shape the executor serves. */
     static final WorkflowDefinition<FanoutState, FanoutContract> FORK_JOIN_DEFINITION = new WorkflowDefinition<>() {
         @Override
         public Class<FanoutContract> contract() {
@@ -765,14 +753,19 @@ public class PgWorkflowSchemaIT {
     }
 
     private static void assertWorkflowObjectsLiveOnlyInMappedSchema() throws SQLException {
-        // The mapped schema holds the history, the eight tables, their indexes and named constraints, and
+        // The mapped schema holds the history, the eleven tables, their indexes and named constraints, and
         // nothing that the packaged scripts do not create
         assertEquals(with(WORKFLOW_TABLES, WORKFLOW_HISTORY), tablesIn(MAPPED_SCHEMA));
         assertTrue(
                 indexesIn(MAPPED_SCHEMA).containsAll(MIGRATED_INDEXES),
                 "migrated indexes in the mapped schema: " + indexesIn(MAPPED_SCHEMA));
-        assertTrue(sequencesIn(MAPPED_SCHEMA).isEmpty(), "the workflow scripts create no sequence");
-        assertTrue(functionsIn(MAPPED_SCHEMA).isEmpty(), "the workflow scripts create no function");
+        assertTrue(
+                sequencesIn(MAPPED_SCHEMA).isEmpty(),
+                "the workflow scripts create no standalone sequence (an identity column owns its own)");
+        assertEquals(
+                Set.of("workflow_commands_notify"),
+                functionsIn(MAPPED_SCHEMA),
+                "the workflow scripts create only the command notify function");
 
         // No other schema received any of them
         assertEquals(Set.of(MAPPED_SCHEMA), schemasHoldingTable(WORKFLOW_HISTORY));
@@ -866,7 +859,7 @@ public class PgWorkflowSchemaIT {
     }
 
     /**
-     * The query, retention and recovery services must use the scoped stores, not instances of their own; the
+     * The query and retention services must use the scoped stores, not instances of their own; the
      * collaborator a service holds is not observable through its API, so this reads the service's fields.
      */
     private static void assertServicesReuseScopedStores(RuntimeComponent runtime) throws Exception {
@@ -876,12 +869,6 @@ public class PgWorkflowSchemaIT {
         assertHolds(runtime.pgWorkflowRetentionService(), runtime.pgWorkflowRetentionRepository());
         assertHolds(runtime.branchTokenQueryService(), runtime.pgBranchTokenRepository());
         assertHolds(runtime.branchTokenQueryService(), runtime.pgJoinStateRepository());
-        assertHolds(runtime.branchRecoveryService(), runtime.pgBranchTokenRepository());
-        assertHolds(runtime.branchRecoveryService(), runtime.pgWorkflowInstanceRepository());
-        assertSame(
-                runtime.branchRecoveryService(),
-                providedThrough(runtime.branchRecoveryCron()),
-                "the recovery cron's provider yields the scoped recovery service");
     }
 
     private static void assertHolds(Object service, Object scoped) throws IllegalAccessException {
@@ -890,18 +877,6 @@ public class PgWorkflowSchemaIT {
                 held.stream().anyMatch(value -> value == scoped),
                 service.getClass().getSimpleName() + " must hold the scoped "
                         + scoped.getClass().getSimpleName());
-    }
-
-    private static Object providedThrough(Object holder) throws IllegalAccessException {
-        List<Provider<?>> providers = heldValues(holder).stream()
-                .filter(Provider.class::isInstance)
-                .<Provider<?>>map(Provider.class::cast)
-                .toList();
-        assertEquals(
-                1,
-                providers.size(),
-                "exactly one provider held by " + holder.getClass().getSimpleName());
-        return providers.get(0).get();
     }
 
     private static List<Object> heldValues(Object holder) throws IllegalAccessException {
@@ -1094,13 +1069,9 @@ public class PgWorkflowSchemaIT {
 
     // --- Branch-token repository and branch query service ---
 
-    /** Branches of the subject instance's fork, plus one long-stale branch of the plain instance. */
+    /** Branches of the subject instance's fork. */
     private record SeededBranches(
-            BranchToken running,
-            BranchToken waiting,
-            BranchToken retryScheduled,
-            BranchToken completed,
-            BranchToken stale) {}
+            BranchToken running, BranchToken waiting, BranchToken retryScheduled, BranchToken completed) {}
 
     private static SeededBranches exerciseBranchTokenRepository(RuntimeComponent runtime, LifecycleInstances instances)
             throws Exception {
@@ -1108,15 +1079,13 @@ public class PgWorkflowSchemaIT {
         WorkflowInstanceId workflowId = instances.withSubject().id();
         Instant now = Instant.now();
 
-        // Given: one branch per status the queries distinguish, and one stale RUNNING branch elsewhere
+        // Given: one branch per status the queries distinguish
         BranchToken running = newBranch(workflowId, "a", BranchStatus.RUNNING, null, null, null, now);
         BranchToken waiting = newBranch(workflowId, "b", BranchStatus.WAITING, WaitType.SIGNAL, "signal-b", null, now);
         BranchToken retryScheduled = newBranch(
                 workflowId, "c", BranchStatus.RETRY_SCHEDULED, null, null, now.plus(Duration.ofMinutes(30)), now);
         BranchToken completed = newBranch(workflowId, "d", BranchStatus.COMPLETED, null, null, null, now);
-        BranchToken stale = newBranch(
-                instances.plain().id(), "a", BranchStatus.RUNNING, null, null, null, now.minus(Duration.ofMinutes(10)));
-        for (BranchToken token : List.of(running, waiting, retryScheduled, completed, stale)) {
+        for (BranchToken token : List.of(running, waiting, retryScheduled, completed)) {
             inTransaction(runtime, tx -> branches.insert(token, tx));
         }
 
@@ -1154,15 +1123,7 @@ public class PgWorkflowSchemaIT {
                         .orElseThrow()
                         .id());
 
-        // recovery and status scans
-        assertEquals(
-                List.of(retryScheduled.id()),
-                tokenIds(
-                        inTransaction(runtime, tx -> branches.findRecoverable(now.plus(Duration.ofHours(1)), 10, tx))));
-        assertEquals(
-                List.of(stale.id()),
-                tokenIds(inTransaction(
-                        runtime, tx -> branches.findStaleRunning(now.minus(Duration.ofMinutes(1)), 10, tx))));
+        // status scans
         assertEquals(
                 List.of(waiting.id()),
                 tokenIds(inTransaction(runtime, tx -> branches.findByStatus(BranchStatus.WAITING, 10, tx))));
@@ -1178,7 +1139,7 @@ public class PgWorkflowSchemaIT {
                 branchIds(await(
                         query.findByWorkflow(workflowId, new BranchTokenFilter(BranchStatus.WAITING, null, null)))));
 
-        return new SeededBranches(advanced, waiting, retryScheduled, completed, stale);
+        return new SeededBranches(advanced, waiting, retryScheduled, completed);
     }
 
     // --- Definition registry store ---
@@ -1435,15 +1396,14 @@ public class PgWorkflowSchemaIT {
         Instant later = Instant.now().plus(Duration.ofHours(1));
         Instant now = Instant.now();
 
-        // Given: timers to settle, a reminder of the open task, a branch timer and a long-overdue timer
+        // Given: timers to settle, a reminder of the open task and a branch timer
         TimerRecord toFire = scheduledTimer(workflowId, later, TimerPurpose.STANDALONE, null, null);
         TimerRecord toCancel = scheduledTimer(workflowId, later, TimerPurpose.STANDALONE, null, null);
         TimerRecord toFail = scheduledTimer(workflowId, later, TimerPurpose.STANDALONE, null, null);
         TimerRecord reminder = scheduledTimer(workflowId, later, TimerPurpose.TASK_REMINDER, openTask, null);
         TimerRecord branchTimer =
                 scheduledTimer(workflowId, later, TimerPurpose.SIGNAL_TIMEOUT, null, branches.waiting());
-        TimerRecord overdue = scheduledTimer(workflowId, LONG_OVERDUE, TimerPurpose.STANDALONE, null, null);
-        for (TimerRecord timer : List.of(toFire, toCancel, toFail, reminder, branchTimer, overdue)) {
+        for (TimerRecord timer : List.of(toFire, toCancel, toFail, reminder, branchTimer)) {
             inTransaction(runtime, tx -> timers.insertScheduled(timer, tx));
         }
 
@@ -1478,22 +1438,7 @@ public class PgWorkflowSchemaIT {
                 TimerStatusTransition.LOST_TO_FIRED,
                 inTransaction(runtime, tx -> timers.markFailed(toFire.timerId(), now, "late", tx)));
 
-        // recovery scan, execution re-binding, reminder and branch lookups
-        assertEquals(
-                List.of(overdue.timerId()),
-                timerIds(inTransaction(
-                        runtime,
-                        tx -> timers.findRecoverableScheduled(LONG_OVERDUE.plus(Duration.ofDays(1)), 10, tx))));
-        UUID rebound = UUID.randomUUID();
-        inTransaction(runtime, tx -> timers.updateExecutionId(branchTimer.timerId(), rebound, tx));
-        assertEquals(
-                rebound.toString(),
-                mappedValue("workflow_timers", "timer_id", branchTimer.timerId(), "delayed_job_execution_id"));
-        assertInstanceOf(
-                WorkflowConflictException.class,
-                failureOf(runtime.pool()
-                        .withTransaction(tx -> timers.updateExecutionId(toFire.timerId(), UUID.randomUUID(), tx))),
-                "re-binding a fired timer is refused after reading the mapped row");
+        // reminder and branch lookups
         assertEquals(
                 List.of(reminder.timerId()),
                 inTransaction(runtime, tx -> timers.findScheduledRemindersForTask(openTask, tx)));
@@ -1507,33 +1452,6 @@ public class PgWorkflowSchemaIT {
         assertEquals("FIRED", mappedValue("workflow_timers", "timer_id", toFire.timerId(), "status"));
         assertEquals("CANCELLED", mappedValue("workflow_timers", "timer_id", toCancel.timerId(), "status"));
         assertEquals("FAILED", mappedValue("workflow_timers", "timer_id", toFail.timerId(), "status"));
-    }
-
-    // --- Branch-recovery cron ---
-
-    private static void exerciseRecoveryCron(RuntimeComponent runtime, SeededBranches branches) throws Exception {
-        // Given: exactly one RUNNING branch older than the default stale threshold, with retries left, and
-        // no due RETRY_SCHEDULED branch
-        assertEquals(
-                "RUNNING",
-                mappedValue("workflow_branch_tokens", "id", branches.stale().id(), "status"));
-
-        // When: the cron entry point reconciles once
-        await(runtime.branchRecoveryCron().reconcile());
-
-        // Then: the stale branch was demoted in the mapped table, and the recent RUNNING branch was left alone
-        UUID stale = branches.stale().id();
-        assertEquals("RETRY_SCHEDULED", mappedValue("workflow_branch_tokens", "id", stale, "status"));
-        assertEquals("1", mappedValue("workflow_branch_tokens", "id", stale, "attempt_count"));
-        assertEquals("stale_running", mappedValue("workflow_branch_tokens", "id", stale, "last_error_type"));
-        assertEquals(
-                "RUNNING",
-                mappedValue("workflow_branch_tokens", "id", branches.running().id(), "status"));
-        assertEquals(
-                BranchStatus.RETRY_SCHEDULED,
-                inTransaction(runtime, tx -> runtime.branchTokenRepository().findById(stale, tx))
-                        .orElseThrow()
-                        .status());
     }
 
     // --- Retention, archived filters and purge ---
@@ -2071,7 +1989,6 @@ public class PgWorkflowSchemaIT {
                 "timer-step",
                 fireAt,
                 TimerStatus.SCHEDULED,
-                UUID.randomUUID(),
                 Instant.now(),
                 null,
                 null,

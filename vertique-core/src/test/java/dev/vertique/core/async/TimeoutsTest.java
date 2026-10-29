@@ -53,7 +53,7 @@ class TimeoutsTest {
         @Test
         @DisplayName("times out while the condition remains false")
         void timesOut(Vertx vertx) throws Exception {
-            Throwable failure = awaitFailure(Timeouts.awaitCondition(vertx, () -> false, 1L, 10L, "record drain"));
+            Throwable failure = awaitFailure(Timeouts.awaitCondition(vertx, () -> false, 10L, 50L, "record drain"));
 
             assertInstanceOf(TimeoutException.class, failure);
             assertTrue(failure.getMessage().contains("record drain"));

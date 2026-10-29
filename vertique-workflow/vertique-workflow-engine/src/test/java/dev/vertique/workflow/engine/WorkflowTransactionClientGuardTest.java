@@ -22,6 +22,9 @@ import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
+import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
+import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
+import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.migration.WorkflowMigrationHandler;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
@@ -38,7 +41,6 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
-import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.tasks.TaskAssignment;
 import dev.vertique.workflow.tasks.TaskStore;
@@ -87,7 +89,6 @@ class WorkflowTransactionClientGuardTest {
 
     private static final WorkflowInstanceId INSTANCE = new WorkflowInstanceId(UUID.randomUUID());
     private static final UUID TASK_ID = UUID.randomUUID();
-    private static final UUID TIMER_ID = UUID.randomUUID();
     private static final WorkflowActor ACTOR = new WorkflowActor.User("alice");
     private static final DurableMetadata CARRIER =
             DurableMetadata.of(TenantCtxCodec.NAMESPACE, new JsonObject().put("tenantId", "CARRIER"));
@@ -175,21 +176,12 @@ class WorkflowTransactionClientGuardTest {
                         (engine, client) -> engine.taskCompleted(
                                 new TaskCompletionCommand(TASK_ID, "approve", Map.of(), "task-key", ACTOR, null),
                                 client)),
-                new EngineOperation("taskDueFired", (engine, client) -> engine.taskDueFired(INSTANCE, TASK_ID, client)),
                 new EngineOperation(
                         "taskReassigned",
                         (engine, client) -> engine.taskReassigned(
                                 new TaskReassignmentCommand(
                                         TASK_ID, new TaskAssignment.User("bob"), ACTOR, "task-key", null),
-                                client)),
-                new EngineOperation(
-                        "taskReminderFired",
-                        (engine, client) -> engine.taskReminderFired(INSTANCE, TASK_ID, TIMER_ID, FIXED_NOW, client)),
-                new EngineOperation("timerFired", (engine, client) -> engine.timerFired(INSTANCE, TIMER_ID, client)),
-                new EngineOperation(
-                        "timerFiringFailed",
-                        (engine, client) ->
-                                engine.timerFiringFailed(INSTANCE, TIMER_ID, "ERROR", "failure message", client)));
+                                client)));
 
         List<InvalidClient> clients = List.of(
                 new InvalidClient("a pool", () -> mock(Pool.class)),
@@ -295,9 +287,6 @@ class WorkflowTransactionClientGuardTest {
 
         RuntimeWorkflow runtime = runtimeWorkflow();
         WorkflowRegistry registry = mock(WorkflowRegistry.class);
-        DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
-        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
-        when(registry.isDeployed(currentKey)).thenReturn(true);
         when(registry.resolve(any(DefinitionKey.class))).thenReturn(runtime);
 
         DefaultContextHolder holder = new DefaultContextHolder();
@@ -324,21 +313,26 @@ class WorkflowTransactionClientGuardTest {
             }
         };
 
-        WorkflowEngineHandle engine = WorkflowEngineFactory.create(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                branchTokens,
-                joinStates,
-                timerStore,
-                taskStore,
-                FIXED_CLOCK,
-                Set.<WorkflowSideEffectRecorder<SqlClient>>of(),
-                WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS,
-                Optional.of(migrations),
-                propagator);
+        WorkflowEngineHandle engine = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
+                .txRunner(txRunner)
+                .registry(registry)
+                .instances(instances)
+                .history(history)
+                .dedup(dedup)
+                .branchTokens(branchTokens)
+                .joinStates(joinStates)
+                .timerStore(timerStore)
+                .taskStore(taskStore)
+                .taskReservations(new AcceptingTaskReservations())
+                .clock(FIXED_CLOCK)
+                .recorders(Set.<WorkflowSideEffectRecorder<SqlClient>>of())
+                .optionalIntentKinds(WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS)
+                .migrationRegistry(Optional.of(migrations))
+                .propagator(propagator)
+                .typeNames(WorkflowEngineFactory.registryTypeNames(registry))
+                .commands(new EmptyCommandRepository())
+                .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCode(runtime))
+                .build());
         return new Harness(
                 engine, txRunner, instances, history, dedup, branchTokens, joinStates, timerStore, taskStore);
     }

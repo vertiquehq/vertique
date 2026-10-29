@@ -57,7 +57,6 @@ public class CodeUnavailableStartupIT {
 
             // Given a store where versions 1 and 2 of one code definition were published
             Boot published = database.node(none(), unobserved(), List.of(version1(removed), version2(removed)));
-            long coolingSeconds = published.app().workflowDefinitionsConfig().maxStalenessSeconds();
             published.close();
 
             // When a restart deploys only version 2
@@ -75,7 +74,6 @@ public class CodeUnavailableStartupIT {
             // When version 1 is retired, with no instance pinned to it, and the restart is tried again
             Boot retiring = database.node(none(), unobserved(), List.of(version1(removed), version2(removed)));
             await(retiring.app().definitionService().deprecate(removedV1));
-            database.ageStatus(removedV1, coolingSeconds + 60);
             await(retiring.app().definitionService().retire(removedV1));
             assertThat(database.stored(removed, 1).status()).isEqualTo("RETIRED");
             retiring.close();

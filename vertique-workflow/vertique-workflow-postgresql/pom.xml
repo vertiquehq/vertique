@@ -166,12 +166,6 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-workflow-events</artifactId>
             <scope>test</scope>
         </dependency>
-        <dependency>
-            <!-- Test scope only: the mixed-code proofs run the timer-fire executor against each node's engine. -->
-            <groupId>dev.vertique</groupId>
-            <artifactId>vertique-workflow-delayed</artifactId>
-            <scope>test</scope>
-        </dependency>
         <!--
           Test scope only: the cross-scope migration proofs compare state types through the schema
           module's WorkflowStateCompatibility. No production code in this module depends on it.
@@ -187,14 +181,22 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
         <!--
-          Test-scope only: PgWorkflowBranchRecoveryServiceIT's AC-2 headline test (PRD-WF-007)
-          asserts recovery-time carrier-row instance fill against the real CorrelationContext type,
-          per the workflow-007 plan S5 fixture note (mirrors vertique-workflow-engine's test-scope
-          dependency added in S3). No production code in this module depends on vertique-correlation.
+          Test-scope only: the recorded-execution ITs assert durable-context fill against the real
+          CorrelationContext type. No production code in this module depends on vertique-correlation.
         -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-correlation</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          Test scope only: the upgrade proofs create the delayed-job tables with the job module's own
+          migration. No production code in this module depends on the job tables.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-job-postgresql</artifactId>
             <scope>test</scope>
         </dependency>
 
@@ -229,14 +231,38 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
 
-        <!-- Compile-testing guard: prove CronPersistenceMarker fails Dagger code-gen
-             when WorkflowBranchRecoveryModule is composed with CronModule (in-memory)
-             instead of CronPersistenceModule. -->
+        <!--
+          Test scope only: the relayed-signal proofs install identity carriage and reconstruction around a real
+          outbox relay that delivers to the workflow signal endpoint. No production code in this module depends on
+          the security runtime or on the outbox service destination.
+        -->
         <dependency>
             <groupId>dev.vertique</groupId>
-            <artifactId>vertique-codegen-test</artifactId>
+            <artifactId>vertique-security-runtime</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-inbox-outbox-services</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          Test scope only: ExecutorMetricsIT proves the Micrometer bridge against the executor on managed PostgreSQL.
+          No production code in this module depends on the bridge.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-micrometer-workflow</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Annotation processing of the Dagger components that the integration tests declare. -->
         <dependency>
             <groupId>com.google.dagger</groupId>
             <artifactId>dagger-compiler</artifactId>

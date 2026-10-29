@@ -3,17 +3,14 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.spi.TimerCommandSpec;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
-import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.ReminderSpec;
-import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
-import dev.vertique.workflow.timer.TimerIntentPayload;
 import dev.vertique.workflow.timer.TimerPurpose;
 import dev.vertique.workflow.timer.TimerStatusTransition;
 import dev.vertique.workflow.timer.TimerStore;
@@ -25,6 +22,7 @@ import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -39,11 +37,11 @@ import java.util.UUID;
  *
  * <p>The {@link ReminderEmission} record and reminder-kind constants are co-located here because
  * they originate in reminder scheduling logic, even though they are also referenced by the
- * {@link WorkflowEngine#taskReminderFired} method (which remains on the facade until Slice C7).
+ * {@link TaskLifecycleService#reminderFired} method (which remains on the facade until Slice C7).
  * Both are package-private, so {@link WorkflowEngine} can still read them directly.
  *
  * <p>This class is a leaf in the dependency graph: it depends on the history repository SPI,
- * the recorder router, the timer store, and the clock. It has no reference to the transition
+ * the command repository, the timer store, and the clock. It has no reference to the transition
  * driver or fork/join coordinator.
  *
  * <p>Instances are {@code @Singleton} and constructed by Dagger via {@code @Inject}.
@@ -53,7 +51,7 @@ final class ReminderScheduler {
 
     // --- Reminder-kind constants (part of the v1 wire contract for TASK_REMINDER events;
     //     see vertique-workflow/vertique-workflow-events/src/main/resources/META-INF/vertique/module.md).
-    // Package-private so WorkflowEngine.taskReminderFired
+    // Package-private so TaskLifecycleService.reminderFired
     //     can read them without duplication until that method moves in Slice C7. ---
 
     /** Attribute value for {@code ONE_SHOT_OFFSET}-mode reminders in the {@code TASK_REMINDER} event. */
@@ -65,7 +63,7 @@ final class ReminderScheduler {
     // --- Dependencies ---
 
     private final WorkflowHistoryRepository<SqlClient> history;
-    private final RecorderRouter recorders;
+    private final WorkflowCommandRepository<SqlClient> commands;
     private final TimerStore<SqlClient> timerStore;
     private final Clock clock;
 
@@ -73,18 +71,18 @@ final class ReminderScheduler {
      * Constructs a new {@code ReminderScheduler}.
      *
      * @param history    the history repository used to obtain sequence numbers and append entries
-     * @param recorders  the recorder router used to schedule timer side-effect intents
+     * @param commands   the command repository that records the reminder timers
      * @param timerStore the timer store used to find and cancel scheduled reminder timer rows
      * @param clock      the wall-clock used to timestamp history entries
      */
     @Inject
     ReminderScheduler(
             WorkflowHistoryRepository<SqlClient> history,
-            RecorderRouter recorders,
+            WorkflowCommandRepository<SqlClient> commands,
             TimerStore<SqlClient> timerStore,
             Clock clock) {
         this.history = history;
-        this.recorders = recorders;
+        this.commands = commands;
         this.timerStore = timerStore;
         this.clock = clock;
     }
@@ -95,7 +93,7 @@ final class ReminderScheduler {
      * Schedules all initial reminder timers declared on {@code htn.reminders()} for a newly-created
      * task. For {@link ReminderSpec.OneShotOffsets}, one timer is scheduled per offset. For
      * {@link ReminderSpec.RecurringInterval}, only the first interval timer is scheduled; subsequent
-     * ones are scheduled by {@link WorkflowEngine#taskReminderFired} as each fires. When
+     * ones are scheduled by {@link TaskLifecycleService#reminderFired} as each fires. When
      * {@code reminders} is {@code null}, this is a no-op.
      *
      * <p>All initial reminders are anchored to the same {@code taskCreatedAt} instant captured by
@@ -103,7 +101,7 @@ final class ReminderScheduler {
      * exact {@code created_at + offset} (no slippage from intermediate work between task INSERT and
      * reminder scheduling) and the first {@link ReminderSpec.RecurringInterval} fire is at exact
      * {@code created_at + interval}. Subsequent recurring fires re-anchor in
-     * {@code taskReminderFired} off the previous timer's persisted {@code fire_at}.
+     * {@code reminderFired} off the previous timer's persisted {@code fire_at}.
      *
      * @param inst          the workflow instance that owns the task
      * @param htn           the human-task node that declared the reminder spec
@@ -126,22 +124,21 @@ final class ReminderScheduler {
             }
             return chain;
         } else if (spec instanceof ReminderSpec.RecurringInterval ri) {
-            // Only the first interval is scheduled; subsequent ones are chained in taskReminderFired.
+            // Only the first interval is scheduled; subsequent ones are chained in reminderFired.
             return scheduleReminderTimer(inst, htn, taskId, taskCreatedAt.plus(ri.interval()), tx);
         }
         return Future.succeededFuture();
     }
 
     /**
-     * Schedules one {@link TimerPurpose#TASK_REMINDER} timer via the {@code WORKFLOW_TIMER}
-     * recorder and appends a {@code TIMER_SCHEDULED} history entry.
+     * Schedules one {@link TimerPurpose#TASK_REMINDER} timer as a {@code REMINDER} command and appends a
+     * {@code TIMER_SCHEDULED} history entry.
      *
      * <p>The {@code fireAt} parameter is an absolute instant. Callers must compute it from a stable
      * anchor (task creation time for initial reminders, or the previous fire's persisted
      * {@code fire_at} for the next recurring reminder) so that recurring reminders maintain a
-     * steady cadence and do NOT drift across executor delays. Clamping {@code fireAt} to {@code >=
-     * clock.instant()} is the caller's choice — leaving a strictly past {@code fireAt} causes the
-     * delayed-job system to fire it as soon as possible, which is desirable for catch-up after a
+     * steady cadence and do NOT drift across executor delays. An instant already past is taken as
+     * the time of recording, so the reminder is due at once, which is desirable for catch-up after a
      * long outage.
      *
      * @param inst   the workflow instance that owns the task
@@ -154,41 +151,31 @@ final class ReminderScheduler {
      */
     Future<Void> scheduleReminderTimer(
             WorkflowInstance inst, HumanTaskNode htn, UUID taskId, Instant fireAt, SqlClient tx) {
-        return history.nextSequence(inst.id(), tx).compose(seq -> {
-            TimerIntentPayload timerPayload = new TimerIntentPayload(fireAt, TimerPurpose.TASK_REMINDER, taskId);
-            WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
-                    IntentKind.WORKFLOW_TIMER,
-                    htn.stepId(),
-                    timerPayload,
-                    Map.of(),
-                    WorkflowSideEffectIntent.Correlation.singlePath(
-                            inst.id(),
-                            seq,
-                            inst.definitionId(),
-                            inst.definitionScopeKey(),
-                            inst.scopeKey(),
-                            htn.stepId()));
-            return recorders.route(intent, tx).compose(recorderResult -> {
-                if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
-                    return Future.failedFuture(new WorkflowDefinitionException(
-                            "WORKFLOW_TIMER recorder must return RecorderResult.Timer for TASK_REMINDER; got "
-                                    + recorderResult.getClass().getSimpleName()));
-                }
-                UUID timerId = timerResult.timerId();
-                String histPayload = Json.encode(
-                        new TimerScheduledHistoryPayload(htn.stepId(), timerId, fireAt, TimerPurpose.TASK_REMINDER));
-                return history.append(
-                        new WorkflowHistoryEntry(
-                                inst.id(), seq, WorkflowEntryType.TIMER_SCHEDULED, histPayload, clock.instant()),
-                        tx);
-            });
-        });
+        TimerCommandSpec timer = new TimerCommandSpec(
+                inst.id(),
+                TimerPurpose.TASK_REMINDER,
+                htn.stepId(),
+                taskId,
+                null,
+                null,
+                null,
+                new TimerCommandSpec.FireTime.At(fireAt),
+                List.of());
+        return commands.recordTimer(timer, tx)
+                .compose(recorded -> history.nextSequence(inst.id(), tx).compose(seq -> {
+                    String histPayload = Json.encode(new TimerScheduledHistoryPayload(
+                            htn.stepId(), recorded.timerId(), recorded.fireAt(), TimerPurpose.TASK_REMINDER));
+                    return history.append(
+                            new WorkflowHistoryEntry(
+                                    inst.id(), seq, WorkflowEntryType.TIMER_SCHEDULED, histPayload, clock.instant()),
+                            tx);
+                }));
     }
 
     /**
      * Schedules a single {@link TimerPurpose#TASK_REMINDER} timer for a branch-owned task.
-     * Mirrors {@link #scheduleReminderTimer} but populates the branch identity on the correlation
-     * so the timer row's {@code branch_token_id / fork_step_id / branch_id} columns are persisted.
+     * Mirrors {@link #scheduleReminderTimer} but records the branch identity so the timer row's
+     * {@code branch_token_id / fork_step_id / branch_id} columns are persisted.
      *
      * @param inst          the parent workflow instance (provides workflow id and definition id)
      * @param htn           the human-task node whose reminders config produced this timer
@@ -209,38 +196,29 @@ final class ReminderScheduler {
             String branchId,
             Instant fireAt,
             SqlClient tx) {
-        return history.nextSequence(inst.id(), tx).compose(seq -> {
-            TimerIntentPayload timerPayload = new TimerIntentPayload(fireAt, TimerPurpose.TASK_REMINDER, taskId);
-            WorkflowSideEffectIntent intent = new WorkflowSideEffectIntent(
-                    IntentKind.WORKFLOW_TIMER,
-                    htn.stepId(),
-                    timerPayload,
-                    Map.of(),
-                    new WorkflowSideEffectIntent.Correlation(
-                            inst.id(),
-                            seq,
-                            inst.definitionId(),
-                            inst.definitionScopeKey(),
-                            inst.scopeKey(),
-                            htn.stepId(),
-                            branchTokenId,
-                            forkStepId,
-                            branchId));
-            return recorders.route(intent, tx).compose(recorderResult -> {
-                if (!(recorderResult instanceof RecorderResult.Timer timerResult)) {
-                    return Future.failedFuture(new WorkflowDefinitionException(
-                            "WORKFLOW_TIMER recorder must return RecorderResult.Timer for branch TASK_REMINDER; got "
-                                    + recorderResult.getClass().getSimpleName()));
-                }
-                UUID timerId = timerResult.timerId();
-                String histPayload = Json.encode(
-                        new TimerScheduledHistoryPayload(htn.stepId(), timerId, fireAt, TimerPurpose.TASK_REMINDER));
-                return history.append(
-                        new WorkflowHistoryEntry(
-                                inst.id(), seq, WorkflowEntryType.BRANCH_TIMER_SCHEDULED, histPayload, clock.instant()),
-                        tx);
-            });
-        });
+        TimerCommandSpec timer = new TimerCommandSpec(
+                inst.id(),
+                TimerPurpose.TASK_REMINDER,
+                htn.stepId(),
+                taskId,
+                branchTokenId,
+                forkStepId,
+                branchId,
+                new TimerCommandSpec.FireTime.At(fireAt),
+                List.of());
+        return commands.recordTimer(timer, tx)
+                .compose(recorded -> history.nextSequence(inst.id(), tx).compose(seq -> {
+                    String histPayload = Json.encode(new TimerScheduledHistoryPayload(
+                            htn.stepId(), recorded.timerId(), recorded.fireAt(), TimerPurpose.TASK_REMINDER));
+                    return history.append(
+                            new WorkflowHistoryEntry(
+                                    inst.id(),
+                                    seq,
+                                    WorkflowEntryType.BRANCH_TIMER_SCHEDULED,
+                                    histPayload,
+                                    clock.instant()),
+                            tx);
+                }));
     }
 
     // --- Reminder cancellation ---
@@ -262,14 +240,10 @@ final class ReminderScheduler {
      * Acquiring the task row lock first here would invert the order vs. the firing path and risk a
      * database deadlock (SQLSTATE 40P01).
      *
-     * <p>Trade-off: a recurring-reminder firing tx may commit a new SCHEDULED reminder row AFTER
-     * this scan returns but BEFORE the caller's {@code markCompleted}-style UPDATE acquires the
-     * task row lock and CLOSES the task. The leftover reminder is harmless — when its delayed-job
-     * eventually fires, the firing executor invokes {@code taskReminderFired} which calls
-     * {@code incrementRemindersFiredCount} (gated on {@code status='OPEN'}), observes
-     * {@link java.util.Optional#empty()} for the now-CLOSED task, and emits no history/event. The
-     * executor then {@code markFired}s the timer and the orphan is gone. Cost: one wasted
-     * delayed-job execution per orphaned reminder; never a correctness gap.
+     * <p>Cancelling a reminder timer also cancels the reminder command that would fire it. A recurring
+     * reminder records its next command in the segment that fires the previous one; both that segment and the
+     * transaction that closes the task hold the instance's execution lock, so no reminder is recorded between the scan
+     * and the closing of the task.
      *
      * @param taskId the task whose scheduled reminder timers should be cancelled
      * @param inst   the workflow instance that owns the task (used for history)
@@ -331,10 +305,10 @@ final class ReminderScheduler {
         });
     }
 
-    // --- Package-private types used by WorkflowEngine.taskReminderFired ---
+    // --- Package-private types used by TaskLifecycleService.reminderFired ---
 
     /**
-     * Pair returned by the {@code taskReminderFired} per-spec branch: the future that schedules the
+     * Pair returned by the {@code reminderFired} per-spec branch: the future that schedules the
      * next recurring reminder timer (or {@link Future#succeededFuture()} for terminal/one-shot
      * branches), and the attribute map for the {@code TASK_REMINDER} event.
      *

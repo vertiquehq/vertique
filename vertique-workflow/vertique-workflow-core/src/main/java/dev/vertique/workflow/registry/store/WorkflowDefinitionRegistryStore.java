@@ -4,6 +4,7 @@
 package dev.vertique.workflow.registry.store;
 
 import io.vertx.core.Future;
+import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;
@@ -164,16 +165,15 @@ public interface WorkflowDefinitionRegistryStore {
 
     /**
      * Retires one definition under the definition id lock. A {@code CANDIDATE} row is retired directly. A
-     * {@code DEPRECATED} row is retired only after its cooling window, the configured staleness bound measured
-     * from the status change time by the database clock, and only while no instance pinned to exactly this
-     * definition version is still running, waiting or compensating, archived instances included. Every other
-     * status is refused as an invalid transition. The checks run in that order and in the same transaction as the
-     * change: a missing or ineligible row fails with
+     * {@code DEPRECATED} row is retired as soon as no instance pinned to exactly this definition version is still
+     * pending, running, waiting or compensating, archived instances included, however recently it was deprecated.
+     * Every other status is refused as an invalid transition. The checks run in that order and in the same
+     * transaction as the change: a missing or ineligible row fails with
      * {@link dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException} reason
-     * {@code INVALID_TRANSITION}, a row that is still cooling fails with reason {@code COOLING}, and a row that
-     * is still pinned fails with reason {@code PINNED_INSTANCES}. A default-scope row that the default scope's
-     * activation record of the id names is refused as an invalid transition before those checks. A refusal changes
-     * no row, and a success changes only this row's status and status change time.
+     * {@code INVALID_TRANSITION}, and a row that is still pinned fails with reason {@code PINNED_INSTANCES}. A
+     * default-scope row that the default scope's activation record of the id names is refused as an invalid
+     * transition before those checks. A refusal changes no row, and a success changes only this row's status and
+     * status change time.
      *
      * @param key scoped definition key to retire
      * @return a future completed after the store-owned transaction commits
@@ -233,4 +233,23 @@ public interface WorkflowDefinitionRegistryStore {
      * @return a future completed after the store-owned transaction commits
      */
     Future<Void> recordFailure(DefinitionKey key, @Nullable DefinitionFailure failure);
+
+    /**
+     * Writes the declared signal names and the start schema of a row that has neither, as a node that builds the
+     * row's plan at startup does for a row written before they were stored. A row that already holds signal names,
+     * a row whose plan hash is no longer the expected one, and a row that does not exist, are left unchanged. The
+     * plan hash is never touched.
+     *
+     * <p>The default implementation does nothing, for a store that keeps no such columns.
+     *
+     * @param key the key of the row
+     * @param planHash the plan hash the schemas were built from; the row is written only while it still holds it
+     * @param signalNames the signal names the row's plan declares
+     * @param startSchema the schema of the row's start payload, or {@code null} when the plan declares none
+     * @return a future completed after the statement ran
+     */
+    default Future<Void> fillSignalSchemas(
+            DefinitionKey key, String planHash, JsonObject signalNames, @Nullable JsonObject startSchema) {
+        return Future.succeededFuture();
+    }
 }

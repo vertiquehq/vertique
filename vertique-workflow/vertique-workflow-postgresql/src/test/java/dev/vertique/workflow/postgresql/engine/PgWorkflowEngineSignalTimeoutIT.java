@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -19,7 +18,6 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.ops.StartCommand;
-import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
@@ -28,15 +26,10 @@ import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
-import dev.vertique.workflow.sideeffect.RecorderResult;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
-import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WaitType;
 import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.timer.TimerPurpose;
-import dev.vertique.workflow.timer.TimerRecord;
-import dev.vertique.workflow.timer.TimerStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -46,14 +39,11 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
-import io.vertx.sqlclient.SqlClient;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -72,13 +62,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   </li>
  *   <li>Signal arrival on a SIGNAL+aux WAITING cancels the timer and appends TIMER_CANCELLED.</li>
  *   <li>Signal arrival on a plain SIGNAL WAITING (no timeout) does not touch workflow_timers.</li>
- *   <li>timerFired for a SIGNAL+aux match runs onTimeout mutator and advances to
+ *   <li>A due signal-timeout command runs the onTimeout mutator and advances to
  *       timeoutNextStepId.</li>
  * </ul>
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class PgWorkflowEngineSignalTimeoutIT {
+
+    private static final Duration IDLE_TIMEOUT = Duration.ofSeconds(10);
 
     // --- Testcontainers setup ---
 
@@ -93,11 +85,23 @@ public class PgWorkflowEngineSignalTimeoutIT {
     static PgWorkflowHistoryRepository historyRepo;
     static PgTimerStore timerStore;
 
-    /** Tracks the most recent timer_id inserted by the fake recorder. */
+    /** The timer that the command of the instance last started with a timeout recorded. */
     static final AtomicReference<UUID> lastTimerId = new AtomicReference<>();
 
-    /** Counts recorder invocations. */
-    static final AtomicInteger recorderCallCount = new AtomicInteger(0);
+    /** Starts an instance of the timeout workflow, waits until it is idle and reads the timeout it recorded. */
+    private static Future<WorkflowInstanceId> startTimeoutWorkflow(StartCommand cmd) {
+        return engineWithTimeout
+                .start(cmd)
+                .compose(started -> engineWithTimeout
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
+                .compose(wfId -> TimerCommandRows.onlyTimerId(pool, wfId, TimerPurpose.SIGNAL_TIMEOUT)
+                        .map(timerId -> {
+                            lastTimerId.set(timerId);
+                            return wfId;
+                        }));
+    }
 
     // --- Domain types ---
 
@@ -152,7 +156,7 @@ public class PgWorkflowEngineSignalTimeoutIT {
 
     // --- Workflow definitions ---
 
-    /** Signal-wait with timeout branch: start → wait("ok-signal", timeout=1min) → ok | cancelled. */
+    /** Signal-wait with timeout branch: start → wait("ok-signal", timeout=1h) → ok | cancelled. */
     static final WorkflowDefinition<OrderState, FakeTimeoutContract> TIMEOUT_DEFINITION = new WorkflowDefinition<>() {
         @Override
         public Class<FakeTimeoutContract> contract() {
@@ -181,7 +185,7 @@ public class PgWorkflowEngineSignalTimeoutIT {
                     .waitForSignal("wait", "ok-signal", OkSignal.class)
                     .onSignal(OrderState::onSignal)
                     .toStepOnSignal("ok")
-                    .timeoutAfter(Duration.ofMinutes(1))
+                    .timeoutAfter(Duration.ofHours(1))
                     .onTimeout(OrderState::onTimeout)
                     .toStepOnTimeout("cancelled")
                     .complete("ok")
@@ -244,44 +248,6 @@ public class PgWorkflowEngineSignalTimeoutIT {
         PgWorkflowDedupRepository dedupRepo = new PgWorkflowDedupRepository(pool, exMapper);
         timerStore = new PgTimerStore(exMapper);
 
-        WorkflowSideEffectRecorder<SqlClient> fakeTimerRecorder = new WorkflowSideEffectRecorder<>() {
-            @Override
-            public IntentKind kind() {
-                return IntentKind.WORKFLOW_TIMER;
-            }
-
-            @Override
-            public Future<RecorderResult> record(WorkflowSideEffectIntent intent, SqlClient tx) {
-                recorderCallCount.incrementAndGet();
-                UUID timerId = UUID.randomUUID();
-                lastTimerId.set(timerId);
-                Instant fireAt = intent.payload() instanceof Instant fa
-                        ? fa
-                        : Instant.now().plusSeconds(120);
-                UUID fakeJobId = UUID.randomUUID();
-                TimerRecord record = new TimerRecord(
-                        timerId,
-                        (dev.vertique.workflow.ops.WorkflowInstanceId)
-                                intent.correlation().workflowId(),
-                        intent.targetId(),
-                        fireAt,
-                        TimerStatus.SCHEDULED,
-                        fakeJobId,
-                        Instant.now(),
-                        null,
-                        null,
-                        null,
-                        null,
-                        TimerPurpose.STANDALONE,
-                        null,
-                        null, // branchTokenId
-                        null, // forkStepId
-                        null,
-                        DurableMetadata.empty()); // branchId
-                return timerStore.insertScheduled(record, tx).map(v -> RecorderResult.ofTimer(timerId));
-            }
-        };
-
         DefaultWorkflowRegistry timeoutRegistry = new DefaultWorkflowRegistry();
         timeoutRegistry.register(TIMEOUT_DEFINITION);
         engineWithTimeout = PgWorkflowEngineTestSupport.create(
@@ -290,7 +256,7 @@ public class PgWorkflowEngineSignalTimeoutIT {
                 instanceRepo,
                 historyRepo,
                 dedupRepo,
-                Set.of(fakeTimerRecorder),
+                Set.of(),
                 Set.of(IntentKind.WORKFLOW_EVENT),
                 timerStore,
                 new PgTaskStore(pool, exMapper),
@@ -316,9 +282,10 @@ public class PgWorkflowEngineSignalTimeoutIT {
     @BeforeEach
     void truncateTables(VertxTestContext ctx) {
         lastTimerId.set(null);
-        recorderCallCount.set(0);
-        pool.query("TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup,"
-                        + " workflow_instances RESTART IDENTITY CASCADE")
+        WorkflowTestTables.truncating(
+                        pool,
+                        "TRUNCATE TABLE workflow_timers, workflow_history, workflow_dedup,"
+                                + " workflow_instances RESTART IDENTITY CASCADE")
                 .execute()
                 .onComplete(ar -> ctx.completeNow());
     }
@@ -334,7 +301,7 @@ public class PgWorkflowEngineSignalTimeoutIT {
 
     /**
      * handleWaitSignal with timeout branch should:
-     * - invoke the WORKFLOW_TIMER recorder once
+     * - record one timeout timer, linked to a pending TIMEOUT command
      * - persist wait_type=SIGNAL, wait_key="ok-signal", wait_aux_id=timerId
      * - append TIMER_SCHEDULED with kind=WAIT_TIMEOUT
      */
@@ -353,13 +320,9 @@ public class PgWorkflowEngineSignalTimeoutIT {
                 null,
                 null);
 
-        engineWithTimeout
-                .start(cmd)
+        startTimeoutWorkflow(cmd)
                 .compose(wfId -> {
-                    ctx.verify(() -> {
-                        assertEquals(1, recorderCallCount.get(), "WORKFLOW_TIMER recorder must be called once");
-                        assertNotNull(lastTimerId.get(), "timerId must be set");
-                    });
+                    ctx.verify(() -> assertNotNull(lastTimerId.get(), "the start must record one timeout timer"));
                     return pool.withTransaction(tx -> instanceRepo.findById(wfId, tx))
                             .compose(optInst -> {
                                 ctx.verify(() -> {
@@ -426,14 +389,14 @@ public class PgWorkflowEngineSignalTimeoutIT {
                 null,
                 null);
 
-        engineWithTimeout
-                .start(cmd)
+        startTimeoutWorkflow(cmd)
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     assertNotNull(timerId, "timerId must be set");
                     String dedupKey = "signal-dedup-" + UUID.randomUUID();
                     return engineWithTimeout
                             .signal(wfId, "ok-signal", new OkSignal("test"), dedupKey)
+                            .compose(v -> engineWithTimeout.executionProbe().awaitIdle(wfId, IDLE_TIMEOUT))
                             .compose(v -> {
                                 // Verify workflow advanced to COMPLETED
                                 return pool.withTransaction(tx -> instanceRepo.findById(wfId, tx))
@@ -505,7 +468,7 @@ public class PgWorkflowEngineSignalTimeoutIT {
 
     /**
      * Signal arrival on a plain SIGNAL WAITING (no timeout) should NOT touch workflow_timers.
-     * The timer recorder should never be called.
+     * No timer is recorded for the wait.
      */
     @Test
     @DisplayName("signal on plain SIGNAL WAITING (no timeout) does not touch workflow_timers")
@@ -524,13 +487,15 @@ public class PgWorkflowEngineSignalTimeoutIT {
 
         engineWithoutTimeout
                 .start(cmd)
+                .compose(started -> engineWithoutTimeout
+                        .executionProbe()
+                        .awaitIdle(started, IDLE_TIMEOUT)
+                        .map(idle -> started))
                 .compose(wfId -> {
-                    // Recorder should never be called for a no-timeout wait
-                    ctx.verify(() -> assertEquals(
-                            0, recorderCallCount.get(), "recorder must not be called for no-timeout wait"));
                     String dedupKey = "dedup-" + UUID.randomUUID();
                     return engineWithoutTimeout
                             .signal(wfId, "ok-signal", new OkSignal("plain"), dedupKey)
+                            .compose(v -> engineWithoutTimeout.executionProbe().awaitIdle(wfId, IDLE_TIMEOUT))
                             .compose(v -> {
                                 return pool.withTransaction(
                                                 tx -> tx.query("SELECT COUNT(*) AS cnt FROM workflow_timers")
@@ -555,15 +520,16 @@ public class PgWorkflowEngineSignalTimeoutIT {
     }
 
     /**
-     * timerFired for a SIGNAL+aux match (wait_type=SIGNAL, wait_aux_id=timerId) should:
+     * A signal-timeout timer whose command comes due while the instance waits (wait_type=SIGNAL,
+     * wait_aux_id=timerId) should:
      * - run the onTimeout mutator
      * - advance the workflow to the timeoutNextStepId
      * - append a TIMEOUT history entry
-     * - return APPLIED
+     * - complete the timer's command
      */
     @Test
-    @DisplayName("timerFired on SIGNAL+aux match runs onTimeout mutator and advances to timeout step")
-    void timerFiredOnSignalAuxMatchRunsTimeoutMutator(VertxTestContext ctx) {
+    @DisplayName("a due signal-timeout command runs onTimeout mutator and advances to timeout step")
+    void dueSignalTimeoutRunsTimeoutMutator(VertxTestContext ctx) {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "signal-timeout-test",
@@ -576,15 +542,16 @@ public class PgWorkflowEngineSignalTimeoutIT {
                 null,
                 null);
 
-        engineWithTimeout
-                .start(cmd)
+        startTimeoutWorkflow(cmd)
                 .compose(wfId -> {
                     UUID timerId = lastTimerId.get();
                     assertNotNull(timerId, "timerId must be set");
-                    return pool.withTransaction(tx -> engineWithTimeout.timerFired(wfId, timerId, tx))
-                            .compose(result -> {
-                                ctx.verify(() -> assertEquals(
-                                        TimerFiringResult.APPLIED, result, "timerFired must return APPLIED"));
+                    return TimerCommandRows.makeDue(pool, timerId)
+                            .compose(due -> engineWithTimeout.executionProbe().awaitIdle(wfId, IDLE_TIMEOUT))
+                            .compose(idle -> TimerCommandRows.commandState(pool, timerId))
+                            .compose(commandState -> {
+                                ctx.verify(() ->
+                                        assertEquals("COMPLETE", commandState, "the timeout command must complete"));
                                 return pool.withTransaction(tx -> instanceRepo.findById(wfId, tx))
                                         .compose(optInst -> {
                                             ctx.verify(() -> {

@@ -22,6 +22,17 @@ SPDX-License-Identifier: EUPL-1.2
 
     <build>
         <plugins>
+            <!-- ExactJsonProfileMapperTest installs mappers into the process-global JSON codec and
+                 restores the raw Vert.x delegate afterwards, so the unit fork enables the reset seam.
+                 Reproduces the parent argLine (JaCoCo late-replacement + Mockito premain); a bare -D
+                 would drop both. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar -Dvertique.json.codec.allowReset=true</argLine>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
@@ -78,6 +89,26 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-context</artifactId>
         </dependency>
         <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-deploy</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-cache-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-cache-caffeine</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-json-schema-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-json-schema</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.vertx</groupId>
             <artifactId>vertx-sql-client</artifactId>
         </dependency>
@@ -100,6 +131,10 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.vishwakarma</groupId>
+            <artifactId>zjsonpatch</artifactId>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
@@ -149,6 +184,12 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-correlation</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Test-scope only: the plan cache settings test binds through the real typed configuration binding. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-config-core</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
