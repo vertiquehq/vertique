@@ -7,10 +7,12 @@ package dev.vertique.workflow.history;
  * Observes what the workflow engine records in an instance's history, after it is committed.
  *
  * <p>Contribute an implementation with {@code @Provides @IntoSet}. Every contributed listener receives every event,
- * synchronously and in no particular order relative to other listeners, on the thread of the transaction's
- * completion. A listener must not block. Events carry no payload, state or failure message.
+ * synchronously and in no particular order relative to other listeners. A listener must not block. Events carry no
+ * payload, state or failure message.
  *
- * <p>Callbacks run on the thread that completes the operation, so a callback must not block that thread.
+ * <p>Committed events are delivered on the thread that completes the post-commit read of the committed entries, which
+ * is not ordered relative to the caller's own result future; a failed action is reported on the thread where the
+ * failure was observed. A callback must not block that thread.
  *
  * <p>Delivery is at most once: if the process stops between the commit and the notification, the event is not
  * delivered, and the instance history remains the source of truth.
