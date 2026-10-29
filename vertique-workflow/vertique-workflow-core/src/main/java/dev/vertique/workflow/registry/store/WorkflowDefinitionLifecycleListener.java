@@ -11,6 +11,8 @@ package dev.vertique.workflow.registry.store;
  * synchronously and in no particular order relative to other listeners. A listener must not block. Events carry no
  * definition source or payload.
  *
+ * <p>Callbacks run on the thread that completes the operation, so a callback must not block that thread.
+ *
  * <p>Delivery is at most once: if the process stops between the commit and the notification, the event is not
  * delivered.
  */
