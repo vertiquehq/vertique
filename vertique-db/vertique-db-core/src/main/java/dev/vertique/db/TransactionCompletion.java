@@ -51,7 +51,7 @@ public final class TransactionCompletion {
      * database outcome unknown. It does not carry the application's own failure; capture that separately.
      *
      * <p>The callbacks run on the transaction's Vert.x context, are never offloaded, and must not block. They run
-     * before the transaction's own result future completes. Anything a callback throws, an {@link Error} included, is
+     * before the transaction's own result future completes. An {@link Exception} a callback throws is
      * caught, logged at warn, and swallowed; it does not affect the enclosing operation or the other registrations.
      *
      * @param tx        the connection the transaction work received
@@ -83,7 +83,7 @@ public final class TransactionCompletion {
                 } else {
                     onFailure.accept(settled.cause());
                 }
-            } catch (Throwable thrown) {
+            } catch (Exception thrown) {
                 log.warn("A transaction completion callback failed", thrown);
             }
         });

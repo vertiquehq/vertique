@@ -493,8 +493,8 @@ repository.transaction().execute(conn ->
   active transaction, and a transaction that has already settled throw `IllegalStateException`;
   nothing is delivered as though committed.
 - **Threading.** Callbacks run on the transaction's Vert.x context, are never offloaded, must not
-  block, and run before the transaction's own result future completes. Anything a callback throws
-  (an `Error` included) is caught, logged at warn, and swallowed; it does not affect the enclosing
+  block, and run before the transaction's own result future completes. An `Exception` a callback throws
+  is caught, logged at warn, and swallowed (an `Error` propagates); it does not affect the enclosing
   operation or the other registrations.
 - **Not a durability mechanism.** If the process stops after the commit, the callback never runs.
   Use an outbox for work that must not be lost.
