@@ -46,7 +46,7 @@ public record CapturedActor(HistoryActor actor, @Nullable String onBehalfOf, His
 
     /**
      * Captures the actor of the current caller. It must run on the calling thread, before any asynchronous hop; a
-     * failed capture is logged and falls back to no actor.
+     * failed capture is logged by its exception class only and falls back to no actor.
      *
      * @param actors the capture of the actor of the current caller
      * @return the captured actor, never {@code null}
@@ -54,8 +54,11 @@ public record CapturedActor(HistoryActor actor, @Nullable String onBehalfOf, His
     public static CapturedActor capture(Supplier<CommandActor> actors) {
         try {
             return of(actors.get());
-        } catch (RuntimeException failure) {
-            log.warn("The actor of a workflow action could not be captured; it is reported as absent", failure);
+        } catch (Exception | LinkageError | AssertionError | StackOverflowError failure) {
+            // the exception message can carry identity text, so only its class is logged
+            log.warn(
+                    "The actor of a workflow action could not be captured ({}); it is reported as absent",
+                    failure.getClass().getName());
             return unattributed();
         }
     }

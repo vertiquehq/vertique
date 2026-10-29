@@ -25,8 +25,11 @@ import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,9 +49,12 @@ import org.slf4j.LoggerFactory;
  *
  * <p>A site wraps the work it runs in a transaction with {@link #around} (an action on a known instance) or
  * {@link #aroundCreating} (a start). Inside the transaction the publisher runs only two cheap reads of the instance's
- * highest history sequence, before and after the work. When the transaction commits, it reads the entries of that
- * range on a pooled connection, maps them to events and hands one {@link WorkflowHistoryCommit} to every listener. A
- * failure of the read, of the mapping or of a listener is logged and never reaches the action.
+ * highest history sequence, before and after the work. The transaction keeps one settlement registration and the
+ * ranges its actions wrote, per instance; when it commits, overlapping or adjacent ranges of an instance are merged, so
+ * a sequence is read, and delivered, at most once even when a rollback to a savepoint made a later action reuse the
+ * sequences of an earlier one. Each range is then read on a pooled connection in pages, mapped to events and handed to
+ * every listener as {@link WorkflowHistoryCommit}s in sequence order; a range larger than one page arrives as several
+ * consecutive commits. A failure of the read, of the mapping or of a listener is logged and never reaches the action.
  *
  * <p>An action that fails, or whose transaction does not commit, is reported once to
  * {@link WorkflowHistoryListener#onHistoryFailed} through whichever signal arrives first: the work's own failure or
@@ -56,18 +62,28 @@ import org.slf4j.LoggerFactory;
  *
  * <p>A public method that runs in a transaction can be reached from inside another wrapped site of the same
  * transaction. The inner call for an instance whose wrapped work is still running only calls its work: the outer call
- * announces the entries, and announcing them twice would overlap their ranges. Calls that follow one another, or that
- * concern other instances, register on their own.
+ * announces the entries. Calls that follow one another, or that concern other instances, record their own ranges.
  *
  * <p>With no listener bound the wrappers only call the work: no statement runs and no actor is captured. The result of
- * the work, its failure included, is always returned unchanged.
+ * the work, its failure included, is always returned unchanged, with one residual exception. The two sequence reads run
+ * as statements of the action's own transaction, and a failed read is recovered here, but a statement that fails inside
+ * a PostgreSQL transaction (a statement timeout, a serialization failure under {@code SERIALIZABLE}, a lost connection)
+ * leaves that transaction aborted whether or not the failure is recovered: the action's next statement then fails, or
+ * the commit becomes a rollback, exactly as if one of the action's own statements had failed. This can only happen
+ * while a listener is bound.
+ *
+ * <p>Commits of one instance are read on independent pooled connections, so two successive commits can reach the
+ * listeners out of order; every event carries its {@code sequence} for a consumer that needs the order.
  */
 @Singleton
 public final class WorkflowHistoryEventPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(WorkflowHistoryEventPublisher.class);
 
-    private final Set<WorkflowHistoryListener> listeners;
+    /** The most entries one read of a committed range returns; a larger range is read in several pages. */
+    static final int PAGE_SIZE = 1000;
+
+    private final List<WorkflowHistoryListener> listeners;
     private final WorkflowHistoryRepository<SqlClient> history;
     private final SqlClient readClient;
     private final Supplier<CommandActor> actors;
@@ -75,11 +91,11 @@ public final class WorkflowHistoryEventPublisher {
     private final BiFunction<WorkflowInstanceId, SqlClient, Future<Void>> lock;
 
     /**
-     * The instances whose wrapped work is running, by the transaction it runs in. The key is the connection's
+     * What one transaction has announced so far, by the transaction it runs in. The key is the connection's
      * {@link Transaction} object, which does not override {@code equals}, so the lookup is by identity; the entry of a
-     * transaction that is dropped goes with it.
+     * transaction that is dropped goes with it. All access is synchronized on the map.
      */
-    private final Map<Transaction, Set<WorkflowInstanceId>> running = Collections.synchronizedMap(new WeakHashMap<>());
+    private final Map<Transaction, TransactionState> transactions = Collections.synchronizedMap(new WeakHashMap<>());
 
     /**
      * Creates the publisher.
@@ -126,7 +142,7 @@ public final class WorkflowHistoryEventPublisher {
             Supplier<CommandActor> actors,
             Clock clock) {
         this.lock = lock;
-        this.listeners = Set.copyOf(listeners);
+        this.listeners = List.copyOf(listeners);
         this.history = history;
         this.readClient = readClient;
         this.actors = actors;
@@ -196,7 +212,8 @@ public final class WorkflowHistoryEventPublisher {
         Future<T> announced;
         try {
             Attempt attempt = attempt(action, id);
-            Future<Void> locked = takeLock && id != null ? acquire(attempt, id, tx) : Future.succeededFuture();
+            Future<Void> locked =
+                    takeLock && id != null ? invoke(attempt, () -> lock.apply(id, tx)) : Future.succeededFuture();
             announced = locked.compose(ignored -> highestSequence(id, tx).compose(after -> invoke(attempt, work)
                     .compose(result -> settle(attempt, after, tx).map(settled -> result))));
         } catch (RuntimeException | Error thrown) {
@@ -204,17 +221,6 @@ public final class WorkflowHistoryEventPublisher {
             throw thrown;
         }
         return leaving(announced, transaction, id);
-    }
-
-    private Future<Void> acquire(Attempt attempt, WorkflowInstanceId id, SqlClient tx) {
-        Future<Void> locked;
-        try {
-            locked = lock.apply(id, tx);
-        } catch (RuntimeException | Error thrown) {
-            reportFailure(attempt, thrown, null);
-            throw thrown;
-        }
-        return locked.onFailure(failure -> reportFailure(attempt, failure, null));
     }
 
     /**
@@ -268,8 +274,11 @@ public final class WorkflowHistoryEventPublisher {
         if (transaction == null) {
             return true;
         }
-        synchronized (running) {
-            return running.computeIfAbsent(transaction, key -> new HashSet<>()).add(id);
+        synchronized (transactions) {
+            return transactions
+                    .computeIfAbsent(transaction, key -> new TransactionState())
+                    .running
+                    .add(id);
         }
     }
 
@@ -277,10 +286,10 @@ public final class WorkflowHistoryEventPublisher {
         if (transaction == null || id == null) {
             return;
         }
-        synchronized (running) {
-            Set<WorkflowInstanceId> inside = running.get(transaction);
-            if (inside != null && inside.remove(id) && inside.isEmpty()) {
-                running.remove(transaction);
+        synchronized (transactions) {
+            TransactionState state = transactions.get(transaction);
+            if (state != null && state.running.remove(id) && state.idle()) {
+                transactions.remove(transaction);
             }
         }
     }
@@ -297,7 +306,7 @@ public final class WorkflowHistoryEventPublisher {
 
     /**
      * The highest sequence of the instance now, or null when there is no instance or the read failed. A failed read is
-     * logged and the range is then not announced; the action goes on.
+     * logged and the range is then not announced; the action goes on, with the residual risk described on the class.
      */
     private Future<Long> highestSequence(@Nullable WorkflowInstanceId id, SqlClient tx) {
         if (id == null) {
@@ -305,13 +314,20 @@ public final class WorkflowHistoryEventPublisher {
         }
         try {
             return history.nextSequence(id, tx).<Long>map(next -> next - 1).recover(failure -> {
-                log.warn("History sequence of instance {} could not be read", id.value(), failure);
+                logSequenceReadFailure(id, failure);
                 return Future.succeededFuture(null);
             });
         } catch (RuntimeException failure) {
-            log.warn("History sequence of instance {} could not be read", id.value(), failure);
+            logSequenceReadFailure(id, failure);
             return Future.succeededFuture(null);
         }
+    }
+
+    private static void logSequenceReadFailure(WorkflowInstanceId id, Throwable failure) {
+        log.warn(
+                "History sequence of instance {} could not be read ({}); its entries are not announced",
+                id.value(),
+                failure.getClass().getName());
     }
 
     private <T> Future<T> invoke(Attempt attempt, Supplier<Future<T>> work) {
@@ -326,44 +342,134 @@ public final class WorkflowHistoryEventPublisher {
     }
 
     /**
-     * Registers the settlement callbacks after the work succeeded: the range is read when the transaction commits, and
-     * a failed settlement is reported. The returned future always succeeds, once the registration is made.
+     * Records the range the work wrote and, for the first success of the transaction, registers its settlement: the
+     * ranges are read when the transaction commits, and every succeeded attempt that did not commit is reported. The
+     * returned future always succeeds, once the registration is made. A replayed start ({@code after == null}) has no
+     * range, so the upper bound is not read, but it is still registered for the failure report.
      */
     private Future<Void> settle(Attempt attempt, @Nullable Long after, SqlClient tx) {
         WorkflowInstanceId id = attempt.instanceId;
-        return highestSequence(id, tx).<Void>map(upTo -> {
-            Runnable onCommit = after != null && upTo != null && upTo > after && id != null
-                    ? () -> collectAndDeliver(id, after, upTo)
-                    : () -> {};
-            try {
-                TransactionCompletion.onSettled(tx, onCommit, failure -> reportFailure(attempt, null, failure));
-            } catch (IllegalStateException cannotSignal) {
-                log.error(
-                        "History events of instance {} are not announced: the transaction cannot signal its outcome",
-                        id == null ? null : id.value(),
-                        cannotSignal);
-            }
+        Future<Long> upTo = after == null ? Future.succeededFuture(null) : highestSequence(id, tx);
+        return upTo.<Void>map(high -> {
+            register(attempt, after, high, tx);
             return null;
         });
     }
 
+    private void register(Attempt attempt, @Nullable Long after, @Nullable Long upTo, SqlClient tx) {
+        WorkflowInstanceId id = attempt.instanceId;
+        Transaction transaction = transactionOf(tx);
+        synchronized (transactions) {
+            TransactionState state = transaction == null
+                    ? new TransactionState()
+                    : transactions.computeIfAbsent(transaction, key -> new TransactionState());
+            if (!state.registered) {
+                try {
+                    TransactionCompletion.onSettled(
+                            tx,
+                            () -> committed(transaction, state),
+                            failure -> settlementFailed(transaction, state, failure));
+                    state.registered = true;
+                } catch (IllegalStateException cannotSignal) {
+                    log.error(
+                            "History events of instance {} are not announced: the transaction cannot signal its"
+                                    + " outcome",
+                            id == null ? null : id.value(),
+                            cannotSignal);
+                    if (transaction != null && state.idle()) {
+                        transactions.remove(transaction);
+                    }
+                    return;
+                }
+            }
+            state.attempts.add(attempt);
+            if (after != null && upTo != null && upTo > after && id != null) {
+                state.ranges.computeIfAbsent(id, key -> new ArrayList<>()).add(new long[] {after, upTo});
+            }
+        }
+    }
+
     // --- After the commit ---
 
+    private void committed(@Nullable Transaction transaction, TransactionState state) {
+        Map<WorkflowInstanceId, List<long[]>> ranges;
+        synchronized (transactions) {
+            ranges = new LinkedHashMap<>(state.ranges);
+            forget(transaction, state);
+        }
+        ranges.forEach((id, written) -> merge(written).forEach(range -> collectAndDeliver(id, range[0], range[1])));
+    }
+
+    private void settlementFailed(@Nullable Transaction transaction, TransactionState state, Throwable failure) {
+        List<Attempt> attempts;
+        synchronized (transactions) {
+            attempts = List.copyOf(state.attempts);
+            forget(transaction, state);
+        }
+        attempts.forEach(attempt -> reportFailure(attempt, null, failure));
+    }
+
+    /** Drops the state of a transaction that settled; the caller holds the lock on {@link #transactions}. */
+    private void forget(@Nullable Transaction transaction, TransactionState state) {
+        state.registered = false;
+        state.attempts.clear();
+        state.ranges.clear();
+        if (transaction != null && state.idle()) {
+            transactions.remove(transaction);
+        }
+    }
+
+    /**
+     * Merges overlapping and adjacent ranges {@code (after, upTo]} into the fewest ranges that cover them, ascending. A
+     * rollback to a savepoint lets a later action write the sequences of an earlier one, so ranges can overlap.
+     */
+    static List<long[]> merge(List<long[]> ranges) {
+        List<long[]> sorted = new ArrayList<>(ranges);
+        sorted.sort(Comparator.comparingLong((long[] range) -> range[0]).thenComparingLong(range -> range[1]));
+        List<long[]> merged = new ArrayList<>();
+        for (long[] range : sorted) {
+            long[] last = merged.isEmpty() ? null : merged.get(merged.size() - 1);
+            if (last != null && range[0] <= last[1]) {
+                last[1] = Math.max(last[1], range[1]);
+            } else {
+                merged.add(new long[] {range[0], range[1]});
+            }
+        }
+        return merged;
+    }
+
+    /** Reads the range page by page and hands every page to the listeners; a page is delivered before the next is read. */
     private void collectAndDeliver(WorkflowInstanceId id, long after, long upTo) {
         try {
-            history.listRange(id, after, upTo, readClient).onComplete(read -> {
+            history.listRange(id, after, upTo, PAGE_SIZE, readClient).onComplete(read -> {
                 try {
                     if (read.failed()) {
-                        log.error("History events of instance {} could not be read", id.value(), read.cause());
+                        log.error(
+                                "History events of instance {} could not be read ({})",
+                                id.value(),
+                                read.cause().getClass().getName());
                         return;
                     }
-                    deliverCommit(id, read.result());
+                    List<CommittedHistoryEntry> page = read.result();
+                    deliverCommit(id, page);
+                    if (page.size() >= PAGE_SIZE) {
+                        long last = page.get(page.size() - 1).entry().sequence();
+                        if (last < upTo) {
+                            collectAndDeliver(id, last, upTo);
+                        }
+                    }
                 } catch (RuntimeException failure) {
-                    log.error("History events of instance {} could not be announced", id.value(), failure);
+                    log.error(
+                            "History events of instance {} could not be announced ({})",
+                            id.value(),
+                            failure.getClass().getName());
                 }
             });
         } catch (RuntimeException failure) {
-            log.error("History events of instance {} could not be read", id.value(), failure);
+            log.error(
+                    "History events of instance {} could not be read ({})",
+                    id.value(),
+                    failure.getClass().getName());
         }
     }
 
@@ -384,17 +490,14 @@ public final class WorkflowHistoryEventPublisher {
             return;
         }
         WorkflowHistoryCommit commit = new WorkflowHistoryCommit(id, events);
-        for (WorkflowHistoryListener listener : listeners) {
-            try {
-                listener.onHistoryCommitted(commit);
-            } catch (Exception failure) {
-                log.warn(
+        ListenerDispatch.forEach(
+                listeners,
+                listener -> listener.onHistoryCommitted(commit),
+                (listener, thrown) -> log.warn(
                         "History listener {} failed for instance {}",
                         listener.getClass().getName(),
                         id.value(),
-                        failure);
-            }
-        }
+                        thrown));
     }
 
     // --- Failures ---
@@ -417,19 +520,16 @@ public final class WorkflowHistoryEventPublisher {
                 attempt.attribution,
                 cause == null ? null : cause.getClass().getSimpleName(),
                 clock.instant());
-        for (WorkflowHistoryListener listener : listeners) {
-            try {
-                listener.onHistoryFailed(failure);
-            } catch (Exception thrown) {
-                log.warn(
+        ListenerDispatch.forEach(
+                listeners,
+                listener -> listener.onHistoryFailed(failure),
+                (listener, thrown) -> log.warn(
                         "History listener {} failed for the failure of instance {}",
                         listener.getClass().getName(),
                         failure.instanceId() == null
                                 ? null
                                 : failure.instanceId().value(),
-                        thrown);
-            }
-        }
+                        thrown));
     }
 
     /** An action of {@code null} announces commits only: no failure is reported and no actor is captured. */
@@ -456,6 +556,22 @@ public final class WorkflowHistoryEventPublisher {
             this.actor = captured.actor();
             this.onBehalfOf = captured.onBehalfOf();
             this.attribution = captured.attribution();
+        }
+    }
+
+    /**
+     * What one transaction has announced: the instances whose wrapped work is running, the attempts that succeeded and
+     * so wait for the outcome, and the sequence ranges they wrote, per instance. Guarded by the lock on
+     * {@code transactions}.
+     */
+    private static final class TransactionState {
+        final Set<WorkflowInstanceId> running = new HashSet<>();
+        final List<Attempt> attempts = new ArrayList<>();
+        final Map<WorkflowInstanceId, List<long[]>> ranges = new LinkedHashMap<>();
+        boolean registered;
+
+        boolean idle() {
+            return running.isEmpty() && !registered;
         }
     }
 }

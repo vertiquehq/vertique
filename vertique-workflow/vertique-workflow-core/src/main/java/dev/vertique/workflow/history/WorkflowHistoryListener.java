@@ -16,13 +16,18 @@ package dev.vertique.workflow.history;
  *
  * <p>Delivery is at most once: if the process stops between the commit and the notification, the event is not
  * delivered, and the instance history remains the source of truth.
+ *
+ * <p>Delivery is not ordered across commits: two successive commits of one instance are read on independent
+ * connections, so the second can be delivered before the first, here and on another node. Every event carries its
+ * {@code sequence}; a consumer that needs the order sorts by it. A very large commit is delivered as several
+ * consecutive {@link WorkflowHistoryCommit}s, each in sequence order.
  */
 public interface WorkflowHistoryListener {
 
     /**
      * Receives the history events one committed transaction wrote for an instance.
-     * Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation.
+     * An {@link Exception}, {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError} thrown by this
+     * callback is caught, logged, and swallowed; it does not affect the enclosing operation or the other listeners.
      *
      * @param commit the committed events
      */
@@ -30,8 +35,8 @@ public interface WorkflowHistoryListener {
 
     /**
      * Receives an action that failed, so none of its entries were committed.
-     * Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation.
+     * An {@link Exception}, {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError} thrown by this
+     * callback is caught, logged, and swallowed; it does not affect the enclosing operation or the other listeners.
      *
      * @param failure the failed action
      */

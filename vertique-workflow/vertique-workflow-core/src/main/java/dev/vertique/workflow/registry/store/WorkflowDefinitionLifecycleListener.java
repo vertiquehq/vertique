@@ -21,8 +21,8 @@ public interface WorkflowDefinitionLifecycleListener {
     /**
      * Receives a registry change after its durable commit. A repeated request that changes nothing is still reported,
      * because the registry result cannot tell a change from a no-op.
-     * Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation.
+     * An {@link Exception}, {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError} thrown by this
+     * callback is caught, logged, and swallowed; it does not affect the enclosing operation or the other listeners.
      *
      * @param change the committed change
      */
@@ -30,8 +30,8 @@ public interface WorkflowDefinitionLifecycleListener {
 
     /**
      * Receives a registry change the lifecycle refused or failed to commit.
-     * Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation.
+     * An {@link Exception}, {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError} thrown by this
+     * callback is caught, logged, and swallowed; it does not affect the enclosing operation or the other listeners.
      *
      * @param failure the attempted change and why it did not happen
      */

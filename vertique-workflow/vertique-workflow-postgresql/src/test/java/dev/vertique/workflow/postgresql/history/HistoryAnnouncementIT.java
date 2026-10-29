@@ -147,10 +147,18 @@ public class HistoryAnnouncementIT {
             only(endedEvents, WorkflowHistoryEvent.SignalReceived.class);
             only(recorded.eventsOf(cancelled), WorkflowHistoryEvent.InstanceCancelled.class);
 
-            // And every entry names who is behind it: the user who recorded the command it belongs to, the user who
+            // And every entry names who is behind it: the user who recorded the command it belongs to (an entry of a
+            // segment that names no command takes the actor of the command the segment executes), the user who
             // reassigned the task, and the user who cancelled
             for (WorkflowHistoryEvent event : endedEvents) {
                 CommandKind kind = event.entryInfo().commandKind();
+                if (kind == null && !(event instanceof WorkflowHistoryEvent.TaskReassigned)) {
+                    assertThat(event.entryInfo().actor().id())
+                            .as(event.toString())
+                            .isIn("u-0", "u-1", "u-4");
+                    assertThat(event.entryInfo().attribution()).isEqualTo(HistoryAttribution.VERIFIED);
+                    continue;
+                }
                 String expected = event instanceof WorkflowHistoryEvent.TaskReassigned
                         ? "u-3"
                         : switch (kind) {
@@ -162,10 +170,10 @@ public class HistoryAnnouncementIT {
                 assertThat(event.entryInfo().actor().id()).as(event.toString()).isEqualTo(expected);
                 assertThat(event.entryInfo().attribution()).isEqualTo(HistoryAttribution.VERIFIED);
             }
+            // and the entries that name their command carry its kind, none inferred from the segment
             assertThat(endedEvents)
-                    .filteredOn(event -> !(event instanceof WorkflowHistoryEvent.TaskReassigned))
-                    .allSatisfy(
-                            event -> assertThat(event.entryInfo().commandKind()).isNotNull());
+                    .extracting(event -> event.entryInfo().commandKind())
+                    .contains(CommandKind.START, CommandKind.COMPLETION, CommandKind.SIGNAL);
             assertThat(recorded.eventsOf(cancelled))
                     .filteredOn(event -> event instanceof WorkflowHistoryEvent.InstanceCancelled
                             || event instanceof WorkflowHistoryEvent.TaskCancelled)
@@ -268,6 +276,34 @@ public class HistoryAnnouncementIT {
             assertThat(failure.instanceId()).isEqualTo(rolledBack[0]);
             assertThat(recorded.eventsOf(rolledBack[0])).isEmpty();
             assertThat(storedSequences(run, rolledBack[0])).isEmpty();
+        }
+    }
+
+    @Test
+    @Timeout(value = 120, unit = TimeUnit.SECONDS)
+    @DisplayName("sequences reused after a rollback to a savepoint in a caller's transaction are announced once")
+    void sequencesReusedAfterASavepointRollbackAreAnnouncedOnce(Vertx vertx) {
+        RecordedHistory recorded = new RecordedHistory();
+        try (AuditRun run = AuditRun.startAnnouncing(vertx, db, recorded)) {
+            // Given an instance at its task, with its announcements delivered
+            WorkflowInstanceId id = run.startAtTask("savepoint");
+            awaitUntil("the start to be announced", () -> !recorded.eventsOf(id).isEmpty());
+
+            // When a caller cancels the instance after a savepoint, rolls back to the savepoint, which removes the
+            // entries of that cancellation, cancels it again so that the same sequences are written again, and commits
+            await(run.pool().withTransaction(tx -> tx.query("SAVEPOINT before_cancel")
+                    .execute()
+                    .compose(ignored -> run.graph().transactionalOperations().cancel(id, "undone", tx))
+                    .compose(ignored ->
+                            tx.query("ROLLBACK TO SAVEPOINT before_cancel").execute())
+                    .compose(ignored -> run.graph().transactionalOperations().cancel(id, "kept", tx))));
+            await(run.graph().executionProbe().awaitIdle(id, Duration.ofSeconds(15)));
+            awaitUntil("the announcements to catch up", () -> caughtUp(run, recorded, id));
+
+            // Then the cancellation is announced once, and every stored sequence exactly once, in order
+            only(recorded.eventsOf(id), WorkflowHistoryEvent.InstanceCancelled.class);
+            assertThat(sequencesOf(recorded.eventsOf(id))).isEqualTo(storedSequences(run, id));
+            assertThat(recorded.failures()).isEmpty();
         }
     }
 

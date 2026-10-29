@@ -6,6 +6,7 @@ package dev.vertique.workflow.engine.history;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -51,6 +52,7 @@ class WorkflowHistoryEventPublisherTest {
 
     private static final WorkflowInstanceId ID = new WorkflowInstanceId(UUID.randomUUID());
     private static final Instant NOW = Instant.parse("2026-03-04T05:06:07Z");
+    private static final int PAGE = WorkflowHistoryEventPublisher.PAGE_SIZE;
 
     private final WorkflowHistoryRepository<SqlClient> history = mock(WorkflowHistoryRepository.class);
     private final SqlClient readClient = mock(SqlClient.class);
@@ -162,7 +164,7 @@ class WorkflowHistoryEventPublisherTest {
     void deliversCommittedEventsInOrder() {
         // Given a listener and a range of three entries, one of which is a baseline
         sequences(2, 4);
-        when(history.listRange(ID, 2L, 4L, readClient))
+        when(history.listRange(ID, 2L, 4L, PAGE, readClient))
                 .thenReturn(Future.succeededFuture(List.of(
                         committed(3, WorkflowEntryType.START),
                         committed(4, WorkflowEntryType.STATE_BASELINE),
@@ -175,7 +177,7 @@ class WorkflowHistoryEventPublisherTest {
         // Then the result is the work's and nothing is read or delivered before the commit
         assertThat(result.result()).isEqualTo("ok");
         assertThat(commits).isEmpty();
-        verify(history, never()).listRange(any(), anyLong(), anyLong(), any());
+        verify(history, never()).listRange(any(), anyLong(), anyLong(), anyInt(), any());
 
         // When the transaction commits
         completion.complete();
@@ -199,7 +201,7 @@ class WorkflowHistoryEventPublisherTest {
     void creatingReadsFromZero() {
         // Given a start that writes entries 1 and 2
         when(history.nextSequence(ID, tx)).thenReturn(Future.succeededFuture(3L));
-        when(history.listRange(ID, 0L, 2L, readClient))
+        when(history.listRange(ID, 0L, 2L, PAGE, readClient))
                 .thenReturn(Future.succeededFuture(List.of(
                         committed(1, WorkflowEntryType.START), committed(2, WorkflowEntryType.COMMAND_RECORDED))));
         WorkflowHistoryEventPublisher publisher = publisher(recorder);
@@ -228,7 +230,7 @@ class WorkflowHistoryEventPublisherTest {
         completion.complete();
 
         // Then nothing is read or delivered
-        verify(history, never()).listRange(any(), anyLong(), anyLong(), any());
+        verify(history, never()).listRange(any(), anyLong(), anyLong(), anyInt(), any());
         assertThat(commits).isEmpty();
         assertThat(failures).isEmpty();
     }
@@ -238,7 +240,7 @@ class WorkflowHistoryEventPublisherTest {
     void listenerIsolation() {
         // Given a throwing listener and a recording one
         sequences(0, 1);
-        when(history.listRange(ID, 0L, 1L, readClient))
+        when(history.listRange(ID, 0L, 1L, PAGE, readClient))
                 .thenReturn(Future.succeededFuture(List.of(committed(1, WorkflowEntryType.START))));
         WorkflowHistoryEventPublisher publisher = publisher(thrower, recorder);
 
@@ -256,7 +258,7 @@ class WorkflowHistoryEventPublisherTest {
     void readFailureIsSwallowed() {
         // Given a range read that fails
         sequences(0, 1);
-        when(history.listRange(ID, 0L, 1L, readClient))
+        when(history.listRange(ID, 0L, 1L, PAGE, readClient))
                 .thenReturn(Future.failedFuture(new RuntimeException("db down")));
         WorkflowHistoryEventPublisher publisher = publisher(recorder);
 
@@ -274,7 +276,7 @@ class WorkflowHistoryEventPublisherTest {
     @DisplayName("a read that throws instead of failing is swallowed too")
     void readThrowIsSwallowed() {
         sequences(0, 1);
-        when(history.listRange(ID, 0L, 1L, readClient)).thenThrow(new IllegalStateException("broken"));
+        when(history.listRange(ID, 0L, 1L, PAGE, readClient)).thenThrow(new IllegalStateException("broken"));
         WorkflowHistoryEventPublisher publisher = publisher(recorder);
 
         publisher.around(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("ok"));
@@ -341,7 +343,7 @@ class WorkflowHistoryEventPublisherTest {
         assertThat(failures).hasSize(1);
         assertThat(failures.get(0).errorType()).isEqualTo("IllegalStateException");
         assertThat(commits).isEmpty();
-        verify(history, never()).listRange(any(), anyLong(), anyLong(), any());
+        verify(history, never()).listRange(any(), anyLong(), anyLong(), anyInt(), any());
     }
 
     @Test
@@ -425,7 +427,7 @@ class WorkflowHistoryEventPublisherTest {
     }
 
     @Test
-    @DisplayName("a failed sequence read does not fail the action")
+    @DisplayName("a failed sequence read is recovered: the work's own result is returned and nothing is announced")
     void sequenceReadFailureDoesNotFailTheAction() {
         when(history.nextSequence(ID, tx)).thenReturn(Future.failedFuture(new RuntimeException("read")));
         WorkflowHistoryEventPublisher publisher = publisher(recorder);
@@ -455,7 +457,7 @@ class WorkflowHistoryEventPublisherTest {
     void nestedCallForTheSameInstanceIsPassThrough() {
         // Given an outer call whose work calls the wrapper again for the same instance
         sequences(2, 4);
-        when(history.listRange(ID, 2L, 4L, readClient))
+        when(history.listRange(ID, 2L, 4L, PAGE, readClient))
                 .thenReturn(Future.succeededFuture(List.of(committed(3, WorkflowEntryType.START))));
         WorkflowHistoryEventPublisher publisher = publisher(recorder);
         AtomicInteger captures = new AtomicInteger();
@@ -477,7 +479,7 @@ class WorkflowHistoryEventPublisherTest {
         assertThat(commits).hasSize(1);
         assertThat(failures).isEmpty();
         verify(history, times(2)).nextSequence(ID, tx);
-        verify(history, times(1)).listRange(ID, 2L, 4L, readClient);
+        verify(history, times(1)).listRange(ID, 2L, 4L, PAGE, readClient);
     }
 
     @Test
@@ -487,7 +489,7 @@ class WorkflowHistoryEventPublisherTest {
         WorkflowInstanceId other = new WorkflowInstanceId(UUID.randomUUID());
         sequences(0, 0);
         when(history.nextSequence(other, tx)).thenReturn(Future.succeededFuture(1L), Future.succeededFuture(2L));
-        when(history.listRange(other, 0L, 1L, readClient))
+        when(history.listRange(other, 0L, 1L, PAGE, readClient))
                 .thenReturn(Future.succeededFuture(List.of(new CommittedHistoryEntry(
                         new WorkflowHistoryEntry(other, 1, WorkflowEntryType.START, "{}", NOW), "START"))));
         WorkflowHistoryEventPublisher publisher = publisher(recorder);
@@ -509,19 +511,18 @@ class WorkflowHistoryEventPublisherTest {
     }
 
     @Test
-    @DisplayName("an instance is announced again by a later call once the earlier work has completed")
-    void sequentialCallsRegisterSeparately() {
-        // Given two calls for one instance in the same transaction, one after the other
+    @DisplayName("adjacent ranges of one instance in one transaction are merged and read once")
+    void sequentialCallsAreMerged() {
+        // Given two calls for one instance in the same transaction, one after the other, writing (0,2] and (2,4]
         when(history.nextSequence(ID, tx))
                 .thenReturn(
                         Future.succeededFuture(1L),
                         Future.succeededFuture(3L),
                         Future.succeededFuture(3L),
                         Future.succeededFuture(5L));
-        when(history.listRange(ID, 0L, 2L, readClient))
-                .thenReturn(Future.succeededFuture(List.of(committed(1, WorkflowEntryType.START))));
-        when(history.listRange(ID, 2L, 4L, readClient))
-                .thenReturn(Future.succeededFuture(List.of(committed(3, WorkflowEntryType.COMPLETED))));
+        when(history.listRange(ID, 0L, 4L, PAGE, readClient))
+                .thenReturn(Future.succeededFuture(
+                        List.of(committed(1, WorkflowEntryType.START), committed(3, WorkflowEntryType.COMPLETED))));
         WorkflowHistoryEventPublisher publisher = publisher(recorder);
 
         // When both run and the transaction commits
@@ -529,11 +530,208 @@ class WorkflowHistoryEventPublisherTest {
         publisher.around(Action.CANCEL, ID, tx, () -> Future.succeededFuture("two"));
         completion.complete();
 
-        // Then the two ranges are announced, not overlapping
+        // Then one settlement was registered and the merged range is announced once
+        verify(transaction, times(1)).completion();
+        verify(history, times(1)).listRange(any(), anyLong(), anyLong(), anyInt(), any());
+        assertThat(commits).hasSize(1);
+        assertThat(commits.get(0).events())
+                .extracting(e -> e.entryInfo().sequence())
+                .containsExactly(1L, 3L);
+    }
+
+    @Test
+    @DisplayName("sequences reused after a rollback to a savepoint are announced once")
+    void reusedRangeAfterSavepointRollbackIsAnnouncedOnce() {
+        // Given action A that wrote (10,12], a rollback to a savepoint that removed its rows, and action B that wrote
+        // the same sequences again
+        when(history.nextSequence(ID, tx))
+                .thenReturn(
+                        Future.succeededFuture(11L),
+                        Future.succeededFuture(13L),
+                        Future.succeededFuture(11L),
+                        Future.succeededFuture(13L));
+        when(history.listRange(ID, 10L, 12L, PAGE, readClient))
+                .thenReturn(Future.succeededFuture(
+                        List.of(committed(11, WorkflowEntryType.COMPLETED), committed(12, WorkflowEntryType.FAILED))));
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+
+        // When both actions succeed and the transaction commits
+        publisher.around(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("A"));
+        publisher.around(Action.CANCEL, ID, tx, () -> Future.succeededFuture("B"));
+        completion.complete();
+
+        // Then the rows are read and delivered once
+        verify(history, times(1)).listRange(ID, 10L, 12L, PAGE, readClient);
+        assertThat(commits).hasSize(1);
+        assertThat(commits.get(0).events())
+                .extracting(e -> e.entryInfo().sequence())
+                .containsExactly(11L, 12L);
+    }
+
+    @Test
+    @DisplayName("ranges that neither overlap nor touch are read separately, ascending")
+    void disjointRangesAreReadSeparately() {
+        // Given two calls writing (0,2] and (5,7]
+        when(history.nextSequence(ID, tx))
+                .thenReturn(
+                        Future.succeededFuture(1L),
+                        Future.succeededFuture(3L),
+                        Future.succeededFuture(6L),
+                        Future.succeededFuture(8L));
+        when(history.listRange(ID, 0L, 2L, PAGE, readClient))
+                .thenReturn(Future.succeededFuture(List.of(committed(1, WorkflowEntryType.START))));
+        when(history.listRange(ID, 5L, 7L, PAGE, readClient))
+                .thenReturn(Future.succeededFuture(List.of(committed(6, WorkflowEntryType.COMPLETED))));
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+
+        // When both run and the transaction commits
+        publisher.around(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("one"));
+        publisher.around(Action.CANCEL, ID, tx, () -> Future.succeededFuture("two"));
+        completion.complete();
+
+        // Then each range is announced
         assertThat(commits).hasSize(2);
         assertThat(commits)
                 .extracting(c -> c.events().get(0).entryInfo().sequence())
-                .containsExactly(1L, 3L);
+                .containsExactly(1L, 6L);
+    }
+
+    @Test
+    @DisplayName("every succeeded attempt of a transaction that does not commit is reported once")
+    void rollbackReportsEveryAttempt() {
+        // Given two succeeded actions in one transaction
+        sequences(0, 1);
+        when(history.nextSequence(ID, tx))
+                .thenReturn(
+                        Future.succeededFuture(1L),
+                        Future.succeededFuture(2L),
+                        Future.succeededFuture(2L),
+                        Future.succeededFuture(3L));
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+        publisher.around(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("one"));
+        publisher.around(Action.CANCEL, ID, tx, () -> Future.succeededFuture("two"));
+
+        // When the transaction rolls back
+        completion.fail(new IllegalStateException("rolled back"));
+
+        // Then each attempt is reported once and nothing is read
+        assertThat(failures).hasSize(2);
+        assertThat(failures).extracting(WorkflowHistoryFailure::action).containsExactly(Action.SIGNAL, Action.CANCEL);
+        verify(history, never()).listRange(any(), anyLong(), anyLong(), anyInt(), any());
+    }
+
+    @Test
+    @DisplayName("a range larger than one page is read page by page and delivered in order")
+    void largeRangeIsReadInPages() {
+        // Given a range of one full page and two more entries
+        int total = PAGE + 2;
+        sequences(0, total);
+        List<CommittedHistoryEntry> first = new ArrayList<>();
+        for (long sequence = 1; sequence <= PAGE; sequence++) {
+            first.add(committed(sequence, WorkflowEntryType.COMPLETED));
+        }
+        when(history.listRange(ID, 0L, (long) total, PAGE, readClient)).thenReturn(Future.succeededFuture(first));
+        when(history.listRange(ID, (long) PAGE, (long) total, PAGE, readClient))
+                .thenReturn(Future.succeededFuture(List.of(
+                        committed(PAGE + 1, WorkflowEntryType.COMPLETED),
+                        committed(PAGE + 2, WorkflowEntryType.COMPLETED))));
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+
+        // When the action commits
+        publisher.around(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("ok"));
+        completion.complete();
+
+        // Then two consecutive commits carry the entries in sequence order
+        assertThat(commits).hasSize(2);
+        assertThat(commits.get(0).events()).hasSize(PAGE);
+        assertThat(commits.get(1).events())
+                .extracting(e -> e.entryInfo().sequence())
+                .containsExactly((long) PAGE + 1, (long) PAGE + 2);
+        verify(history, times(2)).listRange(any(), anyLong(), anyLong(), anyInt(), any());
+    }
+
+    @Test
+    @DisplayName("a page that ends exactly at the range reads no further page")
+    void fullLastPageEndsTheRange() {
+        // Given a range that is exactly one page
+        sequences(0, PAGE);
+        List<CommittedHistoryEntry> only = new ArrayList<>();
+        for (long sequence = 1; sequence <= PAGE; sequence++) {
+            only.add(committed(sequence, WorkflowEntryType.COMPLETED));
+        }
+        when(history.listRange(ID, 0L, (long) PAGE, PAGE, readClient)).thenReturn(Future.succeededFuture(only));
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+
+        // When the action commits
+        publisher.around(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("ok"));
+        completion.complete();
+
+        // Then one page was read and delivered
+        assertThat(commits).hasSize(1);
+        verify(history, times(1)).listRange(any(), anyLong(), anyLong(), anyInt(), any());
+    }
+
+    @Test
+    @DisplayName("an assertion or linkage error from a listener stops no other listener and alters no result")
+    void errorsFromListenersAreContained() {
+        // Given listeners that throw an AssertionError and a LinkageError, before a recording one
+        WorkflowHistoryListener assertion = new WorkflowHistoryListener() {
+            @Override
+            public void onHistoryCommitted(WorkflowHistoryCommit commit) {
+                throw new AssertionError("listener assertion");
+            }
+
+            @Override
+            public void onHistoryFailed(WorkflowHistoryFailure failure) {
+                throw new AssertionError("listener assertion");
+            }
+        };
+        WorkflowHistoryListener linkage = new WorkflowHistoryListener() {
+            @Override
+            public void onHistoryCommitted(WorkflowHistoryCommit commit) {
+                throw new NoClassDefFoundError("missing");
+            }
+
+            @Override
+            public void onHistoryFailed(WorkflowHistoryFailure failure) {
+                throw new NoClassDefFoundError("missing");
+            }
+        };
+        sequences(0, 1);
+        when(history.listRange(ID, 0L, 1L, PAGE, readClient))
+                .thenReturn(Future.succeededFuture(List.of(committed(1, WorkflowEntryType.START))));
+        WorkflowHistoryEventPublisher publisher = publisher(assertion, linkage, recorder);
+
+        // When an action commits and another fails
+        Future<String> result = publisher.around(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("ok"));
+        completion.complete();
+        Future<String> failed =
+                publisher.around(Action.CANCEL, ID, tx, () -> Future.failedFuture(new RuntimeException()));
+
+        // Then the recording listener got both and the results are the actions' own
+        assertThat(result.result()).isEqualTo("ok");
+        assertThat(failed.failed()).isTrue();
+        assertThat(commits).hasSize(1);
+        assertThat(failures).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("an actor capture that throws an error falls back to no actor")
+    void actorCaptureErrorFallsBack() {
+        // Given an actor capture that throws an AssertionError
+        when(history.nextSequence(ID, tx)).thenReturn(Future.succeededFuture(1L));
+        WorkflowHistoryEventPublisher publisher = publisher(
+                () -> {
+                    throw new AssertionError("capture");
+                },
+                recorder);
+
+        // When the work fails
+        publisher.around(Action.SIGNAL, ID, tx, () -> Future.failedFuture(new RuntimeException("no")));
+
+        // Then it is reported with no actor
+        assertThat(failures).hasSize(1);
+        assertThat(failures.get(0).attribution()).isEqualTo(HistoryAttribution.ABSENT);
     }
 
     @Test
@@ -576,7 +774,7 @@ class WorkflowHistoryEventPublisherTest {
         // Then the id is returned and no range is read
         assertThat(result.result()).isEqualTo(ID);
         assertThat(commits).isEmpty();
-        verify(history, never()).listRange(any(), anyLong(), anyLong(), any());
+        verify(history, never()).listRange(any(), anyLong(), anyLong(), anyInt(), any());
     }
 
     @Test

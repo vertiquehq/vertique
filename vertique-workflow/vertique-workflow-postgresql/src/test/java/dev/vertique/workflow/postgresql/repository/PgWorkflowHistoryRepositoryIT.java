@@ -230,7 +230,7 @@ public class PgWorkflowHistoryRepositoryIT {
                                         .execute(Tuple.of(instanceId.value())))
                                 .compose(v -> historyRepository.append(
                                         entry(instanceId, 3L, WorkflowEntryType.COMPLETED), tx)))
-                        .compose(v -> historyRepository.listRange(instanceId, 0L, 3L, pool)))
+                        .compose(v -> historyRepository.listRange(instanceId, 0L, 3L, 1000, pool)))
                 .onSuccess(range -> ctx.verify(() -> {
                     assertEquals(
                             java.util.List.of(1L, 3L),
@@ -242,22 +242,7 @@ public class PgWorkflowHistoryRepositoryIT {
 
     private static dev.vertique.workflow.engine.spi.DecisionEntry decision(
             WorkflowInstanceId id, WorkflowEntryType type, String patch, String state) {
-        return new dev.vertique.workflow.engine.spi.DecisionEntry(
-                id,
-                type,
-                null,
-                "start",
-                "outcome",
-                "default",
-                "order-fulfillment",
-                1L,
-                "abc123",
-                0L,
-                0L,
-                null,
-                patch,
-                state,
-                Instant.now());
+        return decision(id, type, patch, state, null);
     }
 
     // =========================================================================
@@ -293,11 +278,11 @@ public class PgWorkflowHistoryRepositoryIT {
                                                 tx)))
                                 .map(v -> commandId))
                         .compose(commandId -> historyRepository
-                                .listRange(instanceId, 1L, 5L, pool)
+                                .listRange(instanceId, 1L, 5L, 1000, pool)
                                 .compose(full -> historyRepository
-                                        .listRange(instanceId, 1L, 4L, pool)
+                                        .listRange(instanceId, 1L, 4L, 1000, pool)
                                         .compose(upToFour -> historyRepository
-                                                .listRange(instanceId, 5L, 5L, pool)
+                                                .listRange(instanceId, 5L, 5L, 1000, pool)
                                                 .map(empty -> new Object[] {commandId, full, upToFour, empty}))))
                         .onSuccess(result -> ctx.verify(() -> {
                             @SuppressWarnings("unchecked")
@@ -337,6 +322,60 @@ public class PgWorkflowHistoryRepositoryIT {
                             ctx.completeNow();
                         }))
                         .onFailure(ctx::failNow))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("listRange returns at most the limit, and the next page starts after the last sequence read")
+    void listRangeReadsInPages(VertxTestContext ctx) {
+        insertInstance()
+                .compose(instanceId -> pool.withTransaction(tx -> historyRepository
+                                .append(entry(instanceId, 1L, WorkflowEntryType.START), tx)
+                                .compose(v -> historyRepository.append(
+                                        entry(instanceId, 2L, WorkflowEntryType.SIDE_EFFECT_RECORDED), tx))
+                                .compose(v -> historyRepository.append(
+                                        entry(instanceId, 3L, WorkflowEntryType.COMPLETED), tx)))
+                        .compose(v -> historyRepository.listRange(instanceId, 0L, 3L, 2, pool))
+                        .compose(first -> historyRepository
+                                .listRange(
+                                        instanceId,
+                                        first.get(first.size() - 1).entry().sequence(),
+                                        3L,
+                                        2,
+                                        pool)
+                                .map(second -> java.util.List.of(first, second))))
+                .onSuccess(pages -> ctx.verify(() -> {
+                    assertEquals(
+                            java.util.List.of(1L, 2L),
+                            pages.get(0).stream().map(e -> e.entry().sequence()).toList());
+                    assertEquals(
+                            java.util.List.of(3L),
+                            pages.get(1).stream().map(e -> e.entry().sequence()).toList());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("listRange selects the payload only for the task entry types and never the state patch")
+    void listRangeSelectsOnlyWhatTheEventsRead(VertxTestContext ctx) {
+        insertInstance()
+                .compose(instanceId -> pool.withTransaction(tx -> tx.preparedQuery(
+                                        "INSERT INTO workflow_history (workflow_id, sequence, entry_type, payload_json,"
+                                                + " recorded_at, patch_json) VALUES ($1, 1, 'TASK_CREATED',"
+                                                + " '{\"taskId\":\"t\"}'::jsonb, now(), '[1]'::jsonb), ($1, 2, 'SIGNAL_RECEIVED',"
+                                                + " '{\"secret\":\"s\"}'::jsonb, now(), '[2]'::jsonb), ($1, 3,"
+                                                + " 'TASK_CANCELLED', '{\"taskId\":\"t\"}'::jsonb, now(), NULL)")
+                                .execute(Tuple.of(instanceId.value())))
+                        .compose(v -> historyRepository.listRange(instanceId, 0L, 3L, 1000, pool)))
+                .onSuccess(range -> ctx.verify(() -> {
+                    assertEquals(3, range.size());
+                    assertTrue(range.get(0).entry().payloadJson().contains("taskId"));
+                    assertEquals(null, range.get(1).entry().payloadJson());
+                    assertTrue(range.get(2).entry().payloadJson().contains("taskId"));
+                    range.forEach(e -> assertEquals(null, e.entry().patchJson()));
+                    ctx.completeNow();
+                }))
                 .onFailure(ctx::failNow);
     }
 

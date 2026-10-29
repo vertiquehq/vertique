@@ -113,9 +113,14 @@ public interface WorkflowHistoryRepository<TX> {
     Future<List<WorkflowHistoryEntry>> listByInstance(WorkflowInstanceId id, TX tx);
 
     /**
-     * INTERNAL: returns the enriched history entries of an instance in the sequence range {@code (after, upTo]},
-     * ascending, without {@code STATE_BASELINE} entries, each with the kind of the command it names. Read after a
-     * commit to collect what the committed transaction wrote.
+     * INTERNAL: returns up to {@code limit} enriched history entries of an instance in the sequence range
+     * {@code (after, upTo]}, ascending, without {@code STATE_BASELINE} entries, each with the kind of the command it
+     * names. Read after a commit to collect what the committed transaction wrote, one page at a time: a page of
+     * {@code limit} entries means there may be more, and the next page starts after the last sequence of this one.
+     *
+     * <p>The entries are for announcement only: the {@code payloadJson} is filled only for the entry types whose events
+     * read it ({@code TASK_CREATED}, {@code TASK_COMPLETED}, {@code TASK_REASSIGNED} and {@code TASK_CANCELLED}), and
+     * the state patch is never filled.
      *
      * <p>The default fails with {@link UnsupportedOperationException}: a repository that does not implement it cannot
      * serve history listeners, whose notification is then lost and logged.
@@ -123,10 +128,12 @@ public interface WorkflowHistoryRepository<TX> {
      * @param id    the workflow instance id
      * @param after the sequence the range starts after (exclusive)
      * @param upTo  the last sequence of the range (inclusive)
+     * @param limit the most entries to return
      * @param tx    the SQL client or transaction to read with
-     * @return a {@link Future} containing the entries of the range, possibly empty
+     * @return a {@link Future} containing the entries of the page, possibly empty
      */
-    default Future<List<CommittedHistoryEntry>> listRange(WorkflowInstanceId id, long after, long upTo, TX tx) {
+    default Future<List<CommittedHistoryEntry>> listRange(
+            WorkflowInstanceId id, long after, long upTo, int limit, TX tx) {
         return Future.failedFuture(new UnsupportedOperationException("listRange is not supported"));
     }
 }

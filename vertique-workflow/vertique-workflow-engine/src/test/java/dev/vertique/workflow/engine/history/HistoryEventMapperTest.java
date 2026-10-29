@@ -408,6 +408,33 @@ class HistoryEventMapperTest {
         assertOther(WorkflowEntryType.TASK_CANCELLED, null);
     }
 
+    @Test
+    @DisplayName("a decision name and assignment ids longer than the bound are cut to it")
+    void longTaskStringsAreTruncated() {
+        // Given a payload whose decision name and assignment ids exceed the bound
+        int max = HistoryEventMapper.MAX_NAME_LENGTH;
+        String longText = "x".repeat(max + 50);
+        String cut = "x".repeat(max);
+        String payload = "{\"taskId\":\"" + TASK + "\",\"decisionName\":\"" + longText + "\","
+                + "\"assignment\":{\"userId\":\"" + longText + "\"},"
+                + "\"oldAssignment\":{\"roleId\":\"" + longText + "\"},"
+                + "\"newAssignment\":{\"queueName\":\"" + longText + "\"}}";
+
+        // When the task entries are mapped
+        // Then every string is cut to the bound
+        assertThat(mapPayload(WorkflowEntryType.TASK_COMPLETED, payload))
+                .isInstanceOfSatisfying(WorkflowHistoryEvent.TaskDecided.class, e -> assertThat(e.decisionName())
+                        .isEqualTo(cut));
+        assertThat(mapPayload(WorkflowEntryType.TASK_CREATED, payload))
+                .isInstanceOfSatisfying(WorkflowHistoryEvent.TaskCreated.class, e -> assertThat(e.assignment())
+                        .isEqualTo(new TaskAssignment.User(cut)));
+        assertThat(mapPayload(WorkflowEntryType.TASK_REASSIGNED, payload))
+                .isInstanceOfSatisfying(WorkflowHistoryEvent.TaskReassigned.class, e -> {
+                    assertThat(e.from()).isEqualTo(new TaskAssignment.Role(cut));
+                    assertThat(e.to()).isEqualTo(new TaskAssignment.Queue(cut));
+                });
+    }
+
     private static void assertOther(WorkflowEntryType type, String payload) {
         assertThat(mapPayload(type, payload))
                 .as(type + " " + payload)

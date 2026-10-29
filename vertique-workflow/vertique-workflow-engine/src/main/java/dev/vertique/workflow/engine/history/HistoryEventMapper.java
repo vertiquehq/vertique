@@ -33,11 +33,12 @@ import org.slf4j.LoggerFactory;
  * {@code STATE_BASELINE}, which holds a state snapshot and maps to nothing, and a type added after this mapping, which
  * maps to {@link WorkflowHistoryEvent.Other}. A task event reads only the task id, the decision name and the
  * assignments from the entry's payload; when one of those cannot be read the entry maps to {@code Other} instead. The
- * mapper never throws.
+ * mapper never throws and logs only the exception class of a failure, never its message.
  *
  * <p>The kind of a {@code DECISION} entry is recovered from its stored outcome: the words the engine writes map to
  * their {@link DecisionKind}, and any other outcome is the step an author-defined decision node chose and maps to
- * {@code BRANCH} with that step id (at most {@value #MAX_STEP_ID_LENGTH} characters).
+ * {@code BRANCH} with that step id (at most {@value #MAX_STEP_ID_LENGTH} characters). The decision name and the
+ * assignment ids of a task event are cut to {@value #MAX_NAME_LENGTH} characters.
  */
 final class HistoryEventMapper {
 
@@ -45,6 +46,12 @@ final class HistoryEventMapper {
 
     /** The longest chosen step id a {@code BRANCH} decision carries. */
     static final int MAX_STEP_ID_LENGTH = 40;
+
+    /**
+     * The longest decision name or assignment id an event carries, the bound the engine puts on an identifier when it
+     * records it; a longer stored value is cut to it.
+     */
+    static final int MAX_NAME_LENGTH = 255;
 
     /** The outcome words the engine writes to a decision entry. */
     private static final Map<String, DecisionKind> DECISION_WORDS = Map.ofEntries(
@@ -89,14 +96,18 @@ final class HistoryEventMapper {
                 return Optional.of(event(entry, info));
             } catch (RuntimeException e) {
                 log.warn(
-                        "History entry {} of instance {} read as an unknown event",
+                        "History entry {} of instance {} read as an unknown event ({})",
                         entry.sequence(),
                         entry.instanceId(),
-                        e);
+                        e.getClass().getName());
                 return Optional.of(new WorkflowHistoryEvent.Other(info, entry.entryType()));
             }
         } catch (RuntimeException e) {
-            log.warn("History entry {} of instance {} cannot be mapped", entry.sequence(), entry.instanceId(), e);
+            log.warn(
+                    "History entry {} of instance {} cannot be mapped ({})",
+                    entry.sequence(),
+                    entry.instanceId(),
+                    e.getClass().getName());
             return Optional.empty();
         }
     }
@@ -296,7 +307,11 @@ final class HistoryEventMapper {
         if (object == null) {
             return null;
         }
-        return object.getValue(key) instanceof String text ? text : null;
+        return object.getValue(key) instanceof String text ? bounded(text) : null;
+    }
+
+    private static String bounded(String text) {
+        return text.length() <= MAX_NAME_LENGTH ? text : text.substring(0, MAX_NAME_LENGTH);
     }
 
     @Nullable

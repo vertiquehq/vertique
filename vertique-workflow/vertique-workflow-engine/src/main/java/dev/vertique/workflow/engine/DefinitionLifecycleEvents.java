@@ -5,6 +5,7 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.history.CapturedActor;
+import dev.vertique.workflow.engine.history.ListenerDispatch;
 import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -23,6 +24,7 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -53,7 +55,7 @@ final class DefinitionLifecycleEvents {
         DefinitionLifecycleChange build(UUID changeId, CapturedActor actor, Instant occurredAt);
     }
 
-    private final Set<WorkflowDefinitionLifecycleListener> listeners;
+    private final List<WorkflowDefinitionLifecycleListener> listeners;
     private final Supplier<CommandActor> actors;
     private final Clock clock;
 
@@ -64,7 +66,7 @@ final class DefinitionLifecycleEvents {
 
     DefinitionLifecycleEvents(
             Set<WorkflowDefinitionLifecycleListener> listeners, Supplier<CommandActor> actors, Clock clock) {
-        this.listeners = Set.copyOf(listeners);
+        this.listeners = List.copyOf(listeners);
         this.actors = actors;
         this.clock = clock;
     }
@@ -185,17 +187,14 @@ final class DefinitionLifecycleEvents {
     }
 
     private void changed(DefinitionLifecycleChange change) {
-        for (WorkflowDefinitionLifecycleListener listener : listeners) {
-            try {
-                listener.onDefinitionLifecycleChange(change);
-            } catch (Exception thrown) {
-                log.warn(
+        ListenerDispatch.forEach(
+                listeners,
+                listener -> listener.onDefinitionLifecycleChange(change),
+                (listener, thrown) -> log.warn(
                         "Definition lifecycle listener {} failed for change {}",
                         listener.getClass().getName(),
                         change.changeId(),
-                        thrown);
-            }
-        }
+                        thrown));
     }
 
     private void failed(DefinitionLifecycleChange change, Throwable cause) {
@@ -203,16 +202,13 @@ final class DefinitionLifecycleEvents {
                 change,
                 cause instanceof WorkflowDefinitionLifecycleException refusal ? refusal.reason() : null,
                 cause.getClass().getSimpleName());
-        for (WorkflowDefinitionLifecycleListener listener : listeners) {
-            try {
-                listener.onDefinitionLifecycleFailed(failure);
-            } catch (Exception thrown) {
-                log.warn(
+        ListenerDispatch.forEach(
+                listeners,
+                listener -> listener.onDefinitionLifecycleFailed(failure),
+                (listener, thrown) -> log.warn(
                         "Definition lifecycle listener {} failed for the failure of change {}",
                         listener.getClass().getName(),
                         change.changeId(),
-                        thrown);
-            }
-        }
+                        thrown));
     }
 }

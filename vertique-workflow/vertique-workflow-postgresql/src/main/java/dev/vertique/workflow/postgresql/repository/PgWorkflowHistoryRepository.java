@@ -19,16 +19,14 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
-import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * PostgreSQL-backed repository for {@link WorkflowHistoryEntry} persistence.
@@ -42,7 +40,11 @@ import org.slf4j.LoggerFactory;
 @Singleton
 public final class PgWorkflowHistoryRepository extends PgSqlRepository implements WorkflowHistoryRepository<SqlClient> {
 
-    private static final Logger log = LoggerFactory.getLogger(PgWorkflowHistoryRepository.class);
+    /** The entry types a range read returns: every type this node knows except the state baseline. */
+    private static final String[] RANGE_ENTRY_TYPES = Arrays.stream(WorkflowEntryType.values())
+            .filter(type -> type != WorkflowEntryType.STATE_BASELINE)
+            .map(Enum::name)
+            .toArray(String[]::new);
 
     /** Name of the migration instance whose schema mapping places the workflow tables. */
     private static final String INSTANCE_NAME = "workflow";
@@ -134,16 +136,21 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
                 + " state_version_before, state_version_after, patch_json FROM " + history
                 + " WHERE workflow_id = $1 AND sequence > $2 ORDER BY sequence ASC LIMIT $3";
 
-        // The range read serves the history listeners after a commit: the page columns, the baselines left out, and the
-        // kind of the command an entry names (null for an entry that names none).
-        this.sqlListRange = "SELECT h.workflow_id, h.sequence, h.entry_type, h.payload_json, h.recorded_at,"
+        // The range read serves the history listeners after a commit: the page columns, the baselines and the entry
+        // types
+        // this node does not know left out, and the kind of the command an entry names (null for an entry that names
+        // none). Only the entry types whose events read the payload select it, and the state patch is never selected,
+        // so a large range does not carry the payloads and patches of its entries.
+        this.sqlListRange = "SELECT h.workflow_id, h.sequence, h.entry_type,"
+                + " CASE WHEN h.entry_type IN ('TASK_CREATED', 'TASK_COMPLETED', 'TASK_REASSIGNED', 'TASK_CANCELLED')"
+                + " THEN h.payload_json END AS payload_json, h.recorded_at,"
                 + " h.entry_version, h.actor_kind, h.actor_id, h.actor_reason, h.on_behalf_of, h.attribution_status,"
                 + " h.executor_id, h.command_id, h.step_id, h.outcome, h.definition_scope_key, h.definition_id,"
-                + " h.definition_version, h.plan_hash, h.state_version_before, h.state_version_after, h.patch_json,"
-                + " c.kind AS command_kind FROM " + history + " h LEFT JOIN " + commands
+                + " h.definition_version, h.plan_hash, h.state_version_before, h.state_version_after,"
+                + " NULL::jsonb AS patch_json, c.kind AS command_kind FROM " + history + " h LEFT JOIN " + commands
                 + " c ON c.id = h.command_id AND c.workflow_id = h.workflow_id"
-                + " WHERE h.workflow_id = $1 AND h.sequence > $2 AND h.sequence <= $3"
-                + " AND h.entry_type <> 'STATE_BASELINE' ORDER BY h.sequence ASC";
+                + " WHERE h.workflow_id = $1 AND h.sequence > $2 AND h.sequence <= $3 AND h.entry_type = ANY($4)"
+                + " ORDER BY h.sequence ASC LIMIT $5";
     }
 
     // --- Write operations ---
@@ -321,50 +328,30 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
     }
 
     /**
-     * Returns the enriched entries of an instance with {@code after < sequence <= upTo}, ascending, without
-     * {@code STATE_BASELINE} entries, each with the kind of the command it names.
+     * Returns up to {@code limit} enriched entries of an instance with {@code after < sequence <= upTo}, ascending,
+     * without {@code STATE_BASELINE} entries and entries of a type this node does not know, each with the kind of the
+     * command it names. The payload is read only for the task entry types and the state patch never.
      *
      * @param id    the workflow instance id
      * @param after the sequence the range starts after (exclusive)
      * @param upTo  the last sequence of the range (inclusive)
+     * @param limit the most entries to return
      * @param tx    the SQL client or transaction to read with
-     * @return a {@link Future} containing the entries of the range
+     * @return a {@link Future} containing the entries of the page
      */
     @Override
-    public Future<List<CommittedHistoryEntry>> listRange(WorkflowInstanceId id, long after, long upTo, SqlClient tx) {
+    public Future<List<CommittedHistoryEntry>> listRange(
+            WorkflowInstanceId id, long after, long upTo, int limit, SqlClient tx) {
         return tx.preparedQuery(sqlListRange)
-                .execute(Tuple.of(id.value(), after, upTo))
+                .execute(Tuple.of(id.value(), after, upTo, RANGE_ENTRY_TYPES, limit))
                 .map(rs -> {
                     List<CommittedHistoryEntry> entries = new ArrayList<>();
                     var mapper = RowMappers.enrichedWorkflowHistoryEntry();
                     for (var row : rs) {
-                        String entryType = row.getString("entry_type");
-                        if (!isKnownEntryType(entryType)) {
-                            log.warn(
-                                    "History entry {} of instance {} has the entry type {}, which this node does not"
-                                            + " know; it is left out of the range",
-                                    row.getLong("sequence"),
-                                    id.value(),
-                                    entryType);
-                            continue;
-                        }
                         entries.add(new CommittedHistoryEntry(mapper.map(row), row.getString("command_kind")));
                     }
                     return entries;
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history listRange")));
-    }
-
-    /** Whether this node knows the stored entry type; a newer node may have written one it does not. */
-    private static boolean isKnownEntryType(@Nullable String stored) {
-        if (stored == null) {
-            return false;
-        }
-        try {
-            WorkflowEntryType.valueOf(stored);
-            return true;
-        } catch (IllegalArgumentException unknown) {
-            return false;
-        }
     }
 }

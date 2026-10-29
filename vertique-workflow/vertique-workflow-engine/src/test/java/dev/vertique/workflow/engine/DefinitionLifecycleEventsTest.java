@@ -438,6 +438,49 @@ class DefinitionLifecycleEventsTest {
     }
 
     @Test
+    @DisplayName("an assertion or linkage error from a listener stops no later listener and alters no result")
+    void errorsFromListenersAreContained() {
+        // Given listeners that throw an AssertionError and a LinkageError, called before the recorder
+        WorkflowDefinitionLifecycleListener assertion = new WorkflowDefinitionLifecycleListener() {
+            @Override
+            public void onDefinitionLifecycleChange(DefinitionLifecycleChange change) {
+                throw new AssertionError("listener assertion");
+            }
+
+            @Override
+            public void onDefinitionLifecycleFailed(DefinitionLifecycleFailure failure) {
+                throw new AssertionError("listener assertion");
+            }
+        };
+        WorkflowDefinitionLifecycleListener linkage = new WorkflowDefinitionLifecycleListener() {
+            @Override
+            public void onDefinitionLifecycleChange(DefinitionLifecycleChange change) {
+                throw new NoClassDefFoundError("missing");
+            }
+
+            @Override
+            public void onDefinitionLifecycleFailed(DefinitionLifecycleFailure failure) {
+                throw new NoClassDefFoundError("missing");
+            }
+        };
+        DefinitionLifecycleEvents ordered = new DefinitionLifecycleEvents(
+                new java.util.LinkedHashSet<>(List.of(assertion, linkage, recorder)),
+                () -> ALICE,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        var lifecycle = lifecycle(store(), Set.of(), ordered);
+
+        // When a change succeeds and another is refused
+        Future<Void> ok = lifecycle.deprecate(KEY);
+        Future<Void> refused = lifecycle.deprecate(new DefinitionKey(WorkflowScopes.DEFAULT, "wf", 9));
+
+        // Then the results are the operations' own and the recorder heard both
+        assertThat(ok.succeeded()).isTrue();
+        assertThat(refused.failed()).isTrue();
+        assertThat(recorder.changes).hasSize(1);
+        assertThat(recorder.failures).hasSize(1);
+    }
+
+    @Test
     @DisplayName("two listeners are both called for the same change")
     void everyListenerIsCalled() {
         // Given two recorders
