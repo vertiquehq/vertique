@@ -11,6 +11,7 @@ import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.engine.spi.DecisionEntry;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonArray;
@@ -18,6 +19,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Tuple;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Instant;
@@ -25,6 +27,8 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * PostgreSQL-backed repository for {@link WorkflowHistoryEntry} persistence.
@@ -37,6 +41,8 @@ import java.util.List;
  */
 @Singleton
 public final class PgWorkflowHistoryRepository extends PgSqlRepository implements WorkflowHistoryRepository<SqlClient> {
+
+    private static final Logger log = LoggerFactory.getLogger(PgWorkflowHistoryRepository.class);
 
     /** Name of the migration instance whose schema mapping places the workflow tables. */
     private static final String INSTANCE_NAME = "workflow";
@@ -332,10 +338,33 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
                     List<CommittedHistoryEntry> entries = new ArrayList<>();
                     var mapper = RowMappers.enrichedWorkflowHistoryEntry();
                     for (var row : rs) {
+                        String entryType = row.getString("entry_type");
+                        if (!isKnownEntryType(entryType)) {
+                            log.warn(
+                                    "History entry {} of instance {} has the entry type {}, which this node does not"
+                                            + " know; it is left out of the range",
+                                    row.getLong("sequence"),
+                                    id.value(),
+                                    entryType);
+                            continue;
+                        }
                         entries.add(new CommittedHistoryEntry(mapper.map(row), row.getString("command_kind")));
                     }
                     return entries;
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history listRange")));
+    }
+
+    /** Whether this node knows the stored entry type; a newer node may have written one it does not. */
+    private static boolean isKnownEntryType(@Nullable String stored) {
+        if (stored == null) {
+            return false;
+        }
+        try {
+            WorkflowEntryType.valueOf(stored);
+            return true;
+        } catch (IllegalArgumentException unknown) {
+            return false;
+        }
     }
 }

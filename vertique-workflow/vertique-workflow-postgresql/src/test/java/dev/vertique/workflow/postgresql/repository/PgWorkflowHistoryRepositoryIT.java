@@ -218,6 +218,28 @@ public class PgWorkflowHistoryRepositoryIT {
                 .onFailure(ctx::failNow);
     }
 
+    @Test
+    @DisplayName("listRange leaves out an entry whose type this node does not know and returns the rest")
+    void listRangeSkipsAnUnknownEntryType(VertxTestContext ctx) {
+        insertInstance()
+                .compose(instanceId -> pool.withTransaction(tx -> historyRepository
+                                .append(entry(instanceId, 1L, WorkflowEntryType.START), tx)
+                                .compose(v -> tx.preparedQuery("INSERT INTO workflow_history (workflow_id, sequence,"
+                                                + " entry_type, payload_json, recorded_at) VALUES ($1, 2,"
+                                                + " 'ENTRY_FROM_A_NEWER_NODE', '{}'::jsonb, now())")
+                                        .execute(Tuple.of(instanceId.value())))
+                                .compose(v -> historyRepository.append(
+                                        entry(instanceId, 3L, WorkflowEntryType.COMPLETED), tx)))
+                        .compose(v -> historyRepository.listRange(instanceId, 0L, 3L, pool)))
+                .onSuccess(range -> ctx.verify(() -> {
+                    assertEquals(
+                            java.util.List.of(1L, 3L),
+                            range.stream().map(e -> e.entry().sequence()).toList());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
     private static dev.vertique.workflow.engine.spi.DecisionEntry decision(
             WorkflowInstanceId id, WorkflowEntryType type, String patch, String state) {
         return new dev.vertique.workflow.engine.spi.DecisionEntry(
