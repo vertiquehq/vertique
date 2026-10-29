@@ -45,7 +45,8 @@ public sealed interface DefinitionLifecycleChange {
     HistoryAttribution attribution();
 
     /**
-     * When the change was made.
+     * When the change was made: stamped when the call was made, together with the actor, and not when the change
+     * committed.
      *
      * @return the instant
      */
@@ -105,13 +106,15 @@ public sealed interface DefinitionLifecycleChange {
      * @param operation      what was done
      * @param scopeKey       the scope whose default changed
      * @param definitionId   the definition
-     * @param targetScopeKey the scope that owns the version for {@link ActivationOperation#ACTIVATE}, the scope followed for
-     *                       {@link ActivationOperation#FOLLOW}; otherwise {@code null}
-     * @param version        the version made the default, or {@code null} when none
+     * @param targetScopeKey the scope that owns the version for {@link ActivationOperation#ACTIVATE}; the default scope
+     *                       for {@link ActivationOperation#FOLLOW}, the scope followed; {@code null} for
+     *                       {@link ActivationOperation#DEACTIVATE_DEFAULT}
+     * @param version        the version made the default for {@link ActivationOperation#ACTIVATE}, otherwise
+     *                       {@code null}
      * @param actor          who did it
      * @param onBehalfOf     the subject acted for, or {@code null}
      * @param attribution    how far the actor can be relied on
-     * @param occurredAt     when
+     * @param occurredAt     when the call was made
      */
     record ActivationChange(
             UUID changeId,

@@ -8,7 +8,11 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The history events one committed transaction wrote for one instance.
+ * The history events one committed transaction wrote for one instance, as one range of consecutive sequences.
+ *
+ * <p>A transaction registers one settlement however many actions it runs, and the ranges of one instance are merged:
+ * two adjacent actions on an instance give one commit, and sequences that a rollback to a savepoint let a later action
+ * reuse are announced once. A range larger than the read page (1000 entries) arrives as several consecutive commits.
  *
  * @param instanceId the instance the events belong to
  * @param events     the events, ascending by sequence; never empty

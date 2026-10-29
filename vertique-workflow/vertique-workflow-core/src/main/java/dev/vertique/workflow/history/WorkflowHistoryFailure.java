@@ -15,7 +15,7 @@ import java.util.UUID;
  * history entries the action wrote were not committed (the outcome of a lost commit may be unknown), and the
  * sequences they used may be reused.
  *
- * @param attemptId  minted once per attempt; identifies the attempt even across redelivery
+ * @param attemptId  minted once per attempt; a repeat of the action by the caller is a new attempt with a new id
  * @param instanceId the instance, or {@code null} when the action never resolved one
  * @param action     what was attempted
  * @param actor      who attempted it

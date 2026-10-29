@@ -33,7 +33,12 @@ import org.slf4j.LoggerFactory;
  * {@code STATE_BASELINE}, which holds a state snapshot and maps to nothing, and a type added after this mapping, which
  * maps to {@link WorkflowHistoryEvent.Other}. A task event reads only the task id, the decision name and the
  * assignments from the entry's payload; when one of those cannot be read the entry maps to {@code Other} instead. The
- * mapper never throws and logs only the exception class of a failure, never its message.
+ * mapper never throws (it catches {@link RuntimeException}) and logs only the exception class of a failure, never its
+ * message. A stored entry type this node does not know never reaches it: the range read filters the known types in SQL.
+ *
+ * <p>The provenance of an event is exactly what the entry records and is never guessed: the command id comes from the
+ * entry's own column or its payload, and the command kind, the definition pin and the step are {@code null} when the
+ * writer did not record them.
  *
  * <p>The kind of a {@code DECISION} entry is recovered from its stored outcome: the words the engine writes map to
  * their {@link DecisionKind}, and any other outcome is the step an author-defined decision node chose and maps to

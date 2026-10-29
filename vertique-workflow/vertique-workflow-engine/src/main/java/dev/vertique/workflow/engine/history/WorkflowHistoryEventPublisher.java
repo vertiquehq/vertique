@@ -49,16 +49,19 @@ import org.slf4j.LoggerFactory;
  *
  * <p>A site wraps the work it runs in a transaction with {@link #around} (an action on a known instance) or
  * {@link #aroundCreating} (a start). Inside the transaction the publisher runs only two cheap reads of the instance's
- * highest history sequence, before and after the work. The transaction keeps one settlement registration and the
+ * highest history sequence, before and after the work (a start reads it once, after). The transaction keeps one settlement registration and the
  * ranges its actions wrote, per instance; when it commits, overlapping or adjacent ranges of an instance are merged, so
  * a sequence is read, and delivered, at most once even when a rollback to a savepoint made a later action reuse the
  * sequences of an earlier one. Each range is then read on a pooled connection in pages, mapped to events and handed to
  * every listener as {@link WorkflowHistoryCommit}s in sequence order; a range larger than one page arrives as several
- * consecutive commits. A failure of the read, of the mapping or of a listener is logged and never reaches the action.
+ * consecutive commits. Two adjacent actions on an instance give one commit. A failure of the read, of the mapping or
+ * of a listener is logged and never reaches the action: a listener {@link Exception} is logged with its stack, the
+ * others by exception class only, and an {@link Error} is not caught.
  *
  * <p>An action that fails, or whose transaction does not commit, is reported once to
  * {@link WorkflowHistoryListener#onHistoryFailed} through whichever signal arrives first: the work's own failure or
- * the transaction's settlement failure.
+ * the transaction's settlement failure. The report is made on the thread where that signal was observed, and once per
+ * attempt even if the caller later recovers and commits the rest of the transaction.
  *
  * <p>A public method that runs in a transaction can be reached from inside another wrapped site of the same
  * transaction. The inner call for an instance whose wrapped work is still running only calls its work: the outer call

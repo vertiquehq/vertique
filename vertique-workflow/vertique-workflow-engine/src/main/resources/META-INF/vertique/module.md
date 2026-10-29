@@ -267,11 +267,14 @@ Entries are append-only and carry `entry_version = 2`.
   found at a redacted pointer of the command's payload or the instance's state, rendered as text, replaced. A redactor that throws or an
   invalid pointer fails the segment as a transient failure. The redactor is asked at most once per definition version in a segment.
 - **Actor.** Each entry carries the actor of the command it belongs to (see 'Who asked for a command').
-- **Command and definition.** The attribution that closes a segment also gives every entry that names no command the command the
-  segment executes, and every entry that records no definition the definition the instance is pinned to; an entry that already
-  records a value keeps it. A segment that migrates the instance gives the pin it began with only to the entries it writes before the
-  repin, its `COMMAND_RECEIVED` and `COMMAND_REJECTED` entries; the entries after it log the target themselves. The history service
-  therefore shows `commandId` and `definitionKey` on more rows than before.
+- **Command and definition.** Provenance is never guessed. The attribution that closes a segment sets an entry's `command_id`
+  only from the `commandId` in the entry's payload where the column is empty; an entry that names no command keeps a null
+  `commandId` and never takes the command the segment executes, because it may belong to another command (a parked signal applied
+  during the segment). It gives every still unattributed entry that records no definition the definition the instance was pinned to
+  when the segment began, except in a `MIGRATION` segment, whose pin changes part-way: there no entry gets a pin, and each keeps
+  what its writer recorded (the entry that logs the migration records the target). An entry that already records a value keeps it.
+  The history service, and the `EntryInfo` of a history event, therefore show `commandId`, `commandKind` and `definitionKey` as
+  `null` for entries whose writer did not record them.
 
 ### Announcing history to listeners
 
@@ -285,29 +288,34 @@ and never call them, and they sit outside this module's maturity promise.
   `HistoryEventMapper` turns the committed entries into events, `CapturedActor` carries the caller's actor from the calling thread to
   the failure report, and `DefinitionLifecycleEvents` does the same for registry changes.
 - **How a commit is found.** Inside the transaction the publisher reads the instance's highest history sequence before the work and
-  after it. The transaction keeps one settlement registration (`TransactionCompletion.onSettled` of `vertique-db-core`) and the
-  ranges its actions wrote, per instance. When it commits, overlapping or adjacent ranges of an instance are merged, so a sequence
+  after it (a start reads only after, because the instance is new). The transaction keeps one settlement registration
+  (`TransactionCompletion.onSettled` of `vertique-db-core`) and the ranges its actions wrote, per instance. When it commits,
+  overlapping or adjacent ranges of an instance are merged, so two adjacent actions give one `WorkflowHistoryCommit`, and a sequence
   is read and delivered at most once even when a rollback to a savepoint made a later action reuse the sequences of an earlier one.
-  Each merged range is read on a pooled connection with `WorkflowHistoryRepository.listRange`, 1000 entries at a time, mapped, and
-  handed to every listener as `WorkflowHistoryCommit`s in sequence order; a range larger than one page arrives as several
-  consecutive commits. Nothing is read when the work wrote nothing.
-- **Delivery.** At most once, after the commit, one listener after another, on the thread that completes the read. A listener that
-  throws an `Exception` is logged with its stack and the others still run (an `Error` propagates);
-  an `Exception` from the actor capture is contained and the actor is reported as absent. A read, mapping or settlement failure is
+  Each merged range is read on a pooled connection with `WorkflowHistoryRepository.listRange`, `PAGE_SIZE` (1000) entries at a time,
+  mapped, and handed to every listener as `WorkflowHistoryCommit`s in sequence order; a range larger than one page arrives as several
+  consecutive commits, and a page is delivered before the next is read. Nothing is read when the work wrote nothing.
+- **Delivery.** At most once, after the commit, one listener after another, on the thread that completes the post-commit read. A
+  failed action is reported on the thread where the failure was observed. `ListenerDispatch` catches `Exception` only: a listener
+  that throws an `Exception` is logged at warn with its stack and the others still run, while an `Error` (`LinkageError`,
+  `AssertionError`, `StackOverflowError` and the like) is not caught and ends the delivery to the listeners after it. An `Exception`
+  from the actor capture is contained and the actor is reported as absent. A capture, read, mapping or sequence-read failure is
   logged by its exception class only, never by its message, and never reaches the action, whose result is always returned unchanged
   (see the residual risk below).
 - **Order.** Commits of one instance are read on independent pooled connections, so two successive commits can reach a listener out
   of order, here and on another node. Every event carries its `sequence`; a consumer that needs the order sorts by it. No cross-node
   ordering is built.
-- **Residual risk of the sequence reads.** The two reads of the highest sequence are statements of the action's own transaction. A
+- **Residual risk of the sequence reads.** The two reads of the highest sequence (one for a start) are statements of the action's own
+  transaction. A
   failed read is recovered (the range is then not announced and the action goes on), but a statement that fails inside a PostgreSQL
   transaction (a statement timeout, a serialization failure under `SERIALIZABLE`, a lost connection) leaves that transaction aborted
   even though the failure was recovered: the action's next statement then fails or the commit becomes a rollback, exactly as if one of
   the action's own statements had failed. The action is then reported through `onHistoryFailed` like any other failed action. This can
   happen only while a listener is bound; with none bound no statement runs.
 - **Failures.** An action that fails, whose transaction does not commit, or whose commit is not confirmed is reported once to
-  `onHistoryFailed`, through whichever signal arrives first, with an `attemptId` minted per attempt and the actor captured on the
-  calling thread. The failure carries the simple class name only.
+  `onHistoryFailed`, through whichever signal arrives first (the work's own failure, or the transaction's settlement failure), with
+  an `attemptId` minted per attempt and the actor captured on the calling thread. The failure carries the simple class name only. A
+  failed outer action is reported once per attempt even if the caller later recovers and commits the rest of the transaction.
 - **No listener, no overhead.** With no listener bound the wrappers only call the work: no statement runs and no actor is captured.
   The Dagger graph binds the publisher from the `Set<WorkflowHistoryListener>` multibinding; a factory-built engine uses
   `WorkflowEngineParts.Builder.historyPublisher`, whose default announces nothing, and the lifecycle events of the next point exist only
@@ -318,20 +326,26 @@ and never call them, and they sit outside this module's maturity promise.
   `workflow.recording.lockTimeoutMs`, then a retryable `WorkflowPersistenceException`). A `start` takes the new instance's lock as
   before.
 - **Nested calls.** A public method reached from inside another wrapped site of the same transaction for the same instance only runs
-  its work; the outer call announces the entries, once. A failed nested call is not reported separately. A start that replays an existing instance announces nothing.
+  its work; the outer call announces the entries, once. A failed nested call is not reported separately: it is a pass-through, and
+  the outer call reports its own outcome. Calls that follow one another, or concern other instances, record their own ranges. A
+  start that replays an existing instance announces nothing.
 - **Needs a watchable transaction.** The handle must be a `SqlConnection` with an open transaction (the connection `transaction()`
   reports it). Otherwise the call succeeds, the events are not announced and an error is logged.
-- **Entries.** A `STATE_BASELINE` entry yields no event. A stored entry type this node does not know (written by a newer node) is left
-  out of the range. An entry type with no variant of its own, and a task entry whose payload cannot be read, map to
-  `WorkflowHistoryEvent.Other`. The mapper never throws. The range read selects the payload only for the four task entry types
+- **Entries.** A `STATE_BASELINE` entry yields no event. A stored entry type this node does not know (written by a newer node) is
+  left out of the range by the SQL filter, silently and without a log line. An entry type with no variant of its own, and a task
+  entry whose payload cannot be read, map to `WorkflowHistoryEvent.Other`. A `DECISION` entry maps to the `DecisionKind` of its
+  outcome word, and any other outcome to `BRANCH` with that text, cut to 40 characters, as the chosen step id. The mapper never
+  throws. The range read selects the payload only for the four task entry types
   (`TASK_CREATED`, `TASK_COMPLETED`, `TASK_REASSIGNED`, `TASK_CANCELLED`) and never the state patch; the decision name and the
   assignment ids a task event carries are cut to 255 characters.
 - **Registry events.** `DefaultWorkflowDefinitionLifecycle` wraps every operation: it captures the actor on the calling thread before
   the operation is queued, mints a change id, and reports the change after the future completes, or the failure with the typed
-  `Reason`. An accepted repeat is reported like any change. `WorkflowDefinitionRegistryBootstrapStep` reports the first insert of a
-  version after its transaction committed, as a `PUBLISH` by the `SYSTEM` actor with the reason `bootstrap`, followed by an `ACTIVATE`
-  of the default scope when the store answered `ReconcileOutcome.INSERTED_AND_ACTIVATED`. The outcomes `UNCHANGED` and `REHASHED`
-  report nothing.
+  `Reason`. `occurredAt` is stamped at call time with the actor, not at commit. For `ActivationChange`, `targetScopeKey` is the scope
+  that owns the version for `ACTIVATE`, `WorkflowScopes.DEFAULT` for `FOLLOW`, and `null` for `DEACTIVATE_DEFAULT`. An accepted repeat
+  is reported like any change. `WorkflowDefinitionRegistryBootstrapStep` reports the first insert of a version after its transaction
+  committed, as a `PUBLISH` by the `SYSTEM` actor with the reason `bootstrap` and `VERIFIED` attribution, followed by an `ACTIVATE` of
+  the default scope when the store answered `ReconcileOutcome.INSERTED_AND_ACTIVATED`. Every other outcome (`UNCHANGED`, `REHASHED`,
+  `DRIFT`, `KIND_CONFLICT`) reports nothing, and startup reports no failure. A listener exception is handled as for history.
 
 ### Transaction Ownership
 
