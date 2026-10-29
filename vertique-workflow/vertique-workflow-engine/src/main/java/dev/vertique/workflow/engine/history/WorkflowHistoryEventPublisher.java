@@ -7,6 +7,7 @@ import dev.vertique.db.TransactionCompletion;
 import dev.vertique.workflow.engine.executor.CommandActors;
 import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.history.HistoryAttribution;
 import dev.vertique.workflow.history.WorkflowHistoryCommit;
@@ -18,15 +19,23 @@ import dev.vertique.workflow.state.HistoryActor;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
+import io.vertx.sqlclient.SqlConnection;
+import io.vertx.sqlclient.Transaction;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +54,11 @@ import org.slf4j.LoggerFactory;
  * {@link WorkflowHistoryListener#onHistoryFailed} through whichever signal arrives first: the work's own failure or
  * the transaction's settlement failure.
  *
+ * <p>A public method that runs in a transaction can be reached from inside another wrapped site of the same
+ * transaction. The inner call for an instance whose wrapped work is still running only calls its work: the outer call
+ * announces the entries, and announcing them twice would overlap their ranges. Calls that follow one another, or that
+ * concern other instances, register on their own.
+ *
  * <p>With no listener bound the wrappers only call the work: no statement runs and no actor is captured. The result of
  * the work, its failure included, is always returned unchanged.
  */
@@ -58,6 +72,14 @@ public final class WorkflowHistoryEventPublisher {
     private final SqlClient readClient;
     private final Supplier<CommandActor> actors;
     private final Clock clock;
+    private final BiFunction<WorkflowInstanceId, SqlClient, Future<Void>> lock;
+
+    /**
+     * The instances whose wrapped work is running, by the transaction it runs in. The key is the connection's
+     * {@link Transaction} object, which does not override {@code equals}, so the lookup is by identity; the entry of a
+     * transaction that is dropped goes with it.
+     */
+    private final Map<Transaction, Set<WorkflowInstanceId>> running = Collections.synchronizedMap(new WeakHashMap<>());
 
     /**
      * Creates the publisher.
@@ -65,6 +87,7 @@ public final class WorkflowHistoryEventPublisher {
      * @param listeners the listeners to notify; empty when the application binds none
      * @param history   the history repository
      * @param pool      the pool the committed range is read from, after the commit
+     * @param commands  the command repository whose execution lock an action takes before its range starts
      * @param actors    the capture of the actor of the current caller
      */
     @Inject
@@ -72,16 +95,37 @@ public final class WorkflowHistoryEventPublisher {
             Set<WorkflowHistoryListener> listeners,
             WorkflowHistoryRepository<SqlClient> history,
             Pool pool,
+            WorkflowCommandRepository<SqlClient> commands,
             CommandActors actors) {
-        this(listeners, history, pool, actors::capture, Clock.systemUTC());
+        this(listeners, history, pool, commands::lockInstance, actors::capture, Clock.systemUTC());
+    }
+
+    /**
+     * Returns a publisher with no listener, which only calls the work it is given. For assemblies that do not take part
+     * in history announcement.
+     *
+     * @return a publisher that never reads, captures or reports anything
+     */
+    public static WorkflowHistoryEventPublisher disabled() {
+        return new WorkflowHistoryEventPublisher(
+                Set.of(),
+                null,
+                null,
+                (id, tx) -> Future.succeededFuture(),
+                () -> {
+                    throw new IllegalStateException("no listener is bound");
+                },
+                Clock.systemUTC());
     }
 
     WorkflowHistoryEventPublisher(
             Set<WorkflowHistoryListener> listeners,
             WorkflowHistoryRepository<SqlClient> history,
             SqlClient readClient,
+            BiFunction<WorkflowInstanceId, SqlClient, Future<Void>> lock,
             Supplier<CommandActor> actors,
             Clock clock) {
+        this.lock = lock;
         this.listeners = Set.copyOf(listeners);
         this.history = history;
         this.readClient = readClient;
@@ -99,7 +143,9 @@ public final class WorkflowHistoryEventPublisher {
     }
 
     /**
-     * Runs the work of an action on a known instance and reports what it wrote once its transaction commits.
+     * Runs the work of an action on a known instance and reports what it wrote once its transaction commits. The
+     * execution lock of the instance is taken first, before the range starts, so no other transaction can write
+     * entries inside it; the work takes it again at no cost.
      *
      * @param action the caller-driven action, for the failure report
      * @param id     the instance the action concerns, or {@code null} when it never resolved one (only a failure is
@@ -114,12 +160,60 @@ public final class WorkflowHistoryEventPublisher {
             @Nullable WorkflowInstanceId id,
             SqlClient tx,
             Supplier<Future<T>> work) {
+        return run(action, id, tx, true, work);
+    }
+
+    /**
+     * Runs work that already holds the execution lock of the instance, and reports what it wrote once its transaction
+     * commits.
+     *
+     * @param action the caller-driven action to report when the work fails, or {@code null} to only announce commits
+     * @param id     the instance the work concerns
+     * @param tx     the transaction the work runs in, which holds the instance's execution lock
+     * @param work   the work
+     * @param <T>    the result of the work
+     * @return the future of the work, unchanged
+     */
+    public <T> Future<T> aroundLocked(
+            WorkflowHistoryFailure.Action action, WorkflowInstanceId id, SqlClient tx, Supplier<Future<T>> work) {
+        return run(action, id, tx, false, work);
+    }
+
+    private <T> Future<T> run(
+            @Nullable WorkflowHistoryFailure.Action action,
+            @Nullable WorkflowInstanceId id,
+            SqlClient tx,
+            boolean takeLock,
+            Supplier<Future<T>> work) {
         if (!hasListeners()) {
             return work.get();
         }
-        Attempt attempt = attempt(action, id);
-        return highestSequence(id, tx).compose(after -> invoke(attempt, work)
-                .compose(result -> settle(attempt, after, tx).map(settled -> result)));
+        Transaction transaction = transactionOf(tx);
+        if (id != null && !enter(transaction, id)) {
+            return work.get();
+        }
+        Future<T> announced;
+        try {
+            Attempt attempt = attempt(action, id);
+            Future<Void> locked = takeLock && id != null ? acquire(attempt, id, tx) : Future.succeededFuture();
+            announced = locked.compose(ignored -> highestSequence(id, tx).compose(after -> invoke(attempt, work)
+                    .compose(result -> settle(attempt, after, tx).map(settled -> result))));
+        } catch (RuntimeException | Error thrown) {
+            leave(transaction, id);
+            throw thrown;
+        }
+        return leaving(announced, transaction, id);
+    }
+
+    private Future<Void> acquire(Attempt attempt, WorkflowInstanceId id, SqlClient tx) {
+        Future<Void> locked;
+        try {
+            locked = lock.apply(id, tx);
+        } catch (RuntimeException | Error thrown) {
+            reportFailure(attempt, thrown, null);
+            throw thrown;
+        }
+        return locked.onFailure(failure -> reportFailure(attempt, failure, null));
     }
 
     /**
@@ -133,14 +227,69 @@ public final class WorkflowHistoryEventPublisher {
      */
     public Future<WorkflowInstanceId> aroundCreating(
             WorkflowHistoryFailure.Action action, SqlClient tx, Supplier<Future<WorkflowInstanceId>> work) {
+        return aroundCreating(action, tx, () -> true, work);
+    }
+
+    /**
+     * Runs the work of a start like {@link #aroundCreating(WorkflowHistoryFailure.Action, SqlClient, Supplier)}, for a
+     * start that may answer with an instance that already existed, whose history the start did not write.
+     *
+     * @param action     the caller-driven action, for the failure report
+     * @param tx         the transaction the work runs in
+     * @param createdNow tells, once the work succeeded, whether it created the instance; when it did not, nothing is
+     *                   announced, and only a failure is reported
+     * @param work       the work, yielding the id of the instance
+     * @return the future of the work, unchanged
+     */
+    public Future<WorkflowInstanceId> aroundCreating(
+            WorkflowHistoryFailure.Action action,
+            SqlClient tx,
+            BooleanSupplier createdNow,
+            Supplier<Future<WorkflowInstanceId>> work) {
         if (!hasListeners()) {
             return work.get();
         }
         Attempt attempt = attempt(action, null);
         return invoke(attempt, work).compose(created -> {
             attempt.instanceId = created;
-            return settle(attempt, 0L, tx).map(settled -> created);
+            return settle(attempt, createdNow.getAsBoolean() ? 0L : null, tx).map(settled -> created);
         });
+    }
+
+    // --- Nested calls ---
+
+    private static @Nullable Transaction transactionOf(SqlClient tx) {
+        return tx instanceof SqlConnection connection ? connection.transaction() : null;
+    }
+
+    /** Marks the instance as being wrapped in the transaction; false when it already is, so the call is nested. */
+    private boolean enter(@Nullable Transaction transaction, WorkflowInstanceId id) {
+        if (transaction == null) {
+            return true;
+        }
+        synchronized (running) {
+            return running.computeIfAbsent(transaction, key -> new HashSet<>()).add(id);
+        }
+    }
+
+    private void leave(@Nullable Transaction transaction, @Nullable WorkflowInstanceId id) {
+        if (transaction == null || id == null) {
+            return;
+        }
+        synchronized (running) {
+            Set<WorkflowInstanceId> inside = running.get(transaction);
+            if (inside != null && inside.remove(id) && inside.isEmpty()) {
+                running.remove(transaction);
+            }
+        }
+    }
+
+    private <T> Future<T> leaving(
+            Future<T> announced, @Nullable Transaction transaction, @Nullable WorkflowInstanceId id) {
+        if (transaction != null && id != null) {
+            announced.onComplete(done -> leave(transaction, id));
+        }
+        return announced;
     }
 
     // --- In the transaction ---
@@ -254,7 +403,7 @@ public final class WorkflowHistoryEventPublisher {
      * for the error type over {@code settlementFailure}.
      */
     void reportFailure(Attempt attempt, @Nullable Throwable workFailure, @Nullable Throwable settlementFailure) {
-        if (!attempt.reported.compareAndSet(false, true)) {
+        if (attempt.action == null || !attempt.reported.compareAndSet(false, true)) {
             return;
         }
         Throwable cause = workFailure != null ? workFailure : settlementFailure;
@@ -282,8 +431,13 @@ public final class WorkflowHistoryEventPublisher {
         }
     }
 
-    Attempt attempt(WorkflowHistoryFailure.Action action, @Nullable WorkflowInstanceId id) {
-        return new Attempt(action, id, captureActor());
+    /** An action of {@code null} announces commits only: no failure is reported and no actor is captured. */
+    Attempt attempt(@Nullable WorkflowHistoryFailure.Action action, @Nullable WorkflowInstanceId id) {
+        return new Attempt(action, id, action == null ? unattributed() : captureActor());
+    }
+
+    private static Actor unattributed() {
+        return new Actor(new HistoryActor(HistoryActor.Kind.NONE, null, null), null, HistoryAttribution.ABSENT);
     }
 
     /** Captures the actor first, before any asynchronous hop; a failed capture falls back to no actor. */
@@ -296,7 +450,7 @@ public final class WorkflowHistoryEventPublisher {
                     HistoryAttribution.valueOf(actor.attribution().name()));
         } catch (RuntimeException failure) {
             log.warn("The actor of a workflow action could not be captured; it is reported as absent", failure);
-            return new Actor(new HistoryActor(HistoryActor.Kind.NONE, null, null), null, HistoryAttribution.ABSENT);
+            return unattributed();
         }
     }
 
@@ -305,14 +459,15 @@ public final class WorkflowHistoryEventPublisher {
     /** One attempt of an action: its identity, its captured actor and whether its failure was reported. */
     static final class Attempt {
         final UUID attemptId = UUID.randomUUID();
-        final WorkflowHistoryFailure.Action action;
+        final @Nullable WorkflowHistoryFailure.Action action;
         final HistoryActor actor;
         final @Nullable String onBehalfOf;
         final HistoryAttribution attribution;
         final AtomicBoolean reported = new AtomicBoolean();
         volatile @Nullable WorkflowInstanceId instanceId;
 
-        private Attempt(WorkflowHistoryFailure.Action action, @Nullable WorkflowInstanceId id, Actor captured) {
+        private Attempt(
+                @Nullable WorkflowHistoryFailure.Action action, @Nullable WorkflowInstanceId id, Actor captured) {
             this.action = action;
             this.instanceId = id;
             this.actor = captured.actor();

@@ -61,6 +61,7 @@ class WorkflowHistoryEventPublisherTest {
     private final List<WorkflowHistoryCommit> commits = new ArrayList<>();
     private final List<WorkflowHistoryFailure> failures = new ArrayList<>();
     private final AtomicInteger actorCaptures = new AtomicInteger();
+    private final List<WorkflowInstanceId> locked = new ArrayList<>();
 
     /** Records what it receives. */
     private final WorkflowHistoryListener recorder = new WorkflowHistoryListener() {
@@ -107,7 +108,16 @@ class WorkflowHistoryEventPublisherTest {
     private WorkflowHistoryEventPublisher publisher(
             java.util.function.Supplier<CommandActor> actor, WorkflowHistoryListener... listeners) {
         Set<WorkflowHistoryListener> set = new LinkedHashSet<>(List.of(listeners));
-        return new WorkflowHistoryEventPublisher(set, history, readClient, actor, Clock.fixed(NOW, ZoneOffset.UTC));
+        return new WorkflowHistoryEventPublisher(
+                set,
+                history,
+                readClient,
+                (id, client) -> {
+                    locked.add(id);
+                    return Future.succeededFuture();
+                },
+                actor,
+                Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private static CommittedHistoryEntry committed(long sequence, WorkflowEntryType type) {
@@ -297,7 +307,7 @@ class WorkflowHistoryEventPublisherTest {
         assertThat(failure.onBehalfOf()).isEqualTo("bob");
         assertThat(failure.attribution()).isEqualTo(HistoryAttribution.VERIFIED);
         // and no settlement is registered for a failed work
-        verify(tx, never()).transaction();
+        verify(transaction, never()).completion();
     }
 
     @Test
@@ -438,5 +448,197 @@ class WorkflowHistoryEventPublisherTest {
 
         assertThat(commits).hasSize(1);
         assertThatThrownBy(() -> new WorkflowHistoryCommit(ID, List.of())).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("a call nested for the same instance in the same transaction only runs its work")
+    void nestedCallForTheSameInstanceIsPassThrough() {
+        // Given an outer call whose work calls the wrapper again for the same instance
+        sequences(2, 4);
+        when(history.listRange(ID, 2L, 4L, readClient))
+                .thenReturn(Future.succeededFuture(List.of(committed(3, WorkflowEntryType.START))));
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+        AtomicInteger captures = new AtomicInteger();
+
+        // When the inner work fails and the outer work succeeds
+        Future<String> result = publisher.around(Action.SIGNAL, ID, tx, () -> {
+            Future<String> inner = publisher.around(Action.CANCEL, ID, tx, () -> {
+                captures.incrementAndGet();
+                return Future.failedFuture(new IllegalStateException("inner"));
+            });
+            return inner.recover(failure -> Future.succeededFuture("outer"));
+        });
+        completion.complete();
+
+        // Then the inner call registered nothing and reported nothing, and the range is announced once
+        assertThat(result.result()).isEqualTo("outer");
+        assertThat(captures).hasValue(1);
+        assertThat(actorCaptures).hasValue(1);
+        assertThat(commits).hasSize(1);
+        assertThat(failures).isEmpty();
+        verify(history, times(2)).nextSequence(ID, tx);
+        verify(history, times(1)).listRange(ID, 2L, 4L, readClient);
+    }
+
+    @Test
+    @DisplayName("a nested call for another instance registers on its own")
+    void nestedCallForAnotherInstanceRegisters() {
+        // Given an outer call for one instance and an inner call for another in the same transaction
+        WorkflowInstanceId other = new WorkflowInstanceId(UUID.randomUUID());
+        sequences(0, 0);
+        when(history.nextSequence(other, tx)).thenReturn(Future.succeededFuture(1L), Future.succeededFuture(2L));
+        when(history.listRange(other, 0L, 1L, readClient))
+                .thenReturn(Future.succeededFuture(List.of(new CommittedHistoryEntry(
+                        new WorkflowHistoryEntry(other, 1, WorkflowEntryType.START, "{}", NOW), "START"))));
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+
+        // When both succeed and the transaction commits
+        publisher.around(
+                Action.SIGNAL,
+                ID,
+                tx,
+                () -> publisher.around(Action.SIGNAL, other, tx, () -> {
+                    return Future.succeededFuture("inner");
+                }));
+        completion.complete();
+
+        // Then only the inner instance had entries, and they were announced for it
+        assertThat(commits).hasSize(1);
+        assertThat(commits.get(0).instanceId()).isEqualTo(other);
+        verify(history, times(2)).nextSequence(other, tx);
+    }
+
+    @Test
+    @DisplayName("an instance is announced again by a later call once the earlier work has completed")
+    void sequentialCallsRegisterSeparately() {
+        // Given two calls for one instance in the same transaction, one after the other
+        when(history.nextSequence(ID, tx))
+                .thenReturn(
+                        Future.succeededFuture(1L),
+                        Future.succeededFuture(3L),
+                        Future.succeededFuture(3L),
+                        Future.succeededFuture(5L));
+        when(history.listRange(ID, 0L, 2L, readClient))
+                .thenReturn(Future.succeededFuture(List.of(committed(1, WorkflowEntryType.START))));
+        when(history.listRange(ID, 2L, 4L, readClient))
+                .thenReturn(Future.succeededFuture(List.of(committed(3, WorkflowEntryType.COMPLETED))));
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+
+        // When both run and the transaction commits
+        publisher.around(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("one"));
+        publisher.around(Action.CANCEL, ID, tx, () -> Future.succeededFuture("two"));
+        completion.complete();
+
+        // Then the two ranges are announced, not overlapping
+        assertThat(commits).hasSize(2);
+        assertThat(commits)
+                .extracting(c -> c.events().get(0).entryInfo().sequence())
+                .containsExactly(1L, 3L);
+    }
+
+    @Test
+    @DisplayName("a work that throws synchronously or fails frees the instance for a later call")
+    void failedWorkLeavesTheRegistration() {
+        // Given a call whose work throws synchronously, and one whose work fails
+        sequences(0, 0);
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+        Future<String> thrown = publisher.around(Action.SIGNAL, ID, tx, () -> {
+            throw new IllegalStateException("sync");
+        });
+        assertThat(thrown.failed()).isTrue();
+
+        // When a later call for the same instance runs
+        AtomicInteger runs = new AtomicInteger();
+        when(history.nextSequence(ID, tx)).thenReturn(Future.succeededFuture(1L));
+        publisher.around(Action.SIGNAL, ID, tx, () -> {
+            runs.incrementAndGet();
+            return Future.failedFuture(new IllegalStateException("async"));
+        });
+        publisher.around(Action.SIGNAL, ID, tx, () -> Future.failedFuture(new IllegalStateException("again")));
+
+        // Then each was its own attempt and was reported
+        assertThat(runs).hasValue(1);
+        assertThat(failures).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("a start that answers with an existing instance announces nothing")
+    void replayedStartAnnouncesNothing() {
+        // Given a start that found its instance already there
+        when(history.nextSequence(ID, tx)).thenReturn(Future.succeededFuture(4L));
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+
+        // When it succeeds and the transaction commits
+        Future<WorkflowInstanceId> result =
+                publisher.aroundCreating(Action.START, tx, () -> false, () -> Future.succeededFuture(ID));
+        completion.complete();
+
+        // Then the id is returned and no range is read
+        assertThat(result.result()).isEqualTo(ID);
+        assertThat(commits).isEmpty();
+        verify(history, never()).listRange(any(), anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("around takes the execution lock before the range starts, and a work that holds it does not")
+    void lockPrecedesTheRange() {
+        // Given a listener
+        sequences(2, 2);
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+
+        // When an action runs through each wrapper
+        publisher.around(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("a"));
+        sequences(2, 2);
+        publisher.aroundLocked(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("b"));
+
+        // Then only the first took the lock
+        assertThat(locked).containsExactly(ID);
+    }
+
+    @Test
+    @DisplayName("a commit-only wrapper announces commits, reports no failure and captures no actor")
+    void commitOnlyReportsNoFailure() {
+        // Given a commit-only wrapper whose work fails
+        sequences(2, 2);
+        WorkflowHistoryEventPublisher publisher = publisher(recorder);
+
+        // When it runs and the transaction rolls back
+        Future<String> result =
+                publisher.aroundLocked(null, ID, tx, () -> Future.failedFuture(new IllegalStateException("segment")));
+        completion.fail(new IllegalStateException("rolled back"));
+
+        // Then the failure is the work's, and nothing is reported
+        assertThat(result.failed()).isTrue();
+        assertThat(failures).isEmpty();
+        assertThat(actorCaptures).hasValue(0);
+    }
+
+    @Test
+    @DisplayName("a failed lock is reported and fails the action without running the work")
+    void failedLockIsReported() {
+        // Given a lock that times out
+        WorkflowInstanceId other = new WorkflowInstanceId(UUID.randomUUID());
+        Set<WorkflowHistoryListener> set = Set.of(recorder);
+        WorkflowHistoryEventPublisher publisher = new WorkflowHistoryEventPublisher(
+                set,
+                history,
+                readClient,
+                (id, client) -> Future.failedFuture(new IllegalStateException("lock timeout")),
+                () -> new CommandActor(CommandActor.Kind.USER, "alice", null, null, CommandActor.Attribution.VERIFIED),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        AtomicInteger runs = new AtomicInteger();
+
+        // When the action runs
+        Future<String> result = publisher.around(Action.CANCEL, other, tx, () -> {
+            runs.incrementAndGet();
+            return Future.succeededFuture("never");
+        });
+
+        // Then it failed with the lock's failure, reported once, and the work did not run
+        assertThat(result.failed()).isTrue();
+        assertThat(runs).hasValue(0);
+        assertThat(failures).hasSize(1);
+        assertThat(failures.get(0).action()).isEqualTo(Action.CANCEL);
+        assertThat(failures.get(0).instanceId()).isEqualTo(other);
     }
 }
