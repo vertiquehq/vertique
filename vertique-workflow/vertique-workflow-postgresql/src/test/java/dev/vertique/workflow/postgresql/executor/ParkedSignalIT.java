@@ -447,7 +447,15 @@ public class ParkedSignalIT {
                     .extracting(intent -> intent.headers().get("x-workflow-actor-id"))
                     .containsExactly("B");
 
-            // And no entry of the drain is given the segment's command: an entry names its own command or none
+            // And no entry of the drain is given the segment's command: an entry names its own command or none, so the
+            // side effect the drained signal's handler recorded, which names no command, is not the approve command's
+            for (Row row : await(f.fixture
+                    .observer()
+                    .preparedQuery("SELECT command_id FROM workflow_history WHERE workflow_id = $1"
+                            + " AND entry_type = 'SIDE_EFFECT_RECORDED'")
+                    .execute(Tuple.of(id.value())))) {
+                assertThat(row.getLong("command_id")).isNull();
+            }
             assertThat(commandOf(f, id, "SIGNAL_APPLIED", shipped.id())).isEqualTo(shipped.id());
             for (Row row : await(f.fixture
                     .observer()
