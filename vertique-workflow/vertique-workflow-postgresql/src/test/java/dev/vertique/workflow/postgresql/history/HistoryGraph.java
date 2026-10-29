@@ -38,6 +38,7 @@ import dev.vertique.workflow.di.WorkflowDefinitionsConfigModule;
 import dev.vertique.workflow.di.WorkflowExecutorConfigModule;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.history.WorkflowHistoryListener;
 import dev.vertique.workflow.history.WorkflowInstanceHistoryService;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
@@ -304,6 +305,11 @@ final class HistoryGraph {
         ContextHolder contextHolder();
     }
 
+    /** A graph that captures the identity of the caller of a transaction. */
+    interface Carrying extends Graph {
+        IdentitySnapshotCapture identitySnapshotCapture();
+    }
+
     /** Identity carriage and reconstruction with a relay service identity: the graph that runs the whole flow. */
     @Singleton
     @Component(
@@ -315,9 +321,7 @@ final class HistoryGraph {
                 IdentitySnapshotReconstructionModule.class,
                 SecurityEventsModule.class
             })
-    interface Relaying extends Graph {
-        IdentitySnapshotCapture identitySnapshotCapture();
-
+    interface Relaying extends Carrying {
         @Component.Builder
         interface Builder {
             Builder vertxModule(VertxModule module);
@@ -327,6 +331,55 @@ final class HistoryGraph {
             Builder resolverModule(ResolverModule module);
 
             Relaying build();
+        }
+    }
+
+    /** The history listeners of one proof: one that records what it is told and one that always throws. */
+    @Module
+    static final class Listeners {
+        private final RecordedHistory recorded;
+
+        Listeners(RecordedHistory recorded) {
+            this.recorded = recorded;
+        }
+
+        @Provides
+        @IntoSet
+        WorkflowHistoryListener recorder() {
+            return recorded;
+        }
+
+        @Provides
+        @IntoSet
+        WorkflowHistoryListener thrower() {
+            return recorded.thrower();
+        }
+    }
+
+    /** The whole flow of {@link Relaying} with history listeners bound. */
+    @Singleton
+    @Component(
+            modules = {
+                VertxModule.class,
+                Shared.class,
+                Infrastructure.class,
+                ResolverModule.class,
+                Listeners.class,
+                IdentitySnapshotReconstructionModule.class,
+                SecurityEventsModule.class
+            })
+    interface Announcing extends Carrying {
+        @Component.Builder
+        interface Builder {
+            Builder vertxModule(VertxModule module);
+
+            Builder infrastructure(Infrastructure module);
+
+            Builder resolverModule(ResolverModule module);
+
+            Builder listeners(Listeners module);
+
+            Announcing build();
         }
     }
 

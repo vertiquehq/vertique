@@ -13,6 +13,8 @@ import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.engine.WorkflowEngineFactory;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.engine.WorkflowEngineParts;
+import dev.vertique.workflow.engine.executor.CommandActors;
+import dev.vertique.workflow.engine.history.WorkflowHistoryEventPublisher;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -23,6 +25,7 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.history.WorkflowHistoryListener;
 import dev.vertique.workflow.history.WorkflowHistoryRedactor;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
@@ -617,6 +620,7 @@ public final class PgWorkflowEngineTestSupport {
         private Set<InboundContextInitializer> inboundContextInitializers = Set.of();
         private Set<WorkflowExecutorObserver> executorObservers = Set.of();
         private CommandWakeups commandWakeups = CommandWakeups.none();
+        private Set<WorkflowHistoryListener> historyListeners = Set.of();
         private UnaryOperator<WorkflowTransactionRunner<SqlClient>> runnerDecorator = UnaryOperator.identity();
         private UnaryOperator<WorkflowCommandRepository<SqlClient>> commandsDecorator = UnaryOperator.identity();
 
@@ -680,6 +684,12 @@ public final class PgWorkflowEngineTestSupport {
             return this;
         }
 
+        /** The history listeners the engine announces committed history and failed actions to; none by default. */
+        public ExecutorEngine historyListeners(Set<WorkflowHistoryListener> historyListeners) {
+            this.historyListeners = historyListeners;
+            return this;
+        }
+
         /** The durable context propagator the engine captures and binds with. */
         public ExecutorEngine propagator(DurableContextPropagator propagator) {
             this.propagator = propagator;
@@ -712,13 +722,21 @@ public final class PgWorkflowEngineTestSupport {
          */
         public WorkflowEngineHandle build() {
             PgDbExceptionMapper ex = new PgDbExceptionMapper();
+            PgWorkflowHistoryRepository history = new PgWorkflowHistoryRepository(pool, ex);
+            WorkflowHistoryEventPublisher[] publisher = {WorkflowHistoryEventPublisher.disabled()};
+            WorkflowCommandRepository<SqlClient> commands = commandsDecorator.apply(new PgWorkflowCommandRepository(
+                    pool, ex, DbSchemas.empty(), WorkflowRecordingConfig.defaults(), propagator, () -> publisher[0]));
+            if (!historyListeners.isEmpty()) {
+                publisher[0] = new WorkflowHistoryEventPublisher(
+                        historyListeners, history, pool, commands, CommandActors.ambient());
+            }
             WorkflowEngineParts.Builder parts = WorkflowEngineParts.builder()
                     .txRunner(runnerDecorator.apply(runnerFor(pool)))
-                    .commands(commandsDecorator.apply(new PgWorkflowCommandRepository(
-                            pool, ex, DbSchemas.empty(), WorkflowRecordingConfig.defaults(), propagator)))
+                    .commands(commands)
+                    .historyPublisher(publisher[0])
                     .registry(registry)
                     .instances(new PgWorkflowInstanceRepository(pool, ex))
-                    .history(new PgWorkflowHistoryRepository(pool, ex))
+                    .history(history)
                     .dedup(new PgWorkflowDedupRepository(pool, ex))
                     .branchTokens(new PgBranchTokenRepository(pool, ex))
                     .joinStates(new PgJoinStateRepository(pool, ex))

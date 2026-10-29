@@ -46,6 +46,7 @@ import dev.vertique.workflow.engine.testsupport.TenantCtx;
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.events.WorkflowEventIntent;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import dev.vertique.workflow.history.WorkflowHistoryListener;
 import dev.vertique.workflow.history.WorkflowHistoryRedactor;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.ops.StartCommand;
@@ -368,6 +369,7 @@ final class ExecutorFixture implements AutoCloseable {
         private WorkflowMigrationRegistry migrations;
         private WorkflowHistoryRedactor historyRedactor;
         private Set<WorkflowSideEffectRecorder<SqlClient>> additionalRecorders = Set.of();
+        private Set<WorkflowHistoryListener> historyListeners = Set.of();
         private final SegmentControl segmentControl = new SegmentControl();
         private boolean listening;
         private WorkflowRegistry registry;
@@ -378,6 +380,12 @@ final class ExecutorFixture implements AutoCloseable {
 
         private NodeSpec(String name) {
             this.name = name;
+        }
+
+        /** The engine announces committed history and failed actions to these listeners. */
+        NodeSpec historyListeners(Set<WorkflowHistoryListener> historyListeners) {
+            this.historyListeners = historyListeners;
+            return this;
         }
 
         NodeSpec instances(int instances) {
@@ -586,6 +594,7 @@ final class ExecutorFixture implements AutoCloseable {
                     .recorders(recorders)
                     .executorConfig(executorConfig())
                     .executorObservers(observers)
+                    .historyListeners(historyListeners)
                     .commandsDecorator(real -> segmentControl.enabled
                             ? segmentControl.commands(commandsDecorator.apply(real))
                             : commandsDecorator.apply(real));

@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
+import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.MigrationContext;
 import dev.vertique.workflow.migration.MigrationResult;
@@ -25,6 +26,7 @@ import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.Definition;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.History;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.SignalFixture;
 import dev.vertique.workflow.postgresql.executor.RecordedSignalIT.State;
+import dev.vertique.workflow.postgresql.history.RecordedHistory;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -35,7 +37,10 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.Tuple;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -133,6 +138,55 @@ public class RecordedMigrationIT {
             assertThat(f.entry(c, "COMMAND_REJECTED", note.id())).isNotNull();
             assertThat(f.openSignals(c)).isZero();
             assertThat(f.fixture.historyOf(c)).contains("WORKFLOW_MIGRATED");
+        }
+    }
+
+    @Test
+    @DisplayName("a migration recorded by a caller and run by the executor is announced with every entry once")
+    void migrationIsAnnounced() {
+        Versioned v1 = versioned(1, true);
+        RecordedHistory recorded = new RecordedHistory();
+        try (SignalFixture f = new SignalFixture(db.toPoolConfig(), v1, List.of("paid", "note"))) {
+            // Given an instance waiting on version 1, version 2 available and a handler to it
+            seed(f, versioned(2, true), List.of("paid", "note"));
+            Node node = f.node("engine")
+                    .historyListeners(Set.of(recorded, recorded.thrower()))
+                    .migrations(new DefaultWorkflowMigrationRegistry(
+                            Set.<WorkflowMigrationHandler<?, ?>>of(handler(
+                                    ID,
+                                    1,
+                                    2,
+                                    State.class,
+                                    State.class,
+                                    (state, ctx) ->
+                                            MigrationResult.anchorAtInitial(state.add("migrated", signal("v2"))))),
+                            f.registry))
+                    .build();
+            WorkflowInstanceId id = f.waiting(node, "announced-migration");
+
+            // When a caller records the migration and the executor runs it
+            migrate(f, node, id, 2);
+            f.idle(node, id);
+            List<Long> stored = new ArrayList<>();
+            awaitCondition("the announcements to catch up", IDLE, () -> {
+                stored.clear();
+                for (Row row : await(f.fixture
+                        .observer()
+                        .preparedQuery("SELECT sequence FROM workflow_history WHERE workflow_id = $1"
+                                + " AND entry_type <> 'STATE_BASELINE' ORDER BY sequence")
+                        .execute(Tuple.of(id.value())))) {
+                    stored.add(row.getLong("sequence"));
+                }
+                return recorded.eventsOf(id).size() == stored.size();
+            });
+
+            // Then every entry is announced once and in order, the migration among them, and nothing failed
+            assertThat(recorded.eventsOf(id).stream()
+                            .map(event -> event.entryInfo().sequence())
+                            .toList())
+                    .isEqualTo(stored);
+            assertThat(recorded.eventsOf(id)).anyMatch(WorkflowHistoryEvent.InstanceMigrated.class::isInstance);
+            assertThat(recorded.failures()).isEmpty();
         }
     }
 

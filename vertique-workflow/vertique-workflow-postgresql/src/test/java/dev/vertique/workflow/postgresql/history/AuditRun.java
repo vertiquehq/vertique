@@ -23,9 +23,10 @@ import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.engine.WorkflowTestTables;
+import dev.vertique.workflow.postgresql.history.HistoryGraph.Announcing;
 import dev.vertique.workflow.postgresql.history.HistoryGraph.Approve;
+import dev.vertique.workflow.postgresql.history.HistoryGraph.Carrying;
 import dev.vertique.workflow.postgresql.history.HistoryGraph.Contract;
-import dev.vertique.workflow.postgresql.history.HistoryGraph.Relaying;
 import dev.vertique.workflow.postgresql.history.HistoryGraph.Start;
 import dev.vertique.workflow.services.signal.WorkflowSignalRequest;
 import io.vertx.core.Future;
@@ -64,10 +65,10 @@ final class AuditRun implements AutoCloseable {
 
     private final Vertx vertx;
     private final Pool pool;
-    private final Relaying graph;
+    private final Carrying graph;
     private final VertiqueApplicationHandle<?> handle;
 
-    private AuditRun(Vertx vertx, Pool pool, Relaying graph, VertiqueApplicationHandle<?> handle) {
+    private AuditRun(Vertx vertx, Pool pool, Carrying graph, VertiqueApplicationHandle<?> handle) {
         this.vertx = vertx;
         this.pool = pool;
         this.graph = graph;
@@ -76,16 +77,39 @@ final class AuditRun implements AutoCloseable {
 
     /** Starts a graph whose relay identity is the service {@code relay-svc}. */
     static AuditRun start(Vertx vertx, PostgresContainer db) {
+        return start(vertx, db, (pool, options, relayService) -> DaggerHistoryGraph_Relaying.builder()
+                .vertxModule(new VertxModule(vertx, HistoryGraph.config()))
+                .infrastructure(new HistoryGraph.Infrastructure(pool, options))
+                .resolverModule(new HistoryGraph.ResolverModule(relayService))
+                .build());
+    }
+
+    /** Starts the graph with the history listeners of {@code recorded} bound. */
+    static AuditRun startAnnouncing(Vertx vertx, PostgresContainer db, RecordedHistory recorded) {
+        return start(vertx, db, (pool, options, relayService) -> {
+            Announcing graph = DaggerHistoryGraph_Announcing.builder()
+                    .vertxModule(new VertxModule(vertx, HistoryGraph.config()))
+                    .infrastructure(new HistoryGraph.Infrastructure(pool, options))
+                    .resolverModule(new HistoryGraph.ResolverModule(relayService))
+                    .listeners(new HistoryGraph.Listeners(recorded))
+                    .build();
+            return graph;
+        });
+    }
+
+    /** Builds a graph over the pool. */
+    @FunctionalInterface
+    private interface GraphFactory {
+        Carrying create(Pool pool, PgConnectOptions options, ServiceIdentityResolver relayService);
+    }
+
+    private static AuditRun start(Vertx vertx, PostgresContainer db, GraphFactory factory) {
         PgConnectOptions options = HistoryGraph.options(db);
         reset(vertx, options);
         Pool pool = HistoryGraph.pool(vertx, options);
         ServiceIdentityResolver relayService =
                 origin -> SecurityIdentity.service(new PrincipalRef(PrincipalType.SERVICE, RELAY_SERVICE, Map.of()));
-        Relaying graph = DaggerHistoryGraph_Relaying.builder()
-                .vertxModule(new VertxModule(vertx, HistoryGraph.config()))
-                .infrastructure(new HistoryGraph.Infrastructure(pool, options))
-                .resolverModule(new HistoryGraph.ResolverModule(relayService))
-                .build();
+        Carrying graph = factory.create(pool, options, relayService);
         VertiqueApplicationHandle<?> handle;
         try {
             handle = await(HistoryGraph.start(vertx, graph), Duration.ofSeconds(45));
@@ -112,7 +136,7 @@ final class AuditRun implements AutoCloseable {
         }
     }
 
-    Relaying graph() {
+    Carrying graph() {
         return graph;
     }
 
