@@ -19,7 +19,7 @@ import dev.vertique.workflow.engine.spi.CommandActor;
 import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.history.HistoryAttribution;
-import dev.vertique.workflow.history.WorkflowHistoryCommit;
+import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.history.WorkflowHistoryFailure.Action;
@@ -60,7 +60,7 @@ class WorkflowHistoryEventPublisherTest {
     private final Transaction transaction = mock(Transaction.class);
     private final Promise<Void> completion = Promise.promise();
 
-    private final List<WorkflowHistoryCommit> commits = new ArrayList<>();
+    private final List<WorkflowHistoryChange> changes = new ArrayList<>();
     private final List<WorkflowHistoryFailure> failures = new ArrayList<>();
     private final AtomicInteger actorCaptures = new AtomicInteger();
     private final List<WorkflowInstanceId> locked = new ArrayList<>();
@@ -68,8 +68,8 @@ class WorkflowHistoryEventPublisherTest {
     /** Records what it receives. */
     private final WorkflowHistoryListener recorder = new WorkflowHistoryListener() {
         @Override
-        public void onHistoryCommitted(WorkflowHistoryCommit commit) {
-            commits.add(commit);
+        public void onHistoryChanged(WorkflowHistoryChange change) {
+            changes.add(change);
         }
 
         @Override
@@ -81,7 +81,7 @@ class WorkflowHistoryEventPublisherTest {
     /** Throws from both callbacks. */
     private final WorkflowHistoryListener thrower = new WorkflowHistoryListener() {
         @Override
-        public void onHistoryCommitted(WorkflowHistoryCommit commit) {
+        public void onHistoryChanged(WorkflowHistoryChange change) {
             throw new IllegalStateException("listener broke");
         }
 
@@ -176,20 +176,20 @@ class WorkflowHistoryEventPublisherTest {
 
         // Then the result is the work's and nothing is read or delivered before the commit
         assertThat(result.result()).isEqualTo("ok");
-        assertThat(commits).isEmpty();
+        assertThat(changes).isEmpty();
         verify(history, never()).listRange(any(), anyLong(), anyLong(), anyInt(), any());
 
         // When the transaction commits
         completion.complete();
 
         // Then one commit holds the events in sequence order without the baseline
-        assertThat(commits).hasSize(1);
-        assertThat(commits.get(0).instanceId()).isEqualTo(ID);
-        assertThat(commits.get(0).events())
+        assertThat(changes).hasSize(1);
+        assertThat(changes.get(0).instanceId()).isEqualTo(ID);
+        assertThat(changes.get(0).events())
                 .extracting(e -> e.entryInfo().sequence())
                 .containsExactly(3L, 5L);
-        assertThat(commits.get(0).events().get(0)).isInstanceOf(WorkflowHistoryEvent.InstanceStarted.class);
-        assertThat(commits.get(0).events().get(0).entryInfo().commandKind())
+        assertThat(changes.get(0).events().get(0)).isInstanceOf(WorkflowHistoryEvent.InstanceStarted.class);
+        assertThat(changes.get(0).events().get(0).entryInfo().commandKind())
                 .isEqualTo(dev.vertique.workflow.history.CommandKind.START);
         assertThat(failures).isEmpty();
         // and the only statements inside the transaction were the two sequence reads
@@ -213,8 +213,8 @@ class WorkflowHistoryEventPublisherTest {
 
         // Then the work's id is returned and its entries are delivered
         assertThat(result.result()).isEqualTo(ID);
-        assertThat(commits).hasSize(1);
-        assertThat(commits.get(0).events()).hasSize(2);
+        assertThat(changes).hasSize(1);
+        assertThat(changes.get(0).events()).hasSize(2);
         verify(history, times(1)).nextSequence(ID, tx);
     }
 
@@ -231,7 +231,7 @@ class WorkflowHistoryEventPublisherTest {
 
         // Then nothing is read or delivered
         verify(history, never()).listRange(any(), anyLong(), anyLong(), anyInt(), any());
-        assertThat(commits).isEmpty();
+        assertThat(changes).isEmpty();
         assertThat(failures).isEmpty();
     }
 
@@ -250,7 +250,7 @@ class WorkflowHistoryEventPublisherTest {
 
         // Then the recording listener still got the commit and the action succeeded
         assertThat(result.succeeded()).isTrue();
-        assertThat(commits).hasSize(1);
+        assertThat(changes).hasSize(1);
     }
 
     @Test
@@ -268,7 +268,7 @@ class WorkflowHistoryEventPublisherTest {
 
         // Then no commit is delivered and no failure is reported
         assertThat(result.succeeded()).isTrue();
-        assertThat(commits).isEmpty();
+        assertThat(changes).isEmpty();
         assertThat(failures).isEmpty();
     }
 
@@ -282,7 +282,7 @@ class WorkflowHistoryEventPublisherTest {
         publisher.around(Action.SIGNAL, ID, tx, () -> Future.succeededFuture("ok"));
         completion.complete();
 
-        assertThat(commits).isEmpty();
+        assertThat(changes).isEmpty();
     }
 
     @Test
@@ -342,7 +342,7 @@ class WorkflowHistoryEventPublisherTest {
         // Then one failure is reported with the settlement's type and nothing is delivered as committed
         assertThat(failures).hasSize(1);
         assertThat(failures.get(0).errorType()).isEqualTo("IllegalStateException");
-        assertThat(commits).isEmpty();
+        assertThat(changes).isEmpty();
         verify(history, never()).listRange(any(), anyLong(), anyLong(), anyInt(), any());
     }
 
@@ -422,7 +422,7 @@ class WorkflowHistoryEventPublisherTest {
         // Then the result is the work's, unchanged
         assertThat(result.succeeded()).isTrue();
         assertThat(result.result()).isEqualTo("ok");
-        assertThat(commits).isEmpty();
+        assertThat(changes).isEmpty();
         assertThat(failures).isEmpty();
     }
 
@@ -436,7 +436,7 @@ class WorkflowHistoryEventPublisherTest {
         completion.complete();
 
         assertThat(result.result()).isEqualTo("ok");
-        assertThat(commits).isEmpty();
+        assertThat(changes).isEmpty();
     }
 
     @Test
@@ -448,8 +448,8 @@ class WorkflowHistoryEventPublisherTest {
         publisher.deliverCommit(ID, List.of(committed(2, WorkflowEntryType.STATE_BASELINE)));
         publisher.deliverCommit(ID, List.of());
 
-        assertThat(commits).hasSize(1);
-        assertThatThrownBy(() -> new WorkflowHistoryCommit(ID, List.of())).isInstanceOf(IllegalArgumentException.class);
+        assertThat(changes).hasSize(1);
+        assertThatThrownBy(() -> new WorkflowHistoryChange(ID, List.of())).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -476,7 +476,7 @@ class WorkflowHistoryEventPublisherTest {
         assertThat(result.result()).isEqualTo("outer");
         assertThat(captures).hasValue(1);
         assertThat(actorCaptures).hasValue(1);
-        assertThat(commits).hasSize(1);
+        assertThat(changes).hasSize(1);
         assertThat(failures).isEmpty();
         verify(history, times(2)).nextSequence(ID, tx);
         verify(history, times(1)).listRange(ID, 2L, 4L, PAGE, readClient);
@@ -505,8 +505,8 @@ class WorkflowHistoryEventPublisherTest {
         completion.complete();
 
         // Then only the inner instance had entries, and they were announced for it
-        assertThat(commits).hasSize(1);
-        assertThat(commits.get(0).instanceId()).isEqualTo(other);
+        assertThat(changes).hasSize(1);
+        assertThat(changes.get(0).instanceId()).isEqualTo(other);
         verify(history, times(2)).nextSequence(other, tx);
     }
 
@@ -533,8 +533,8 @@ class WorkflowHistoryEventPublisherTest {
         // Then one settlement was registered and the merged range is announced once
         verify(transaction, times(1)).completion();
         verify(history, times(1)).listRange(any(), anyLong(), anyLong(), anyInt(), any());
-        assertThat(commits).hasSize(1);
-        assertThat(commits.get(0).events())
+        assertThat(changes).hasSize(1);
+        assertThat(changes.get(0).events())
                 .extracting(e -> e.entryInfo().sequence())
                 .containsExactly(1L, 3L);
     }
@@ -562,8 +562,8 @@ class WorkflowHistoryEventPublisherTest {
 
         // Then the rows are read and delivered once
         verify(history, times(1)).listRange(ID, 10L, 12L, PAGE, readClient);
-        assertThat(commits).hasSize(1);
-        assertThat(commits.get(0).events())
+        assertThat(changes).hasSize(1);
+        assertThat(changes.get(0).events())
                 .extracting(e -> e.entryInfo().sequence())
                 .containsExactly(11L, 12L);
     }
@@ -590,8 +590,8 @@ class WorkflowHistoryEventPublisherTest {
         completion.complete();
 
         // Then each range is announced
-        assertThat(commits).hasSize(2);
-        assertThat(commits)
+        assertThat(changes).hasSize(2);
+        assertThat(changes)
                 .extracting(c -> c.events().get(0).entryInfo().sequence())
                 .containsExactly(1L, 6L);
     }
@@ -642,9 +642,9 @@ class WorkflowHistoryEventPublisherTest {
         completion.complete();
 
         // Then two consecutive commits carry the entries in sequence order
-        assertThat(commits).hasSize(2);
-        assertThat(commits.get(0).events()).hasSize(PAGE);
-        assertThat(commits.get(1).events())
+        assertThat(changes).hasSize(2);
+        assertThat(changes.get(0).events()).hasSize(PAGE);
+        assertThat(changes.get(1).events())
                 .extracting(e -> e.entryInfo().sequence())
                 .containsExactly((long) PAGE + 1, (long) PAGE + 2);
         verify(history, times(2)).listRange(any(), anyLong(), anyLong(), anyInt(), any());
@@ -667,7 +667,7 @@ class WorkflowHistoryEventPublisherTest {
         completion.complete();
 
         // Then one page was read and delivered
-        assertThat(commits).hasSize(1);
+        assertThat(changes).hasSize(1);
         verify(history, times(1)).listRange(any(), anyLong(), anyLong(), anyInt(), any());
     }
 
@@ -710,7 +710,7 @@ class WorkflowHistoryEventPublisherTest {
 
         // Then the id is returned and no range is read
         assertThat(result.result()).isEqualTo(ID);
-        assertThat(commits).isEmpty();
+        assertThat(changes).isEmpty();
         verify(history, never()).listRange(any(), anyLong(), anyLong(), anyInt(), any());
     }
 

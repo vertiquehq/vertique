@@ -290,11 +290,11 @@ and never call them, and they sit outside this module's maturity promise.
 - **How a commit is found.** Inside the transaction the publisher reads the instance's highest history sequence before the work and
   after it (a start reads only after, because the instance is new). The transaction keeps one settlement registration
   (`TransactionCompletion.onSettled` of `vertique-db-core`) and the ranges its actions wrote, per instance. When it commits,
-  overlapping or adjacent ranges of an instance are merged, so two adjacent actions give one `WorkflowHistoryCommit`, and a sequence
+  overlapping or adjacent ranges of an instance are merged, so two adjacent actions give one `WorkflowHistoryChange`, and a sequence
   is read and delivered at most once even when a rollback to a savepoint made a later action reuse the sequences of an earlier one.
   Each merged range is read on a pooled connection with `WorkflowHistoryRepository.listRange`, `PAGE_SIZE` (1000) entries at a time,
-  mapped, and handed to every listener as `WorkflowHistoryCommit`s in sequence order; a range larger than one page arrives as several
-  consecutive commits, and a page is delivered before the next is read. Nothing is read when the work wrote nothing.
+  mapped, and handed to every listener as `WorkflowHistoryChange`s in sequence order; a range larger than one page arrives as several
+  consecutive changes, and a page is delivered before the next is read. Nothing is read when the work wrote nothing.
 - **Delivery.** At most once, after the commit, one listener after another, on the thread that completes the post-commit read. A
   failed action is reported on the thread where the failure was observed. `ListenerDispatch` catches `Exception` only: a listener
   that throws an `Exception` is logged at warn with its stack and the others still run, while an `Error` (`LinkageError`,

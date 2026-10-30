@@ -11,16 +11,16 @@ import java.util.Objects;
  * The history events one committed transaction wrote for one instance, as one range of consecutive sequences.
  *
  * <p>A transaction registers one settlement however many actions it runs, and the ranges of one instance are merged:
- * two adjacent actions on an instance give one commit, and sequences that a rollback to a savepoint let a later action
- * reuse are announced once. A range larger than the read page (1000 entries) arrives as several consecutive commits.
+ * two adjacent actions on an instance give one change, and sequences that a rollback to a savepoint let a later action
+ * reuse are announced once. A range larger than the read page (1000 entries) arrives as several consecutive changes.
  *
  * @param instanceId the instance the events belong to
  * @param events     the events, ascending by sequence; never empty
  */
-public record WorkflowHistoryCommit(WorkflowInstanceId instanceId, List<WorkflowHistoryEvent> events) {
+public record WorkflowHistoryChange(WorkflowInstanceId instanceId, List<WorkflowHistoryEvent> events) {
 
     /** Validates and copies the events. */
-    public WorkflowHistoryCommit {
+    public WorkflowHistoryChange {
         Objects.requireNonNull(instanceId, "instanceId");
         events = List.copyOf(events);
         if (events.isEmpty()) {

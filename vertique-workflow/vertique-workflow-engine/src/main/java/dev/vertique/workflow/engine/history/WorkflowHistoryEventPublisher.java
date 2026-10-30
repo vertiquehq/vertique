@@ -10,7 +10,7 @@ import dev.vertique.workflow.engine.spi.CommittedHistoryEntry;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.history.HistoryAttribution;
-import dev.vertique.workflow.history.WorkflowHistoryCommit;
+import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.history.WorkflowHistoryListener;
@@ -53,8 +53,8 @@ import org.slf4j.LoggerFactory;
  * ranges its actions wrote, per instance; when it commits, overlapping or adjacent ranges of an instance are merged, so
  * a sequence is read, and delivered, at most once even when a rollback to a savepoint made a later action reuse the
  * sequences of an earlier one. Each range is then read on a pooled connection in pages, mapped to events and handed to
- * every listener as {@link WorkflowHistoryCommit}s in sequence order; a range larger than one page arrives as several
- * consecutive commits. Two adjacent actions on an instance give one commit. A failure of the read, of the mapping or
+ * every listener as {@link WorkflowHistoryChange}s in sequence order; a range larger than one page arrives as several
+ * consecutive changes. Two adjacent actions on an instance give one change. A failure of the read, of the mapping or
  * of a listener is logged and never reaches the action: a listener {@link Exception} is logged with its stack, the
  * others by exception class only, and an {@link Error} is not caught.
  *
@@ -492,10 +492,10 @@ public final class WorkflowHistoryEventPublisher {
         if (events.isEmpty()) {
             return;
         }
-        WorkflowHistoryCommit commit = new WorkflowHistoryCommit(id, events);
+        WorkflowHistoryChange change = new WorkflowHistoryChange(id, events);
         ListenerDispatch.forEach(
                 listeners,
-                listener -> listener.onHistoryCommitted(commit),
+                listener -> listener.onHistoryChanged(change),
                 (listener, thrown) -> log.warn(
                         "History listener {} failed for instance {}",
                         listener.getClass().getName(),

@@ -514,11 +514,11 @@ public interface WorkflowHistoryRedactor {
 ### WorkflowHistoryListener
 
 SPI (`dev.vertique.workflow.history`) that observes what the engine records in an instance's history, after it is committed. Use it
-to feed an audit trail, a metric or a notification without reading the history table.
+to feed a metric, a notification or a search index without reading the history table.
 
 ```java
 public interface WorkflowHistoryListener {
-    void onHistoryCommitted(WorkflowHistoryCommit commit);
+    void onHistoryChanged(WorkflowHistoryChange change);
     default void onHistoryFailed(WorkflowHistoryFailure failure) {}
 }
 ```
@@ -529,17 +529,17 @@ needs no wiring:
 ```java
 @Provides
 @IntoSet
-static WorkflowHistoryListener auditTrail(AuditSink sink) {
+static WorkflowHistoryListener historyNotifier(Notifier notifier) {
     return new WorkflowHistoryListener() {
         @Override
-        public void onHistoryCommitted(WorkflowHistoryCommit commit) {
-            for (WorkflowHistoryEvent event : commit.events()) {
+        public void onHistoryChanged(WorkflowHistoryChange change) {
+            for (WorkflowHistoryEvent event : change.events()) {
                 WorkflowHistoryEvent.EntryInfo info = event.entryInfo();
                 switch (event) {
                     case WorkflowHistoryEvent.TaskDecided decided ->
-                        sink.taskDecided(info.instanceId(), decided.taskId(), decided.decisionName(), info.actor());
+                        notifier.taskDecided(info.instanceId(), decided.taskId(), decided.decisionName(), info.actor());
                     case WorkflowHistoryEvent.InstanceCompleted completed ->
-                        sink.completed(info.instanceId(), info.recordedAt());
+                        notifier.completed(info.instanceId(), info.recordedAt());
                     default -> { }   // variants added later, and events this listener does not use
                 }
             }
@@ -547,7 +547,7 @@ static WorkflowHistoryListener auditTrail(AuditSink sink) {
 
         @Override
         public void onHistoryFailed(WorkflowHistoryFailure failure) {
-            sink.refused(failure.action(), failure.instanceId(), failure.errorType());
+            notifier.refused(failure.action(), failure.instanceId(), failure.errorType());
         }
     };
 }
@@ -565,20 +565,20 @@ static WorkflowHistoryListener auditTrail(AuditSink sink) {
   VM failure and is not caught: it ends the delivery to the listeners after it, and what becomes of it is left to the thread's
   handler. A failure of the actor capture, of the read of the committed entries, of the mapping or of a sequence read is logged
   with the exception class only, never its message.
-- **Order.** Commits of one instance are read on independent connections, so two successive commits can be delivered out of order.
+- **Order.** Changes of one instance are read on independent connections, so two successive changes can be delivered out of order.
   Every event carries its `sequence`; a consumer that needs the order sorts by it.
 - **One transaction, one settlement, merged ranges.** A transaction registers one settlement callback however many engine calls it
   makes. The entries each call wrote for an instance form a range of sequences, and the ranges of one instance are merged when the
-  transaction commits: two adjacent actions on the same instance in one transaction give **one** `WorkflowHistoryCommit`, and
+  transaction commits: two adjacent actions on the same instance in one transaction give **one** `WorkflowHistoryChange`, and
   sequences that a rollback to a savepoint let a later action reuse are announced once. `events()` holds the entries of the merged
   range for `instanceId()`, ascending by sequence, and is never empty. A range that is larger than the read page (1000 entries)
-  arrives as several consecutive commits, still in sequence order. A transaction that touches several instances produces commits for
+  arrives as several consecutive changes, still in sequence order. A transaction that touches several instances produces changes for
   each. A start that only replays an existing instance, and a call that wrote nothing, produce none.
 - **Nothing sensitive.** An event carries no payload, state, patch or failure message. Task events read only the task id, the
   decision name and the assignments, each cut at 255 characters, and a decision node's choice reads only the chosen step id, cut at 40 characters.
 - **Each event knows its own provenance.** `WorkflowHistoryEvent.EntryInfo` holds the instance, sequence, definition pin, step, the
   command id and `CommandKind` (`START`, `SIGNAL`, `COMPLETION`, `RETRY`, `MIGRATION` or `TIMER`), the `HistoryActor`, `onBehalfOf`, a
-  `HistoryAttribution` and the recording time. One commit can mix actors and definition pins: a parked signal applied by another
+  `HistoryAttribution` and the recording time. One change can mix actors and definition pins: a parked signal applied by another
   command's segment carries the actor that recorded the signal, and a migration logs the target `DefinitionKey`.
 - **Provenance is never guessed.** `commandId` is set only from the entry's own command column or the `commandId` in its payload;
   an entry that names no command does not take the command of the segment it was written in. The `definition` pin is filled from the
@@ -657,14 +657,14 @@ Contribute it with `@Provides @IntoSet`; `WorkflowCoreModule` declares the set e
 ```java
 @Provides
 @IntoSet
-static WorkflowDefinitionLifecycleListener registryAudit(AuditSink sink) {
+static WorkflowDefinitionLifecycleListener registryNotifier(Notifier notifier) {
     return new WorkflowDefinitionLifecycleListener() {
         @Override
         public void onDefinitionLifecycleChange(DefinitionLifecycleChange change) {
             switch (change) {
-                case DefinitionLifecycleChange.VersionChange v -> sink.version(v.operation(), v.key(), v.actor());
+                case DefinitionLifecycleChange.VersionChange v -> notifier.version(v.operation(), v.key(), v.actor());
                 case DefinitionLifecycleChange.ActivationChange a ->
-                    sink.activation(a.operation(), a.scopeKey(), a.definitionId(), a.version(), a.actor());
+                    notifier.activation(a.operation(), a.scopeKey(), a.definitionId(), a.version(), a.actor());
                 default -> { }
             }
         }
@@ -1007,7 +1007,7 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **Missing recorders fail the transition.** When a step emits a side-effect intent and no `WorkflowSideEffectRecorder<TX>` is registered for that `IntentKind`, the transaction fails. There is no silent no-op. Optional intent kinds may be declared via `@OptionalIntentKinds` and are no-ops only when explicitly opted in.
 - **Recorders must be durable, never live.** A `WorkflowSideEffectRecorder<TX>` may persist an outbox row, or write to another transactional store, but must not call a downstream service before commit.
 - **A history listener must not block, and must have a default branch.** Callbacks run on a Vert.x thread, and the variants of `WorkflowHistoryEvent`, `DefinitionLifecycleChange` and their enums grow additively. A `switch` without `default` fails to compile, or throws `MatchException`, when a version adds a variant. See `WorkflowHistoryListener`.
-- **A history listener may miss events.** Delivery is after the commit and at most once; a process stop between the two loses the notification. Read `WorkflowInstanceHistoryService` when a listener must be complete, and never use a listener as the only copy of an audit record.
+- **A history listener may miss events.** Delivery is after the commit and at most once; a process stop between the two loses the notification. Read `WorkflowInstanceHistoryService` when a listener must be complete, and never use a listener as the only copy of a record.
 - **Listener events are not authorization input.** An event with `HistoryAttribution.DEGRADED` or `ABSENT` was not attributed to a verified identity.
 - **A listener makes a call wait for the instance lock.** With a `WorkflowHistoryListener` bound, even a duplicate signal waits for the instance's execution lock, and a lock timeout fails the call with a retryable `WorkflowPersistenceException`.
 - **Human task DSL guard rails.** A task step's decision list must be non-empty with unique decision names (enforced by the `HumanTaskNode` compact constructor). The optional due-date triplet (`dueDate`, `onDueMutator`, `dueNextStepId`) is all-or-nothing — supplying a partial subset is rejected at construction.

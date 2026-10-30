@@ -17,11 +17,11 @@ package dev.vertique.workflow.history;
  * <p>Delivery is at most once: if the process stops between the commit and the notification, the event is not
  * delivered, and the instance history remains the source of truth.
  *
- * <p>Delivery is not ordered across commits: two successive commits of one instance are read on independent
+ * <p>Delivery is not ordered across changes: two successive changes of one instance are read on independent
  * connections, so the second can be delivered before the first, here and on another node. Every event carries its
- * {@code sequence}; a consumer that needs the order sorts by it. A very large commit is delivered as several
- * consecutive {@link WorkflowHistoryCommit}s, each in sequence order. Two adjacent actions on one instance in one
- * transaction give one commit.
+ * {@code sequence}; a consumer that needs the order sorts by it. A very large change is delivered as several
+ * consecutive {@link WorkflowHistoryChange}s, each in sequence order. Two adjacent actions on one instance in one
+ * transaction give one change.
  *
  * <p>A listener is isolated from the engine: an {@link Exception} it throws is logged at warn with its stack and does
  * not reach the action or the other listeners. An {@link Error} is not caught and ends the delivery to the listeners
@@ -36,7 +36,7 @@ public interface WorkflowHistoryListener {
      *
      * @param commit the committed events
      */
-    void onHistoryCommitted(WorkflowHistoryCommit commit);
+    void onHistoryChanged(WorkflowHistoryChange change);
 
     /**
      * Receives an action that failed, so none of its entries were committed. It is reported once per attempt, on the

@@ -110,7 +110,7 @@ public class ExecutorHistoryAnnouncementIT {
             // And nothing was reported as failed, since an internal retry is not, while the throwing listener changed
             // nothing
             assertThat(recorded.failures()).isEmpty();
-            assertThat(recorded.thrown()).isEqualTo(recorded.commits().size());
+            assertThat(recorded.thrown()).isEqualTo(recorded.changes().size());
         }
     }
 
