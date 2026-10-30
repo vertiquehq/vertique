@@ -15,7 +15,9 @@ package dev.vertique.workflow.history;
  * failure was observed. A callback must not block that thread.
  *
  * <p>Delivery is at most once: if the process stops between the commit and the notification, the event is not
- * delivered, and the instance history remains the source of truth.
+ * delivered, and the instance history remains the source of truth. A listener runs after the transaction, so it cannot
+ * write an outbox row in it; a consumer that must not miss an event keeps the last {@code sequence} it handled per
+ * instance and catches up from the instance history.
  *
  * <p>Delivery is not ordered across changes: two successive changes of one instance are read on independent
  * connections, so the second can be delivered before the first, here and on another node. Every event carries its

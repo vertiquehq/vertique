@@ -558,8 +558,10 @@ static WorkflowHistoryListener historyNotifier(Notifier notifier) {
   block and must not assume it runs before or after the caller's own result completes. A failed action is reported on the thread
   where the failure was observed. Do slow work elsewhere, for example by handing the event to a queue.
 - **At most once.** If the process stops between the commit and the notification, the event is not delivered; the instance history
-  stays the source of truth. A history read that fails after the commit is logged and the commit is not delivered. Use
-  `WorkflowInstanceHistoryService` to catch up, or an outbox where an event must not be lost.
+  stays the source of truth. A history read that fails after the commit is logged and the change is not delivered. A listener runs
+  after the transaction, so it cannot write an outbox row in that transaction. Where nothing may be lost, keep the last `sequence`
+  you handled per instance and catch up from `WorkflowInstanceHistoryService`, or publish workflow events to external consumers
+  with `vertique-workflow-events`, which records them through the transactional outbox.
 - **Isolated.** An `Exception` a listener throws is logged at warn with its stack and swallowed: it reaches neither the engine, the
   caller nor the other listeners. An `Error` (`LinkageError`, `AssertionError`, `StackOverflowError` and the like) is a programming or
   VM failure and is not caught: it ends the delivery to the listeners after it, and what becomes of it is left to the thread's
@@ -1011,7 +1013,7 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **Missing recorders fail the transition.** When a step emits a side-effect intent and no `WorkflowSideEffectRecorder<TX>` is registered for that `IntentKind`, the transaction fails. There is no silent no-op. Optional intent kinds may be declared via `@OptionalIntentKinds` and are no-ops only when explicitly opted in.
 - **Recorders must be durable, never live.** A `WorkflowSideEffectRecorder<TX>` may persist an outbox row, or write to another transactional store, but must not call a downstream service before commit.
 - **A history listener must not block, and must have a default branch.** Callbacks run on a Vert.x thread, and the variants of `WorkflowHistoryEvent`, `DefinitionLifecycleChange` and their enums grow additively. A `switch` without `default` fails to compile, or throws `MatchException`, when a version adds a variant. See `WorkflowHistoryListener`.
-- **A history listener may miss events.** Delivery is after the commit and at most once; a process stop between the two loses the notification. Read `WorkflowInstanceHistoryService` when a listener must be complete, and never use a listener as the only copy of a record.
+- **A history listener may miss events.** Delivery is after the commit and at most once; a process stop between the two loses the notification. Catch up from `WorkflowInstanceHistoryService` by `sequence` when a consumer must be complete, and never use a listener as the only copy of a record.
 - **Listener events are not authorization input.** An event with `HistoryAttribution.DEGRADED` or `ABSENT` was not attributed to a verified identity.
 - **A listener makes a call wait for the instance lock.** With a `WorkflowHistoryListener` bound, even a duplicate signal waits for the instance's execution lock, and a lock timeout fails the call with a retryable `WorkflowPersistenceException`.
 - **Human task DSL guard rails.** A task step's decision list must be non-empty with unique decision names (enforced by the `HumanTaskNode` compact constructor). The optional due-date triplet (`dueDate`, `onDueMutator`, `dueNextStepId`) is all-or-nothing — supplying a partial subset is rejected at construction.
