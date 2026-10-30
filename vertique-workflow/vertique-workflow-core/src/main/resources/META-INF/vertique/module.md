@@ -567,6 +567,10 @@ static WorkflowHistoryListener historyNotifier(Notifier notifier) {
   with the exception class only, never its message.
 - **Order.** Changes of one instance are read on independent connections, so two successive changes can be delivered out of order.
   Every event carries its `sequence`; a consumer that needs the order sorts by it.
+- **Why events arrive in a batch.** One engine action writes several history entries in one transaction (a signal, the step it
+  completes and the step it starts, for example), and the commit is the unit that became visible. `WorkflowHistoryChange` hands you
+  that unit together: one callback per commit and instance instead of one per entry, the entries read once after the commit, and
+  related events in one place for a notification or a metric. Iterate `events()` when you want to act on single events.
 - **One transaction, one settlement, merged ranges.** A transaction registers one settlement callback however many engine calls it
   makes. The entries each call wrote for an instance form a range of sequences, and the ranges of one instance are merged when the
   transaction commits: two adjacent actions on the same instance in one transaction give **one** `WorkflowHistoryChange`, and
