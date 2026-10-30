@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+# The document form of PurchaseRoutingDefinition: a decision routes the purchase, a human task approves it, a timer holds it, and a signal completes it.
+definitionId: purchase-routing
+definitionVersion: 1
+stateType: purchase
+contract: purchase-approval
+startPayloadType: purchase-start
+initialStateMapper: scenario.purchase.fromStart
+initialStep: route-purchase
+steps:
+  - id: route-purchase
+    type: decision
+    routes:
+      - when: "state.purchaseId.startsWith('rush-')"
+        to: hold-shipment
+    default: finance-approval
+  - id: finance-approval
+    type: human-task
+    taskType: finance
+    assignment:
+      mode: role
+      value: finance
+    decisions:
+      - name: approve
+        payloadType: finance-decision
+        applicator: scenario.purchase.keepState
+        next: hold-shipment
+  - id: hold-shipment
+    type: timer
+    fireAt: PT1S
+    next: await-audit
+  - id: await-audit
+    type: wait-signal
+    signal: po.audited
+    payloadType: po-audited
+    stateReducer: scenario.purchase.applyAudit
+    next: done
+  - id: done
+    type: complete
