@@ -3,7 +3,7 @@
 
 package dev.vertique.workflow.postgresql.history;
 
-import dev.vertique.workflow.history.WorkflowHistoryCommit;
+import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.history.WorkflowHistoryListener;
@@ -15,13 +15,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** A history listener that keeps what it is told, in the order it is told, next to one that always throws. */
 public final class RecordedHistory implements WorkflowHistoryListener {
 
-    private final List<WorkflowHistoryCommit> commits = new CopyOnWriteArrayList<>();
+    private final List<WorkflowHistoryChange> changes = new CopyOnWriteArrayList<>();
     private final List<WorkflowHistoryFailure> failures = new CopyOnWriteArrayList<>();
     private final AtomicInteger thrown = new AtomicInteger();
 
     @Override
-    public void onHistoryCommitted(WorkflowHistoryCommit commit) {
-        commits.add(commit);
+    public void onHistoryChanged(WorkflowHistoryChange change) {
+        changes.add(change);
     }
 
     @Override
@@ -33,7 +33,7 @@ public final class RecordedHistory implements WorkflowHistoryListener {
     public WorkflowHistoryListener thrower() {
         return new WorkflowHistoryListener() {
             @Override
-            public void onHistoryCommitted(WorkflowHistoryCommit commit) {
+            public void onHistoryChanged(WorkflowHistoryChange change) {
                 thrown.incrementAndGet();
                 throw new IllegalStateException("the listener broke");
             }
@@ -47,8 +47,8 @@ public final class RecordedHistory implements WorkflowHistoryListener {
     }
 
     /** The commits announced so far, in the order of delivery. */
-    public List<WorkflowHistoryCommit> commits() {
-        return List.copyOf(commits);
+    public List<WorkflowHistoryChange> changes() {
+        return List.copyOf(changes);
     }
 
     /** The failures reported so far, in the order of delivery. */
@@ -63,9 +63,9 @@ public final class RecordedHistory implements WorkflowHistoryListener {
 
     /** The events announced for the instance, in the order of delivery. */
     public List<WorkflowHistoryEvent> eventsOf(WorkflowInstanceId id) {
-        return commits.stream()
-                .filter(commit -> commit.instanceId().equals(id))
-                .flatMap(commit -> commit.events().stream())
+        return changes.stream()
+                .filter(change -> change.instanceId().equals(id))
+                .flatMap(change -> change.events().stream())
                 .toList();
     }
 }

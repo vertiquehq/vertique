@@ -20,7 +20,7 @@ import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
-import dev.vertique.workflow.history.WorkflowHistoryCommit;
+import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.history.WorkflowHistoryFailure.Action;
 import dev.vertique.workflow.history.WorkflowHistoryListener;
@@ -69,7 +69,7 @@ class WorkflowEngineHistoryAnnouncementTest {
     private final WorkflowHistoryRepository<SqlClient> history = mock();
     private final TaskStore<SqlClient> tasks = mock();
     private final List<WorkflowHistoryFailure> failures = new ArrayList<>();
-    private final List<WorkflowHistoryCommit> commits = new ArrayList<>();
+    private final List<WorkflowHistoryChange> changes = new ArrayList<>();
     private final WorkflowEngine engine = engine();
 
     private WorkflowEngine engine() {
@@ -81,8 +81,8 @@ class WorkflowEngineHistoryAnnouncementTest {
         when(tasks.findById(any(), any())).thenReturn(Future.succeededFuture(Optional.empty()));
         WorkflowHistoryListener listener = new WorkflowHistoryListener() {
             @Override
-            public void onHistoryCommitted(WorkflowHistoryCommit commit) {
-                commits.add(commit);
+            public void onHistoryChanged(WorkflowHistoryChange change) {
+                changes.add(change);
             }
 
             @Override
@@ -195,7 +195,7 @@ class WorkflowEngineHistoryAnnouncementTest {
 
         assertThat(failures).hasSize(1);
         assertThat(failures.getFirst().action()).isEqualTo(Action.START);
-        assertThat(commits).isEmpty();
+        assertThat(changes).isEmpty();
     }
 
     private void assertReported(Action action, WorkflowInstanceId id) {
@@ -203,7 +203,7 @@ class WorkflowEngineHistoryAnnouncementTest {
         assertThat(failures.getFirst().action()).isEqualTo(action);
         assertThat(failures.getFirst().instanceId()).isEqualTo(id);
         assertThat(failures.getFirst().errorType()).isNotNull();
-        assertThat(commits).isEmpty();
+        assertThat(changes).isEmpty();
     }
 
     private WorkflowInstance pinned() {

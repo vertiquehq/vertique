@@ -11,7 +11,7 @@ import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.actor.WorkflowActor;
 import dev.vertique.workflow.history.CommandKind;
 import dev.vertique.workflow.history.HistoryAttribution;
-import dev.vertique.workflow.history.WorkflowHistoryCommit;
+import dev.vertique.workflow.history.WorkflowHistoryChange;
 import dev.vertique.workflow.history.WorkflowHistoryEvent;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.ops.StartCommand;
@@ -111,11 +111,11 @@ public class HistoryAnnouncementIT {
             // And the commits of an instance do not overlap and follow one another
             for (WorkflowInstanceId id : List.of(ended, cancelled)) {
                 long last = 0;
-                for (WorkflowHistoryCommit commit : recorded.commits()) {
-                    if (!commit.instanceId().equals(id)) {
+                for (WorkflowHistoryChange change : recorded.changes()) {
+                    if (!change.instanceId().equals(id)) {
                         continue;
                     }
-                    List<Long> sequences = sequencesOf(commit.events());
+                    List<Long> sequences = sequencesOf(change.events());
                     assertThat(sequences).isNotEmpty().isSorted();
                     assertThat(sequences.getFirst()).isGreaterThan(last);
                     last = sequences.getLast();
@@ -183,7 +183,7 @@ public class HistoryAnnouncementIT {
 
             // And no action failed, while the throwing listener was told of every commit and did not alter one
             assertThat(recorded.failures()).isEmpty();
-            assertThat(recorded.thrown()).isEqualTo(recorded.commits().size());
+            assertThat(recorded.thrown()).isEqualTo(recorded.changes().size());
         }
     }
 
@@ -196,7 +196,7 @@ public class HistoryAnnouncementIT {
             // Given an instance at its task, with its announcements delivered
             WorkflowInstanceId id = run.startAtTask("refused");
             awaitUntil("the start to be announced", () -> !recorded.eventsOf(id).isEmpty());
-            int announced = recorded.commits().size();
+            int announced = recorded.changes().size();
 
             // When a completion of a task that does not exist is driven in a caller's transaction
             TaskCompletionCommand unknown = new TaskCompletionCommand(
@@ -227,7 +227,7 @@ public class HistoryAnnouncementIT {
             assertThat(failures).extracting(WorkflowHistoryFailure::attemptId).doesNotHaveDuplicates();
 
             // And neither announced anything
-            assertThat(recorded.commits()).hasSize(announced);
+            assertThat(recorded.changes()).hasSize(announced);
         }
     }
 
@@ -243,7 +243,7 @@ public class HistoryAnnouncementIT {
                     .transactionalOperations()
                     .start(startCommand("committed"), tx)
                     .map(id -> {
-                        announcedInside[0] = recorded.commits().size();
+                        announcedInside[0] = recorded.changes().size();
                         return id;
                     })));
 
