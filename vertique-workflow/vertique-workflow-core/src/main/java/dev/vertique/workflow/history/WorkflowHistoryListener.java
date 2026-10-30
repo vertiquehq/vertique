@@ -20,23 +20,30 @@ package dev.vertique.workflow.history;
  * <p>Delivery is not ordered across commits: two successive commits of one instance are read on independent
  * connections, so the second can be delivered before the first, here and on another node. Every event carries its
  * {@code sequence}; a consumer that needs the order sorts by it. A very large commit is delivered as several
- * consecutive {@link WorkflowHistoryCommit}s, each in sequence order.
+ * consecutive {@link WorkflowHistoryCommit}s, each in sequence order. Two adjacent actions on one instance in one
+ * transaction give one commit.
+ *
+ * <p>A listener is isolated from the engine: an {@link Exception} it throws is logged at warn with its stack and does
+ * not reach the action or the other listeners. An {@link Error} is not caught and ends the delivery to the listeners
+ * after it.
  */
 public interface WorkflowHistoryListener {
 
     /**
      * Receives the history events one committed transaction wrote for an instance.
-     * Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation or the other listeners.
+     * An {@link Exception} thrown by this callback is caught, logged, and swallowed; it does not affect the
+     * enclosing operation or the other listeners. An {@link Error} is not caught.
      *
      * @param commit the committed events
      */
     void onHistoryCommitted(WorkflowHistoryCommit commit);
 
     /**
-     * Receives an action that failed, so none of its entries were committed.
-     * Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation or the other listeners.
+     * Receives an action that failed, so none of its entries were committed. It is reported once per attempt, on the
+     * thread where the failure was observed, even if the caller later recovers and commits the rest of the
+     * transaction. A call nested in another call for the same instance in one transaction is not reported separately.
+     * An {@link Exception} thrown by this callback is caught, logged, and swallowed; it does not affect the
+     * enclosing operation or the other listeners. An {@link Error} is not caught.
      *
      * @param failure the failed action
      */

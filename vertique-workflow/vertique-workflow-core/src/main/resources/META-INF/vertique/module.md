@@ -555,36 +555,50 @@ static WorkflowHistoryListener auditTrail(AuditSink sink) {
 
 - **Delivery.** Every contributed listener receives every event, one listener after another, in no defined order. The callback runs
   after the transaction committed, on the thread that completes the read of the committed entries (a Vert.x thread), so it must not
-  block and must not assume it runs before or after the caller's own result completes. Do slow work elsewhere, for example by
-  handing the event to a queue.
+  block and must not assume it runs before or after the caller's own result completes. A failed action is reported on the thread
+  where the failure was observed. Do slow work elsewhere, for example by handing the event to a queue.
 - **At most once.** If the process stops between the commit and the notification, the event is not delivered; the instance history
   stays the source of truth. A history read that fails after the commit is logged and the commit is not delivered. Use
   `WorkflowInstanceHistoryService` to catch up, or an outbox where an event must not be lost.
-- **Isolated.** An `Exception` a listener throws is logged and swallowed; an `Error` is a programming error and propagates.
-  It reaches neither the engine, the caller nor the other listeners.
+- **Isolated.** An `Exception` a listener throws is logged at warn with its stack and swallowed: it reaches neither the engine, the
+  caller nor the other listeners. An `Error` (`LinkageError`, `AssertionError`, `StackOverflowError` and the like) is a programming or
+  VM failure and is not caught: it ends the delivery to the listeners after it, and what becomes of it is left to the thread's
+  handler. A failure of the actor capture, of the read of the committed entries, of the mapping or of a sequence read is logged
+  with the exception class only, never its message.
 - **Order.** Commits of one instance are read on independent connections, so two successive commits can be delivered out of order.
   Every event carries its `sequence`; a consumer that needs the order sorts by it.
-- **One commit, one `WorkflowHistoryCommit` per instance.** `events()` holds the entries the transaction wrote for `instanceId()`,
-  ascending by sequence, and is never empty. A transaction that touches several instances produces one commit for each; a very large
-  commit is delivered as several consecutive ones, still in sequence order. A start that only replays an existing instance, and a
-  call that wrote nothing, produce none.
+- **One transaction, one settlement, merged ranges.** A transaction registers one settlement callback however many engine calls it
+  makes. The entries each call wrote for an instance form a range of sequences, and the ranges of one instance are merged when the
+  transaction commits: two adjacent actions on the same instance in one transaction give **one** `WorkflowHistoryCommit`, and
+  sequences that a rollback to a savepoint let a later action reuse are announced once. `events()` holds the entries of the merged
+  range for `instanceId()`, ascending by sequence, and is never empty. A range that is larger than the read page (1000 entries)
+  arrives as several consecutive commits, still in sequence order. A transaction that touches several instances produces commits for
+  each. A start that only replays an existing instance, and a call that wrote nothing, produce none.
 - **Nothing sensitive.** An event carries no payload, state, patch or failure message. Task events read only the task id, the
   decision name and the assignments, each cut at 255 characters, and a decision node's choice reads only the chosen step id, cut at 40 characters.
-- **Each event knows its own provenance.** `WorkflowHistoryEvent.EntryInfo` holds the instance, sequence, step, the command id and
-  `CommandKind` (`START`, `SIGNAL`, `COMPLETION`, `RETRY`, `MIGRATION` or `TIMER`), the `HistoryActor`, `onBehalfOf`, a
+- **Each event knows its own provenance.** `WorkflowHistoryEvent.EntryInfo` holds the instance, sequence, definition pin, step, the
+  command id and `CommandKind` (`START`, `SIGNAL`, `COMPLETION`, `RETRY`, `MIGRATION` or `TIMER`), the `HistoryActor`, `onBehalfOf`, a
   `HistoryAttribution` and the recording time. One commit can mix actors and definition pins: a parked signal applied by another
-  command's segment carries the actor that recorded the signal, and a migration logs the target `DefinitionKey`. `commandId`,
-  `commandKind`, `definition` and `stepId` are `null` when the entry does not record them.
+  command's segment carries the actor that recorded the signal, and a migration logs the target `DefinitionKey`.
+- **Provenance is never guessed.** `commandId` is set only from the entry's own command column or the `commandId` in its payload;
+  an entry that names no command does not take the command of the segment it was written in. The `definition` pin is filled from the
+  instance's head only for an entry written in a command's segment that is not a migration. So `commandId`, `commandKind`,
+  `definition` and `stepId` are `null` whenever the writer did not record them: for example an entry written outside a command, or
+  inside a `MIGRATION` segment, whose pin changes part-way, except the entry that logs the migration itself. `commandKind` is also
+  `null` when the command row's kind is not one this node knows. `actor` is `HistoryActor.Kind.NONE` and `attribution` is `ABSENT`
+  for an entry that was never attributed.
 - **Attribution.** `VERIFIED` is a verified caller identity, `ABSENT` means there was none (the actor is `HistoryActor.Kind.NONE`),
   and `DEGRADED` means the identity was rebuilt from a snapshot that could not be verified and the work continued. Treat `DEGRADED` as
   unverified for authorization or compliance use.
 - **Failures.** `onHistoryFailed` reports a caller action that failed, whose transaction did not commit or whose commit was not
-  confirmed. It is reported once per attempt, with an `attemptId` that identifies the attempt even if the caller retries, the
+  confirmed. It is reported once per attempt, with an `attemptId` minted for that attempt (a repeat of the action is a new attempt), the
   `Action` (`START`, `SIGNAL`, `CANCEL`, `RETRY`, `MIGRATE`, `TASK_COMPLETE`, `TASK_REASSIGN` or `FAILURE_DISPOSITION`, the terminal
   failure of a recorded command), the actor, and only the simple class name of the failure in `errorType`. `instanceId` is `null`
   when the action never resolved an instance. The entries the attempt wrote were not committed, and their sequences can be reused.
   When the caller owns the transaction and rolls it back after the engine call succeeded, the rollback is reported as a failed
-  action. A lost connection during the commit can leave the outcome unknown.
+  action. A lost connection during the commit can leave the outcome unknown. A call nested in another call for the same instance in
+  one transaction only runs its work, so it has no report of its own. A failed outer action is reported once even if the caller
+  recovers (for example with a savepoint) and then commits the rest of the transaction.
 - **Executor work is announced too.** The history written by the executor (timers, signals, completions, retries, migrations, task
   due dates and the dispositions of a command that was deferred, dead-lettered or failed) is delivered like the history of a direct
   call, with the actor of the command it ran.
@@ -609,12 +623,17 @@ one variant:
 | `Other` | an entry type that has no variant of its own yet, with its `WorkflowEntryType`; also an entry whose task payload cannot be read |
 
 `STATE_BASELINE` entries hold a state snapshot and produce no event. An entry whose type this node does not know, written by a
-newer node during a rolling deploy, is left out and logged.
+newer node during a rolling deploy, is skipped silently: the read filters the known types in SQL and nothing is logged. A
+`DECISION` outcome that is not an engine word reads as `BRANCH` with that text, cut at 40 characters, as the chosen step id.
 
 - **Zero cost without a listener.** With no listener bound the engine runs no extra statement and captures no actor.
 - **A listener makes a call take the instance lock first.** With a listener bound, an action on an existing instance takes the
   instance's execution lock before it reads the sequence the commit will be measured from, so a duplicate signal that would have
   returned without writing waits for the lock like any other change. See `vertique-workflow-engine`.
+- **Two reads run in your transaction.** For an action on an existing instance the engine reads the instance's highest history
+  sequence before and after the work (a start reads it once, after). If one of those statements fails, a PostgreSQL transaction is
+  poisoned like by any failed statement: the action's next statement fails or the commit becomes a rollback, even though the
+  engine recovered from the read itself. This can happen only while a listener is bound.
 - **Needs a transaction it can watch.** The `SqlClient` a `TransactionalWorkflowOperations` call runs on must be a connection with an
   open transaction. Otherwise the commit cannot be observed, the call itself succeeds, and the events are not announced (an error is
   logged).
@@ -654,20 +673,27 @@ static WorkflowDefinitionLifecycleListener registryAudit(AuditSink sink) {
 ```
 
 - **`VersionChange`** carries a `VersionOperation` (`PUBLISH`, `DEPRECATE`, `RETIRE`, `REINSTATE`) and the `DefinitionKey`.
-  **`ActivationChange`** carries an `ActivationOperation` (`ACTIVATE`, `DEACTIVATE_DEFAULT`, `FOLLOW`), the scope key, the definition
-  id, the target scope key (for `ACTIVATE` and `FOLLOW`) and the version (`null` when none). Both carry the `changeId`, the actor,
-  `onBehalfOf`, the `HistoryAttribution` and the time. The variants grow additively, so keep a `default` branch.
-- **Actor.** The actor is the caller's identity, captured on the calling thread before the operation is queued.
+  **`ActivationChange`** carries an `ActivationOperation` (`ACTIVATE`, `DEACTIVATE_DEFAULT`, `FOLLOW`), the scope key whose default
+  changed, the definition id, the target scope key and the version (`null` when none). The target scope key is the scope that owns
+  the version for `ACTIVATE`, always `WorkflowScopes.DEFAULT` for `FOLLOW`, and `null` for `DEACTIVATE_DEFAULT`; the version is set
+  only for `ACTIVATE`. Both carry the `changeId`, the actor, `onBehalfOf`, the `HistoryAttribution` and `occurredAt`. The variants
+  grow additively, so keep a `default` branch.
+- **Actor and time.** The actor is the caller's identity, captured on the calling thread before the operation is queued, and
+  `occurredAt` is stamped at the same moment, when the call was made, not when the change committed.
 - **Failures.** `onDefinitionLifecycleFailed` receives a `DefinitionLifecycleFailure` for a change the lifecycle refused or failed to
   commit: the attempted change, the typed `WorkflowDefinitionLifecycleException.Reason` for a refusal (`null` for any other failure)
   and the simple class name of the failure, never its message. The failure carries the same `changeId` as the change of that call.
 - **Repeats are reported.** A repeat that changes nothing, such as publishing an available version, is accepted and reported like any
   other change, because the registry result cannot tell the two apart.
 - **Startup.** The versions startup records for the first time are reported as a `PUBLISH` by `HistoryActor.Kind.SYSTEM` with the
-  reason `bootstrap`, and a version that also became the default scope's current version is followed by an `ACTIVATE` in the default
-  scope. A restart that finds nothing new reports nothing.
+  reason `bootstrap` and `VERIFIED` attribution, and a version that also became the default scope's current version is followed by
+  an `ACTIVATE` in the default scope (scope key and target scope key both `WorkflowScopes.DEFAULT`). A restart that finds nothing new
+  reports nothing, and startup reports no failures.
+- **Only in a Dagger graph.** The events are built by the engine module's Dagger-injected lifecycle and startup step. A
+  factory-built engine (`WorkflowEngineFactory`) emits none.
 - **Delivery.** The same as for history listeners: after the durable commit, at most once, one listener after another on the thread
-  that completes the operation, isolated, and carrying no definition source or payload.
+  that completes the operation, isolated (an `Exception` is logged at warn with its stack; an `Error` is not caught), and carrying no
+  definition source or payload.
 
 ---
 

@@ -38,8 +38,10 @@ import org.slf4j.LoggerFactory;
  * <p>{@link #around} wraps a public lifecycle operation: it captures the actor on the calling thread, mints the id
  * of the change, and reports the outcome of the future the operation returns. {@link #bootstrapped} reports the
  * versions that startup recorded, which bypass the lifecycle. A listener is called on the thread that completes the
- * operation; an exception it throws is logged and never reaches the operation, whose result is always returned
- * unchanged.
+ * operation; an {@link Exception} it throws is logged and never reaches the operation, whose result is always returned
+ * unchanged, while an {@link Error} is not caught. The actor and {@code occurredAt} are taken when the operation is
+ * called, not when it completes. For an activation, {@code targetScopeKey} is the scope that owns the version for
+ * {@code ACTIVATE}, the default scope for {@code FOLLOW} and {@code null} for {@code DEACTIVATE_DEFAULT}.
  *
  * <p>With no listener bound the wrappers only call the operation: no actor is captured and nothing is built.
  */

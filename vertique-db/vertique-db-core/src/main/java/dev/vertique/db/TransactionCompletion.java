@@ -29,6 +29,9 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>This is a notification, not a durability mechanism: if the process stops after the commit, the callback never
  * runs. Use an outbox for work that must not be lost.
+ *
+ * <p>A failed SQL statement fails the whole transaction, even when the work recovers from it and rolls back to a
+ * savepoint: the commit does not happen and the failure callback runs.
  */
 @Slf4j
 public final class TransactionCompletion {
@@ -47,8 +50,9 @@ public final class TransactionCompletion {
      * failed commit reports the commit or transport error, and a connection lost during the commit may leave the
      * database outcome unknown. It does not carry the application's own failure; capture that separately.
      *
-     * <p>The callbacks run on the transaction's Vert.x context, are never offloaded, and must not block. Exceptions
-     * thrown by a callback are caught, logged, and swallowed; they do not affect the enclosing operation.
+     * <p>The callbacks run on the transaction's Vert.x context, are never offloaded, and must not block. They run
+     * before the transaction's own result future completes. An {@link Exception} a callback throws is
+     * caught, logged at warn, and swallowed; it does not affect the enclosing operation or the other registrations.
      *
      * @param tx        the connection the transaction work received
      * @param onCommit  runs after the commit
@@ -79,7 +83,7 @@ public final class TransactionCompletion {
                 } else {
                     onFailure.accept(settled.cause());
                 }
-            } catch (Throwable thrown) {
+            } catch (Exception thrown) {
                 log.warn("A transaction completion callback failed", thrown);
             }
         });

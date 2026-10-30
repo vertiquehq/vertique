@@ -35,15 +35,23 @@ public sealed interface WorkflowHistoryEvent {
     /**
      * What every event knows about its own history entry.
      *
+     * <p>Provenance is never guessed. {@code commandId} is set only from the entry's own command column or the
+     * {@code commandId} of its payload, never from the command of the segment the entry was written in. The definition
+     * pin is filled from the instance's head only for an entry written in a command's segment that is not a migration.
+     * So {@code definition}, {@code commandId} and {@code commandKind} are {@code null} on an event whose writer did
+     * not record them, for example an entry written outside a command or inside a migration segment.
+     *
      * @param instanceId  the instance
      * @param sequence    the entry's position in the instance history
-     * @param definition  the definition pin the entry was logged under, or {@code null} when the entry did not record it
+     * @param definition  the definition pin the entry was logged under, or {@code null} when the entry did not record
+     *                    it and none was filled in
      * @param stepId      the step the entry concerns, or {@code null}
-     * @param commandId   the id of the command that produced the entry, or {@code null}
-     * @param commandKind the kind of that command, or {@code null} for an entry written outside a command
-     * @param actor       who the entry is attributed to
+     * @param commandId   the id of the command the entry names, or {@code null} when it names none
+     * @param commandKind the kind of that command, or {@code null} when the entry names no command or the stored kind
+     *                    is not known to this node
+     * @param actor       who the entry is attributed to; {@code HistoryActor.Kind.NONE} when it was never attributed
      * @param onBehalfOf  the subject the actor acted for, or {@code null}
-     * @param attribution how far the actor can be relied on
+     * @param attribution how far the actor can be relied on; {@code ABSENT} when it was never attributed
      * @param recordedAt  when the entry was persisted
      */
     record EntryInfo(
