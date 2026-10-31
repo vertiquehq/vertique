@@ -8,6 +8,7 @@ import dev.vertique.core.context.DurableCarrierDescriptor;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.DurableMetadataHeaderCodec;
 import dev.vertique.core.context.DurableTarget;
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.inboxoutbox.DelayedJobControl;
 import dev.vertique.inboxoutbox.OutboxDeliveryMetadata;
 import dev.vertique.inboxoutbox.OutboxEntry;
@@ -102,7 +103,10 @@ class DefaultOutboxService implements OutboxService {
      * a {@code null} key, a {@code null} value, or a key with the reserved framework prefix
      * ({@link DurableMetadataHeaderCodec#RESERVED_PREFIX}) fails the returned future with an
      * {@link IllegalArgumentException} that names the key (never the value), and nothing is inserted.
-     * A {@code null} header map means no headers. When the entry carries a {@link DelayedJobControl}
+     * A {@code null} header map means no headers. A {@code null} or invalid
+     * {@link OutboxEntry#scopeKey()} likewise fails the returned future with an
+     * {@link IllegalArgumentException} that does not repeat the key, and nothing is inserted; the
+     * scope is stored as given and the ambient {@code ScopeContext} does not select it. When the entry carries a {@link DelayedJobControl}
      * snapshot, it is persisted in {@code metadata.delivery.delayedJob}; all other entries receive
      * an empty delivery section (FR-CTX-175, FR-TM-039).
      *
@@ -131,6 +135,11 @@ class DefaultOutboxService implements OutboxService {
         if (undeliverable != null) {
             return Future.failedFuture(undeliverable);
         }
+        // The row's scope is chosen by the entry alone; the ambient ScopeContext never selects it.
+        IllegalArgumentException invalidScope = invalidScopeKey(entry.scopeKey());
+        if (invalidScope != null) {
+            return Future.failedFuture(invalidScope);
+        }
         // F3b row binding: allocate the carrier id up front so the durable snapshot this call
         // captures is signed for THIS row, then persist the same id into the first-class column.
         UUID carrierId = UUID.randomUUID();
@@ -144,6 +153,27 @@ class DefaultOutboxService implements OutboxService {
         return repository
                 .insert(entry, metadata, carrierId, tx)
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox publish")));
+    }
+
+    /**
+     * Checks that the entry's scope key is a valid {@link ScopeKey}.
+     *
+     * <p>{@link ScopeKey} messages never repeat the key, so the failure text stays free of
+     * caller-supplied scope text.
+     *
+     * @param scopeKey the entry's scope key; may be {@code null}
+     * @return the exception to fail {@code publish} with, or {@code null} when the key is valid
+     */
+    private static IllegalArgumentException invalidScopeKey(String scopeKey) {
+        if (scopeKey == null) {
+            return new IllegalArgumentException("scopeKey must not be null");
+        }
+        try {
+            new ScopeKey(scopeKey);
+            return null;
+        } catch (IllegalArgumentException e) {
+            return e;
+        }
     }
 
     /**
