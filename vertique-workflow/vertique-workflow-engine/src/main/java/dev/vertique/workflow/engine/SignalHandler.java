@@ -15,7 +15,9 @@ import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
+import dev.vertique.workflow.engine.spi.ParkedSignal;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
+import dev.vertique.workflow.engine.spi.SignalWaitRecord;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
@@ -52,6 +54,8 @@ import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.BiFunction;
@@ -366,6 +370,7 @@ final class SignalHandler {
                                                 waiting.currentStepId(),
                                                 waiting.forkStepId(),
                                                 waiting.branchId(),
+                                                commandId > 0L ? commandId : null,
                                                 tx))
                                         .compose(closed -> branchEngine
                                                 .driveExecutorBranchTransitions(
@@ -543,24 +548,28 @@ final class SignalHandler {
                             tx);
                 })
                 // The wait is left: its record goes before the drive, which may enter the same wait again.
-                .compose(v -> closeWait(inst.id(), inst.currentStepId(), null, null, tx))
+                .compose(v -> closeWait(inst.id(), inst.currentStepId(), null, null, ctx.commandId(), tx))
                 .compose(v -> driver.driveTransitions(updated, rw, tx));
     }
 
     /**
-     * Deletes the record of the wait a signal leaves. Nothing is deleted where no wait record collaborator is present.
+     * Deletes the record of the wait a signal leaves, which settles the other signals parked on that entry as stale.
+     * Nothing is deleted where no wait record collaborator is present.
+     *
+     * @param applyingCommandId the command whose application leaves the wait, which is not settled, or {@code null}
      */
     private Future<Void> closeWait(
             WorkflowInstanceId instance,
             String stepId,
             @Nullable String forkStepId,
             @Nullable String branchId,
+            @Nullable Long applyingCommandId,
             SqlClient tx) {
         if (signalWaits == null) {
             return Future.succeededFuture();
         }
         return signalWaits
-                .close(instance, stepId, forkStepId, branchId, null, tx)
+                .close(instance, stepId, forkStepId, branchId, applyingCommandId, tx)
                 .mapEmpty();
     }
 
@@ -649,19 +658,38 @@ final class SignalHandler {
             WorkflowInstance inst,
             RuntimeWorkflow rw,
             SqlClient tx) {
-        if (inst.status() == WorkflowStatus.FAILED) {
-            return metInstance(claim, command, signal, inst, false, tx);
+        // The entry the signal matched is compared before the instance's status: an entry that is not open is stale
+        // whether the instance is live or FAILED, and the FAILED parking applies only while the entry is still open.
+        return entryOpen(inst, signal, tx).compose(open -> {
+            if (!open) {
+                return stale(claim, command, signal, CommandErrors.signalWaitEntryClosed(signal.name()), tx);
+            }
+            if (inst.status() == WorkflowStatus.FAILED) {
+                return metInstance(claim, command, signal, inst, false, tx);
+            }
+            boolean awaited = inst.status() == WorkflowStatus.WAITING
+                    && inst.waitType() == WaitType.SIGNAL
+                    && signal.name().equals(inst.waitKey());
+            if (!awaited) {
+                return park(claim, command, signal, tx);
+            }
+            return deadlineGuard
+                    .blocked(inst.id(), inst.currentStepId(), null, command.commandId(), tx)
+                    .compose(blocked -> blocked
+                            ? park(claim, command, signal, tx)
+                            : apply(claim, command, signal, inst, null, rw, tx));
+        });
+    }
+
+    /**
+     * Tells whether the wait entry a signal matched is still open for the instance. A signal that matched no entry has
+     * none to compare, and is open as far as this check goes.
+     */
+    private Future<Boolean> entryOpen(WorkflowInstance inst, SignalTarget signal, SqlClient tx) {
+        if (!signal.correlated() || signalWaits == null) {
+            return Future.succeededFuture(true);
         }
-        boolean awaited = inst.status() == WorkflowStatus.WAITING
-                && inst.waitType() == WaitType.SIGNAL
-                && signal.name().equals(inst.waitKey());
-        if (!awaited) {
-            return park(claim, command, signal, tx);
-        }
-        return deadlineGuard
-                .blocked(inst.id(), inst.currentStepId(), null, command.commandId(), tx)
-                .compose(blocked ->
-                        blocked ? park(claim, command, signal, tx) : apply(claim, command, signal, inst, null, rw, tx));
+        return signalWaits.isOpen(inst.id(), signal.waitId(), tx);
     }
 
     private Future<WorkflowSegments.Outcome> decideBranch(
@@ -679,25 +707,38 @@ final class SignalHandler {
                             .findFirst();
                     boolean branchEnded =
                             branch.isPresent() && isFinished(branch.get().status());
-                    if (inst.status() == WorkflowStatus.FAILED) {
-                        return metInstance(claim, command, signal, inst, branchEnded, tx);
-                    }
-                    if (branchEnded) {
-                        return stale(claim, command, signal, CommandErrors.signalBranchEnded(signal.name()), tx);
-                    }
-                    boolean awaited = branch.isPresent()
-                            && branch.get().status() == BranchStatus.WAITING
-                            && branch.get().waitType() == WaitType.SIGNAL
-                            && signal.name().equals(branch.get().waitKey());
-                    if (!awaited) {
-                        return park(claim, command, signal, tx);
-                    }
-                    BranchToken waiting = branch.get();
-                    return deadlineGuard
-                            .blocked(inst.id(), waiting.currentStepId(), signal.branchId(), command.commandId(), tx)
-                            .compose(blocked -> blocked
-                                    ? park(claim, command, signal, tx)
-                                    : apply(claim, command, signal, inst, waiting, rw, tx));
+                    // The entry the signal matched is compared before the instance's status, as for an instance wait.
+                    return entryOpen(inst, signal, tx).compose(open -> {
+                        if (!open) {
+                            return stale(
+                                    claim,
+                                    command,
+                                    signal,
+                                    branchEnded
+                                            ? CommandErrors.signalBranchEnded(signal.name())
+                                            : CommandErrors.signalWaitEntryClosed(signal.name()),
+                                    tx);
+                        }
+                        if (inst.status() == WorkflowStatus.FAILED) {
+                            return metInstance(claim, command, signal, inst, branchEnded, tx);
+                        }
+                        if (branchEnded) {
+                            return stale(claim, command, signal, CommandErrors.signalBranchEnded(signal.name()), tx);
+                        }
+                        boolean awaited = branch.isPresent()
+                                && branch.get().status() == BranchStatus.WAITING
+                                && branch.get().waitType() == WaitType.SIGNAL
+                                && signal.name().equals(branch.get().waitKey());
+                        if (!awaited) {
+                            return park(claim, command, signal, tx);
+                        }
+                        BranchToken waiting = branch.get();
+                        return deadlineGuard
+                                .blocked(inst.id(), waiting.currentStepId(), signal.branchId(), command.commandId(), tx)
+                                .compose(blocked -> blocked
+                                        ? park(claim, command, signal, tx)
+                                        : apply(claim, command, signal, inst, waiting, rw, tx));
+                    });
                 });
     }
 
@@ -866,6 +907,11 @@ final class SignalHandler {
 
     private Future<WorkflowSegments.Outcome> stale(
             ClaimedCommand claim, SegmentCommand command, SignalTarget signal, String reason, SqlClient tx) {
+        log.info(
+                "Signal '{}' (command {}) of instance {} settled stale",
+                EchoedNames.bounded(signal.name()),
+                command.commandId(),
+                command.workflowId().value());
         return commands.stale(command.commandId(), claim.token(), reason, tx)
                 .compose(ClaimLostException::requireRow)
                 .compose(done -> historyRecorder.appendSignalCommandHistory(
@@ -936,22 +982,69 @@ final class SignalHandler {
                 WorkflowInstance inst = found.get();
                 if (EndedInstanceOutcomes.isEnded(inst.status())) {
                     return Future.succeededFuture(
-                            new ParkedSignals.Waits(inst.status().name(), List.of()));
+                            new ParkedSignals.Waits(inst.status().name(), false, List.of()));
                 }
+                boolean failed = inst.status() == WorkflowStatus.FAILED;
                 List<ParkedSignals.WaitAddress> open = new ArrayList<>();
                 if (inst.status() == WorkflowStatus.WAITING && inst.waitType() == WaitType.SIGNAL) {
-                    open.add(new ParkedSignals.WaitAddress(inst.currentStepId(), inst.waitKey(), null, null));
+                    open.add(new ParkedSignals.WaitAddress(inst.currentStepId(), inst.waitKey(), null, null, null));
                 }
-                return branchTokens.findActiveByWorkflow(instance, tx).map(tokens -> {
-                    for (BranchToken token : tokens) {
-                        if (token.status() == BranchStatus.WAITING && token.waitType() == WaitType.SIGNAL) {
-                            open.add(new ParkedSignals.WaitAddress(
-                                    token.currentStepId(), token.waitKey(), token.forkStepId(), token.branchId()));
-                        }
+                return branchTokens
+                        .findActiveByWorkflow(instance, tx)
+                        .compose(tokens -> {
+                            for (BranchToken token : tokens) {
+                                if (token.status() == BranchStatus.WAITING && token.waitType() == WaitType.SIGNAL) {
+                                    open.add(new ParkedSignals.WaitAddress(
+                                            token.currentStepId(),
+                                            token.waitKey(),
+                                            token.forkStepId(),
+                                            token.branchId(),
+                                            null));
+                                }
+                            }
+                            return withEntryIds(instance, open, tx);
+                        })
+                        .map(addressed -> new ParkedSignals.Waits(null, failed, addressed));
+            });
+        }
+
+        /**
+         * Gives each open wait the id of its entry: the id the parked signals that matched an entry of it carry, when
+         * that entry's record is held and addresses this wait. A wait no parked signal matched keeps no id.
+         */
+        private Future<List<ParkedSignals.WaitAddress>> withEntryIds(
+                WorkflowInstanceId instance, List<ParkedSignals.WaitAddress> open, SqlClient tx) {
+            if (signalWaits == null || open.isEmpty()) {
+                return Future.succeededFuture(List.copyOf(open));
+            }
+            return commands.parkedSignals(instance, tx).compose(parked -> {
+                List<String> waitIds = parked.stream()
+                        .map(ParkedSignal::waitId)
+                        .filter(Objects::nonNull)
+                        .toList();
+                if (waitIds.isEmpty()) {
+                    return Future.succeededFuture(List.copyOf(open));
+                }
+                return signalWaits.openEntries(instance, waitIds, tx).map(entries -> {
+                    List<ParkedSignals.WaitAddress> addressed = new ArrayList<>(open.size());
+                    for (ParkedSignals.WaitAddress wait : open) {
+                        String entryId = entries.entrySet().stream()
+                                .filter(entry -> addresses(entry.getValue(), wait))
+                                .map(Map.Entry::getKey)
+                                .findFirst()
+                                .orElse(null);
+                        addressed.add(new ParkedSignals.WaitAddress(
+                                wait.stepId(), wait.signalName(), wait.forkStepId(), wait.branchId(), entryId));
                     }
-                    return new ParkedSignals.Waits(null, List.copyOf(open));
+                    return List.copyOf(addressed);
                 });
             });
+        }
+
+        private boolean addresses(SignalWaitRecord record, ParkedSignals.WaitAddress wait) {
+            return record.stepId().equals(wait.stepId())
+                    && record.forkStepId().equals(wait.forkStepId() != null ? wait.forkStepId() : "")
+                    && record.branchId().equals(wait.branchId() != null ? wait.branchId() : "");
         }
 
         @Override

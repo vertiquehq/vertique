@@ -432,6 +432,8 @@ public interface WorkflowCommandRepository<TX> {
      * @param signalName          the signal's name
      * @param forkStepId          the fork step of a branch-addressed signal, or {@code null}
      * @param branchId            the branch of a branch-addressed signal, or {@code null}
+     * @param waitId              the id of the wait entry a delivery by key matched, stored in the target only when set,
+     *                            or {@code null}
      * @param dedupKey            the caller's idempotency key, kept for display
      * @param payloadJson         the payload as JSON, or {@code null} when the signal has none
      * @param explicitCarrierJson the sanitized explicit durable-context carrier as JSON, or {@code null}
@@ -444,6 +446,7 @@ public interface WorkflowCommandRepository<TX> {
             String signalName,
             @Nullable String forkStepId,
             @Nullable String branchId,
+            @Nullable String waitId,
             String dedupKey,
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,
@@ -477,6 +480,7 @@ public interface WorkflowCommandRepository<TX> {
                 signalName,
                 forkStepId,
                 branchId,
+                null,
                 dedupKey,
                 payloadJson,
                 explicitCarrierJson,
@@ -614,7 +618,8 @@ public interface WorkflowCommandRepository<TX> {
      *
      * @param instance the instance
      * @param tx       the segment's transaction handle
-     * @return a {@link Future} containing the parked signals
+     * @return a {@link Future} containing the parked signals, each with the id of the wait entry it matched when it has
+     *     one
      */
     Future<List<ParkedSignal>> parkedSignals(WorkflowInstanceId instance, TX tx);
 

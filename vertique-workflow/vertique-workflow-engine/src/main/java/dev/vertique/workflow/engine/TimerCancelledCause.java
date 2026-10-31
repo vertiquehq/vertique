@@ -34,5 +34,11 @@ enum TimerCancelledCause {
      * cancelled, or expired) and the reminder cascade was triggered. Used exclusively for
      * {@link dev.vertique.workflow.timer.TimerPurpose#TASK_REMINDER} timers.
      */
-    TASK_CLOSED
+    TASK_CLOSED,
+
+    /**
+     * Timer was cancelled because the instance was migrated out of the signal wait it guarded, and the wait's record
+     * was closed with it.
+     */
+    WAIT_MIGRATED
 }

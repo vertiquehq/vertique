@@ -17,6 +17,7 @@ import java.time.Instant;
  * @param signalName the signal's name
  * @param forkStepId the fork step a branch-addressed signal targets, or {@code null} for an instance-addressed one
  * @param branchId   the branch a branch-addressed signal targets, or {@code null} for an instance-addressed one
+ * @param waitId     the id of the wait entry a signal delivered by key matched, or {@code null} for any other signal
  * @param recordedAt the database time at which the signal was recorded
  */
 public record ParkedSignal(
@@ -25,4 +26,5 @@ public record ParkedSignal(
         String signalName,
         @Nullable String forkStepId,
         @Nullable String branchId,
+        @Nullable String waitId,
         Instant recordedAt) {}

@@ -4,13 +4,18 @@
 package dev.vertique.workflow.engine;
 
 import dev.vertique.core.util.UUIDV7;
+import dev.vertique.workflow.engine.executor.CommandErrors;
+import dev.vertique.workflow.engine.spi.ParkedSignal;
 import dev.vertique.workflow.engine.spi.SignalWaitRecord;
+import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository;
 import dev.vertique.workflow.exception.WorkflowCorrelationKeyException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
+import dev.vertique.workflow.state.WorkflowEntryType;
 import dev.vertique.workflow.state.WorkflowInstance;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
@@ -19,6 +24,11 @@ import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +44,10 @@ import org.slf4j.LoggerFactory;
  * repeats a key.
  *
  * <p>A record is deleted in the transaction that leaves its wait, by {@link #close} for one wait and by
- * {@link #closeAll} for an instance that ends. These are the only places a record is deleted.
+ * {@link #closeAll} for an instance that ends. These are the only places a record is deleted. A record's id names one
+ * entry of the wait: an entry that is entered again is a new one, so a signal that carries the id of an entry applies to
+ * that entry only while its record is held. {@link #close} settles the signals parked on the entry it closes as stale;
+ * {@link #closeAll} settles nothing, because the signals of an instance that ends settle as any signal does.
  */
 @Singleton
 final class SignalWaits {
@@ -48,17 +61,27 @@ final class SignalWaits {
     private static final int MAX_KEY_LENGTH = 255;
 
     private final WorkflowSignalWaitRepository<SqlClient> waits;
+    private final WorkflowCommandRepository<SqlClient> commands;
+    private final WorkflowHistoryRecorder history;
     private final Clock clock;
 
     /**
      * Creates the collaborator.
      *
      * @param waits the repository the records are written to
+     * @param commands the command repository whose parked signals a closing wait settles
+     * @param history the history writer of the entries a settlement leaves
      * @param clock the clock that stamps a record
      */
     @Inject
-    SignalWaits(WorkflowSignalWaitRepository<SqlClient> waits, Clock clock) {
+    SignalWaits(
+            WorkflowSignalWaitRepository<SqlClient> waits,
+            WorkflowCommandRepository<SqlClient> commands,
+            WorkflowHistoryRecorder history,
+            Clock clock) {
         this.waits = waits;
+        this.commands = commands;
+        this.history = history;
         this.clock = clock;
     }
 
@@ -134,17 +157,25 @@ final class SignalWaits {
     }
 
     /**
-     * Deletes the record of one wait, in the transaction that leaves it.
+     * Deletes the record of one wait, in the transaction that leaves it, and settles as stale the signals parked on the
+     * entry it closes.
      *
      * <p>Deleting a record that is not there is not an error: a wait that declares no key has none, an older node's
-     * cancel may have left one, and a wait entered again may have replaced one.
+     * cancel may have left one, and a wait entered again may have replaced one. When no record was held, no signal is
+     * parked on the entry and nothing is settled.
+     *
+     * <p>Each parked signal that carries the id of an entry whose record is no longer held is settled {@code STALE}
+     * in this transaction, with a {@code COMMAND_STALE} history entry, except the command named by
+     * {@code applyingCommandId}: its own settlement belongs to the executor that applies it, as a signal's does. A
+     * signal parked on an entry that stays open is left as it is. The settlement is written in the caller's
+     * transaction, so a caller that runs inside a savepoint rolls it back with the rest of the savepoint.
      *
      * @param instance the instance that leaves the wait
      * @param stepId the step of the wait
      * @param forkStepId the fork step of the branch that leaves the wait; {@code null} for the main wait
      * @param branchId the branch that leaves the wait; {@code null} for the main wait
-     * @param applyingCommandId the id of the command whose application leaves the wait, or {@code null} where no command
-     *     applies; not used yet
+     * @param applyingCommandId the id of the command whose application leaves the wait, which is not settled, or
+     *     {@code null} where no command applies
      * @param tx the transaction that leaves the wait
      * @return a {@link Future} of {@code true} when a record was deleted and {@code false} when none was held
      */
@@ -156,11 +187,105 @@ final class SignalWaits {
             @Nullable Long applyingCommandId,
             SqlClient tx) {
         return waits.delete(
-                instance,
-                stepId,
-                forkStepId != null ? forkStepId : MAIN_PATH,
-                branchId != null ? branchId : MAIN_PATH,
-                tx);
+                        instance,
+                        stepId,
+                        forkStepId != null ? forkStepId : MAIN_PATH,
+                        branchId != null ? branchId : MAIN_PATH,
+                        tx)
+                .compose(deleted -> deleted
+                        ? settleStale(instance, applyingCommandId, tx).map(settled -> true)
+                        : Future.succeededFuture(false));
+    }
+
+    /**
+     * Tells whether the entry with the given id is open for an instance: whether its record is held.
+     *
+     * @param instance the instance a signal addresses
+     * @param waitId the id of the entry the signal carries
+     * @param tx the active transaction
+     * @return a {@link Future} of {@code true} when the entry is open for the instance
+     */
+    Future<Boolean> isOpen(WorkflowInstanceId instance, String waitId, SqlClient tx) {
+        return openEntries(instance, List.of(waitId), tx).map(open -> open.containsKey(waitId));
+    }
+
+    /**
+     * Reads the records that are held for an instance among the entries with the given ids.
+     *
+     * @param instance the instance
+     * @param waitIds the ids of the entries; an id that is not a record's id names no open entry
+     * @param tx the active transaction
+     * @return a {@link Future} of the held records of the instance, by the id of their entry
+     */
+    Future<Map<String, SignalWaitRecord>> openEntries(WorkflowInstanceId instance, List<String> waitIds, SqlClient tx) {
+        Map<String, SignalWaitRecord> open = new HashMap<>();
+        Future<Void> chain = Future.succeededFuture();
+        for (String waitId : waitIds.stream().distinct().toList()) {
+            UUID id;
+            try {
+                id = UUID.fromString(waitId);
+            } catch (IllegalArgumentException notAnId) {
+                continue;
+            }
+            chain = chain.compose(done -> waits.findById(id, tx).map(found -> {
+                found.filter(record -> record.instanceId().equals(instance))
+                        .ifPresent(record -> open.put(waitId, record));
+                return null;
+            }));
+        }
+        return chain.map(done -> open);
+    }
+
+    /**
+     * Settles as stale every parked signal of the instance that carries the id of an entry that is not open, except the
+     * applying command, with the history of each.
+     */
+    private Future<Void> settleStale(WorkflowInstanceId instance, @Nullable Long applyingCommandId, SqlClient tx) {
+        return commands.parkedSignals(instance, tx).compose(parked -> {
+            List<ParkedSignal> correlated = parked.stream()
+                    .filter(signal -> signal.waitId() != null)
+                    .filter(signal -> applyingCommandId == null || signal.commandId() != applyingCommandId)
+                    .toList();
+            if (correlated.isEmpty()) {
+                return Future.<Void>succeededFuture();
+            }
+            return openEntries(
+                            instance,
+                            correlated.stream().map(ParkedSignal::waitId).toList(),
+                            tx)
+                    .compose(open -> {
+                        List<ParkedSignal> closed = new ArrayList<>();
+                        for (ParkedSignal signal : correlated) {
+                            if (!open.containsKey(signal.waitId())) {
+                                closed.add(signal);
+                            }
+                        }
+                        Future<Void> chain = Future.succeededFuture();
+                        for (ParkedSignal signal : closed) {
+                            chain = chain.compose(done -> settleStale(instance, signal, tx));
+                        }
+                        return chain;
+                    });
+        });
+    }
+
+    private Future<Void> settleStale(WorkflowInstanceId instance, ParkedSignal signal, SqlClient tx) {
+        String reason = CommandErrors.signalWaitEntryClosed(signal.signalName());
+        return commands.settleParked(signal.commandId(), "STALE", reason, tx)
+                .compose(rows -> rows == 0
+                        ? Future.<Void>succeededFuture()
+                        : history.appendSignalCommandHistory(
+                                        instance,
+                                        WorkflowEntryType.COMMAND_STALE,
+                                        signal.commandId(),
+                                        signal.signalName(),
+                                        reason,
+                                        tx)
+                                .onSuccess(done -> log.info(
+                                        "Signal '{}' (command {}) of instance {} settled stale: its wait entry closed",
+                                        EchoedNames.bounded(signal.signalName()),
+                                        signal.commandId(),
+                                        instance.value())));
     }
 
     /**

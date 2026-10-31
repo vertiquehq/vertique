@@ -121,7 +121,7 @@ public final class WorkflowEngineFactory {
                 eventEmitter,
                 clock,
                 decisionLog,
-                new SignalWaits(parts.signalWaits(), clock));
+                new SignalWaits(parts.signalWaits(), parts.commands(), historyRecorder, clock));
         // Build the substrate lifecycle helper ONCE from the (possibly-null) propagator and the
         // supplied initializer set, and thread the same instance into BranchTransitionEngine so
         // binder-row drives (WorkflowContextBinder, wired inside the WorkflowEngine constructor
@@ -151,7 +151,7 @@ public final class WorkflowEngineFactory {
                         propagator,
                         null,
                         parts.schemaProducer(),
-                        new SignalWaits(parts.signalWaits(), clock))
+                        new SignalWaits(parts.signalWaits(), parts.commands(), historyRecorder, clock))
                 : new BranchTransitionEngine(
                         branchTokens,
                         dedup,
@@ -163,7 +163,7 @@ public final class WorkflowEngineFactory {
                         propagator,
                         inboundExecScope,
                         parts.schemaProducer(),
-                        new SignalWaits(parts.signalWaits(), clock));
+                        new SignalWaits(parts.signalWaits(), parts.commands(), historyRecorder, clock));
         BranchCompensationOrchestrator branchCompensation =
                 new BranchCompensationOrchestrator(history, recorderRouter, clock);
         WorkflowExecutorControl[] executorHolder = new WorkflowExecutorControl[1];

@@ -346,6 +346,7 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
             String signalName,
             @Nullable String forkStepId,
             @Nullable String branchId,
+            @Nullable String waitId,
             String dedupKey,
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,

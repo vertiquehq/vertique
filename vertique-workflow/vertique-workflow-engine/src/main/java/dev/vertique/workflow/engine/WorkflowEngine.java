@@ -343,7 +343,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.history = history;
         this.dedup = dedup;
         this.signalWaits = signalWaits;
-        this.waitRecords = new SignalWaits(signalWaits, clock);
+        this.waitRecords = new SignalWaits(signalWaits, commands, historyRecorder, clock);
         this.typeNames = typeNames;
         this.timerStore = timerStore;
         this.taskStore = taskStore;
@@ -543,7 +543,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.history = history;
         this.dedup = dedup;
         this.signalWaits = signalWaits;
-        SignalWaits waitRecords = new SignalWaits(signalWaits, clock);
+        SignalWaits waitRecords = new SignalWaits(signalWaits, commands, historyRecorder, clock);
         this.waitRecords = waitRecords;
         this.typeNames = typeNames;
         this.timerStore = timerStore;
@@ -689,7 +689,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 definitionReads,
                 actors,
                 decisions,
-                waitRecords);
+                waitRecords,
+                timerStore,
+                this.timerLifecycle);
     }
 
     // --- WorkflowEngineHandle ---
@@ -2173,6 +2175,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                                             signalName,
                                                             forkStepId,
                                                             branchId,
+                                                            match.waitId().toString(),
                                                             dedupKey,
                                                             payloadJson,
                                                             null,
@@ -2327,6 +2330,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                                 signalName,
                                                 forkStepId,
                                                 branchId,
+                                                null,
                                                 signalDedupKey,
                                                 payloadJson,
                                                 carrierJson,

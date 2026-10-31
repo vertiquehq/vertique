@@ -26,6 +26,7 @@ import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
+import dev.vertique.workflow.timer.TimerStore;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
@@ -37,6 +38,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -128,6 +130,14 @@ final class MigrationExecutor {
     @jakarta.annotation.Nullable
     private final SignalWaits signalWaits;
 
+    /** Cancels the timeout timer of the wait a migration leaves; {@code null} in legacy test constructors. */
+    @jakarta.annotation.Nullable
+    private final TimerStore<SqlClient> timerStore;
+
+    /** Appends the history of that cancel; {@code null} in legacy test constructors. */
+    @jakarta.annotation.Nullable
+    private final TimerLifecycleService timerLifecycle;
+
     /**
      * Constructs a new migration executor.
      *
@@ -159,6 +169,9 @@ final class MigrationExecutor {
      * @param decisions the decision log that records the migration's patch and baseline
      * @param signalWaits deletes the record of the wait the migration leaves; may be {@code null} in legacy test
      *     constructors
+     * @param timerStore cancels the timeout timer of a keyed wait the migration leaves; may be {@code null} in legacy
+     *     test constructors
+     * @param timerLifecycle appends the history of that cancel; may be {@code null} in legacy test constructors
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -175,8 +188,12 @@ final class MigrationExecutor {
             @jakarta.annotation.Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
             CommandActors actors,
             DecisionLog decisions,
-            @jakarta.annotation.Nullable SignalWaits signalWaits) {
+            @jakarta.annotation.Nullable SignalWaits signalWaits,
+            @jakarta.annotation.Nullable TimerStore<SqlClient> timerStore,
+            @jakarta.annotation.Nullable TimerLifecycleService timerLifecycle) {
         this.signalWaits = signalWaits;
+        this.timerStore = timerStore;
+        this.timerLifecycle = timerLifecycle;
         this.decisions = decisions;
         this.actors = actors;
         // migrationRegistryOpt is null only from test-only constructors that delegate with null;
@@ -213,6 +230,8 @@ final class MigrationExecutor {
      * @param actors takes the actor a recorded migration is logged with from the caller's identity
      * @param decisions the decision log that records the migration's patch and baseline
      * @param signalWaits deletes the record of the wait the migration leaves
+     * @param timerStore cancels the timeout timer of a keyed wait the migration leaves
+     * @param timerLifecycle appends the history of that cancel
      */
     @Inject
     MigrationExecutor(
@@ -230,7 +249,9 @@ final class MigrationExecutor {
             Optional<TransactionalDefinitionReads<SqlClient>> definitionReads,
             CommandActors actors,
             DecisionLog decisions,
-            SignalWaits signalWaits) {
+            SignalWaits signalWaits,
+            TimerStore<SqlClient> timerStore,
+            TimerLifecycleService timerLifecycle) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -246,7 +267,9 @@ final class MigrationExecutor {
                 definitionReads.orElse(null),
                 actors,
                 decisions,
-                signalWaits);
+                signalWaits,
+                timerStore,
+                timerLifecycle);
     }
 
     /**
@@ -291,6 +314,8 @@ final class MigrationExecutor {
                 null,
                 CommandActors.ambient(),
                 decisions,
+                null,
+                null,
                 null);
     }
 
@@ -842,7 +867,7 @@ final class MigrationExecutor {
                                     now),
                             tx))
                     // --- The source wait is left: its record goes before the drive, which may enter a wait again ---
-                    .compose(v -> closeSourceWait(id, sourceStepId, tx))
+                    .compose(v -> closeSourceWait(inst, sourceStepId, tx))
                     // --- Drive transitions in the target plan ---
                     .compose(v -> driver.driveTransitions(migrated, targetRw, tx));
         });
@@ -851,12 +876,27 @@ final class MigrationExecutor {
     /**
      * Deletes the record of the main wait the migrated instance leaves, which is the source's current step. A migrating
      * instance holds at most its main wait. Nothing is deleted where no wait record collaborator is present.
+     *
+     * <p>When a record was deleted and the wait carried a timeout timer, the timer is cancelled in the same
+     * transaction, a dead-lettered one included, so that it cannot block the wait the migration enters. A wait that
+     * declares no key holds no record, and its timer is left as it is.
      */
-    private Future<Void> closeSourceWait(WorkflowInstanceId id, String sourceStepId, SqlClient tx) {
+    private Future<Void> closeSourceWait(WorkflowInstance source, String sourceStepId, SqlClient tx) {
         if (signalWaits == null) {
             return Future.succeededFuture();
         }
-        return signalWaits.close(id, sourceStepId, null, null, null, tx).mapEmpty();
+        return signalWaits
+                .close(source.id(), sourceStepId, null, null, null, tx)
+                .compose(deleted -> {
+                    UUID timeoutTimerId = source.waitAuxId();
+                    if (!deleted || timeoutTimerId == null || timerStore == null || timerLifecycle == null) {
+                        return Future.<Void>succeededFuture();
+                    }
+                    return timerStore
+                            .markCancelled(timeoutTimerId, clock.instant(), tx)
+                            .compose(transition -> timerLifecycle.appendTimerCancelledHistory(
+                                    source, timeoutTimerId, TimerCancelledCause.WAIT_MIGRATED, tx));
+                });
     }
 
     /** Logs a migration to the decision log: the patch of its state change, then the full state after it. */

@@ -411,6 +411,9 @@ the operation, as described under `WorkflowContextBinder`.
   `workflow.executor.maxStepsPerSegment` (reason `STEP_LIMIT`). The savepoint is rolled back, so the instance, its version and its
   wait are unchanged;
 - a branch-addressed signal for a branch that was superseded or ended, or for an ended instance, is `STALE`.
+- a signal delivered by key carries the `wait_id` of the wait entry it matched in its target, and is compared against the open wait records before
+  the `FAILED` test: it applies only while that exact entry is open, and is `STALE` (reason `WAIT_ENTRY_CLOSED`) when no wait is open with that
+  `wait_id`, on a live and on a `FAILED` instance alike. See "Wait Records And Delivery By Key".
 
 Every reason written to the command's `last_error` and to history is a reason code and framework-composed text naming the signal;
 it never contains payload values, exception text or class names. History records `COMMAND_RECEIVED`, `SIGNAL_RECEIVED` and
@@ -1272,6 +1275,20 @@ A signal wait that declares a key with `correlateBy` keeps an open wait record w
 7. claims the dedup row and records the `SIGNAL` command in the same transaction. A claim that another delivery of the same event won gives the open-signal slot back and answers `DUPLICATE`.
 
 The dedup row has kind `correlated`, scope key `default`, the hashed namespace and key, and the matched instance as its `workflow_id`; it is unique per event across instances, so two attempts of one event that matched different instances record one command, and it goes with the instance. The command's `dedup_key` is the same hashed key, so a dedup key of any length fits. A `FAILED` instance is live: its open record matches, and the command is recorded for the instance to apply when it resumes. The `signal`-kind dedup row is never written for a delivery by key. An executor applies the command like any recorded signal, so `awaitIdle` observes the instance resumed with `SIGNAL_RECEIVED` in its history. The receipt is `RECORDED` with the matched definition id. No outcome other than `RECORDED` writes a command, a dedup row or a history entry, and each failure is reported to history listeners once and names the contract and the signal, never the key. The open-signal limit and an oversized payload keep their exceptions. Instance-id delivery is unchanged.
+
+**Applying to the entry that matched.** The recorded command's target carries the matched record's `wait_id` as `waitId`, only for a delivery by key; the target of an instance-id signal is what it was, and a target is still read strictly. A command may run after its entry has gone, because a command ahead of it in the queue leaves the wait or enters it again, and a re-entered wait is a new entry with a new `wait_id` even when its step and key are equal. The `wait_id`, never the key, is therefore compared at execution, before the `FAILED` test and after the checks for an ended instance and an undeclared name:
+
+| The entry with the command's `wait_id` | Instance live and awaiting it, no timeout blocks | Instance `FAILED`, or a timeout blocks the wait | No entry open with that `wait_id` |
+| --- | --- | --- | --- |
+| outcome | applied | parked on its `wait_id` | `STALE` with `COMMAND_STALE`, logged, the instance unchanged |
+
+A signal recorded at or after a timeout's fire time never applies at that wait: the timeout runs first and leaves it. The stale settlement is logged at info with the instance, the signal and the command id, never a key.
+
+**Closing an entry settles the commands parked on it.** Every exit from a wait on an instance that stays live deletes the record through one helper, and the same transaction settles each other correlated command parked on that entry as `STALE` with a `COMMAND_STALE` history entry (reason `WAIT_ENTRY_CLOSED`), lowering the open-signal count once for each. A command whose application closes the entry is excluded, because the executor settles it. A parked command can therefore never reach a later entry, whatever its key. When a signal applies to a wait, the settlement of the others is written inside that signal's savepoint, so a signal that rolls back keeps the wait open and the others parked. When the instance ends, the records are deleted and nothing else is settled: a parked command there settles as any signal does, `REJECTED` or `CANCELLED`.
+
+**Parked correlated commands.** The drain applies a parked correlated command only at the wait that holds its `wait_id`, and skips every correlated command while the instance is `FAILED`. A command parked behind a timeout therefore waits for the timeout, and applies only when its own entry resumes, which in practice is a branch wait of a fork that failed at its join; on the main path a `FAILED` wait has always passed its fire time, so the timeout runs and the command goes stale. A retry that fails again, or that the join refuses, leaves the command parked until the instance is cancelled. An instance-id signal, and a command without a `wait_id`, park and drain as they do without this rule.
+
+**Migration out of a keyed wait.** A migration that closes the record of the wait it leaves also cancels that wait's timeout timer in the same savepoint, a dead-lettered one included, and writes `TIMER_CANCELLED` with the cause `WAIT_MIGRATED`, so the timer cannot block the wait the migration enters. A rejected migration keeps the timer and the record. A migration out of a wait that declares no key closes no record and leaves its timer as it is. One consequence follows for instance-id delivery: after a migration out of a keyed wait whose timeout was dead-lettered, an instance-id signal at the re-entered wait applies instead of parking, because the timer is gone.
 
 ### WorkflowExceptionMapper
 

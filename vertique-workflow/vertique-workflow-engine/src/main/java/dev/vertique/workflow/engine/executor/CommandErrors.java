@@ -48,6 +48,8 @@ public final class CommandErrors {
         UNDECLARED_SIGNAL,
         /** A branch-addressed signal or retry arrived after its branch was superseded or ended. */
         BRANCH_ENDED,
+        /** A signal matched a wait entry that is no longer open, so it was settled stale. */
+        WAIT_ENTRY_CLOSED,
         /** A completion's task is no longer reserved by that completion. */
         TASK_NOT_RESERVED,
         /** A completion's instance had failed, so it cannot take the decision. */
@@ -263,6 +265,20 @@ public final class CommandErrors {
                 Reason.BRANCH_ENDED,
                 "SIGNAL command for signal '" + EchoedNames.bounded(signalName)
                         + "' is stale: its branch was superseded or ended");
+    }
+
+    /**
+     * The value for a signal delivered by key whose wait entry is no longer open: the wait was left, or entered again
+     * as a new entry, before the signal could apply.
+     *
+     * @param signalName the signal's name, echoed bounded
+     * @return the stored value
+     */
+    public static String signalWaitEntryClosed(String signalName) {
+        return format(
+                Reason.WAIT_ENTRY_CLOSED,
+                "SIGNAL command for signal '" + EchoedNames.bounded(signalName)
+                        + "' is stale: the wait entry it matched is no longer open");
     }
 
     /**
