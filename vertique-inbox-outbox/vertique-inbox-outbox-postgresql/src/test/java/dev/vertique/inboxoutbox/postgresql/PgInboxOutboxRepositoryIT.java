@@ -25,6 +25,7 @@ import dev.vertique.inboxoutbox.OutboxPublishResult;
 import dev.vertique.inboxoutbox.OutboxRecord;
 import dev.vertique.inboxoutbox.RelayCapabilities;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
@@ -71,10 +72,12 @@ public class PgInboxOutboxRepositoryIT {
             .withMigration("classpath:db/migration/inbox-outbox");
 
     static Pool pool;
+    static Vertx vertxForTimers;
     static PgInboxOutboxRepository repository;
 
     @BeforeAll
     static void setUp(Vertx vertx, VertxTestContext ctx) {
+        vertxForTimers = vertx;
         DbPoolConfig config = db.toPoolConfig();
         pool = PgBuilder.pool()
                 .with(new PoolOptions().setMaxSize(10))
@@ -495,6 +498,179 @@ public class PgInboxOutboxRepositoryIT {
                         .anyMatch(r -> r.id() == id)))
                 .onSuccess(claimed -> ctx.verify(() -> {
                     assertFalse(claimed, "Entry with future scheduled_at must not be claimed");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    // =========================================================================
+    // Outbox — available_at follows scheduled_at at insert
+    // =========================================================================
+
+    /** Reads available_at and scheduled_at of a row as instants (null when the column is null). */
+    private Future<Instant[]> readAvailability(long id) {
+        return pool.preparedQuery("SELECT available_at, scheduled_at FROM outbox WHERE id = $1")
+                .execute(Tuple.of(id))
+                .map(rs -> {
+                    var row = rs.iterator().next();
+                    var available = row.getOffsetDateTime("available_at");
+                    var scheduled = row.getOffsetDateTime("scheduled_at");
+                    return new Instant[] {
+                        available == null ? null : available.toInstant(),
+                        scheduled == null ? null : scheduled.toInstant()
+                    };
+                });
+    }
+
+    private static OutboxEntry timedEntry(Instant scheduledAt, Instant availableAt, String aggregateId) {
+        return OutboxEntry.builder()
+                .destinationType(DestinationType.KAFKA)
+                .destination("timed-" + UUID.randomUUID())
+                .eventType("test.event")
+                .aggregateType(aggregateId == null ? null : "Agg")
+                .aggregateId(aggregateId)
+                .payload(new JsonObject())
+                .scheduledAt(scheduledAt)
+                .availableAt(availableAt)
+                .build();
+    }
+
+    @Test
+    @DisplayName("insert makes available_at equal to scheduled_at when only scheduled_at is supplied")
+    void insertScheduledOnlyMakesAvailableAtTheScheduledTime(VertxTestContext ctx) {
+        Instant scheduled = Instant.now().plus(Duration.ofDays(1)).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        pool.withTransaction(tx -> insert(timedEntry(scheduled, null, null), tx))
+                .compose(this::readAvailability)
+                .onSuccess(times -> ctx.verify(() -> {
+                    assertEquals(scheduled, times[1]);
+                    assertEquals(scheduled, times[0], "available_at must not sit before the scheduled time");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("insert keeps a supplied available_at that is later than scheduled_at")
+    void insertKeepsLaterSuppliedAvailableAt(VertxTestContext ctx) {
+        Instant scheduled = Instant.now().plus(Duration.ofHours(1)).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        Instant available = Instant.now().plus(Duration.ofHours(3)).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        pool.withTransaction(tx -> insert(timedEntry(scheduled, available, null), tx))
+                .compose(this::readAvailability)
+                .onSuccess(times -> ctx.verify(() -> {
+                    assertEquals(available, times[0]);
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("insert raises a supplied available_at that is earlier than scheduled_at")
+    void insertRaisesEarlierSuppliedAvailableAt(VertxTestContext ctx) {
+        Instant scheduled = Instant.now().plus(Duration.ofHours(3)).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        Instant available = Instant.now().plus(Duration.ofHours(1)).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        pool.withTransaction(tx -> insert(timedEntry(scheduled, available, null), tx))
+                .compose(this::readAvailability)
+                .onSuccess(times -> ctx.verify(() -> {
+                    assertEquals(scheduled, times[0]);
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("insert leaves an unscheduled row at NOW(), and a past supplied available_at is not bumped")
+    void insertUnscheduledKeepsItsAvailability(VertxTestContext ctx) {
+        Instant past = Instant.now().minus(Duration.ofHours(2)).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        Instant before = Instant.now();
+        pool.withTransaction(tx -> insert(timedEntry(null, null, null), tx)
+                        .compose(none ->
+                                insert(timedEntry(null, past, null), tx).map(pastId -> new long[] {none, pastId})))
+                .compose(ids -> readAvailability(ids[0])
+                        .compose(none -> readAvailability(ids[1]).map(pastRow -> new Instant[] {none[0], pastRow[0]})))
+                .onSuccess(times -> ctx.verify(() -> {
+                    assertFalse(times[0].isBefore(before.minusSeconds(5)), "unscheduled row defaults to NOW()");
+                    assertFalse(times[0].isAfter(Instant.now().plusSeconds(5)));
+                    assertEquals(past, times[1], "a past available_at with no scheduled_at is kept as supplied");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("a row stored before this change (available_at now, scheduled_at later) is still not claimed")
+    void legacyScheduledRowIsStillNotClaimed(VertxTestContext ctx) {
+        String topic = "legacy-" + UUID.randomUUID();
+        pool.preparedQuery("INSERT INTO outbox(carrier_id, event_type, destination, destination_type, payload,"
+                        + " scheduled_at, available_at) VALUES ($1, 'e', $2, 'KAFKA', '{}'::jsonb,"
+                        + " NOW() + interval '1 hour', NOW()) RETURNING id")
+                .execute(Tuple.of(UUID.randomUUID(), topic))
+                .compose(rs -> {
+                    long id = rs.iterator().next().getLong("id");
+                    return repository.claimBatch(10, "node-x", kafkaOnly()).map(records -> records.stream()
+                            .anyMatch(r -> r.id() == id));
+                })
+                .onSuccess(claimed -> ctx.verify(() -> {
+                    assertFalse(claimed, "the scheduled_at predicate must still hold the row back");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("a scheduled row is claimed once its time has passed")
+    void scheduledRowIsClaimedWhenDue(VertxTestContext ctx) {
+        Instant due = Instant.now().plusMillis(1500);
+        pool.withTransaction(tx -> insert(timedEntry(due, null, null), tx))
+                .compose(id -> repository
+                        .claimBatch(10, "node-x", kafkaOnly())
+                        .map(early -> early.stream().anyMatch(r -> r.id() == id))
+                        .compose(earlyClaimed -> {
+                            ctx.verify(() -> assertFalse(earlyClaimed, "not claimable before its time"));
+                            Promise<Boolean> late = Promise.promise();
+                            vertxForTimers.setTimer(2000, t -> repository
+                                    .claimBatch(10, "node-x", kafkaOnly())
+                                    .map(rows -> rows.stream().anyMatch(r -> r.id() == id))
+                                    .onComplete(late));
+                            return late.future();
+                        }))
+                .onSuccess(claimed -> ctx.verify(() -> {
+                    assertTrue(claimed, "claimable once scheduled_at has passed");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("a scheduled head of an aggregate still blocks its younger unscheduled sibling")
+    void scheduledHeadStillBlocksYoungerSibling(VertxTestContext ctx) {
+        String aggregate = "agg-" + UUID.randomUUID();
+        Instant scheduled = Instant.now().plus(Duration.ofHours(1));
+        pool.withTransaction(tx -> insert(timedEntry(scheduled, null, aggregate), tx)
+                        .compose(head -> insert(timedEntry(null, null, aggregate), tx)))
+                .compose(sibling -> repository
+                        .claimBatch(10, "node-x", kafkaOnly())
+                        .map(records -> records.stream().anyMatch(r -> r.id() == sibling)))
+                .onSuccess(claimed -> ctx.verify(() -> {
+                    assertFalse(claimed, "head-of-line blocking is unchanged: the younger sibling stays blocked");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("claim order of unscheduled rows is still insertion order")
+    void unscheduledRowsAreStillClaimedInInsertionOrder(VertxTestContext ctx) {
+        pool.withTransaction(tx -> insert(timedEntry(null, null, null), tx)
+                        .compose(a -> insert(timedEntry(null, null, null), tx)
+                                .compose(b -> insert(timedEntry(Instant.now().minusSeconds(60), null, null), tx)
+                                        .map(c -> List.of(a, b, c)))))
+                .compose(ids -> repository.claimBatch(10, "node-x", kafkaOnly()).map(records -> records.stream()
+                        .map(OutboxRecord::id)
+                        .filter(ids::contains)
+                        .toList()
+                        .equals(ids)))
+                .onSuccess(inOrder -> ctx.verify(() -> {
+                    assertTrue(inOrder, "rows are claimed oldest first");
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);
