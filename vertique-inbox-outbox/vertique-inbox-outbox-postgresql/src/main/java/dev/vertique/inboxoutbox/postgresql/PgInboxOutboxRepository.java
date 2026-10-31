@@ -166,10 +166,14 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
                 + " LIMIT $2) DELETE FROM " + inbox + " USING batch"
                 + " WHERE inbox.message_id = batch.message_id AND inbox.source = batch.source";
 
+        // available_at is the later of the supplied availability (NOW() when absent) and scheduled_at, so a row
+        // scheduled for later sorts after every row that can be claimed now and the claim's index range on
+        // available_at stops before it instead of walking and filtering it. GREATEST ignores a NULL scheduled_at.
+        // The claim keeps its scheduled_at predicate, so rows stored before this change stay correct.
         this.sqlOutboxInsert = "INSERT INTO " + outbox
                 + " (carrier_id, aggregate_type, aggregate_id, event_type, destination,"
                 + " destination_type, payload, headers, metadata, scheduled_at, available_at, max_attempts)"
-                + " VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, COALESCE($11, NOW()), $12)"
+                + " VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, GREATEST(COALESCE($11, NOW()), $10), $12)"
                 + " RETURNING id";
 
         this.sqlOutboxClaimPrefix = "WITH eligible AS ("
