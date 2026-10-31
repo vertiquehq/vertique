@@ -94,6 +94,9 @@ final class BranchTransitionEngine {
     private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
     private final Clock clock;
 
+    /** The open wait records of keyed signal waits; {@code null} for the legacy test constructors, which write none. */
+    private final SignalWaits signalWaits;
+
     /**
      * The scopes of the owning workflow instance, stamped on every side-effect correlation a branch
      * drive records.
@@ -152,6 +155,7 @@ final class BranchTransitionEngine {
      *                         not need first-ingress initializers to run on branch drive
      * @param schemaProducer   produces the payload schema of each decision a branch task offers, for the task's
      *                         decision snapshot; empty when no schema module is installed
+     * @param signalWaits      keeps the open wait records of the keyed signal waits a branch enters
      */
     @Inject
     BranchTransitionEngine(
@@ -164,7 +168,9 @@ final class BranchTransitionEngine {
             Clock clock,
             dev.vertique.context.DurableContextPropagator propagator,
             dev.vertique.context.InboundExecutionContextScope inboundExecScope,
-            Optional<WorkflowPlanSchemaProducer> schemaProducer) {
+            Optional<WorkflowPlanSchemaProducer> schemaProducer,
+            SignalWaits signalWaits) {
+        this.signalWaits = signalWaits;
         this.schemaProducer = schemaProducer;
         this.branchTokens = branchTokens;
         this.dedup = dedup;
@@ -204,7 +210,8 @@ final class BranchTransitionEngine {
                 clock,
                 propagator,
                 inboundExecScope,
-                Optional.empty());
+                Optional.empty(),
+                null);
     }
 
     /**
@@ -416,9 +423,9 @@ final class BranchTransitionEngine {
         }
         if (node instanceof WaitSignalNode wsn) {
             if (wsn.timeout() != null) {
-                return branchHandleWaitSignalWithTimeout(token, wsn, parentStateJson, rw, tx);
+                return branchHandleWaitSignalWithTimeout(token, wsn, parentStateJson, rw, instanceScope, tx);
             }
-            return branchHandleWaitSignal(token, wsn, tx);
+            return branchHandleWaitSignal(token, wsn, parentStateJson, rw, instanceScope, tx);
         }
         if (node instanceof HumanTaskNode htn) {
             return branchHandleHumanTaskNode(token, htn, parentStateJson, parentSubjectVersion, rw, tx);
@@ -556,11 +563,44 @@ final class BranchTransitionEngine {
 
     // --- WaitSignal (no timeout) ---
 
-    private Future<BranchToken> branchHandleWaitSignal(BranchToken token, WaitSignalNode wsn, SqlClient tx) {
+    private Future<BranchToken> branchHandleWaitSignal(
+            BranchToken token,
+            WaitSignalNode wsn,
+            String parentStateJson,
+            RuntimeWorkflow rw,
+            InstanceScope instanceScope,
+            SqlClient tx) {
         BranchToken waiting =
                 token.withWait(WaitType.SIGNAL, wsn.signalName(), null, token.version() + 1, clock.instant());
-        return casUpdate(waiting, token.version(), tx, "WaitSignal", wsn.stepId())
+        return openWaitRecord(token, wsn, parentStateJson, rw, instanceScope, tx)
+                .compose(opened -> casUpdate(waiting, token.version(), tx, "WaitSignal", wsn.stepId()))
                 .compose(t -> appendBranchHistory(t, WorkflowEntryType.BRANCH_WAIT, wsn.stepId(), tx));
+    }
+
+    /**
+     * Writes the open record of a keyed signal wait the branch enters, in the branch's transaction. The key is
+     * computed on the parent state at branch entry. Completes at once for a wait that declares no key.
+     */
+    private Future<Void> openWaitRecord(
+            BranchToken token,
+            WaitSignalNode wsn,
+            String parentStateJson,
+            RuntimeWorkflow rw,
+            InstanceScope instanceScope,
+            SqlClient tx) {
+        if (signalWaits == null) {
+            return Future.succeededFuture();
+        }
+        return signalWaits.openBranch(
+                token.workflowId(),
+                instanceScope.scopeKey(),
+                rw.plan().definitionId(),
+                parentStateJson,
+                token.forkStepId(),
+                token.branchId(),
+                wsn,
+                rw,
+                tx);
     }
 
     // --- WaitSignal with timeout ---
@@ -579,11 +619,17 @@ final class BranchTransitionEngine {
      * @param parentStateJson the parent instance's {@code state_json} (used by
      *     {@link TimerSpec.FromState} resolvers)
      * @param rw              the resolved runtime workflow
+     * @param instanceScope   the scopes of the owning instance
      * @param tx              the active transaction
      * @return a {@link Future} of the post-transition branch token
      */
     private Future<BranchToken> branchHandleWaitSignalWithTimeout(
-            BranchToken token, WaitSignalNode wsn, String parentStateJson, RuntimeWorkflow rw, SqlClient tx) {
+            BranchToken token,
+            WaitSignalNode wsn,
+            String parentStateJson,
+            RuntimeWorkflow rw,
+            InstanceScope instanceScope,
+            SqlClient tx) {
         TimerCommandSpec timer = new TimerCommandSpec(
                 token.workflowId(),
                 TimerPurpose.SIGNAL_TIMEOUT,
@@ -596,27 +642,33 @@ final class BranchTransitionEngine {
                         wsn.timeout().timeout(),
                         () -> resolveFireAt(wsn.timeout().timeout(), parentStateJson, rw)),
                 List.of(wsn.signalName()));
-        return commands.recordTimer(timer, tx).compose(recorded -> {
-            UUID timerId = recorded.timerId();
-            return history.nextSequence(token.workflowId(), tx)
-                    .compose(seq -> {
-                        String histPayload = Json.encode(new TimerScheduledHistoryPayload(
-                                wsn.stepId(), timerId, recorded.fireAt(), TimerPurpose.SIGNAL_TIMEOUT));
-                        return history.append(
-                                new WorkflowHistoryEntry(
-                                        token.workflowId(),
-                                        seq,
-                                        WorkflowEntryType.BRANCH_SIGNAL_TIMEOUT_SCHEDULED,
-                                        histPayload,
-                                        clock.instant()),
-                                tx);
-                    })
-                    .compose(v -> {
-                        BranchToken waiting = token.withWait(
-                                WaitType.SIGNAL, wsn.signalName(), timerId, token.version() + 1, clock.instant());
-                        return casUpdate(waiting, token.version(), tx, "WaitSignalWithTimeout", wsn.stepId());
-                    });
-        });
+        return openWaitRecord(token, wsn, parentStateJson, rw, instanceScope, tx)
+                .compose(opened -> commands.recordTimer(timer, tx))
+                .compose(recorded -> {
+                    UUID timerId = recorded.timerId();
+                    return history.nextSequence(token.workflowId(), tx)
+                            .compose(seq -> {
+                                String histPayload = Json.encode(new TimerScheduledHistoryPayload(
+                                        wsn.stepId(), timerId, recorded.fireAt(), TimerPurpose.SIGNAL_TIMEOUT));
+                                return history.append(
+                                        new WorkflowHistoryEntry(
+                                                token.workflowId(),
+                                                seq,
+                                                WorkflowEntryType.BRANCH_SIGNAL_TIMEOUT_SCHEDULED,
+                                                histPayload,
+                                                clock.instant()),
+                                        tx);
+                            })
+                            .compose(v -> {
+                                BranchToken waiting = token.withWait(
+                                        WaitType.SIGNAL,
+                                        wsn.signalName(),
+                                        timerId,
+                                        token.version() + 1,
+                                        clock.instant());
+                                return casUpdate(waiting, token.version(), tx, "WaitSignalWithTimeout", wsn.stepId());
+                            });
+                });
     }
 
     // --- HumanTaskNode ---

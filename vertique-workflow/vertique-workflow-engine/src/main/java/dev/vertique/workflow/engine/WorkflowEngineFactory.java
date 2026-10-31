@@ -144,7 +144,8 @@ public final class WorkflowEngineFactory {
                         clock,
                         propagator,
                         null,
-                        parts.schemaProducer())
+                        parts.schemaProducer(),
+                        new SignalWaits(parts.signalWaits(), clock))
                 : new BranchTransitionEngine(
                         branchTokens,
                         dedup,
@@ -155,7 +156,8 @@ public final class WorkflowEngineFactory {
                         clock,
                         propagator,
                         inboundExecScope,
-                        parts.schemaProducer());
+                        parts.schemaProducer(),
+                        new SignalWaits(parts.signalWaits(), clock));
         BranchCompensationOrchestrator branchCompensation =
                 new BranchCompensationOrchestrator(history, recorderRouter, clock);
         WorkflowExecutorControl[] executorHolder = new WorkflowExecutorControl[1];

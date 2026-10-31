@@ -99,6 +99,8 @@ The function is registered under the callback id `<stepId>.correlationKey`, and 
 
 `WaitSignalNode` has seven components and keeps its six-argument constructor, which leaves the key absent. A component added later is appended after `correlationKeyCallbackId`.
 
+A computed key is a non-blank string of at most 255 characters with no NUL. A key that is `null`, blank, too long or holds a NUL, or an accessor that throws, fails the wait's segment with `WorkflowCorrelationKeyException`, a final `WorkflowDefinitionException` (so a signal whose application reached the wait is rejected and the instance stays where it was). Its message names the definition, the step and the reason, never the key; it carries no cause, because an accessor's own message may hold the key.
+
 ### Delivery By Key
 
 `TransactionalWorkflowOperations<TX>` has two delivery methods that address a signal by a key instead of an instance id:
