@@ -134,6 +134,15 @@ Lombok `@Builder` value object. Only `handler` is required.
 | `maxAttempts` | `3` | Attempts before dead-letter; must be in `[1, 1000]` |
 | `jobId` | auto-generated | Logical job id, stable across retries; generated as `delayed-<uuid>` when `null` |
 | `metadata` | empty `DurableMetadata` | Durable propagation context; normally left alone |
+| `scopeKey` | `"default"` | Scope label stored with the execution; validated as a core `ScopeKey` at enqueue |
+
+`scopeKey` is selected here, per job. Leaving it out stores `default`. A `null`, blank, over-long (more
+than 255 code points) or control- or format-character key fails the enqueue with an
+`IllegalArgumentException` in a failed future, before any write, and the message does not repeat the
+key. This holds for `enqueue` and `enqueuePremerged`, with or without a `SqlClient`. The ambient
+`ScopeContext` never selects the row's scope; it is captured into `metadata` like any other durable
+context. The scope is a label, not authorization: the poller still claims jobs of every scope from
+its queue.
 
 `metadata` exists for advanced callers that must supply a pre-built `DurableMetadata` document. In
 the normal path the framework captures ambient durable context at enqueue time and merges it over

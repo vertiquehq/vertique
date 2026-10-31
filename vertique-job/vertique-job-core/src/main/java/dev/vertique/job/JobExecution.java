@@ -4,6 +4,8 @@
 package dev.vertique.job;
 
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.scope.ScopeKey;
+import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -46,6 +48,10 @@ import java.util.UUID;
  *                      decoded on poll via
  *                      {@code DurableContextPropagator.decodeToDispatchContext(..., DELAYED_JOB)}.
  *                      Never {@code null} — defaults to {@link DurableMetadata#empty()}.
+ * @param scopeKey      the scope this execution belongs to, a partition label chosen when the job was
+ *                      enqueued; {@code null} is read as {@link ScopeKey#DEFAULT}, so the accessor
+ *                      never returns {@code null}. The text is stored exactly as supplied and is not
+ *                      validated here; the enqueue path validates it as a {@link ScopeKey}.
  */
 public record JobExecution(
         UUID id,
@@ -68,7 +74,83 @@ public record JobExecution(
         ProgressSnapshot progress,
         Map<String, Object> parameters,
         Map<String, Object> attributes,
-        DurableMetadata metadata) {
+        DurableMetadata metadata,
+        @Nullable String scopeKey) {
+
+    /**
+     * Creates an execution in the default scope.
+     *
+     * <p>This is the constructor shape that predates {@code scopeKey}; it passes {@code null}, which
+     * the canonical constructor reads as {@link ScopeKey#DEFAULT}.
+     *
+     * @param id            unique execution identifier
+     * @param jobId         logical job identifier
+     * @param jobType       scheduling mechanism that triggered this execution
+     * @param handler       event bus address of the handler processing this job
+     * @param queue         logical queue or group this execution belongs to
+     * @param state         current lifecycle state
+     * @param attemptNumber zero-based attempt counter
+     * @param maxAttempts   maximum number of attempts allowed
+     * @param payload       the typed job data, or {@code null}
+     * @param priority      priority for claiming order
+     * @param lockedBy      node identity of the worker processing this execution, or {@code null}
+     * @param scheduledAt   when this execution was scheduled
+     * @param enqueuedAt    when this execution was placed on the work queue, or {@code null}
+     * @param startedAt     when processing began, or {@code null}
+     * @param completedAt   when processing finished, or {@code null}
+     * @param errorMessage  human-readable error message on failure, or {@code null}
+     * @param errorType     the exception class name on failure, or {@code null}
+     * @param progress      latest progress snapshot, or {@code null} for {@code ProgressSnapshot#EMPTY}
+     * @param parameters    static parameters provided at scheduling time
+     * @param attributes    runtime attributes set by interceptors or handlers
+     * @param metadata      durable context-propagation metadata, or {@code null} for empty
+     */
+    public JobExecution(
+            UUID id,
+            String jobId,
+            JobType jobType,
+            String handler,
+            String queue,
+            JobState state,
+            int attemptNumber,
+            int maxAttempts,
+            Object payload,
+            int priority,
+            String lockedBy,
+            Instant scheduledAt,
+            Instant enqueuedAt,
+            Instant startedAt,
+            Instant completedAt,
+            String errorMessage,
+            String errorType,
+            ProgressSnapshot progress,
+            Map<String, Object> parameters,
+            Map<String, Object> attributes,
+            DurableMetadata metadata) {
+        this(
+                id,
+                jobId,
+                jobType,
+                handler,
+                queue,
+                state,
+                attemptNumber,
+                maxAttempts,
+                payload,
+                priority,
+                lockedBy,
+                scheduledAt,
+                enqueuedAt,
+                startedAt,
+                completedAt,
+                errorMessage,
+                errorType,
+                progress,
+                parameters,
+                attributes,
+                metadata,
+                null);
+    }
 
     /**
      * Compact constructor that defensively copies the maps to ensure immutability.
@@ -87,6 +169,7 @@ public record JobExecution(
         attributes = attributes != null ? Map.copyOf(attributes) : Map.of();
         metadata = metadata != null ? metadata : DurableMetadata.empty();
         progress = progress != null ? progress : ProgressSnapshot.EMPTY;
+        scopeKey = scopeKey != null ? scopeKey : ScopeKey.DEFAULT.value();
     }
 
     /**
@@ -117,7 +200,8 @@ public record JobExecution(
                 progress,
                 parameters,
                 attributes,
-                metadata);
+                metadata,
+                scopeKey);
     }
 
     /**
@@ -148,7 +232,8 @@ public record JobExecution(
                 newProgress,
                 parameters,
                 attributes,
-                metadata);
+                metadata,
+                scopeKey);
     }
 
     /**
@@ -179,7 +264,8 @@ public record JobExecution(
                 progress,
                 parameters,
                 attributes,
-                metadata);
+                metadata,
+                scopeKey);
     }
 
     /**
@@ -211,7 +297,8 @@ public record JobExecution(
                 progress,
                 parameters,
                 attributes,
-                metadata);
+                metadata,
+                scopeKey);
     }
 
     /**
@@ -243,7 +330,8 @@ public record JobExecution(
                 progress,
                 parameters,
                 attributes,
-                metadata);
+                metadata,
+                scopeKey);
     }
 
     /**
@@ -277,7 +365,8 @@ public record JobExecution(
                 progress,
                 parameters,
                 attributes,
-                metadata);
+                metadata,
+                scopeKey);
     }
 
     /**
@@ -310,6 +399,7 @@ public record JobExecution(
                 progress,
                 parameters,
                 attributes,
-                metadata);
+                metadata,
+                scopeKey);
     }
 }

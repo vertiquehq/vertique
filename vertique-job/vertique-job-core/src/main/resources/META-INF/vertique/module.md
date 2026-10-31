@@ -45,6 +45,15 @@ put and `attemptNumber` increments, so a specific attempt is `(id, attemptNumber
 creates a distinct row each time. `attemptNumber` is zero-based and `maxAttempts` is inclusive, so
 attempts remain while `attemptNumber + 1 < maxAttempts`.
 
+### Scope
+
+Every `JobExecution` carries a `scopeKey`, the application's partition label for the work (a tenant,
+project or workspace). The enqueue call selects it explicitly (`DelayedJob.scopeKey` in
+`vertique-job-delayed`); an execution that never selected one reads `default`
+(`ScopeKey.DEFAULT.value()`), and `scopeKey()` is never `null`. The ambient `ScopeContext` does not
+choose it. The scope is a label, not authorization: claiming, retry, retention and cron
+de-duplication ignore it, so a worker claims jobs of every scope from its queue.
+
 ### The state machine
 
 There is no `SCHEDULED` state. Future-dated work is `ENQUEUED` with a future `scheduledAt`, and claim
@@ -314,9 +323,12 @@ component order is part of this contract:
 
 - `JobExecution(id, jobId, jobType, handler, queue, state, attemptNumber, maxAttempts, payload,
   priority, lockedBy, scheduledAt, enqueuedAt, startedAt, completedAt, errorMessage, errorType,
-  progress, parameters, attributes, metadata)` — 21 components. The compact constructor copies
-  `parameters`/`attributes` and defaults `progress` to `ProgressSnapshot.EMPTY` and `metadata` to
-  `DurableMetadata.empty()`. Copy-on-write helpers: `withState`, `withProgress`, `withPayload`,
+  progress, parameters, attributes, metadata, scopeKey)` — 22 components; a public 21-argument
+  constructor without `scopeKey` remains and reads `default`. The compact constructor copies
+  `parameters`/`attributes`, defaults `progress` to `ProgressSnapshot.EMPTY` and `metadata` to
+  `DurableMetadata.empty()`, and maps a `null` `scopeKey` to `default`. A repository must persist
+  `scopeKey` with the execution and return it unchanged on every read. Copy-on-write helpers (each
+  carries `scopeKey`): `withState`, `withProgress`, `withPayload`,
   `withLockedBy`, `withError`, `withStarted(Instant, String)`, `withCompleted(Instant)`.
 - `CronJobSchedule(jobId, cronExpression, handler, target, executionMode, timezone, enabled,
   overlapPolicy, maxAttempts, tracked, lastFiredAt, nextFireAt)` — 12 components, persisted for

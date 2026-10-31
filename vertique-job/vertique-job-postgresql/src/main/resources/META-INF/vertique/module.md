@@ -35,6 +35,8 @@ public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas
 
 The two-argument constructor leaves every table unqualified, so tables resolve through the connection's default schema. The three-argument constructor qualifies every job table (`job_executions`, `job_logs`, `job_schedules`, `job_server_heartbeats`) with the schema that `schemas` maps to `job`; with no `job` entry its SQL is the same as the two-argument constructor's. The mapping is validated when the repository is constructed: a schema that is not a single valid PostgreSQL identifier throws `IllegalArgumentException` before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`). SQL in this document is shown with unqualified table names.
 
+**Scope:** `save`, the transactional `save` and `tryInsert` write `JobExecution.scopeKey()` to `job_executions.scope_key`, and every read maps it back, so a custom `JobRepository` implementation must also persist `scopeKey` and return it unchanged. The scope is a label, not authorization: the claim, retry, retention and cron de-duplication queries do not read it.
+
 **Transactional save overload:**
 
 `PgJobRepository` exposes a second `save` overload not in the `JobRepository` interface, used by `DelayedJobService` for outbox-pattern enqueue:
@@ -112,6 +114,8 @@ Flyway migration:
 
 - `V002__index_job_executions_for_retention.sql` — the partial index `idx_job_executions_retention` that the execution retention job scans (see [Execution retention](#execution-retention)). The plain `CREATE INDEX` blocks every write to `job_executions` (enqueue, claim, completion) while it builds, so on a very large installation build it ahead of the upgrade with `CREATE INDEX CONCURRENTLY IF NOT EXISTS` and the same name and definition. The script sets `lock_timeout` to 30 s, which bounds only the wait for the lock, not the build, and it drops an index of that name that a cancelled concurrent build left invalid before it creates one. Every application that applies the migration gets the index, whether or not it includes `JobRetentionModule`
 
+- `V003__add_job_execution_scope.sql` — adds `job_executions.scope_key VARCHAR(255) NOT NULL DEFAULT 'default'`, so every existing row reads `default`. The default is a constant, so PostgreSQL 11 and later add the column without rewriting the table. The script sets `lock_timeout` to 30 s, which bounds only the wait for the table lock. No index and no check constraint are added.
+
 **The `V1` schema is frozen.** `vertique-job-postgresql` is Stable, so every later schema change ships
 as a new `V2+` migration file; `V1` is never edited again. A database that applied an earlier `V1`
 would fail Flyway checksum validation, which is why the fold-back practice ends here.
@@ -138,6 +142,7 @@ would fail Flyway checksum validation, which is why the fold-back practice ends 
 | `locked_by` | `VARCHAR(255)` | Node identity of the worker; null when not PROCESSING |
 | `last_error` | `TEXT` | Human-readable error message on failure |
 | `error_type` | `VARCHAR(500)` | Exception class name on failure |
+| `scope_key` | `VARCHAR(255)` | Scope label chosen at enqueue (default: `'default'`); not read by claim, retry, retention or cron de-duplication |
 | `metadata` | `JSONB` | Durable context `DurableMetadata` document persisted as a `{"context": {namespace: {...}}}` carrier; written at enqueue time by `DelayedJobService`; read at dispatch time by `DelayedJobPoller` |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time (also serves as heartbeat timestamp) |

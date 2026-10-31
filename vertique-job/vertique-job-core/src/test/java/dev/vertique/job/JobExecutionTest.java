@@ -10,8 +10,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 import dev.vertique.core.context.DurableMetadata;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.UnaryOperator;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -47,6 +49,62 @@ class JobExecutionTest {
                 Map.of(),
                 Map.of(),
                 DurableMetadata.empty());
+    }
+
+    /** Builds an execution in the given scope with the canonical constructor. */
+    private JobExecution buildExecution(String scopeKey) {
+        return new JobExecution(
+                UUID.randomUUID(),
+                "test-job",
+                JobType.CRON,
+                "handler.address",
+                "default",
+                JobState.ENQUEUED,
+                0,
+                3,
+                null,
+                0,
+                null,
+                Instant.now(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                ProgressSnapshot.EMPTY,
+                Map.of(),
+                Map.of(),
+                DurableMetadata.empty(),
+                scopeKey);
+    }
+
+    // --- Scope ---
+
+    @Test
+    @DisplayName("every copy keeps the scope key, and the previous-arity constructor reads the default")
+    void scopeKeySurvivesCopiesAndDefaultsFromPreviousArity() {
+        Map<String, UnaryOperator<JobExecution>> copies = new LinkedHashMap<>();
+        copies.put("withState", e -> e.withState(JobState.PROCESSING));
+        copies.put("withProgress", e -> e.withProgress(new ProgressSnapshot(10, 5, 0, "half done")));
+        copies.put("withPayload", e -> e.withPayload("other"));
+        copies.put("withLockedBy", e -> e.withLockedBy("node-1"));
+        copies.put("withError", e -> e.withError("boom", "java.lang.RuntimeException"));
+        copies.put("withStarted", e -> e.withStarted(Instant.now(), "node-1"));
+        copies.put("withCompleted", e -> e.withCompleted(Instant.now()));
+
+        // Given: an execution in acme, and one built with the previous-arity constructor
+        JobExecution acme = buildExecution("acme");
+        JobExecution previousArity = buildExecution();
+
+        // When: every with* method is called on each
+        // Then: each copy of the acme execution reports acme, and the previous-arity instance and its copies report
+        // default
+        assertEquals("acme", acme.scopeKey());
+        assertEquals("default", previousArity.scopeKey());
+        copies.forEach((method, copy) -> {
+            assertEquals("acme", copy.apply(acme).scopeKey(), method + " must carry the scope key");
+            assertEquals("default", copy.apply(previousArity).scopeKey(), method + " must keep the default");
+        });
     }
 
     // --- New fields ---

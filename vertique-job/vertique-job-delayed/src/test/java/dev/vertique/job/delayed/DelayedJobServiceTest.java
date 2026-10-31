@@ -4,13 +4,18 @@
 package dev.vertique.job.delayed;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import dagger.BindsInstance;
+import dagger.Component;
+import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.context.ContextScopeBinder;
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DurableContextMetadataRegistry;
@@ -21,6 +26,8 @@ import dev.vertique.core.context.DurableContextMetadataEncoder;
 import dev.vertique.core.context.DurableEncodeContext;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.exception.DurableEncodeRejectedException;
+import dev.vertique.core.scope.ScopeContext;
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.db.exception.DataAccessException;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobRepository;
@@ -30,23 +37,34 @@ import dev.vertique.job.delayed.exception.DelayedJobPersistenceException;
 import dev.vertique.job.postgresql.PgJobRepository;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import jakarta.inject.Singleton;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
+import java.util.function.UnaryOperator;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -91,6 +109,150 @@ class DelayedJobServiceTest {
                         "send-email", "test/svc/sendEmail"));
         service = new DelayedJobService(
                 repository, pgRepository, registrar, noOpPropagator(), new DelayedJobExceptionMapper());
+    }
+
+    // --- Scope selection ---
+
+    private static final ScopeContext ACME = new ScopeContext(new ScopeKey("acme"));
+
+    /** Real context wiring, so the ambient scope is captured into durable metadata the way production does. */
+    @Singleton
+    @Component(modules = ContextRuntimeModule.class)
+    interface ScopeGraph {
+        ContextHolder holder();
+
+        DelayedJobService service();
+
+        @Component.Factory
+        interface Factory {
+            ScopeGraph create(
+                    @BindsInstance JobRepository repository,
+                    @BindsInstance PgJobRepository pgRepository,
+                    @BindsInstance DelayedJobHandlerRegistrar registrar);
+        }
+    }
+
+    private static Named<BiFunction<DelayedJobService, DelayedJob, Future<UUID>>> entryPoint(
+            String name, BiFunction<DelayedJobService, DelayedJob, Future<UUID>> call) {
+        return Named.of(name, call);
+    }
+
+    private static Named<UnaryOperator<DelayedJob.DelayedJobBuilder>> selection(
+            String name, UnaryOperator<DelayedJob.DelayedJobBuilder> selection) {
+        return Named.of(name, selection);
+    }
+
+    /**
+     * Each row pairs an enqueue entry point and a scope selection with the scope that must be saved, or
+     * {@code null} when the enqueue must be rejected, and with the key text a rejection must not repeat.
+     */
+    private static Stream<Arguments> scopeSelections() {
+        return Stream.of(
+                        entryPoint("enqueue", (svc, job) -> svc.enqueue(job)),
+                        entryPoint("enqueuePremerged", (svc, job) -> svc.enqueuePremerged(job)))
+                .flatMap(entryPoint -> Stream.of(
+                        Arguments.of(entryPoint, selection("no scope", builder -> builder), "default", null),
+                        Arguments.of(entryPoint, selection("default", b -> b.scopeKey("default")), "default", null),
+                        Arguments.of(entryPoint, selection("acme", b -> b.scopeKey("acme")), "acme", null),
+                        Arguments.of(entryPoint, selection("null", b -> b.scopeKey(null)), null, null),
+                        Arguments.of(entryPoint, selection("blank", b -> b.scopeKey("   ")), null, "   "),
+                        Arguments.of(
+                                entryPoint,
+                                selection("over-long", b -> b.scopeKey("x".repeat(256))),
+                                null,
+                                "x".repeat(256)),
+                        Arguments.of(
+                                entryPoint,
+                                selection("control character", b -> b.scopeKey("bad\u0001key")),
+                                null,
+                                "bad\u0001key"),
+                        Arguments.of(
+                                entryPoint,
+                                selection("format character", b -> b.scopeKey("bad\u200Bkey")),
+                                null,
+                                "bad\u200Bkey")));
+    }
+
+    @ParameterizedTest
+    @MethodSource("scopeSelections")
+    @DisplayName("enqueue saves the selected scope, defaults an omitted one, and rejects an invalid one")
+    void enqueueSelectsScope(
+            BiFunction<DelayedJobService, DelayedJob, Future<UUID>> entryPoint,
+            UnaryOperator<DelayedJob.DelayedJobBuilder> selection,
+            String expectedScope,
+            String rejectedKeyText) {
+        // Given: a service with a mock repository, and a job with the scope selection
+        DelayedJob job =
+                selection.apply(DelayedJob.builder().handler("my-handler")).build();
+        if (expectedScope != null) {
+            when(repository.save(any())).thenReturn(Future.succeededFuture(UUID.randomUUID()));
+        }
+
+        // When: it is enqueued
+        Future<UUID> result = entryPoint.apply(service, job);
+
+        // Then: a valid selection is saved in that scope; an invalid one fails without a write or the key text
+        if (expectedScope != null) {
+            ArgumentCaptor<JobExecution> captor = ArgumentCaptor.forClass(JobExecution.class);
+            verify(repository).save(captor.capture());
+            assertEquals(expectedScope, captor.getValue().scopeKey());
+        } else {
+            assertTrue(result.failed(), "an invalid scope key must give a failed future");
+            assertInstanceOf(IllegalArgumentException.class, result.cause());
+            verify(repository, never()).save(any());
+            if (rejectedKeyText != null) {
+                assertFalse(
+                        String.valueOf(result.cause().getMessage()).contains(rejectedKeyText),
+                        "the failure text must not repeat the key");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("an ambient scope is captured in metadata but never selects the row scope")
+    void ambientScopeDoesNotSelectRowScope(Vertx vertx, VertxTestContext ctx) {
+        // Given: ScopeContext bound to acme, and a job with no selection and a job selecting globex
+        ScopeGraph graph = DaggerDelayedJobServiceTest_ScopeGraph.factory().create(repository, pgRepository, registrar);
+        List<JobExecution> rows = new CopyOnWriteArrayList<>();
+        when(repository.save(any())).thenAnswer(invocation -> {
+            JobExecution execution = invocation.getArgument(0);
+            rows.add(execution);
+            return Future.succeededFuture(execution.id());
+        });
+        DelayedJob unselected = DelayedJob.builder().handler("my-handler").build();
+        DelayedJob selectingGlobex =
+                DelayedJob.builder().handler("my-handler").scopeKey("globex").build();
+
+        // When: each is enqueued under the bound scope
+        enqueueUnderAmbientScope(vertx, graph, unselected)
+                .compose(id -> enqueueUnderAmbientScope(vertx, graph, selectingGlobex))
+                .onComplete(ctx.succeeding(id -> ctx.verify(() -> {
+                    // Then: the rows hold default and globex, and the durable metadata holds acme in both
+                    assertEquals(
+                            List.of("default", "globex"),
+                            rows.stream().map(JobExecution::scopeKey).toList());
+                    JsonObject acmeBody = new JsonObject().put("scopeKey", "acme");
+                    assertEquals(
+                            List.of(acmeBody, acmeBody),
+                            rows.stream()
+                                    .map(row -> row.metadata().body("scope").orElseThrow())
+                                    .toList());
+                    ctx.completeNow();
+                })));
+    }
+
+    /** Enqueues with {@link #ACME} bound on a duplicated Vert.x context, and closes the binding afterwards. */
+    private static Future<UUID> enqueueUnderAmbientScope(Vertx vertx, ScopeGraph graph, DelayedJob job) {
+        Promise<UUID> enqueued = Promise.promise();
+        ContextInternal producer = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
+        producer.runOnContext(ignored -> {
+            try (ContextHolder.Scope scope = graph.holder().bind(ScopeContext.class, ACME)) {
+                graph.service().enqueue(job).onComplete(enqueued);
+            } catch (Throwable failure) {
+                enqueued.tryFail(failure);
+            }
+        });
+        return enqueued.future();
     }
 
     @Nested
