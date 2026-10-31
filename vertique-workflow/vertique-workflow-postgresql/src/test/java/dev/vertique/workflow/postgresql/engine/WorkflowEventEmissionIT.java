@@ -81,8 +81,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * state transitions at the six primary {@link WorkflowEventType} emission sites.
  *
  * <p>Each test runs a workflow scenario end-to-end against a real Testcontainers Postgres instance.
- * A real {@link WorkflowEventSideEffectRecorder} backed by {@link DefaultOutboxService} (via
- * {@link PgInboxOutboxRepository}) is wired in so the outbox {@code INSERT} participates in the
+ * A real {@link WorkflowEventSideEffectRecorder} backed by {@link PgInboxOutboxRepository} is wired
+ * in so the outbox {@code INSERT} participates in the
  * same transaction as the workflow state write. After each operation the test reads the
  * {@code outbox} table directly and asserts:
  * <ul>

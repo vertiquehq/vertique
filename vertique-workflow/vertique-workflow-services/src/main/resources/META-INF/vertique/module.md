@@ -37,7 +37,7 @@ Recorder behavior:
 - Resolve the workflow target id through `ServiceTargetResolver`.
 - Require the target to be a one-payload, `Future<Void>` service operation.
 - Write an outbox entry with workflow correlation headers: `x-workflow-id`, `x-workflow-step-sequence`, `x-workflow-definition-id`, `x-workflow-definition-scope` (the scope of the definition the instance is pinned to), `x-workflow-scope` (the scope the instance was started in), `x-workflow-step-id`, and the branch identity headers for a branch dispatch. A correlation header replaces an intent header of the same name.
-- Write the outbox row in the scope the instance was started in: `scope_key` carries it alongside `x-workflow-scope`. Rows written before the upgrade read `default` even when their header names another scope. The scope is a label, not authorization.
+- Write the outbox row in the scope the instance was started in: `scope_key` carries it alongside `x-workflow-scope`. The workflow client's `.scope(...)` or `StartCommand.startScope` selects that scope, and an instance started without one is in `default`. A target reads it from `TransactionalMessageContext.scopeKey()`. The scope is a label, not authorization: nothing checks it at publish, by id, or under a service principal. Row scope and the ambient `ScopeContext` are independent, so a handler that partitions data chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself.
 - Fail the workflow transaction on an unknown or invalid target.
 - Treat a `null` intent header map as no headers, and fail the returned future with an `IllegalArgumentException` naming the key when an intent header has a `null` key or value.
 
