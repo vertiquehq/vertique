@@ -58,6 +58,13 @@ import lombok.extern.slf4j.Slf4j;
  * <p><b>Adaptive backoff:</b> When a poll cycle returns no records, the poll delay doubles up
  * to four times the base interval (capped at 60 seconds). The delay resets when entries are found.
  *
+ * <p><b>Draining a backlog:</b> a claim that filled the capacity it asked for is followed by another
+ * almost at once, and so is a freed slot after a cycle that found more work than it could take, so a
+ * backlog drains at the speed of the handlers rather than one claim per interval. A claim that came
+ * back short or empty keeps the interval pacing, and the empty claim's backoff is unchanged. There
+ * is exactly one pending poll at any time: a notification, a freed slot and the interval timer all
+ * replace it, and none overlaps a claim in flight.
+ *
  * <p><b>Concurrency control:</b> An {@link AtomicInteger} tracks the number of in-flight
  * entries across all handlers. When the in-flight count reaches {@link OutboxRelayConfig#batchSize()},
  * claim cycles are skipped. Each entry occupies one slot from the moment the relay starts to
@@ -101,6 +108,9 @@ public class OutboxRelay extends AbstractVerticle {
     /** PostgreSQL LISTEN channel name; must match the trigger DDL. */
     private static final String NOTIFY_CHANNEL = "transactional_outbox_channel";
 
+    /** The pause before a pass that follows a full claim, a freed slot or a notification, in milliseconds. */
+    private static final long IMMEDIATE_MS = 1L;
+
     /** Unresolvable entries are backed off for 60 seconds before re-claiming. */
     private static final Duration UNRESOLVABLE_BACKOFF = Duration.ofSeconds(60);
 
@@ -133,6 +143,25 @@ public class OutboxRelay extends AbstractVerticle {
 
     private long pollTimerId = -1L;
     private volatile boolean running;
+
+    /** {@code true} while the pending poll timer is the immediate one a full claim, freed slot or wake-up set. */
+    private boolean passDue;
+
+    /** {@code true} from the moment a poll cycle starts until it has scheduled the next one. */
+    private boolean polling;
+
+    /** Set by a wake-up that arrives during a claim, which may not have seen the row it announces. */
+    private boolean wakeRequested;
+
+    /**
+     * {@code true} while the last cycle found more eligible work than it could take: a claim that
+     * filled the capacity it asked for, or a cycle that found no free slot. A freed slot asks for a
+     * pass only then; a relay that last came back short or empty keeps its interval pacing.
+     */
+    private volatile boolean saturated;
+
+    /** The capacity the claim in flight asked for. */
+    private int claimCapacity;
 
     /**
      * Dedicated PostgreSQL connection for LISTEN/NOTIFY; non-null only when
@@ -265,15 +294,25 @@ public class OutboxRelay extends AbstractVerticle {
     // --- Poll loop ---
 
     /**
-     * Schedules the next poll cycle using a one-shot timer so that the polling interval is
-     * measured from the end of the previous cycle.
+     * Schedules the next poll cycle at the current adaptive delay using a one-shot timer so that
+     * the polling interval is measured from the end of the previous cycle.
      */
     private void schedulePoll() {
+        schedulePoll(currentPollDelay);
+    }
+
+    /**
+     * Schedules the one pending poll cycle after the given delay. A caller that replaces a pending
+     * timer cancels it first, so there is never more than one.
+     */
+    private void schedulePoll(long delayMs) {
         if (!running) {
             return;
         }
+        passDue = delayMs <= IMMEDIATE_MS;
         // raw timer: adaptive data-plane poll loop (next delay computed from prior batch result)
-        pollTimerId = vertx.setTimer(currentPollDelay, id -> {
+        pollTimerId = vertx.setTimer(delayMs, id -> {
+            passDue = false;
             if (running) {
                 poll();
             }
@@ -281,38 +320,74 @@ public class OutboxRelay extends AbstractVerticle {
     }
 
     /**
+     * Asks for a pass now rather than at the interval: cancels the pending timer and re-arms it
+     * almost at once. A pass that is already due absorbs the request, and a claim in flight is not
+     * overlapped. When {@code duringClaim} is {@code true}, the claim may have missed what prompted
+     * the request, so the claim's own completion schedules the follow-up even if it comes back short.
+     *
+     * @param duringClaim {@code true} when a claim in flight must be followed by a pass
+     */
+    private void requestPass(boolean duringClaim) {
+        if (!running) {
+            return;
+        }
+        if (polling) {
+            wakeRequested |= duringClaim;
+            return;
+        }
+        if (passDue) {
+            return;
+        }
+        cancelTimer(pollTimerId);
+        schedulePoll(IMMEDIATE_MS);
+    }
+
+    /**
      * Executes one poll cycle: checks available capacity, claims eligible entries from the
      * repository, dispatches each one, and reschedules.
      *
      * <p>The next poll is always scheduled, exactly once per cycle: after the claim has settled and
-     * its entries have been dispatched, or at once when no claim is made. A claim that throws
-     * synchronously, or returns {@code null} instead of a future, is a failed poll. A claim that
-     * completes with a {@code null} list is an empty batch. An {@link Error} this method does not
-     * handle still propagates, after the next poll has been scheduled.
+     * its entries have been dispatched, or at once when no claim is made. It follows after the
+     * interval (backed off on an empty claim) unless the claim filled the capacity it asked for and a
+     * slot is free, or a notification arrived during the claim, when it follows almost at once. With
+     * no free slot there is nothing to claim with, so the interval stays as the fallback and the next
+     * freed slot asks for the pass. A claim that throws synchronously, or returns {@code null}
+     * instead of a future, is a failed poll. A claim that completes with a {@code null} list is an
+     * empty batch. An {@link Error} this method does not handle still propagates, after the next poll
+     * has been scheduled.
      */
     private void poll() {
+        polling = true;
+        wakeRequested = false;
         Future<List<OutboxRecord>> claimed;
         try {
             int capacity = config.batchSize() - inFlight.get();
             if (capacity <= 0) {
                 log.debug("OutboxRelay nodeId={}: all slots in use, skipping poll", nodeId);
+                polling = false;
+                saturated = true;
                 schedulePoll();
                 return;
             }
+            claimCapacity = capacity;
             claimed = Objects.requireNonNull(
                     outboxRepository.claimBatch(capacity, nodeId, capabilities),
                     "OutboxRepository.claimBatch() returned null instead of a future");
         } catch (Exception | LinkageError | AssertionError e) {
             claimed = Future.failedFuture(e);
         } catch (Throwable t) {
+            polling = false;
             schedulePoll();
             throw t;
         }
 
         claimed.onComplete(ar -> {
+            boolean full = false;
             try {
                 if (ar.succeeded()) {
-                    dispatchClaimed(ar.result() != null ? ar.result() : List.of());
+                    List<OutboxRecord> records = ar.result() != null ? ar.result() : List.of();
+                    full = records.size() >= claimCapacity;
+                    dispatchClaimed(records);
                 } else {
                     log.warn(
                             "OutboxRelay nodeId={}: poll failed: {}",
@@ -321,7 +396,10 @@ public class OutboxRelay extends AbstractVerticle {
                             ar.cause());
                 }
             } finally {
-                schedulePoll();
+                polling = false;
+                saturated = full;
+                boolean again = wakeRequested || (full && inFlight.get() < config.batchSize());
+                schedulePoll(again ? IMMEDIATE_MS : currentPollDelay);
             }
         });
     }
@@ -334,7 +412,7 @@ public class OutboxRelay extends AbstractVerticle {
      */
     private void dispatchClaimed(List<OutboxRecord> records) {
         if (records.isEmpty()) {
-            currentPollDelay = Math.min(currentPollDelay * 2, Math.min(config.pollingIntervalMs() * 4, 60_000L));
+            currentPollDelay = delayAfterEmptyClaim(currentPollDelay, config.pollingIntervalMs());
             return;
         }
         currentPollDelay = config.pollingIntervalMs();
@@ -342,6 +420,42 @@ public class OutboxRelay extends AbstractVerticle {
         for (OutboxRecord record : records) {
             inFlight.incrementAndGet();
             processRecord(record);
+        }
+    }
+
+    /**
+     * The poll delay after an empty claim: doubled, up to four times the base interval and never
+     * over 60 seconds.
+     *
+     * @param currentMs the delay the empty claim was made at
+     * @param baseMs    the configured {@link OutboxRelayConfig#pollingIntervalMs()}
+     * @return the delay before the next claim
+     */
+    static long delayAfterEmptyClaim(long currentMs, long baseMs) {
+        return Math.min(currentMs * 2, Math.min(baseMs * 4, 60_000L));
+    }
+
+    /**
+     * Gives one in-flight slot back. When the last cycle found more work than it could take, the
+     * freed slot asks for a pass at once instead of leaving the relay to wait out the interval;
+     * repeated releases coalesce into the one pending pass, and a release during a claim leaves the
+     * claim's own completion to look at the free capacity. A handler or repository future can settle
+     * on any thread, so the request is made on the relay's own context, where the poll state lives.
+     * Never throws, so a release inside a {@code finally} cannot hide the error that is already
+     * propagating.
+     */
+    private void releaseSlot() {
+        inFlight.decrementAndGet();
+        if (saturated) {
+            try {
+                runOnRelayContext(() -> {
+                    if (saturated) {
+                        requestPass(false);
+                    }
+                });
+            } catch (RuntimeException e) {
+                log.debug("OutboxRelay nodeId={}: no pass could be scheduled", nodeId, e);
+            }
         }
     }
 
@@ -380,7 +494,7 @@ public class OutboxRelay extends AbstractVerticle {
             processRecord(record, slotHandedOver);
         } finally {
             if (!slotHandedOver[0]) {
-                inFlight.decrementAndGet();
+                releaseSlot();
             }
         }
     }
@@ -535,7 +649,7 @@ public class OutboxRelay extends AbstractVerticle {
         } catch (Exception | LinkageError | AssertionError e) {
             recorded = Future.failedFuture(e);
         } finally {
-            inFlight.decrementAndGet();
+            releaseSlot();
         }
 
         Transition transition = decided;
@@ -777,14 +891,7 @@ public class OutboxRelay extends AbstractVerticle {
             conn.notificationHandler(notification -> {
                 if (NOTIFY_CHANNEL.equals(notification.getChannel()) && running) {
                     log.trace("OutboxRelay: received NOTIFY on channel={}, triggering poll", NOTIFY_CHANNEL);
-                    currentPollDelay = config.pollingIntervalMs();
-                    cancelTimer(pollTimerId);
-                    // raw timer: near-immediate wakeup triggered by PostgreSQL NOTIFY
-                    pollTimerId = vertx.setTimer(1, id -> {
-                        if (running) {
-                            poll();
-                        }
-                    });
+                    onNotification();
                 }
             });
             conn.closeHandler(v -> {
@@ -804,6 +911,16 @@ public class OutboxRelay extends AbstractVerticle {
                         return Future.failedFuture(err);
                     });
         });
+    }
+
+    /**
+     * Takes a wake-up from the LISTEN connection: resets the backoff and asks for a pass now. A
+     * notification that arrives during a claim may announce a row the claim did not see, so that
+     * claim is followed by a pass whatever it returns. Must run on the relay's own context.
+     */
+    void onNotification() {
+        currentPollDelay = config.pollingIntervalMs();
+        requestPass(true);
     }
 
     // --- Helpers ---

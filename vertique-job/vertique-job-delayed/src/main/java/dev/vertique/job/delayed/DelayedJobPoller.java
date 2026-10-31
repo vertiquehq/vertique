@@ -32,12 +32,14 @@ import dev.vertique.job.delayed.config.DelayedJobQueueConfig;
 import dev.vertique.logging.MDCContexts;
 import dev.vertique.resilience.BackoffStrategy;
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.eventbus.MessageConsumer;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -59,7 +61,11 @@ import lombok.extern.slf4j.Slf4j;
  *   <li><b>Poll timer:</b> A recurring one-shot timer (using {@link io.vertx.core.Vertx#setTimer})
  *       that wakes up every {@link DelayedJobQueueConfig#sleepDelayMs()} milliseconds, claims up to
  *       {@link DelayedJobQueueConfig#maxConcurrentJobs()} executions from the repository, dispatches each
- *       one, and then reschedules itself.</li>
+ *       one, and then reschedules itself. A claim that filled the capacity it asked for is followed
+ *       by another almost at once, and so is a freed slot after a cycle that found more work than it
+ *       could take, so a backlog drains at the speed of the handlers rather than one claim per
+ *       interval. A claim that came back short or empty keeps the interval pacing, and the empty
+ *       claim's backoff is unchanged.</li>
  * </ul>
  *
  * <p>Future-scheduled jobs are inserted as {@link JobState#ENQUEUED} with a future
@@ -69,7 +75,8 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p><b>Concurrency control:</b> An {@link AtomicInteger} semaphore tracks in-flight dispatches.
  * When the in-flight count reaches {@link DelayedJobQueueConfig#maxConcurrentJobs()}, the poll cycle
- * skips claiming and reschedules for the next cycle.
+ * skips claiming and reschedules for the next cycle, at the interval; the next slot to free asks for
+ * the pass instead of leaving the queue to wait it out. There is exactly one pending poll at any time.
  *
  * <p><b>Dispatch pattern:</b> For each claimed job, the poller:
  * <ol>
@@ -123,6 +130,9 @@ import lombok.extern.slf4j.Slf4j;
 public class DelayedJobPoller extends AbstractVerticle {
 
     // --- Constants ---
+
+    /** The pause before a pass that follows a full claim or a freed slot, in milliseconds. */
+    private static final long IMMEDIATE_MS = 1;
 
     /**
      * Default upper bound, in milliseconds, on how long {@link #stop(Promise)} waits for one
@@ -218,6 +228,19 @@ public class DelayedJobPoller extends AbstractVerticle {
 
     private long pollTimerId = -1;
     private volatile boolean running;
+
+    /** {@code true} while the pending poll timer is the immediate one a full claim or freed slot set. */
+    private boolean passDue;
+
+    /** {@code true} from the moment a poll cycle starts until it has scheduled the next one. */
+    private boolean polling;
+
+    /**
+     * {@code true} while the last cycle found more eligible work than it could take: a claim that
+     * filled the capacity it asked for, or a cycle that found no free slot. A freed slot asks for a
+     * pass only then; a queue that last came back short or empty keeps its interval pacing.
+     */
+    private boolean saturated;
 
     /**
      * Creates a new poller for the given queue with no execution timeout or progress-flush support.
@@ -458,15 +481,26 @@ public class DelayedJobPoller extends AbstractVerticle {
     // --- Poll loop ---
 
     /**
-     * Schedules the next poll cycle using a one-shot timer. The timer reschedules itself after
-     * each cycle so that the {@link DelayedJobQueueConfig#sleepDelayMs()} is measured from the end of
-     * the previous cycle rather than from the start.
+     * Schedules the next poll cycle at the current adaptive delay using a one-shot timer. The timer
+     * reschedules itself after each cycle so that the {@link DelayedJobQueueConfig#sleepDelayMs()} is
+     * measured from the end of the previous cycle rather than from the start.
      */
     private void schedulePoll() {
+        schedulePoll(currentPollDelay);
+    }
+
+    /**
+     * Schedules the one pending poll cycle after the given delay. A caller that replaces a pending
+     * timer cancels it first, so there is never more than one.
+     */
+    private void schedulePoll(long delayMs) {
         if (!running) {
             return;
         }
-        pollTimerId = vertx.setTimer(currentPollDelay, id -> {
+        passDue = delayMs <= IMMEDIATE_MS;
+        // raw timer: adaptive data-plane poll loop (next delay computed from prior claim result)
+        pollTimerId = vertx.setTimer(delayMs, id -> {
+            passDue = false;
             if (!running) {
                 return;
             }
@@ -477,39 +511,114 @@ public class DelayedJobPoller extends AbstractVerticle {
     /**
      * Executes one poll cycle: checks available capacity, claims eligible jobs from the
      * repository, dispatches each one, and reschedules the next cycle.
+     *
+     * <p>The next cycle is always scheduled, exactly once, however the claim ends: it comes after
+     * the interval (backed off on an empty claim) unless the claim filled the capacity it asked
+     * for and a slot is free, when it follows almost at once. With no free slot there is nothing to
+     * claim with, so the interval stays as the fallback and the next freed slot asks for the pass.
+     * A claim that throws synchronously or returns {@code null} instead of a future is a failed
+     * claim. An {@link Error} this method does not handle still propagates, after the next cycle
+     * has been scheduled.
      */
     private void poll() {
+        polling = true;
         int available = config.maxConcurrentJobs() - inFlight.get();
         if (available <= 0) {
             log.debug(
                     "DelayedJobPoller queue='{}': all {} slots in use, skipping poll",
                     queue,
                     config.maxConcurrentJobs());
+            polling = false;
+            saturated = true;
             schedulePoll();
             return;
         }
 
-        repository
-                .claimNextJob(queue, available)
-                .onSuccess(jobs -> {
-                    if (jobs.isEmpty()) {
-                        // Back off: double delay up to 4x base, capped at 60 seconds
-                        currentPollDelay = Math.min(currentPollDelay * 2, Math.min(config.sleepDelayMs() * 4, 60_000L));
-                    } else {
-                        // Reset to base delay when jobs are found
-                        currentPollDelay = config.sleepDelayMs();
-                        log.debug("DelayedJobPoller queue='{}': claimed {} job(s)", queue, jobs.size());
-                    }
-                    for (JobExecution job : jobs) {
-                        inFlight.incrementAndGet();
-                        dispatch(job);
-                    }
-                    schedulePoll();
-                })
-                .onFailure(err -> {
-                    log.warn("DelayedJobPoller queue='{}': failed to claim jobs: {}", queue, err.getMessage(), err);
-                    schedulePoll();
-                });
+        Future<List<JobExecution>> claimed;
+        try {
+            claimed = Objects.requireNonNull(
+                    repository.claimNextJob(queue, available),
+                    "JobRepository.claimNextJob() returned null instead of a future");
+        } catch (Exception | LinkageError | AssertionError e) {
+            claimed = Future.failedFuture(e);
+        } catch (Throwable t) {
+            polling = false;
+            schedulePoll();
+            throw t;
+        }
+
+        claimed.onComplete(ar -> {
+            boolean full = false;
+            try {
+                if (ar.succeeded()) {
+                    List<JobExecution> jobs = ar.result() != null ? ar.result() : List.of();
+                    full = jobs.size() >= available;
+                    dispatchClaimed(jobs);
+                } else {
+                    log.warn(
+                            "DelayedJobPoller queue='{}': failed to claim jobs: {}",
+                            queue,
+                            ar.cause().getMessage(),
+                            ar.cause());
+                }
+            } finally {
+                polling = false;
+                saturated = full;
+                schedulePoll(full && inFlight.get() < config.maxConcurrentJobs() ? IMMEDIATE_MS : currentPollDelay);
+            }
+        });
+    }
+
+    /**
+     * Adapts the poll delay to the size of a claim and dispatches each claimed job. An empty claim
+     * doubles the delay up to its cap; a non-empty one resets it.
+     *
+     * @param jobs the claimed executions; may be empty
+     */
+    private void dispatchClaimed(List<JobExecution> jobs) {
+        if (jobs.isEmpty()) {
+            // Back off: double delay up to 4x base, capped at 60 seconds
+            currentPollDelay = delayAfterEmptyClaim(currentPollDelay, config.sleepDelayMs());
+            return;
+        }
+        // Reset to base delay when jobs are found
+        currentPollDelay = config.sleepDelayMs();
+        log.debug("DelayedJobPoller queue='{}': claimed {} job(s)", queue, jobs.size());
+        for (JobExecution job : jobs) {
+            inFlight.incrementAndGet();
+            dispatch(job);
+        }
+    }
+
+    /**
+     * The poll delay after an empty claim: doubled, up to four times the base interval and never
+     * over 60 seconds.
+     *
+     * @param currentMs the delay the empty claim was made at
+     * @param baseMs    the configured {@link DelayedJobQueueConfig#sleepDelayMs()}
+     * @return the delay before the next claim
+     */
+    static long delayAfterEmptyClaim(long currentMs, long baseMs) {
+        return Math.min(currentMs * 2, Math.min(baseMs * 4, 60_000L));
+    }
+
+    /**
+     * Gives one in-flight slot back. When the last cycle found more work than it could take, the
+     * freed slot asks for a pass at once instead of leaving the queue to wait out the interval;
+     * repeated releases coalesce into the one pending pass, and a release during a claim leaves the
+     * claim's own completion to look at the free capacity.
+     */
+    private void releaseSlot() {
+        inFlight.decrementAndGet();
+        if (!saturated || polling || passDue || !running) {
+            return;
+        }
+        try {
+            vertx.cancelTimer(pollTimerId);
+            schedulePoll(IMMEDIATE_MS);
+        } catch (RuntimeException e) {
+            log.debug("DelayedJobPoller queue='{}': no pass could be scheduled", queue, e);
+        }
     }
 
     // --- Dispatch ---
@@ -700,7 +809,7 @@ public class DelayedJobPoller extends AbstractVerticle {
                                                 err.getMessage()));
                             }
                         } finally {
-                            inFlight.decrementAndGet();
+                            releaseSlot();
                             // Both timeout outcomes above (abandon-and-retry, dead-letter) end this
                             // execution, so the single drain in this finally covers both. drain(),
                             // not flush(): the progress tick is cancelled above, so a claim that
@@ -778,7 +887,7 @@ public class DelayedJobPoller extends AbstractVerticle {
                     }
                 }
             } finally {
-                inFlight.decrementAndGet();
+                releaseSlot();
                 // The handler has reported, so nothing more will be appended: this drains whatever
                 // the periodic tick had not yet claimed. drain(), not flush() — the tick timer is
                 // cancelled above, so a claim that came back empty because a tick write was still

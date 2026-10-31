@@ -72,6 +72,13 @@ Backoff is configured **per queue**, not per job:
 more instances is always safe, and higher `priority` is claimed first. There is **no** per-job
 ordering guarantee: two jobs enqueued in order may run concurrently or out of order.
 
+**Draining a backlog.** When a claim returns as many jobs as the poller had free slots, it claims
+again almost at once. When every slot is busy it claims nothing and waits; the next slot to free asks
+for the pass instead of leaving the queue to wait out `sleepDelayMs`. A queue that last came back
+short or empty keeps the interval pacing and its backoff, so an idle queue costs what it did before.
+A poller has one claim in flight at a time, so throughput per poller is bounded by `maxConcurrentJobs`
+and handler latency, not by `sleepDelayMs`.
+
 **What a handler receives.** Handlers run as ordinary service operations, so `JobContext` and
 `JobDispatchContext` from `dev.vertique:vertique-job-core` are injected simply by declaring them as
 parameters; cancellation, progress and structured logging all go through `JobContext`.
@@ -308,7 +315,7 @@ annotation-based handler resolves to the framework defaults (`"default"` queue, 
 
 | Field | Default | Description |
 |---|---|---|
-| `sleepDelayMs` | `5000` | Base interval between poll cycles. While a queue yields nothing the poller backs off — doubling up to 4× this value, capped at 60 s — and resets to the base as soon as work is found |
+| `sleepDelayMs` | `5000` | Base interval between poll cycles. While a queue yields nothing the poller backs off — doubling up to 4× this value, capped at 60 s — and resets to the base as soon as work is found. A claim that fills every free slot is followed by another almost at once, so a backlog drains at the speed of the handlers rather than one claim per interval; a claim that comes back short keeps this interval |
 | `maxConcurrentJobs` | `5` | Maximum in-flight dispatches per poller instance |
 | `backoffStrategy` | `"LINEAR"` | `FIXED`, `LINEAR` or `EXPONENTIAL`, case-insensitive |
 | `backoffBaseDelayMs` | `30000` | Base retry delay |
