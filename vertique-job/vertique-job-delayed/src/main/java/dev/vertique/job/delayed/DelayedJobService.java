@@ -22,6 +22,7 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -98,6 +99,12 @@ public class DelayedJobService {
     private final DelayedJobExceptionMapper exceptionMapper;
 
     /**
+     * The scope every enqueue is stored in, or {@code null} to store each job's own
+     * {@link DelayedJob#scopeKey()}. Set only on the instance returned by {@link #scopedTo(String)}.
+     */
+    private final String boundScopeKey;
+
+    /**
      * Creates a new delayed job service.
      *
      * @param repository      the job repository for standalone enqueueing
@@ -121,6 +128,34 @@ public class DelayedJobService {
         this.handlerAddresses = registrar.handlerAddresses();
         this.propagator = propagator;
         this.exceptionMapper = exceptionMapper;
+        this.boundScopeKey = null;
+    }
+
+    /** Creates the scoped view of {@code base}: the same dependencies and handler addresses, one bound scope. */
+    private DelayedJobService(DelayedJobService base, String boundScopeKey) {
+        this.repository = base.repository;
+        this.pgRepository = base.pgRepository;
+        this.handlerAddresses = base.handlerAddresses;
+        this.propagator = base.propagator;
+        this.exceptionMapper = base.exceptionMapper;
+        this.boundScopeKey = boundScopeKey;
+    }
+
+    /**
+     * INTERNAL framework seam — not an application contract and outside the maturity promise.
+     *
+     * <p>Returns a service that shares every dependency of this one and stores every job it enqueues in
+     * {@code scopeKey}, in place of {@link DelayedJob#scopeKey()}. Used by {@link DelayedJobClientFactory}
+     * to give a typed client its scope.
+     *
+     * @param scopeKey the scope every enqueue is stored in
+     * @return the scoped service
+     * @throws NullPointerException     if {@code scopeKey} is {@code null}
+     * @throws IllegalArgumentException if {@code scopeKey} is not a valid {@link ScopeKey}
+     */
+    DelayedJobService scopedTo(String scopeKey) {
+        Objects.requireNonNull(scopeKey, "scopeKey");
+        return new DelayedJobService(this, new ScopeKey(scopeKey).value());
     }
 
     /**
@@ -465,6 +500,6 @@ public class DelayedJobService {
                 Map.of(), // parameters
                 Map.of(), // attributes
                 metadata,
-                job.scopeKey());
+                boundScopeKey != null ? boundScopeKey : job.scopeKey());
     }
 }

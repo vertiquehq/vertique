@@ -143,7 +143,9 @@ Lombok `@Builder` value object. Only `handler` is required.
 | `metadata` | empty `DurableMetadata` | Durable propagation context; normally left alone |
 | `scopeKey` | `"default"` | Scope label stored with the execution; validated as a core `ScopeKey` at enqueue |
 
-`scopeKey` is selected here, per job. Leaving it out stores `default`. A `null`, blank, over-long (more
+`scopeKey` is selected here only when you build the `DelayedJob` yourself; a typed contract client
+selects it once for all its enqueues (see [DelayedJobClientFactory](#delayedjobclientfactory)).
+Leaving it out stores `default`. A `null`, blank, over-long (more
 than 255 code points) or control- or format-character key fails the enqueue with an
 `IllegalArgumentException` in a failed future, before any write, and the message does not repeat the
 key. This holds for `enqueue` and `enqueuePremerged`, with or without a `SqlClient`. The ambient
@@ -288,6 +290,26 @@ job.enqueue(payload, DelayedJobOptions.builder()
 Creates the client proxy for a contract interface via `create(Class<T>)`, rejecting a non-interface
 or an interface without `@DelayedJobContract` with `IllegalArgumentException`. See
 [Registering a typed job](#registering-a-typed-job) for the binding.
+
+**Selecting a scope.** `client(Class<T>)` returns a `DelayedJobClientBuilder<T>`; its `scope(String)`
+stores every enqueue from the built client in that scope, and `create()` builds the client.
+
+```java
+DeliverWebhookJob acme = factory.client(DeliverWebhookJob.class).scope("acme").create();
+acme.enqueue(payload);   // stored in scope "acme"
+```
+
+- Every overload of the client stores the scope, including enqueue inside a transaction and with
+  `DelayedJobOptions`. The scope replaces any `DelayedJob.scopeKey` and is applied by the service
+  that the client enqueues through.
+- `scope` throws `NullPointerException` for `null` and `IllegalArgumentException` for a blank,
+  over-long (more than 255 code points) or control- or format-character key, when it is called. The
+  message does not repeat the key.
+- `client(C.class).create()` without `scope`, and `create(C.class)`, store `default`.
+- A generated `{Contract}_DelayedJobProxy` needs no regeneration: the scope travels in the service
+  the proxy is given, not in a constructor argument or a `DelayedJobOptions` field.
+- **One client per scope.** A client has one scope for its lifetime. An application that serves several
+  scopes creates a client for each, for example from a small map keyed by scope.
 
 When `dev.vertique:vertique-codegen-delayed-job` has generated a static
 `{Contract}_DelayedJobProxy`, the factory uses it; otherwise it falls back to an equivalent
