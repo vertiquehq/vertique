@@ -15,7 +15,7 @@ import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** Unit tests for the header copy {@link OutboxEnvelope} takes at construction. */
+/** Unit tests for the header copy and the default scope {@link OutboxEnvelope} takes at construction. */
 @DisplayName("OutboxEnvelope")
 class OutboxEnvelopeTest {
 
@@ -62,6 +62,12 @@ class OutboxEnvelopeTest {
     @DisplayName("a null map is an empty map")
     void nullMapIsEmpty() {
         assertTrue(envelopeWith(null).headers().isEmpty());
+    }
+
+    @Test
+    @DisplayName("an envelope built without a scope reports the default scope")
+    void previousArityYieldsDefault() {
+        assertEquals("default", envelopeWith(Map.of()).scopeKey());
     }
 
     private static OutboxEnvelope envelopeWith(Map<String, String> headers) {

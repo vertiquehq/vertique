@@ -3,6 +3,7 @@
 
 package dev.vertique.inboxoutbox.services;
 
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxEntry;
 import dev.vertique.inboxoutbox.OutboxService;
@@ -19,6 +20,7 @@ import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Creates transaction-scoped JDK proxy clients for service contract interfaces that write to
@@ -82,7 +84,7 @@ public class TransactionalServiceClientFactory {
 
     /**
      * Creates a typed proxy for the given service contract that writes outbox entries for each
-     * method invocation within the supplied transaction.
+     * method invocation within the supplied transaction, in the default scope.
      *
      * <p>All non-{@link Object} methods on the contract are validated at proxy-creation time.
      * Every method must carry {@link ServiceOperation}; methods without the annotation cause an
@@ -96,8 +98,33 @@ public class TransactionalServiceClientFactory {
      * @throws IllegalArgumentException if any method is missing {@link ServiceOperation} or
      *                                  violates the outbox contract constraints
      */
-    @SuppressWarnings("unchecked")
     public <T> T create(Class<T> contract, SqlClient tx) {
+        return create(contract, ScopeKey.DEFAULT.value(), tx);
+    }
+
+    /**
+     * Creates a typed proxy as {@link #create(Class, SqlClient)} does, with every entry the proxy
+     * writes in the given scope.
+     *
+     * <p>The scope is a label stored with each entry and read at delivery through
+     * {@link dev.vertique.inboxoutbox.TransactionalMessageContext#scopeKey()}. It does not select the
+     * ambient {@code ScopeContext} and is not an authorization check.
+     *
+     * @param <T>      the contract type
+     * @param contract the contract interface class; every non-{@link Object} method must be
+     *                 annotated with {@link ServiceOperation}
+     * @param scopeKey the scope of every entry the proxy writes; validated as a {@link ScopeKey}
+     * @param tx       the open database transaction to use when persisting outbox entries
+     * @return a proxy that records each method invocation as an outbox entry within {@code tx}
+     * @throws NullPointerException     if {@code scopeKey} is {@code null}
+     * @throws IllegalArgumentException if {@code scopeKey} is not a valid {@link ScopeKey}, or any
+     *                                  method is missing {@link ServiceOperation} or violates the
+     *                                  outbox contract constraints
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T create(Class<T> contract, String scopeKey, SqlClient tx) {
+        Objects.requireNonNull(scopeKey, "scopeKey");
+        String validatedScope = new ScopeKey(scopeKey).value();
         Map<Method, PrecomputedTarget> targets = validateAndPrecompute(contract);
 
         return (T)
@@ -120,6 +147,7 @@ public class TransactionalServiceClientFactory {
                             .destination(target.targetId())
                             .eventType(target.operationId())
                             .payload(payload)
+                            .scopeKey(validatedScope)
                             .build();
                     return outboxService.publish(tx, entry).mapEmpty();
                 });

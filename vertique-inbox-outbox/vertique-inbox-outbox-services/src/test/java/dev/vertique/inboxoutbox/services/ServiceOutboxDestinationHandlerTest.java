@@ -141,6 +141,22 @@ class ServiceOutboxDestinationHandlerTest {
                 Instant.now());
     }
 
+    private OutboxEnvelope makeEnvelopeInScope(String scopeKey) {
+        return new OutboxEnvelope(
+                42L,
+                "Order",
+                "order-123",
+                "order.placed",
+                "test.target",
+                new JsonObject().put("key", "value"),
+                Map.of("x-custom", "header-val"),
+                OutboxMetadata.empty(),
+                null,
+                0,
+                Instant.now(),
+                scopeKey);
+    }
+
     // --- destinationType ---
 
     @Test
@@ -318,6 +334,27 @@ class ServiceOutboxDestinationHandlerTest {
             assertEquals("outbox-relay", deferredOrigin.kind());
             assertEquals("outbox-relay", deferredOrigin.reference(), "blank eventType must fall back to the kind");
         }
+    }
+
+    // --- scope ---
+
+    @Test
+    @DisplayName("the target reads the row scope through TransactionalMessageContext")
+    void targetReadsRowScope() {
+        ResolvedServiceTarget target = makeTarget(false);
+        when(resolver.resolve("test.target")).thenReturn(target);
+        ArgumentCaptor<DispatchEnvelope<?>> bodyCaptor = forClass(DispatchEnvelope.class);
+        when(sender.send(eq(target), bodyCaptor.capture())).thenReturn(Future.succeededFuture(Result.success(null)));
+
+        handler.publish(makeEnvelopeInScope("acme")).result();
+
+        Object ctx =
+                bodyCaptor.getValue().metadata().dispatchContext().get(TransactionalMessageContext.class.getName());
+        assertEquals(
+                "acme", assertInstanceOf(TransactionalMessageContext.class, ctx).scopeKey());
+        assertEquals("default", new TransactionalMessageContext(1L, "order.placed", null, null, Map.of()).scopeKey());
+        assertEquals(
+                "default", new TransactionalMessageContext(1L, "order.placed", null, null, Map.of(), null).scopeKey());
     }
 
     // --- F3b: per-row carrier reproduction ---

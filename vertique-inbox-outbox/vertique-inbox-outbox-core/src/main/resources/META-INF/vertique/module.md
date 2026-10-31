@@ -190,6 +190,9 @@ Immutable record passed to `OutboxDestinationHandler.publish()` at relay time.
 | `destination` / `payload` / `scheduledAt` / `attempt` / `createdAt` | Delivery fields from the row |
 | `headers` | Application/transport headers only (`OutboxEntry.headers`) — no framework keys; an unmodifiable copy — see [Header model](#header-model) |
 | `metadata` | `OutboxMetadata`: durable propagation context (`context`) plus delivery control (`delivery.outbox`: `OutboxRelayControl`, relay control projected from the row columns; `delivery.delayedJob`: scheduling) |
+| `scopeKey` | Scope label read from the row; never `null` — a `null` component reads `default`. The relay does not bind it as the ambient `ScopeContext`. See [Scope](#scope) |
+
+The envelope is the canonical 12-component form with `scopeKey` last; a public 11-argument constructor without it remains and reads `default`.
 
 Framework relay control (`x-message-id`, `eventType`, `aggregate*`) is **not** merged into `headers`; it lives in `metadata.delivery.outbox`. Durable context lives in `metadata.context`, not headers.
 
@@ -291,6 +294,14 @@ The relay constructs this record from the registered `OutboxDestinationHandler` 
 ### `TransactionalMessageContext`
 
 Publish-side access to the application/transport headers for an outbound message (application-only). Framework durable context (correlation, trace, locale, …) is NOT carried here — it is captured from the ambient bound context into `OutboxMetadata.context` at publish. Outbox relay fields (message id, `eventType`, aggregate ids) are delivery control surfaced at relay time via `metadata.delivery.outbox`, not via this context.
+
+| Field | Description |
+|-------|-------------|
+| `messageId` / `eventType` / `aggregateType` / `aggregateId` | Row columns of the originating entry |
+| `headers` | Application/transport headers, an unmodifiable copy |
+| `scopeKey` | Scope label read from the row; never `null` — a `null` component reads `default`. Independent of the ambient `ScopeContext`. See [Scope](#scope) |
+
+The record is the canonical six-component form with `scopeKey` last; a public five-argument constructor without it remains and reads `default`.
 
 ### Exceptions
 

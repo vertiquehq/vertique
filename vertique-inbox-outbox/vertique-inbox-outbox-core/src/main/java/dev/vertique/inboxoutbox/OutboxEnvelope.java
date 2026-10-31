@@ -3,6 +3,8 @@
 
 package dev.vertique.inboxoutbox;
 
+import dev.vertique.core.scope.ScopeKey;
+import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.Map;
 
@@ -36,6 +38,10 @@ import java.util.Map;
  * @param scheduledAt   optional intended delivery time specified by the producer
  * @param attempt       zero-based delivery attempt counter (0 = first attempt)
  * @param createdAt     time at which the originating outbox entry was inserted
+ * @param scopeKey      the scope the originating entry was published in, a partition label read from
+ *                      the stored row; {@code null} is read as {@link ScopeKey#DEFAULT}, so the
+ *                      accessor never returns {@code null}. It is a label, not authorization, and
+ *                      the relay does not bind it as the ambient scope
  */
 public record OutboxEnvelope(
         long entryId,
@@ -48,15 +54,64 @@ public record OutboxEnvelope(
         OutboxMetadata metadata,
         Instant scheduledAt,
         int attempt,
-        Instant createdAt) {
+        Instant createdAt,
+        @Nullable String scopeKey) {
+
+    /**
+     * Creates an envelope in the default scope.
+     *
+     * <p>This is the constructor shape that predates {@code scopeKey}; it passes {@code null}, which
+     * the canonical constructor reads as {@link ScopeKey#DEFAULT}.
+     *
+     * @param entryId       surrogate primary key of the originating outbox entry
+     * @param aggregateType optional domain aggregate type that produced the event
+     * @param aggregateId   optional identifier of the specific aggregate instance
+     * @param eventType     logical event type name
+     * @param destination   specific destination address within the destination type
+     * @param payload       raw payload read from JSONB storage
+     * @param headers       application/transport headers; {@code null} means none
+     * @param metadata      structured metadata document
+     * @param scheduledAt   optional intended delivery time specified by the producer
+     * @param attempt       zero-based delivery attempt counter
+     * @param createdAt     time at which the originating outbox entry was inserted
+     */
+    public OutboxEnvelope(
+            long entryId,
+            String aggregateType,
+            String aggregateId,
+            String eventType,
+            String destination,
+            Object payload,
+            Map<String, String> headers,
+            OutboxMetadata metadata,
+            Instant scheduledAt,
+            int attempt,
+            Instant createdAt) {
+        this(
+                entryId,
+                aggregateType,
+                aggregateId,
+                eventType,
+                destination,
+                payload,
+                headers,
+                metadata,
+                scheduledAt,
+                attempt,
+                createdAt,
+                null);
+    }
 
     /**
      * Takes an unmodifiable copy of {@code headers}, so a later change to the given map does not
-     * reach the envelope and the map {@link #headers()} returns rejects mutation.
+     * reach the envelope and the map {@link #headers()} returns rejects mutation, and maps a
+     * {@code null} {@code scopeKey} to {@link ScopeKey#DEFAULT}.
      *
-     * @param headers the application headers; may be {@code null} (treated as empty)
+     * @param headers  the application headers; may be {@code null} (treated as empty)
+     * @param scopeKey the scope label; may be {@code null} (treated as the default scope)
      */
     public OutboxEnvelope {
         headers = OutboxEntry.unmodifiableCopy(headers);
+        scopeKey = scopeKey != null ? scopeKey : ScopeKey.DEFAULT.value();
     }
 }

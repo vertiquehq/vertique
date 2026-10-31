@@ -44,6 +44,7 @@ import dev.vertique.inboxoutbox.OutboxPublishResult;
 import dev.vertique.inboxoutbox.OutboxRelayConfig;
 import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.RelayStrategy;
+import dev.vertique.inboxoutbox.TransactionalMessageContext;
 import dev.vertique.inboxoutbox.services.ServiceOutboxDestinationHandler;
 import dev.vertique.inboxoutbox.services.TransactionalMessagingServiceModule;
 import dev.vertique.resilience.ResolvedResiliencePolicy;
@@ -81,7 +82,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -117,16 +120,24 @@ public class DurableScopeOutboxRelayIT {
         ScopeContext receiverPrevious;
         Optional<ScopeContext> installed = Optional.empty();
         Map<String, Object> receivedMap = Map.of();
+        String messageScope;
         ContextHolder.Scope previousBinding;
         Promise<ReceiverReceipt> closedReceiver;
+        final List<ReceiverReceipt> receipts = new CopyOnWriteArrayList<>();
+        int expectedReceipts = 1;
+        Promise<List<ReceiverReceipt>> allReceived;
 
         void reset() {
             failing = false;
             receiverPrevious = null;
             installed = Optional.empty();
             receivedMap = Map.of();
+            messageScope = null;
             previousBinding = null;
             closedReceiver = Promise.promise();
+            receipts.clear();
+            expectedReceipts = 1;
+            allReceived = Promise.promise();
         }
     }
 
@@ -135,7 +146,8 @@ public class DurableScopeOutboxRelayIT {
             Optional<ScopeContext> after,
             boolean emptyAfterFixtureClose,
             boolean scopeEntryPresent,
-            boolean failed) {}
+            boolean failed,
+            String messageScope) {}
 
     record RelayReceipt(OutboxPublishCompletedEvent event, JsonObject context, ReceiverReceipt receiver) {}
 
@@ -151,8 +163,9 @@ public class DurableScopeOutboxRelayIT {
         }
 
         /** Reads installed scope before completing asynchronously on the receiving duplicate. */
-        public Future<String> receive(String payload) {
+        public Future<String> receive(String payload, TransactionalMessageContext message) {
             probe.installed = holder.current(ScopeContext.class);
+            probe.messageScope = message.scopeKey();
             Promise<String> completion = Promise.promise();
             Vertx.currentContext().runOnContext(ignored -> {
                 if (probe.failing) {
@@ -179,7 +192,8 @@ public class DurableScopeOutboxRelayIT {
             try {
                 return ServiceMethodMeta.ofDirect(
                         receiver,
-                        ServiceMethodDescriptor.of(Receiver.class.getMethod("receive", String.class)),
+                        ServiceMethodDescriptor.of(
+                                Receiver.class.getMethod("receive", String.class, TransactionalMessageContext.class)),
                         ADDRESS,
                         TARGET,
                         "test",
@@ -187,7 +201,13 @@ public class DurableScopeOutboxRelayIT {
                         "receive",
                         String.class,
                         String.class,
-                        List.of(new ParamMeta("payload", ParamSource.PAYLOAD, String.class)),
+                        List.of(
+                                new ParamMeta("payload", ParamSource.PAYLOAD, String.class),
+                                new ParamMeta(
+                                        "message",
+                                        ParamSource.DISPATCH_CONTEXT,
+                                        TransactionalMessageContext.class,
+                                        TransactionalMessageContext.class.getName())),
                         ResilienceAnnotations.NONE,
                         List.of(),
                         List.of(),
@@ -247,14 +267,21 @@ public class DurableScopeOutboxRelayIT {
                             if (probe.previousBinding != null) {
                                 probe.previousBinding.close();
                             }
-                            probe.closedReceiver.tryComplete(new ReceiverReceipt(
+                            ReceiverReceipt receipt = new ReceiverReceipt(
                                     probe.installed,
                                     after,
                                     holder.current(ScopeContext.class).isEmpty(),
                                     probe.receivedMap.containsKey(ScopeContext.class.getName()),
-                                    result.isFailure()));
+                                    result.isFailure(),
+                                    probe.messageScope);
+                            probe.closedReceiver.tryComplete(receipt);
+                            probe.receipts.add(receipt);
+                            if (probe.receipts.size() >= probe.expectedReceipts) {
+                                probe.allReceived.tryComplete(List.copyOf(probe.receipts));
+                            }
                         } catch (Throwable failure) {
                             probe.closedReceiver.tryFail(failure);
+                            probe.allReceived.tryFail(failure);
                         } finally {
                             if (probe.previousBinding != null) {
                                 probe.previousBinding.close();
@@ -472,6 +499,27 @@ public class DurableScopeOutboxRelayIT {
                 })));
     }
 
+    @Test
+    @DisplayName("the target reads the row scope while the holder keeps the restored scope")
+    void rowScopeIsIndependentOfRestoredContext(VertxTestContext ctx) {
+        publish(ACME, entry())
+                .compose(first -> publish(ACME, entryIn("globex")).map(second -> List.of(first, second)))
+                .compose(this::relayAll)
+                .onComplete(ctx.succeeding(receipts -> ctx.verify(() -> {
+                    assertEquals(
+                            List.of("default", "globex"),
+                            receipts.stream()
+                                    .map(receipt -> receipt.messageScope())
+                                    .toList());
+                    assertEquals(
+                            List.of(Optional.of(ACME), Optional.of(ACME)),
+                            receipts.stream()
+                                    .map(receipt -> receipt.installed())
+                                    .toList());
+                    ctx.completeNow();
+                })));
+    }
+
     private static OutboxEntry entry() {
         return OutboxEntry.builder()
                 .destinationType(DestinationType.SERVICE)
@@ -482,12 +530,27 @@ public class DurableScopeOutboxRelayIT {
                 .build();
     }
 
+    private static OutboxEntry entryIn(String scopeKey) {
+        return OutboxEntry.builder()
+                .destinationType(DestinationType.SERVICE)
+                .destination(TARGET)
+                .eventType("scope.receipt")
+                .payload("payload")
+                .maxAttempts(1)
+                .scopeKey(scopeKey)
+                .build();
+    }
+
     private static Future<Long> publish(ScopeContext senderScope) {
+        return publish(senderScope, entry());
+    }
+
+    private static Future<Long> publish(ScopeContext senderScope, OutboxEntry entry) {
         return onFreshDuplicate(() -> {
             ContextHolder.Scope sender =
                     senderScope == null ? () -> {} : graph.holder().bind(ScopeContext.class, senderScope);
             try {
-                return pool.withTransaction(tx -> graph.producer().publish(tx, entry()))
+                return pool.withTransaction(tx -> graph.producer().publish(tx, entry))
                         .eventually(() -> {
                             sender.close();
                             return Future.succeededFuture();
@@ -513,6 +576,54 @@ public class DurableScopeOutboxRelayIT {
 
     private Future<RelayReceipt> relay(Long id) {
         Promise<RelayReceipt> completed = Promise.promise();
+        OutboxPublishObserver observer = new OutboxPublishObserver() {
+            @Override
+            public void onPublishCompleted(OutboxPublishCompletedEvent event, OutboxEnvelope envelope) {
+                if (id.toString().equals(event.entryId())) {
+                    JsonObject context = envelope.metadata().context().toJson();
+                    probe.closedReceiver.future().onComplete(receiver -> {
+                        if (receiver.succeeded()) {
+                            completed.tryComplete(new RelayReceipt(event, context, receiver.result()));
+                        } else {
+                            completed.tryFail(receiver.cause());
+                        }
+                    });
+                }
+            }
+        };
+        return deployRelay(observer).compose(deployment -> {
+            relayDeployment = deployment;
+            return completed.future().eventually(() -> {
+                relayDeployment = null;
+                return vertx.undeploy(deployment);
+            });
+        });
+    }
+
+    /** Delivers every given entry through one relay, in claim order, and returns the receiver receipts. */
+    private Future<List<ReceiverReceipt>> relayAll(List<Long> ids) {
+        probe.expectedReceipts = ids.size();
+        Promise<List<ReceiverReceipt>> completed = Promise.promise();
+        AtomicInteger notified = new AtomicInteger();
+        OutboxPublishObserver observer = new OutboxPublishObserver() {
+            @Override
+            public void onPublishCompleted(OutboxPublishCompletedEvent event, OutboxEnvelope envelope) {
+                if (ids.stream().anyMatch(id -> id.toString().equals(event.entryId()))
+                        && notified.incrementAndGet() == ids.size()) {
+                    probe.allReceived.future().onComplete(completed);
+                }
+            }
+        };
+        return deployRelay(observer).compose(deployment -> {
+            relayDeployment = deployment;
+            return completed.future().eventually(() -> {
+                relayDeployment = null;
+                return vertx.undeploy(deployment);
+            });
+        });
+    }
+
+    private Future<String> deployRelay(OutboxPublishObserver observer) {
         OutboxDestinationHandler independentRelay = new OutboxDestinationHandler() {
             @Override
             public DestinationType destinationType() {
@@ -540,21 +651,6 @@ public class DurableScopeOutboxRelayIT {
                 });
             }
         };
-        OutboxPublishObserver observer = new OutboxPublishObserver() {
-            @Override
-            public void onPublishCompleted(OutboxPublishCompletedEvent event, OutboxEnvelope envelope) {
-                if (id.toString().equals(event.entryId())) {
-                    JsonObject context = envelope.metadata().context().toJson();
-                    probe.closedReceiver.future().onComplete(receiver -> {
-                        if (receiver.succeeded()) {
-                            completed.tryComplete(new RelayReceipt(event, context, receiver.result()));
-                        } else {
-                            completed.tryFail(receiver.cause());
-                        }
-                    });
-                }
-            }
-        };
         Map<DestinationType, OutboxDestinationHandler> handlers = OutboxRelay.buildHandlerMap(Set.of(independentRelay));
         OutboxRelayConfig config = OutboxRelayConfig.builder()
                 .pollingIntervalMs(10L)
@@ -569,13 +665,7 @@ public class DurableScopeOutboxRelayIT {
                 connectOptions,
                 "scope-relay",
                 List.of(observer));
-        return vertx.deployVerticle(relay).compose(deployment -> {
-            relayDeployment = deployment;
-            return completed.future().eventually(() -> {
-                relayDeployment = null;
-                return vertx.undeploy(deployment);
-            });
-        });
+        return vertx.deployVerticle(relay);
     }
 
     private static ScopeContext scope(String key) {

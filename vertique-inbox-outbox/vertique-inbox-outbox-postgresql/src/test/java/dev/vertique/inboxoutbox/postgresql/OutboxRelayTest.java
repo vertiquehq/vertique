@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -23,6 +24,8 @@ import dev.vertique.inboxoutbox.OutboxDestinationHandler;
 import dev.vertique.inboxoutbox.OutboxEntryState;
 import dev.vertique.inboxoutbox.OutboxEnvelope;
 import dev.vertique.inboxoutbox.OutboxMetadata;
+import dev.vertique.inboxoutbox.OutboxPublishCompletedEvent;
+import dev.vertique.inboxoutbox.OutboxPublishObserver;
 import dev.vertique.inboxoutbox.OutboxPublishResult;
 import dev.vertique.inboxoutbox.OutboxRecord;
 import dev.vertique.inboxoutbox.OutboxRelayConfig;
@@ -31,12 +34,16 @@ import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.RelayCapabilities;
 import dev.vertique.inboxoutbox.RelayStrategy;
 import io.vertx.core.Future;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -108,6 +115,94 @@ class OutboxRelayTest {
                 null,
                 Instant.now(),
                 Instant.now());
+    }
+
+    private OutboxRecord recordInScope(long id, String scopeKey) {
+        return new OutboxRecord(
+                id,
+                UUID.randomUUID(),
+                "Order",
+                "order-99",
+                "order.placed",
+                "my-service",
+                DestinationType.SERVICE,
+                new JsonObject().put("orderId", "99"),
+                Map.of(),
+                OutboxMetadata.empty(),
+                null,
+                Instant.now(),
+                OutboxEntryState.PROCESSING,
+                0,
+                3,
+                Instant.now(),
+                "test-node",
+                null,
+                null,
+                null,
+                Instant.now(),
+                Instant.now(),
+                scopeKey);
+    }
+
+    // --- delivery tests ---
+
+    @Test
+    @DisplayName("the handler and the publish observer receive an envelope reporting the row scope")
+    void envelopeCarriesRowScope() throws Exception {
+        CompletableFuture<OutboxEnvelope> handled = new CompletableFuture<>();
+        CompletableFuture<OutboxEnvelope> observed = new CompletableFuture<>();
+        OutboxDestinationHandler handler = new OutboxDestinationHandler() {
+            @Override
+            public DestinationType destinationType() {
+                return DestinationType.SERVICE;
+            }
+
+            @Override
+            public ClaimScope claimScope() {
+                return ClaimScope.all();
+            }
+
+            @Override
+            public Future<OutboxPublishResult> publish(OutboxEnvelope envelope) {
+                handled.complete(envelope);
+                return Future.succeededFuture(OutboxPublishResult.success());
+            }
+        };
+        OutboxPublishObserver observer = new OutboxPublishObserver() {
+            @Override
+            public void onPublishCompleted(OutboxPublishCompletedEvent event, OutboxEnvelope envelope) {
+                observed.complete(envelope);
+            }
+        };
+        Map<DestinationType, OutboxDestinationHandler> handlers = Map.of(DestinationType.SERVICE, handler);
+        OutboxRelay scopedRelay = new OutboxRelay(
+                OutboxRelayConfig.builder()
+                        .pollingIntervalMs(20L)
+                        .batchSize(10)
+                        .strategy(RelayStrategy.POLLING)
+                        .build(),
+                outboxRepository,
+                handlers,
+                OutboxRelay.deriveCapabilities(handlers),
+                null,
+                "test-node",
+                List.of(observer));
+        when(outboxRepository.claimBatch(anyInt(), anyString(), any()))
+                .thenReturn(
+                        Future.succeededFuture(List.of(recordInScope(1L, "acme"))), Future.succeededFuture(List.of()));
+        when(outboxRepository.markPublished(1L, "test-node")).thenReturn(Future.succeededFuture(true));
+        Vertx vertx = Vertx.vertx();
+        try {
+            vertx.deployVerticle(scopedRelay)
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .get(10, TimeUnit.SECONDS);
+
+            assertEquals("acme", handled.get(10, TimeUnit.SECONDS).scopeKey());
+            assertEquals("acme", observed.get(10, TimeUnit.SECONDS).scopeKey());
+        } finally {
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
     }
 
     // --- handleResult tests ---
