@@ -266,6 +266,32 @@ class OutboxRelayPollPacingTest {
         }
 
         @Test
+        @DisplayName("a claim that settles on a foreign thread is still followed up on the relay's own context")
+        void claimSettledOffTheEventLoopStaysOnTheRelayContext() throws Exception {
+            Promise<List<OutboxRecord>> firstClaim = Promise.promise();
+            List<Context> claimContexts = Collections.synchronizedList(new ArrayList<>());
+            doAnswer(invocation -> {
+                        claimContexts.add(Vertx.currentContext());
+                        int number = claims.record(invocation.getArgument(0));
+                        return number == 1 ? firstClaim.future() : Future.succeededFuture(List.<OutboxRecord>of());
+                    })
+                    .when(outboxRepository)
+                    .claimBatch(anyInt(), anyString(), any());
+
+            ProbeRelay relay = deployRelay(2, 200L, envelope -> Future.succeededFuture(OutboxPublishResult.success()));
+            claims.await(1, 15_000L);
+
+            Thread foreign = new Thread(() -> firstClaim.complete(List.of()));
+            foreign.start();
+            foreign.join();
+
+            claims.await(3, 15_000L);
+            for (Context context : claimContexts) {
+                assertSame(relay.relayContext(), context, "a claim ran off the relay's context");
+            }
+        }
+
+        @Test
         @DisplayName("claims never overlap while a backlog drains")
         void claimsNeverOverlap() throws Exception {
             AtomicInteger inFlightClaims = new AtomicInteger();

@@ -39,6 +39,7 @@ import io.vertx.core.eventbus.DeliveryOptions;
 import io.vertx.junit5.VertxExtension;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -200,6 +201,79 @@ class DelayedJobPollerPacingTest {
         }
 
         @Test
+        @DisplayName("a claim that returns null instead of a future keeps polling at the interval")
+        void nullFutureKeepsPolling(Vertx vertx) {
+            claims.scriptNullFuture();
+
+            deploy(vertx, 4, 200L);
+
+            claims.await(2, 15_000L);
+            assertTrue(claims.gapMs(0, 1) >= 180L, "second claim came after " + claims.gapMs(0, 1) + " ms");
+        }
+
+        @Test
+        @DisplayName("a claim that completes with a null list is an empty claim and keeps polling")
+        void nullListKeepsPolling(Vertx vertx) {
+            claims.scriptNullList();
+
+            deploy(vertx, 4, 200L);
+
+            claims.await(3, 15_000L);
+            assertTrue(claims.gapMs(0, 1) >= 380L, "an empty claim backs off: " + claims.gapMs(0, 1) + " ms");
+        }
+
+        @Test
+        @DisplayName("a job that cannot be dispatched gives its slot back, and the full claim is followed at once")
+        void undispatchableJobReleasesItsSlot(Vertx vertx) {
+            // a blank handler address makes the dispatch throw before it registers anything
+            claims.script(List.of(executionFor(" ", "bad")), List.of());
+
+            deploy(vertx, 1, SLEEP_MS);
+
+            claims.await(2, 15_000L);
+            // capacity 1 again: the slot was not leaked, and the claim that filled it was followed at once
+            assertEquals(List.of(1, 1), claims.asked());
+            assertTrue(claims.gapMs(0, 1) < SLEEP_MS / 2, "second claim waited " + claims.gapMs(0, 1) + " ms");
+        }
+
+        @Test
+        @DisplayName("a slot freed during a claim lets a full claim be followed at once")
+        void slotFreedDuringAClaimIsSeenAtCompletion(Vertx vertx) throws Exception {
+            Promise<List<JobExecution>> secondClaim = Promise.promise();
+            doAnswer(invocation -> {
+                        int number = claims.record(invocation.getArgument(1));
+                        return switch (number) {
+                            case 1 -> Future.succeededFuture(List.of(execution("held")));
+                            case 2 -> secondClaim.future();
+                            default -> Future.succeededFuture(List.<JobExecution>of());
+                        };
+                    })
+                    .when(repository)
+                    .claimNextJob(anyString(), anyInt());
+
+            holdEveryDispatch(vertx);
+            deploy(vertx, 2, SLEEP_MS);
+
+            claims.await(1, 15_000L);
+            awaitHeld(1);
+            // one slot is in use and the queue is not saturated, so nothing asks for a pass before the interval;
+            // the second claim (asking for the one free slot) comes at the interval and stays outstanding
+            claims.await(2, 15_000L);
+            assertEquals(List.of(2, 1), claims.asked().subList(0, 2));
+
+            // the held job finishes while the claim is outstanding: its release must not overlap the claim
+            reply(vertx, held.get(0));
+            verify(completionHandler, timeout(5_000L)).handleCompletion(any(), any(), any());
+            Thread.sleep(300L);
+            assertEquals(2, claims.count());
+
+            // the claim fills the one slot it asked for; a slot is free now, so the next claim follows at once
+            secondClaim.complete(List.of(execution("second")));
+            claims.await(3, 15_000L);
+            assertTrue(claims.gapMs(1, 2) < SLEEP_MS / 2 + 300L + 500L, "third claim waited " + claims.gapMs(1, 2));
+        }
+
+        @Test
         @DisplayName("with no free slot nothing is claimed, and a freed slot asks for the pass")
         void freedSlotAsksForThePass(Vertx vertx) throws Exception {
             claims.script(List.of(execution("a"), execution("b")), List.of(execution("c")), List.of());
@@ -342,6 +416,8 @@ class DelayedJobPollerPacingTest {
     private static final class ClaimLog {
         private final List<Long> times = Collections.synchronizedList(new ArrayList<>());
         private final List<Integer> asked = Collections.synchronizedList(new ArrayList<>());
+        private static final Object NULL_FUTURE = new Object();
+        private static final Object NULL_LIST = new Object();
         private volatile List<Object> script = List.of(List.of());
 
         @SafeVarargs
@@ -351,6 +427,16 @@ class DelayedJobPollerPacingTest {
 
         void scriptFailure(Throwable failure) {
             script = List.of(failure);
+        }
+
+        /** The first claim returns {@code null} instead of a future, then the claims are empty. */
+        void scriptNullFuture() {
+            script = new ArrayList<>(Arrays.asList(NULL_FUTURE, List.of()));
+        }
+
+        /** The first claim completes with a {@code null} list, then the claims are empty. */
+        void scriptNullList() {
+            script = new ArrayList<>(Arrays.asList(NULL_LIST, List.of()));
         }
 
         void scriptThrow(RuntimeException failure) {
@@ -367,6 +453,12 @@ class DelayedJobPollerPacingTest {
         Future<List<JobExecution>> next(org.mockito.invocation.InvocationOnMock invocation) {
             int number = record(invocation.getArgument(1));
             Object step = script.get(Math.min(number, script.size()) - 1);
+            if (step == NULL_FUTURE) {
+                return null;
+            }
+            if (step == NULL_LIST) {
+                return Future.succeededFuture(null);
+            }
             if (step instanceof RuntimeException thrown) {
                 throw thrown;
             }
@@ -417,11 +509,15 @@ class DelayedJobPollerPacingTest {
     }
 
     private static JobExecution execution(String jobId) {
+        return executionFor(HANDLER, jobId);
+    }
+
+    private static JobExecution executionFor(String handler, String jobId) {
         return new JobExecution(
                 UUID.randomUUID(),
                 jobId,
                 JobType.DELAYED,
-                HANDLER,
+                handler,
                 "default",
                 JobState.PROCESSING,
                 0,

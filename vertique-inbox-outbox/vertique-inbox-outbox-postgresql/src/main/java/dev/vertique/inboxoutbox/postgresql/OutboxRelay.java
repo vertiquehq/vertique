@@ -381,7 +381,9 @@ public class OutboxRelay extends AbstractVerticle {
             throw t;
         }
 
-        claimed.onComplete(ar -> {
+        // A repository future can settle on any thread; the poll state and the next timer belong to the
+        // relay's own context.
+        claimed.onComplete(ar -> runOnRelayContext(() -> {
             boolean full = false;
             try {
                 if (ar.succeeded()) {
@@ -401,7 +403,7 @@ public class OutboxRelay extends AbstractVerticle {
                 boolean again = wakeRequested || (full && inFlight.get() < config.batchSize());
                 schedulePoll(again ? IMMEDIATE_MS : currentPollDelay);
             }
-        });
+        }));
     }
 
     /**

@@ -547,7 +547,9 @@ public class DelayedJobPoller extends AbstractVerticle {
             throw t;
         }
 
-        claimed.onComplete(ar -> {
+        // A repository future can settle on any thread; the poll state and the next timer belong to this
+        // verticle's own context.
+        claimed.onComplete(ar -> onVerticleContext(() -> {
             boolean full = false;
             try {
                 if (ar.succeeded()) {
@@ -566,7 +568,7 @@ public class DelayedJobPoller extends AbstractVerticle {
                 saturated = full;
                 schedulePoll(full && inFlight.get() < config.maxConcurrentJobs() ? IMMEDIATE_MS : currentPollDelay);
             }
-        });
+        }));
     }
 
     /**
@@ -586,7 +588,35 @@ public class DelayedJobPoller extends AbstractVerticle {
         log.debug("DelayedJobPoller queue='{}': claimed {} job(s)", queue, jobs.size());
         for (JobExecution job : jobs) {
             inFlight.incrementAndGet();
-            dispatch(job);
+            try {
+                dispatch(job);
+            } catch (Exception | LinkageError | AssertionError e) {
+                // dispatch failed before it registered the resources whose reply or timeout would release the
+                // slot: release it here, so a job that cannot be dispatched does not shrink the queue's capacity
+                // for good. The execution stays PROCESSING until the coordinator recovers it.
+                if (!activeExecutions.containsKey(job.id())) {
+                    releaseSlot();
+                }
+                log.warn(
+                        "DelayedJobPoller queue='{}': could not dispatch execution {}: {}",
+                        queue,
+                        job.id(),
+                        e.getMessage(),
+                        e);
+            }
+        }
+    }
+
+    /**
+     * Runs an action on this verticle's own context: directly when the caller is already on it,
+     * otherwise through {@link io.vertx.core.Context#runOnContext}.
+     */
+    private void onVerticleContext(Runnable action) {
+        io.vertx.core.Context verticleContext = context;
+        if (verticleContext == null || verticleContext == io.vertx.core.Vertx.currentContext()) {
+            action.run();
+        } else {
+            verticleContext.runOnContext(ignored -> action.run());
         }
     }
 
