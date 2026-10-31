@@ -20,7 +20,7 @@ PostgreSQL implementation of the `JobRepository` SPI defined in `job-core`. Pers
 
 ### `PgJobRepository`
 
-Extends `PgSqlRepository` and implements `JobRepository`. All SQL operations use the Vert.x reactive PostgreSQL client. JSONB columns (`payload`, `progress`, `parameters`) are serialized as Vert.x `JsonObject` instances, which the pg-client driver handles natively.
+Extends `PgSqlRepository` and implements `JobRepository`. All SQL operations use the Vert.x reactive PostgreSQL client. JSONB columns (`payload`, `progress`, `parameters`) are serialized as Vert.x `JsonObject` instances, which the pg-client driver handles natively. `save` and `tryInsert` fail their returned future with `IllegalArgumentException`, before any statement runs, for a payload that does not serialize to a JSON object, such as a `String`, a number, a `Boolean`, a `UUID`, or an array. The message names the payload type, never its value.
 
 Generates a stable `nodeId` from the hostname and a random 8-character suffix, used as the `locked_by` value during job claiming and as the server identity for heartbeats.
 

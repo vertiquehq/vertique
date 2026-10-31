@@ -31,6 +31,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -271,10 +272,10 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      */
     @Override
     public Future<UUID> save(JobExecution execution) {
-        return this.<UUID>query(sqlInsert)
-                .params(buildInsertTuple(execution))
+        return withInsertParams(execution, params -> this.<UUID>query(sqlInsert)
+                .params(params)
                 .mapping(row -> row.getUUID(COL_ID))
-                .returning();
+                .returning());
     }
 
     /**
@@ -286,11 +287,11 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      * @return a future of the saved execution ID
      */
     public Future<UUID> save(JobExecution execution, SqlClient client) {
-        return this.<UUID>query(sqlInsert)
+        return withInsertParams(execution, params -> this.<UUID>query(sqlInsert)
                 .on(client)
-                .params(buildInsertTuple(execution))
+                .params(params)
                 .mapping(row -> row.getUUID(COL_ID))
-                .returning();
+                .returning());
     }
 
     /**
@@ -511,10 +512,10 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      */
     @Override
     public Future<Optional<UUID>> tryInsert(JobExecution execution) {
-        return this.<UUID>query(sqlTryInsert)
-                .params(buildInsertTuple(execution))
+        return withInsertParams(execution, params -> this.<UUID>query(sqlTryInsert)
+                .params(params)
                 .mapping(row -> row.getUUID(JobExecutionMapper.COL_ID))
-                .returningOptional();
+                .returningOptional());
     }
 
     /**
@@ -664,6 +665,26 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     // --- Internal helpers ---
 
     /**
+     * Runs an insert with the parameter tuple of {@code execution}, so an execution that cannot be
+     * stored fails the returned future instead of throwing past the caller's recovery.
+     *
+     * @param <T>       the insert's result type
+     * @param execution the execution to build parameters for
+     * @param insert    the insert to run with the parameters; its future is returned unchanged
+     * @return the insert's future, or a future failed with {@link IllegalArgumentException} if a
+     *         JSONB value cannot be serialized
+     */
+    private <T> Future<T> withInsertParams(JobExecution execution, Function<Tuple, Future<T>> insert) {
+        Tuple params;
+        try {
+            params = buildInsertTuple(execution);
+        } catch (IllegalArgumentException e) {
+            return Future.failedFuture(e);
+        }
+        return insert.apply(params);
+    }
+
+    /**
      * Builds the INSERT parameter tuple from a {@link JobExecution}. Serializes {@code payload},
      * {@code progress}, and {@code parameters} to {@link JsonObject} for JSONB columns.
      *
@@ -678,7 +699,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 execution.handler(),
                 execution.queue(),
                 execution.state().name(),
-                toJsonObject(execution.payload()),
+                payloadToJsonObject(execution.payload()),
                 toJsonObject(execution.progress()),
                 toJsonObject(execution.parameters()),
                 execution.metadata().toCarrier(),
@@ -701,6 +722,25 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      */
     private static OffsetDateTime toOffsetDateTime(Instant instant) {
         return instant != null ? instant.atOffset(ZoneOffset.UTC) : null;
+    }
+
+    /**
+     * Converts a job payload to the {@link JsonObject} the {@code payload} column stores.
+     *
+     * @param payload the payload to convert, or {@code null}
+     * @return the {@link JsonObject} representation, or {@code null}
+     * @throws IllegalArgumentException if the payload does not serialize to a JSON object. The
+     *                                  message names only the type: Jackson's own message quotes
+     *                                  the value, and this one reaches error columns and logs
+     */
+    private static JsonObject payloadToJsonObject(Object payload) {
+        try {
+            return toJsonObject(payload);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            // JsonObject.mapFrom reports a value that serializes to JSON null with a NullPointerException.
+            throw new IllegalArgumentException(
+                    "Job payload of type " + payload.getClass().getName() + " does not serialize to a JSON object");
+        }
     }
 
     /**
