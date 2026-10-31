@@ -112,7 +112,8 @@ At relay time:
 #### Scope at delivery
 
 The envelope's `scopeKey` is passed through unchanged as `TransactionalMessageContext.scopeKey`, so a
-service target reads the scope the entry was published in by declaring the context as a parameter:
+service target reads the scope the entry was published in by declaring the context as a parameter of its
+`ServiceHandler` implementation method, not of the transactional contract:
 
 ```java
 public Future<Void> handleOrderPlaced(OrderPlacedEvent event, TransactionalMessageContext ctx) {
