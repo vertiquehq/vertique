@@ -622,6 +622,26 @@ public class PgJobRepositoryIT {
     }
 
     @Test
+    @DisplayName("updateScheduleFireTimes never moves last_fired_at backwards")
+    void updateScheduleFireTimesIsMonotonic(VertxTestContext ctx) {
+        String jobId = "cron-monotonic-" + UUID.randomUUID();
+        Instant later = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+        Instant earlier = later.minusSeconds(120);
+        Instant next = later.plusSeconds(60);
+        repository
+                .saveSchedule(new CronJobSchedule(
+                        jobId, "0 * * * * *", "h", null, "SINGLE_INSTANCE", "UTC", true, "SKIP", 3, true, null, null))
+                .compose(v -> repository.updateScheduleFireTimes(jobId, later, next))
+                .compose(v -> repository.updateScheduleFireTimes(jobId, earlier, next))
+                .compose(v -> repository.findSchedule(jobId))
+                .onSuccess(schedule -> ctx.verify(() -> {
+                    assertEquals(later, schedule.orElseThrow().lastFiredAt());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
     @DisplayName("tryInsert succeeds on first insert and returns the execution ID")
     void tryInsertSucceedsOnFirstInsert(VertxTestContext ctx) {
         String jobId = "cron-si-" + UUID.randomUUID();

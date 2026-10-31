@@ -110,6 +110,8 @@ Metadata-only Dagger module that contributes one `MigrationDefinition` (from `de
 Flyway migration:
 - `V1__create_job_tables.sql` — initial schema (`job_executions`, `job_logs`, `job_schedules`, `job_server_heartbeats`), including `metadata JSONB` on `job_executions` for durable context propagation and the `target` column on `job_schedules` for the explicit target-reference cron model
 
+- `V002__index_job_executions_for_retention.sql` — the partial index `idx_job_executions_retention` that the execution retention job scans (see [Execution retention](#execution-retention)). The plain `CREATE INDEX` blocks every write to `job_executions` (enqueue, claim, completion) while it builds, so on a very large installation build it ahead of the upgrade with `CREATE INDEX CONCURRENTLY IF NOT EXISTS` and the same name and definition. The script sets `lock_timeout` to 30 s, which bounds only the wait for the lock, not the build, and it drops an index of that name that a cancelled concurrent build left invalid before it creates one. Every application that applies the migration gets the index, whether or not it includes `JobRetentionModule`
+
 **The `V1` schema is frozen.** `vertique-job-postgresql` is Stable, so every later schema change ships
 as a new `V2+` migration file; `V1` is never edited again. A database that applied an earlier `V1`
 would fail Flyway checksum validation, which is why the fold-back practice ends here.
@@ -289,6 +291,58 @@ connection default match it, or the repository will look in a schema the migrati
 public interface AppComponent { ... }
 ```
 
+### Execution retention
+
+`job_executions` and `job_logs` grow with every execution. `JobRetentionModule` (package
+`dev.vertique.job.postgresql.maintenance`) adds a cluster-singleton `@CronJob(SINGLE_INSTANCE, SKIP)` named
+`job-execution-retention` that deletes finished executions, and their logs, once they are older than a retention
+age. It is **opt-in**: include it next to `JobPostgresqlModule` and `CronPersistenceModule`.
+
+```java
+@Component(modules = {
+    DbPostgresqlModule.class, DbFlywayModule.class, JobPostgresqlModule.class,
+    CronPersistenceModule.class, JobRetentionModule.class, AppModule.class
+})
+public interface AppComponent { ... }
+```
+
+An application that includes `JobRetentionModule` without the persistence-backed cron fails at Dagger code
+generation (`JobRetentionComposeValidator`) instead of starting with the job silently unscheduled. An application
+that does not include the module keeps every execution until it deletes them itself, and is not required to
+install cron.
+
+| Field (`job.retention`) | Default | Description |
+|---|---|---|
+| `retentionSeconds` | `604800` (7 days) | How long a finished execution is kept, counted from when it finished. At least `3600`; a smaller value fails configuration |
+| `batchSize` | `1000` | Most executions deleted in one batch; each batch is its own short transaction |
+
+The cadence is `0 */15 * * * *`; override it with `cron.jobs.job-execution-retention.cron`.
+
+**What is deleted.** Only executions that cannot run again: `SUCCEEDED`, `CANCELLED` and `DEAD_LETTER`, and the
+`FAILED` and `ABANDONED` executions of cron jobs, which are never re-enqueued (the cron scheduler fires the next
+tick as a new execution). They are aged by `completed_at` (`updated_at` when a state change did not set it).
+`ENQUEUED` and `PROCESSING` executions, and `FAILED` and `ABANDONED` delayed jobs, are never deleted, however old,
+because the delayed ones can still be re-enqueued. A `DEAD_LETTER`
+execution is deleted at the same age as the others, so raise `retentionSeconds` if you inspect parked jobs for
+longer. The `job_logs` rows go with their execution.
+
+**Cron executions.** A `SINGLE_INSTANCE` cron fire is deduplicated by an execution row for its fire time, and a
+restart recovers missed fires only after the schedule's `last_fired_at`. A cron execution is therefore also kept
+while its fire time is after the schedule's `last_fired_at`, so deleting a row never lets a fire time that a
+recovery can still reach run twice. A cron execution whose schedule never recorded a fire is kept. To make that
+bound hold, `last_fired_at` only moves forward: a fire that completes late does not set it back.
+
+**Batching.** One run deletes batch after batch until a batch comes back short, up to 100 batches (100 000
+executions at the default batch size). A batch limits executions, not logs: the logs of each deleted execution go
+with it, so a job that writes very many log lines makes a batch larger than its size suggests. The next run
+continues. A failed batch fails the run, which the cron tracking record shows. The job runs on one node at a
+time per tick; a run that outlasts the 15-minute cadence can overlap the next tick's run on another node, which
+is safe because the batches skip rows another transaction holds.
+
+**What reads old executions.** Misfire recovery reads `job_schedules`, not executions, and an audit listener sees
+each state transition when it happens, so neither is affected. Anything that shows history from `job_executions`,
+such as a dashboard on `idx_job_executions_state`, sees only the last `retentionSeconds`.
+
 ---
 
 ## Dependencies
@@ -296,4 +350,5 @@ public interface AppComponent { ... }
 - **job-core** — `JobRepository` SPI, `JobExecution`, `JobExecutionStateTransitionListener`, `JobState`, `JobType`, `ProgressSnapshot`, `LogEntry`, `CronJobSchedule`
 - **db-core** — `DbSchemas`, `DbSchemasModule`, `MigrationDefinition` (through db-postgresql)
 - **db-postgresql** — `PgSqlRepository`, `PgDbExceptionMapper`, `PgTableNames`, `Pool`
+- **job-cron**, **services** — the `@CronJob` and `@ServiceContract` annotations of the execution retention job; they bring no behavior unless `JobRetentionModule` is included
 - **db-flyway** — `FlywayMigrationRunner` applies the bundled migration; test-scope here, so the application supplies it

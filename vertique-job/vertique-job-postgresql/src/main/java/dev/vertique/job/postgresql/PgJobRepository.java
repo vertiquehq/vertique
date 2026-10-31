@@ -77,6 +77,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     private final String sqlFindDeadServers;
     private final String sqlRemoveServer;
     private final String sqlFindByLockedBy;
+    private final String sqlPurgeTerminal;
 
     // --- Node identity ---
 
@@ -200,7 +201,8 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 """.formatted(jobSchedules);
 
         this.sqlUpdateScheduleFireTimes = "UPDATE " + jobSchedules
-                + " SET last_fired_at = $2, next_fire_at = $3, updated_at = NOW() WHERE job_id = $1";
+                + " SET last_fired_at = GREATEST(COALESCE(last_fired_at, $2), $2), next_fire_at = $3,"
+                + " updated_at = NOW() WHERE job_id = $1";
 
         this.sqlFindSchedule = """
                 SELECT job_id, cron_expression, handler, target, execution_mode, timezone, enabled,
@@ -218,6 +220,27 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
         this.sqlRemoveServer = "DELETE FROM " + heartbeats + " WHERE server_id = $1";
 
         this.sqlFindByLockedBy = sqlSelectAllCols + "WHERE locked_by = $1 AND state = 'PROCESSING'";
+
+        // One bounded batch of finished executions older than $1 seconds, oldest first, by the age the partial
+        // index idx_job_executions_retention is built on. SUCCEEDED, CANCELLED and DEAD_LETTER have no outgoing
+        // transition. FAILED and ABANDONED can be re-enqueued, except on a CRON execution: the cron dispatcher
+        // writes both through completeExecution and re-fires on the next tick as a new row, so nothing moves
+        // them again. ENQUEUED and PROCESSING are live and never match. A CRON row is kept while a misfire
+        // recovery could still fire its tick: recovery fires only ticks after the schedule's last_fired_at, and
+        // idx_job_executions_cron_dedup is what stops such a tick from running twice, so a row whose tick is not
+        // after last_fired_at is the only kind whose deletion cannot re-run a fire. job_logs rows go with their
+        // execution through ON DELETE CASCADE.
+        this.sqlPurgeTerminal = "WITH batch AS (SELECT e.id FROM " + executions + " e"
+                + " WHERE (e.state IN ('SUCCEEDED', 'CANCELLED', 'DEAD_LETTER')"
+                + "        OR (e.job_type = 'CRON' AND e.state IN ('FAILED', 'ABANDONED')))"
+                + "   AND COALESCE(e.completed_at, e.updated_at) < NOW() - ($1 * interval '1 second')"
+                + "   AND (e.job_type <> 'CRON' OR NOT EXISTS (SELECT 1 FROM " + jobSchedules + " s"
+                + "        WHERE s.job_id = e.job_id"
+                + "          AND (s.last_fired_at IS NULL OR s.last_fired_at < e.scheduled_at)))"
+                + " ORDER BY COALESCE(e.completed_at, e.updated_at)"
+                + " LIMIT $2"
+                + " FOR UPDATE OF e SKIP LOCKED)"
+                + " DELETE FROM " + executions + " USING batch WHERE " + executions + ".id = batch.id";
     }
 
     /**
@@ -600,6 +623,42 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                 .params(Tuple.of(serverId))
                 .mapping(JobExecutionMapper::fromRow)
                 .list();
+    }
+
+    // --- Retention ---
+
+    /** The batch delete statement, for the plan test. */
+    String purgeStatement() {
+        return sqlPurgeTerminal;
+    }
+
+    /**
+     * Deletes one bounded batch of finished executions, together with their logs.
+     *
+     * <p>Only {@link JobState#SUCCEEDED}, {@link JobState#CANCELLED} and {@link JobState#DEAD_LETTER}
+     * executions qualify, plus {@link JobState#FAILED} and {@link JobState#ABANDONED} executions of
+     * type {@code CRON}, which are never re-enqueued. A delayed job in any other state can still run
+     * or retry and is never deleted. An execution qualifies only once it has been finished for at
+     * least {@code retention}: the age is {@code completed_at}, or {@code updated_at} for a state
+     * change that did not set it. A {@code CRON} execution is also kept while its fire time is after
+     * the schedule's {@code last_fired_at}, because that is the only range a misfire recovery can
+     * fire again, and the row is what keeps such a fire from running twice. Rows another transaction
+     * holds are skipped. The scan follows {@code idx_job_executions_retention}.
+     *
+     * <p>The batch limits executions, not their logs: the logs of each deleted execution go with it.
+     *
+     * @param retention how long an execution must have been finished before it is deleted
+     * @param batchSize the most executions to delete in this call
+     * @return the number of executions deleted; fewer than {@code batchSize} means no more qualified
+     *         that no other transaction held when the batch ran
+     */
+    public Future<Integer> purgeTerminalExecutions(Duration retention, int batchSize) {
+        // Not the query builder: it rejects a base statement that contains FOR UPDATE, and this one locks inside
+        // the batch subquery.
+        return pool.preparedQuery(sqlPurgeTerminal)
+                .execute(Tuple.of(retention.toSeconds(), batchSize))
+                .map(rs -> rs.rowCount())
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "job purgeTerminalExecutions")));
     }
 
     // --- Internal helpers ---
