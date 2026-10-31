@@ -4,6 +4,7 @@
 package dev.vertique.inboxoutbox.postgresql;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -228,6 +229,40 @@ class OutboxRelayPollPacingTest {
             verify(outboxRepository, timeout(5_000L)).markPublished(1L, NODE);
             Thread.sleep(500L);
             assertEquals(1, claims.count());
+        }
+
+        @Test
+        @DisplayName("slots freed from a foreign thread still ask for the pass on the relay's own context")
+        void slotsFreedOffTheEventLoopStayOnTheRelayContext() throws Exception {
+            List<Promise<OutboxPublishResult>> held = Collections.synchronizedList(new ArrayList<>());
+            List<Context> claimContexts = Collections.synchronizedList(new ArrayList<>());
+            doAnswer(invocation -> {
+                        claimContexts.add(Vertx.currentContext());
+                        int number = claims.record(invocation.getArgument(0));
+                        return Future.succeededFuture(
+                                number == 1 ? List.of(record(1L), record(2L)) : List.<OutboxRecord>of());
+                    })
+                    .when(outboxRepository)
+                    .claimBatch(anyInt(), anyString(), any());
+
+            ProbeRelay relay = deployRelay(2, INTERVAL_MS, envelope -> {
+                Promise<OutboxPublishResult> promise = Promise.promise();
+                held.add(promise);
+                return promise.future();
+            });
+            claims.await(1, 15_000L);
+            awaitHeld(held, 2);
+
+            // a producer-callback style completion: a plain thread that is not an event loop
+            Thread foreign = new Thread(() -> held.get(0).complete(OutboxPublishResult.success()));
+            foreign.start();
+            foreign.join();
+
+            claims.await(2, 15_000L);
+            assertEquals(2, claimContexts.size());
+            for (Context context : claimContexts) {
+                assertSame(relay.relayContext(), context, "a claim ran off the relay's context");
+            }
         }
 
         @Test

@@ -158,7 +158,7 @@ public class OutboxRelay extends AbstractVerticle {
      * filled the capacity it asked for, or a cycle that found no free slot. A freed slot asks for a
      * pass only then; a relay that last came back short or empty keeps its interval pacing.
      */
-    private boolean saturated;
+    private volatile boolean saturated;
 
     /** The capacity the claim in flight asked for. */
     private int claimCapacity;
@@ -439,14 +439,20 @@ public class OutboxRelay extends AbstractVerticle {
      * Gives one in-flight slot back. When the last cycle found more work than it could take, the
      * freed slot asks for a pass at once instead of leaving the relay to wait out the interval;
      * repeated releases coalesce into the one pending pass, and a release during a claim leaves the
-     * claim's own completion to look at the free capacity. Never throws, so a release inside a
-     * {@code finally} cannot hide the error that is already propagating.
+     * claim's own completion to look at the free capacity. A handler or repository future can settle
+     * on any thread, so the request is made on the relay's own context, where the poll state lives.
+     * Never throws, so a release inside a {@code finally} cannot hide the error that is already
+     * propagating.
      */
     private void releaseSlot() {
         inFlight.decrementAndGet();
         if (saturated) {
             try {
-                requestPass(false);
+                runOnRelayContext(() -> {
+                    if (saturated) {
+                        requestPass(false);
+                    }
+                });
             } catch (RuntimeException e) {
                 log.debug("OutboxRelay nodeId={}: no pass could be scheduled", nodeId, e);
             }
