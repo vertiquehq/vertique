@@ -107,6 +107,31 @@ public interface WorkflowDedupRepository<TX> {
      */
     Future<Boolean> claimOrResolveSignalScoped(String scope, String key, WorkflowInstanceId workflowId, TX tx);
 
+    // --- Correlated dedup ---
+
+    /**
+     * Reads, without writing, the committed or own {@code correlated} dedup row of a namespace and key.
+     *
+     * @param namespace the hashed namespace of the contract, signal name and scope
+     * @param key       the hashed dedup key
+     * @param tx        the active transaction to use
+     * @return a {@link Future} containing the id of the instance the row names, or {@link Optional#empty()} when no
+     *         row is visible
+     */
+    Future<Optional<WorkflowInstanceId>> findCorrelated(String namespace, String key, TX tx);
+
+    /**
+     * Atomically claims a {@code correlated} dedup slot or resolves an existing one. The row is unique per namespace
+     * and key across instances, and goes with the instance it names.
+     *
+     * @param namespace  the hashed namespace of the contract, signal name and scope
+     * @param key        the hashed dedup key
+     * @param workflowId the matched instance; stored as the FK reference
+     * @param tx         the active transaction to use
+     * @return a {@link Future} of {@code true} when this call inserted the row, {@code false} when it already existed
+     */
+    Future<Boolean> claimOrResolveCorrelated(String namespace, String key, WorkflowInstanceId workflowId, TX tx);
+
     // --- Task dedup ---
 
     /**

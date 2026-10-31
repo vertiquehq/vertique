@@ -11,10 +11,12 @@ import dev.vertique.context.ContextScopeBinder;
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DurableContextMetadataRegistry;
 import dev.vertique.context.DurableContextPropagator;
+import dev.vertique.context.DurableJsonContextCodecs;
 import dev.vertique.core.context.ContextDecodeResult;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextScopes;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.DurableContextMetadataDecoder;
 import dev.vertique.core.context.DurableContextMetadataEncoder;
 import dev.vertique.core.context.DurableDecodeContext;
@@ -22,6 +24,8 @@ import dev.vertique.core.context.DurableEncodeContext;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.InboundContextInitializationContext;
 import dev.vertique.core.context.InboundContextInitializer;
+import dev.vertique.core.scope.ScopeContext;
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.IsolationLevel;
 import dev.vertique.db.exception.TransactionDeadlineExceededException;
@@ -260,8 +264,8 @@ final class ExecutorFixture implements AutoCloseable {
         this.vertx = Vertx.vertx(new VertxOptions().setEventLoopPoolSize(4));
         this.observer = pool(vertx, 4);
         DurableContextMetadataRegistry registry = new DurableContextMetadataRegistry(
-                Set.of(TenantCtxCodec.encoder(), correlationEncoder(), identityEncoder()),
-                Set.of(TenantCtxCodec.decoder(), correlationDecoder(), identityDecoder()));
+                Set.of(TenantCtxCodec.encoder(), correlationEncoder(), identityEncoder(), scopeEncoder()),
+                Set.of(TenantCtxCodec.decoder(), correlationDecoder(), identityDecoder(), scopeDecoder()));
         this.propagator = new DurableContextPropagator(registry, holder, new ContextScopeBinder(holder));
         logs.start();
         workflowLogger.addAppender(logs);
@@ -1136,6 +1140,21 @@ final class ExecutorFixture implements AutoCloseable {
             this.transaction = transaction;
         }
 
+        /** Runs a statement in the held transaction, which sees the lock holder's own uncommitted changes. */
+        void execute(String sql, Tuple parameters) {
+            await(connection.preparedQuery(sql).execute(parameters));
+        }
+
+        /** Commits the transaction, which releases the lock and makes the statements it ran visible. */
+        synchronized void commit() {
+            if (released) {
+                return;
+            }
+            released = true;
+            await(transaction.commit());
+            await(connection.close());
+        }
+
         /** Rolls the transaction back, which releases the lock. */
         synchronized void release() {
             if (released) {
@@ -1643,6 +1662,26 @@ final class ExecutorFixture implements AutoCloseable {
     }
 
     // --- Context carriage ---
+
+    /** Carries the ambient scope across the workflow boundary, as the production runtime registry does by default. */
+    private static DurableContextMetadataEncoder<ScopeContext> scopeEncoder() {
+        return DurableJsonContextCodecs.jsonEncoder(
+                ScopeContext.class,
+                "scope",
+                Set.of(DispatchBoundary.WORKFLOW, DispatchBoundary.OUTBOX, DispatchBoundary.DELAYED_JOB),
+                scope -> Map.of("scopeKey", scope.scopeKey().value()));
+    }
+
+    /** Restores the ambient scope at the workflow boundary, as the production runtime registry does by default. */
+    private static DurableContextMetadataDecoder<ScopeContext> scopeDecoder() {
+        return DurableJsonContextCodecs.jsonDecoder(
+                ScopeContext.class,
+                "scope",
+                Set.of(DispatchBoundary.WORKFLOW, DispatchBoundary.OUTBOX_SERVICE, DispatchBoundary.DELAYED_JOB),
+                body -> body.getValue("scopeKey") instanceof String key
+                        ? ContextDecodeResult.of(new ScopeContext(new ScopeKey(key)))
+                        : ContextDecodeResult.empty());
+    }
 
     private static DurableContextMetadataEncoder<CorrelationCtx> correlationEncoder() {
         return new DurableContextMetadataEncoder<>() {

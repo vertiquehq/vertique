@@ -9,6 +9,9 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
 import ch.qos.logback.classic.spi.ThrowableProxyUtil;
+import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.scope.ScopeContext;
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.workflow.contract.SignalDedupKey;
@@ -52,6 +55,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -147,6 +151,18 @@ final class KeyedWaitFixture implements AutoCloseable {
 
     /** An {@code ALL_REQUIRED} fork whose failure route is a later wait, a timer of an hour. */
     static final String FORK_FAILING_TO_WAIT = "fork-failing-to-wait";
+
+    /**
+     * An order that waits like {@link #ORDER} and records the scope the ambient context holds when its signal applies
+     * into {@link #observedScopes}.
+     */
+    static final String ORDER_SCOPE_PROBE = "order-scope-probe";
+
+    /**
+     * A fork whose branches {@code b1} and {@code b2} both enter {@code wait-a}, which waits for
+     * {@code shipment-confirmed} keyed by {@code refA}, so that the two branch records hold the same key.
+     */
+    static final String FORK_EQUAL_KEYS = "order-fork-equal-keys";
 
     /** The value inside the message of the throwing accessor of {@link KeyBehaviour#THROWING}. */
     static final String SECRET = "SECRET-KEY-7";
@@ -322,6 +338,9 @@ final class KeyedWaitFixture implements AutoCloseable {
     /** While set, the initial state of {@link #BREAKABLE_START} throws. */
     final AtomicBoolean startBroken = new AtomicBoolean(true);
 
+    /** The scope keys the ambient context held when a signal of {@link #ORDER_SCOPE_PROBE} applied, in order. */
+    final List<String> observedScopes = new CopyOnWriteArrayList<>();
+
     private final DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
     private final PgWorkflowDefinitionRegistryStore store;
 
@@ -337,6 +356,13 @@ final class KeyedWaitFixture implements AutoCloseable {
             seed(chain(), List.of("a-done", "b-done"));
             seed(fork(FORK, ForkState::refA, ForkState::refB, false), List.of(), forkBranches());
             seed(fork(FORK_WITH_TIMEOUT, ForkState::refA, ForkState::refB, true), List.of(), forkBranches());
+            seed(scopeProbeOrder(), List.of("payment-captured", "refund-issued"));
+            seed(
+                    forkEqualKeys(),
+                    List.of(),
+                    new JsonObject()
+                            .put("fork/b1", new JsonArray().add("shipment-confirmed"))
+                            .put("fork/b2", new JsonArray().add("shipment-confirmed")));
             if (withExits) {
                 seedExitDefinitions();
             }
@@ -416,6 +442,57 @@ final class KeyedWaitFixture implements AutoCloseable {
         return startWith(node, definitionId, new ForkStart(ref, refA, refB), SCOPE);
     }
 
+    /**
+     * Records, and commits, the start of a definition in a scope, as a caller whose ambient context holds that scope
+     * would, so that the instance saves the scope in its durable context. The node must carry the context.
+     *
+     * @param node             the node whose engine records the start
+     * @param definitionId     the definition to start
+     * @param paymentReference the value the wait is keyed by
+     * @param scope            the start scope and the ambient scope
+     * @return the instance
+     */
+    WorkflowInstanceId startInScope(Node node, String definitionId, String paymentReference, String scope) {
+        String ref = definitionId + "-" + paymentReference + "-" + UUID.randomUUID();
+        StartCommand command = new StartCommand(
+                definitionId,
+                runtimeOf(definitionId).contractName(),
+                new OrderStart(ref, paymentReference),
+                "idem-" + UUID.randomUUID(),
+                null,
+                null,
+                1L,
+                scope,
+                null);
+        return await(caller(() -> {
+            ContextHolder.Scope ambient =
+                    fixture.holder().bind(ScopeContext.class, new ScopeContext(new ScopeKey(scope)));
+            try {
+                return node.pool
+                        .withTransaction(tx -> node.engine.start(command, tx))
+                        .eventually(() -> {
+                            ambient.close();
+                            return Future.succeededFuture();
+                        });
+            } catch (Throwable failure) {
+                ambient.close();
+                return Future.failedFuture(failure);
+            }
+        }));
+    }
+
+    /**
+     * Records, and commits, the start of {@link #FORK_EQUAL_KEYS}, whose two branches wait for the same signal under
+     * the same key.
+     *
+     * @param node the node whose engine records the start
+     * @param key  the key both waits compute
+     * @return the instance
+     */
+    WorkflowInstanceId forkWithEqualBranchKeys(Node node, String key) {
+        return startFork(node, FORK_EQUAL_KEYS, key, key);
+    }
+
     private WorkflowInstanceId startWith(Node node, String definitionId, Object payload, @Nullable String scope) {
         StartCommand command = new StartCommand(
                 definitionId,
@@ -492,6 +569,63 @@ final class KeyedWaitFixture implements AutoCloseable {
         return ExecutorFixture.failureOf(
                 caller(() -> node.pool.withTransaction(tx -> node.engine.signalByKey(signal, tx))),
                 Duration.ofSeconds(15));
+    }
+
+    /** What a delivery by key answered: a receipt, or the failure of the returned future. */
+    record Delivery(
+            @Nullable CorrelatedSignalReceipt receipt,
+            @Nullable Throwable failure) {
+
+        /** The receipt; fails the proof when the delivery failed. */
+        CorrelatedSignalReceipt receiptOrFail() {
+            if (failure != null) {
+                throw new AssertionError("expected a receipt but the delivery failed with " + failure, failure);
+            }
+            return receipt;
+        }
+
+        /** The failure; fails the proof when the delivery answered with a receipt. */
+        Throwable failureOrFail() {
+            if (failure == null) {
+                throw new AssertionError("expected a failure but the delivery answered " + receipt);
+            }
+            return failure;
+        }
+    }
+
+    /**
+     * Delivers the signal by key in a caller transaction that commits whatever the outcome was, so that anything a
+     * refusal wrote would stay.
+     *
+     * @param node   the node whose engine delivers
+     * @param signal the signal
+     * @return the receipt or the failure
+     */
+    Delivery deliver(Node node, CorrelatedSignal signal) {
+        return await(startDelivery(node, signal));
+    }
+
+    /**
+     * Starts the delivery of {@link #deliver} and returns before it ends, for deliveries that block on a lock.
+     *
+     * @param node   the node whose engine delivers
+     * @param signal the signal
+     * @return a future of the receipt or the failure
+     */
+    Future<Delivery> startDelivery(Node node, CorrelatedSignal signal) {
+        return caller(() -> node.pool
+                .getConnection()
+                .compose(connection -> connection.begin().compose(transaction -> node.engine
+                        .signalByKey(signal, connection)
+                        .transform(outcome -> {
+                            Delivery delivery = outcome.succeeded()
+                                    ? new Delivery(outcome.result(), null)
+                                    : new Delivery(null, outcome.cause());
+                            return transaction
+                                    .commit()
+                                    .transform(committed -> connection.close())
+                                    .map(closed -> delivery);
+                        }))));
     }
 
     /**
@@ -600,6 +734,63 @@ final class KeyedWaitFixture implements AutoCloseable {
         return count(
                 "SELECT count(*) FROM workflow_dedup WHERE workflow_id = $1 AND kind NOT IN ('start', 'signal')",
                 Tuple.of(id.value()));
+    }
+
+    /**
+     * A dedup row, as the tests read it.
+     *
+     * @param kind       the kind of the row
+     * @param scopeKey   the scope column
+     * @param namespace  the namespace column
+     * @param key        the key column
+     * @param workflowId the instance the row names
+     */
+    record DedupRow(String kind, String scopeKey, String namespace, String key, UUID workflowId) {}
+
+    /** The dedup rows of kind {@code correlated}, in no particular order. */
+    List<DedupRow> dedupRows() {
+        List<DedupRow> rows = new ArrayList<>();
+        for (Row row : await(fixture.observer()
+                .query("SELECT kind, scope_key, dedup_namespace, key, workflow_id FROM workflow_dedup"
+                        + " WHERE kind = 'correlated'")
+                .execute())) {
+            rows.add(new DedupRow(
+                    row.getString("kind"),
+                    row.getString("scope_key"),
+                    row.getString("dedup_namespace"),
+                    row.getString("key"),
+                    row.getUUID("workflow_id")));
+        }
+        return rows;
+    }
+
+    /**
+     * What the tables hold that a delivery writes to.
+     *
+     * @param commands    the rows of {@code workflow_commands}
+     * @param dedup       the rows of {@code workflow_dedup}
+     * @param history     the rows of {@code workflow_history}
+     * @param openSignals the sum of the open-signal counters of the command queues
+     */
+    record Written(long commands, long dedup, long history, long openSignals) {}
+
+    /** The row counts of the tables a delivery writes to, read on a connection of their own. */
+    Written written() {
+        return new Written(
+                count("SELECT count(*) FROM workflow_commands", Tuple.tuple()),
+                count("SELECT count(*) FROM workflow_dedup", Tuple.tuple()),
+                count("SELECT count(*) FROM workflow_history", Tuple.tuple()),
+                count("SELECT COALESCE(sum(open_signals), 0)::bigint FROM workflow_command_queues", Tuple.tuple()));
+    }
+
+    /** The scope columns of the instance: its start scope and its definition scope. */
+    JsonObject scopeColumns(WorkflowInstanceId id) {
+        return await(fixture.observer()
+                        .preparedQuery("SELECT scope_key, definition_scope_key FROM workflow_instances WHERE id = $1")
+                        .execute(Tuple.of(id.value())))
+                .iterator()
+                .next()
+                .toJson();
     }
 
     /** The number of dedup rows of kind {@code signal} that the instance holds for the key. */
@@ -843,6 +1034,57 @@ final class KeyedWaitFixture implements AutoCloseable {
                     .build();
             wf.complete("done");
         });
+    }
+
+    /** An order that records the ambient scope when its signal applies. */
+    private Definition<OrderState, OrderContract> scopeProbeOrder() {
+        return orderDefinition(ORDER_SCOPE_PROBE, OrderContract.class, wf -> {
+            wf.initialStep("wait-payment");
+            wf.waitForSignal("wait-payment", "payment-captured", Payment.class)
+                    .correlateBy(OrderState::paymentReference)
+                    .onSignal((state, payment) -> {
+                        observedScopes.add(fixture.holder()
+                                .current(ScopeContext.class)
+                                .map(scope -> scope.scopeKey().value())
+                                .orElse("<none>"));
+                        return new OrderState(state.ref(), state.paymentReference(), payment.reference());
+                    })
+                    .toStepOnSignal("done")
+                    .build();
+            wf.complete("done");
+        });
+    }
+
+    /**
+     * A fork whose two branches enter the one wait step, for {@code shipment-confirmed} keyed by {@code refA}. A plan
+     * declares a signal name once, so two branches hold the same key only by sharing the wait.
+     */
+    private static Definition<ForkState, ForkContract> forkEqualKeys() {
+        return forkDefinition(FORK_EQUAL_KEYS, 1, wf -> {
+            wf.initialStep("fork");
+            wf.fork("fork")
+                    .branch("b1", "wait-a", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .branch("b2", "wait-a", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .join("join");
+            sameKeyShipmentWait(wf, "wait-a", "a-done");
+            wf.complete("a-done");
+            wf.join("join")
+                    .allRequired((state, results) -> state)
+                    .toStep("done")
+                    .onFailure("done")
+                    .endJoin();
+            wf.complete("done");
+        });
+    }
+
+    /** A wait for {@code shipment-confirmed} keyed by {@code refA}. */
+    private static void sameKeyShipmentWait(WorkflowBuilder<ForkState> wf, String step, String next) {
+        wf.waitForSignal(step, "shipment-confirmed", Payment.class)
+                .correlateBy(ForkState::refA)
+                .onSignal((state, payment) ->
+                        new ForkState(state.ref(), state.refA(), state.refB(), payment.reference(), state.printed()))
+                .toStepOnSignal(next)
+                .build();
     }
 
     private static Definition<OrderState, InvoiceContract> invoice() {

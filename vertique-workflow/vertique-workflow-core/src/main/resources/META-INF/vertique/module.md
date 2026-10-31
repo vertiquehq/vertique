@@ -114,7 +114,7 @@ Both are default methods that fail the returned future with `UnsupportedOperatio
 
 `CorrelatedSignal` is a record of `contract`, `signalName`, `key`, `payload`, `dedupKey`, `definitionId`, `scopeKey` and `provenance`. `CorrelatedSignal.of(contract, signalName, key, payload, dedupKey)` leaves `definitionId`, `scopeKey` and `provenance` null, so the delivery matches across definitions and scopes; `withDefinition`, `withScope` and `withProvenance` return a copy that differs in that one component. The key must be non-blank, at most 255 characters and free of NUL; the dedup key must be non-blank; `withScope` applies the scope key rules. A refusal names the component and never repeats the value, and `toString` prints the contract and signal name only, never the key, dedup key or payload.
 
-`CorrelatedSignalReceipt(outcome, definitionId)` reports `RECORDED` with the id of the definition of the matched instance, or `DUPLICATE` with a null definition id. `SignalProvenance(transport, source, attributes)` names where a signal came from: `SignalProvenance.kafka(source, topic, partition, offset)` and `SignalProvenance.camel(source, triggerId, messageHash)` fill `transport` and `source` and put their other arguments in `attributes` (numbers as decimal strings); the map is copied immutably. The engine does not read the provenance yet.
+`CorrelatedSignalReceipt(outcome, definitionId)` reports `RECORDED` with the id of the definition of the matched instance, or `DUPLICATE` with a null definition id. A delivery that finds no open wait fails with `WorkflowSignalNoMatchException`, and one that finds more than one with `WorkflowSignalAmbiguousException` (narrow it with `withDefinition` or `withScope`); each exposes `contractName()` and `signalName()`, its message names those two and never the key, and a caller may deliver again later because a wait may open. `WorkflowDedupScopes.correlatedScope(contractName, signalName, scope)` and `correlatedKey(dedupKey)` encode the dedup row of a delivery by key: each is a 64-character lowercase SHA-256 hex digest, the first of the three parts joined by the unit separator `0x1F` with the empty string for an absent scope, the second of the dedup key, so a dedup key of any length fits and no key is stored. `SignalProvenance(transport, source, attributes)` names where a signal came from: `SignalProvenance.kafka(source, topic, partition, offset)` and `SignalProvenance.camel(source, triggerId, messageHash)` fill `transport` and `source` and put their other arguments in `attributes` (numbers as decimal strings); the map is copied immutably. The engine does not read the provenance yet.
 
 
 ### Parallel Branches
@@ -984,6 +984,8 @@ report invalid arguments through failed Futures.
 | `WorkflowException` | `BusinessRuleException` | 400 |
 | `WorkflowInvalidPayloadException` | leaf of `WorkflowException`; implements `ViolationCarrier` | 400 |
 | `WorkflowSignalLimitException` | leaf of `WorkflowException`; not retryable | 400 |
+| `WorkflowSignalNoMatchException` | final leaf of `WorkflowException`; names the contract and the signal | 400 |
+| `WorkflowSignalAmbiguousException` | final leaf of `WorkflowConflictException`; names the contract and the signal | 409 |
 | `WorkflowConflictException` | `ConflictException` | 409 |
 | `WorkflowNotFoundException` | `NotFoundException` | 404 |
 | `WorkflowConfigurationException` | `ConfigurationException` | — |

@@ -28,6 +28,9 @@ import java.security.NoSuchAlgorithmException;
  *       dedup row in {@code BranchTransitionEngine} BEFORE invoking {@code RecorderRouter}; on
  *       conflict the dispatch is treated as already-recorded and not re-emitted
  *       (FR-WF-PAR-038).</li>
+ *   <li><b>correlated</b> — kind {@code 'correlated'}. The namespace is a 64-char SHA-256 hex digest of
+ *       {@code (contract name, signal name, scope or empty)} and the key a 64-char digest of the caller's
+ *       dedup key, so one event is unique across instances and no name, scope or key is stored in clear.</li>
  *   <li><b>signalInboxId</b> — composite id used by {@code WorkflowSignalContributor} for the
  *       inbox-message-id ({@code inbox.message_id VARCHAR(255)}). For non-branch signals it
  *       reproduces today's {@code workflowId + ":" + dedupKey} string so existing inbox rows
@@ -143,6 +146,33 @@ public final class WorkflowDedupScopes {
     public static String dispatchKey(
             String forkStepId, String branchId, String stepId, String targetId, String operation) {
         return sha256Hex(forkStepId, branchId, stepId, targetId, operation);
+    }
+
+    // --- Correlated scopes ---
+
+    /**
+     * Returns the {@code workflow_dedup.dedup_namespace} string for a correlated signal claim: the 64-char SHA-256 hex
+     * digest of {@code (contractName, signalName, scope)}, with the empty string for an absent scope. The namespace
+     * holds no instance id, so one event is unique across instances, and no name or scope in clear.
+     *
+     * @param contractName the logical name of the contract the signal is addressed to
+     * @param signalName the name of the signal
+     * @param scope the scope the delivery is narrowed to, or {@code null} when it serves every scope
+     * @return 64-char SHA-256 hex digest
+     */
+    public static String correlatedScope(String contractName, String signalName, @Nullable String scope) {
+        return sha256Hex(contractName, signalName, scope == null ? "" : scope);
+    }
+
+    /**
+     * Returns the {@code workflow_dedup.key} string for a correlated signal claim: the 64-char SHA-256 hex digest of
+     * the dedup key, so a key of any length fits and no key is stored in clear.
+     *
+     * @param dedupKey the caller-supplied dedup key
+     * @return 64-char SHA-256 hex digest
+     */
+    public static String correlatedKey(String dedupKey) {
+        return sha256Hex(dedupKey);
     }
 
     // --- Helpers ---
