@@ -96,6 +96,37 @@ class DelayedJobOutboxDestinationHandlerTest {
         assertEquals(DestinationType.DELAYED_JOB, handler.destinationType());
     }
 
+    // --- scope ---
+
+    @Test
+    @DisplayName("the job takes the scope of the row, not a scope named in headers or metadata")
+    void jobTakesRowScope() {
+        when(resolver.resolve("deliver-webhook")).thenReturn(makeTarget());
+        ArgumentCaptor<DelayedJob> jobCaptor = forClass(DelayedJob.class);
+        when(delayedJobService.enqueue(jobCaptor.capture())).thenReturn(Future.succeededFuture(UUID.randomUUID()));
+        // The row is in acme; the headers and the durable context name globex on purpose
+        OutboxMetadata contraryMetadata = new OutboxMetadata(
+                DurableMetadata.of("scope", new JsonObject().put("scopeKey", "globex")),
+                scheduledMetadata().delivery());
+        OutboxEnvelope envelope = new OutboxEnvelope(
+                99L,
+                "Webhook",
+                "webhook-456",
+                "webhook.deliver",
+                "deliver-webhook",
+                new JsonObject().put("url", "https://example.com"),
+                Map.of("scopeKey", "globex"),
+                contraryMetadata,
+                null,
+                0,
+                Instant.now(),
+                "acme");
+
+        handler.publish(envelope).result();
+
+        assertEquals("acme", jobCaptor.getValue().scopeKey());
+    }
+
     // --- publish ---
 
     @Nested

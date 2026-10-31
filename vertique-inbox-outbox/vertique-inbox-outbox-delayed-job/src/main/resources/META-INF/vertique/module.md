@@ -39,9 +39,29 @@ pool.withTransaction(tx ->
 | Method | Description |
 |--------|-------------|
 | `publish(Class<? extends DelayedJobClient<P>> contract, P payload, SqlClient tx)` | Eligible as soon as the transaction commits; uses contract defaults |
-| `publish(Class<? extends DelayedJobClient<P>> contract, P payload, Instant scheduledAt, SqlClient tx)` | Scheduled for a specific time; a `null` `scheduledAt` behaves like the three-argument form |
+| `publish(Class<? extends DelayedJobClient<P>> contract, P payload, Instant scheduledAt, SqlClient tx)` | Scheduled for a specific time; a `null` `scheduledAt` behaves like the three-argument form; the entry is in scope `default` |
+| `publish(Class<? extends DelayedJobClient<P>> contract, P payload, @Nullable Instant scheduledAt, String scopeKey, SqlClient tx)` | As the four-argument form, with the entry in the given scope |
 
-There is no duration-based overload — pass `Instant.now().plus(delay)` to the scheduled form.
+There is no duration-based overload — pass `Instant.now().plus(delay)` to the scheduled form. There is deliberately no four-argument overload that takes a scope key in place of `scheduledAt`, so `publish(contract, payload, null, tx)` stays unambiguous; pass the scope through the five-argument form.
+
+**Scope:** A job published without a scope key is in scope `default`. The five-argument form records the entry in the scope you pass, and the job that the relay later enqueues from that row takes the same scope:
+
+```java
+pool.withTransaction(tx ->
+    orderRepository.save(order, tx)
+        .compose(v -> txJobPublisher.publish(
+            DeliverWebhookJob.class,
+            new WebhookPayload(order.id()),
+            null,
+            "acme",
+            tx))
+);
+```
+
+A `null` or invalid `scopeKey` (anything `ScopeKey` rejects, such as a blank value or one longer than 255 code points) returns a failed future carrying an `IllegalArgumentException` whose message does not repeat the key. Nothing is written in that case.
+
+- **A label, not authorization.** The scope key partitions work; it grants nothing. It is not checked when you publish, when a job is looked up by id, or when a handler runs under a service principal. A handler that needs access control authorizes the access itself.
+- **Row scope and `ScopeContext` are independent.** The scope of the job comes from the outbox row alone, never from envelope headers or metadata, and publishing does not read the ambient `ScopeContext`. A handler that partitions its data chooses one source, `JobContext.scopeKey()` or `ScopeContext`. When both are present it compares them and fails on a mismatch.
 
 Returns `Future<Long>` carrying the outbox entry id. Does not return the eventual job execution UUID because the job is not enqueued until the relay fires after commit.
 
@@ -55,7 +75,7 @@ At relay time:
 1. Reads `destination` (durable delayed-job target id) from the `OutboxEnvelope` and resolves the current handler via `DelayedJobTargetResolver`.
 2. If the target id is not registered on this node, returns `OutboxPublishResult.unresolvable(message)` — the relay backs off and retries once the handler is deployed.
 3. Reads the snapshotted queue, priority, and `maxAttempts` from the `DelayedJobControl` in `envelope.metadata().delivery().delayedJob()`. If that snapshot is absent, returns `OutboxPublishResult.permanent(message, cause)` — an authoring bug that retrying cannot fix.
-4. Builds the `DelayedJob`, taking `runAt` from `envelope.scheduledAt()` and forwarding the durable propagation context from `envelope.metadata().context()` verbatim into `DelayedJob.metadata()`, so context captured at publish time survives the relay hop.
+4. Builds the `DelayedJob`, taking `runAt` from `envelope.scheduledAt()`, its scope from `envelope.scopeKey()` (never from headers or metadata), and forwarding the durable propagation context from `envelope.metadata().context()` verbatim into `DelayedJob.metadata()`, so context captured at publish time survives the relay hop.
 5. Calls `DelayedJobService.enqueue(job)` — standalone enqueue (not transactional), because the relay only sees committed outbox rows and the business transaction has already committed.
 6. On successful enqueue: returns `OutboxPublishResult.success()`.
 7. If the enqueue is rejected as invalid (an `IllegalArgumentException`, e.g. the handler name fails `DelayedJobService` validation): returns `OutboxPublishResult.permanent(message, cause)`.

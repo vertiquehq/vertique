@@ -3,6 +3,7 @@
 
 package dev.vertique.inboxoutbox.delayedjob;
 
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.inboxoutbox.DelayedJobControl;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxEntry;
@@ -12,6 +13,7 @@ import dev.vertique.job.delayed.DelayedJobTargetResolver;
 import dev.vertique.job.delayed.ResolvedDelayedJobTarget;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Instant;
@@ -98,6 +100,43 @@ public class TransactionalDelayedJobPublisher {
      */
     public <P> Future<Long> publish(
             Class<? extends DelayedJobClient<P>> contract, P payload, Instant scheduledAt, SqlClient tx) {
+        return publish(contract, payload, scheduledAt, ScopeKey.DEFAULT.value(), tx);
+    }
+
+    /**
+     * Records a delayed-job side effect in the outbox table in the given scope.
+     *
+     * <p>As {@link #publish(Class, Object, Instant, SqlClient)}, with the entry in {@code scopeKey}.
+     * The job the relay later enqueues takes the same scope. The scope is a partition label, not
+     * authorization; it is not checked here.
+     *
+     * @param <P>         the payload type; must be Jackson-serializable
+     * @param contract    the typed delayed-job contract interface class
+     * @param payload     the job payload to serialize into the outbox entry
+     * @param scheduledAt optional instant at which the job should become eligible for execution;
+     *                    {@code null} means eligible immediately after the transaction commits
+     * @param scopeKey    the scope of the entry and of the job it produces; must be a valid
+     *                    {@link ScopeKey} value
+     * @param tx          the open database transaction to use for the outbox insert
+     * @return a {@link Future} that completes with the surrogate primary key of the inserted entry,
+     *         or a failed future if the contract is not registered or {@code scopeKey} is
+     *         {@code null} or invalid; nothing is written in that case
+     */
+    public <P> Future<Long> publish(
+            Class<? extends DelayedJobClient<P>> contract,
+            P payload,
+            @Nullable Instant scheduledAt,
+            String scopeKey,
+            SqlClient tx) {
+        if (scopeKey == null) {
+            return Future.failedFuture(new IllegalArgumentException("scope key must not be null"));
+        }
+        try {
+            new ScopeKey(scopeKey);
+        } catch (IllegalArgumentException e) {
+            return Future.failedFuture(e);
+        }
+
         ResolvedDelayedJobTarget target;
         try {
             target = targetResolver.resolve(contract);
@@ -115,6 +154,7 @@ public class TransactionalDelayedJobPublisher {
                 .payload(payload)
                 .scheduledAt(scheduledAt)
                 .delayedJob(delayedJob)
+                .scopeKey(scopeKey)
                 .build();
 
         return outboxService.publish(tx, entry);
