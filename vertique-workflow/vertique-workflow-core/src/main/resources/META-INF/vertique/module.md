@@ -84,6 +84,21 @@ public final class OrderFulfillmentDefinition
 }
 ```
 
+### Signal Wait Key
+
+`waitForSignal(stepId, signalName, Payload.class)` returns a `SignalWaitBuilder`. Its optional `correlateBy(Function<S, String>)` declares the value that identifies the wait, computed from the workflow state:
+
+```java
+wf.waitForSignal("await-payment", "payment.captured", PaymentCaptured.class)
+  .correlateBy(OrderState::paymentReference)
+  .onSignal((state, event) -> state.withPaid(true))
+  .toStepOnSignal("ship");
+```
+
+The function is registered under the callback id `<stepId>.correlationKey`, and the resulting `WaitSignalNode` carries that id as `correlationKeyCallbackId` (the plan holds the id, never the function). The id is `null` when the wait declares no key, and the deprecated `waitFor` declares none. `WorkflowCallbackRegistry.correlationKeyResolver(CallbackId)` returns the function; like `timerResolver`, its default throws `UnsupportedOperationException`, and registration fails a plan whose node names a key callback the registry cannot resolve. The declaration is recorded in the plan; a declared key is not evaluated yet.
+
+`WaitSignalNode` has seven components and keeps its six-argument constructor, which leaves the key absent. A component added later is appended after `correlationKeyCallbackId`.
+
 ### Parallel Branches
 
 `WorkflowBuilder.fork(stepId)` declares a fan-out into named branches, each with its own start step; `join(stepId)` declares the matching join step with a completion policy (`allRequired`, `firstSuccess`, or `firstFailure`) that reduces branch results back into workflow state. Each running branch executes against its own `BranchToken`; the fork's fan-in progress is tracked in a `JoinState`.
@@ -1007,6 +1022,7 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **Definition rows can carry the declared signal names and the start schema.** `WorkflowDefinitionRecord` has two trailing nullable components, `signalNames` (`{"instance": [names], "branches": {"<forkStep>/<branch>": [names]}}`, names sorted and de-duplicated, `branches` empty without a fork) and `startSchema` (the JSON Schema of the start payload). A store writes them in the same statement as the plan hash and leaves them as they are when the hash is unchanged; the previous twelve-argument constructor still exists and passes null for both. They are null when the row was written by a node without schema production, and for a row written before they were stored until a node with schema production next builds its plan. `WorkflowDefinitionRegistryStore.fillSignalSchemas(key, planHash, signalNames, startSchema)` writes them to a row whose `signalNames` is still null and whose plan hash is still `planHash`, without touching the plan hash; its default does nothing.
 - **`WorkflowPlanSchemaProducer` is an internal seam.** `dev.vertique.workflow.plan.WorkflowPlanSchemaProducer` produces the start schema and the decision schemas of a plan; `vertique-workflow-schema` binds it, and `WorkflowCoreModule` declares the binding optional (`Optional<WorkflowPlanSchemaProducer>`). Applications do not implement it. Without a binding nothing fails and rows keep null columns.
 - **New states and links exist as types before every writer is in place.** `WorkflowStatus.PENDING` (accepted, not initialized; not terminal, so a `PENDING` instance has a null `stateJson`, `currentStepId` and `subjectRef`), `TaskStatus.COMPLETING` (a recorded completion reserves the task; it cannot be reassigned or completed again, and returns to `OPEN` if that completion is rejected), `TimerRecord.commandId` (a nullable trailing component) and `TaskDecisionDescriptor.payloadSchema` (nullable; the three-argument constructors are kept) are appended, as are thirteen `WorkflowEntryType` constants for recorded commands, parked signals, decisions and state baselines. Exhaustive switches over `WorkflowStatus` and `TaskStatus` need a branch for the new constants. A new task stores each decision's payload schema in `payloadSchema` when a schema module is installed, and `TaskRecord.requireVersionStability` records the plan's version-stability requirement; both are `null`/absent on a task created by an earlier version, which the executor validates from the plan alone. `TaskRecord.reservationCommandId` names the recorded completion that reserves a `COMPLETING` task.
+- **A declared key moves the plan hash; an undeclared one does not.** The hash writes `correlationKeyCallbackId` after the timeout branch, and only when it is non-null. A plan whose waits declare no key hashes as it did before the key existed, and adding `.correlateBy(...)` to a wait changes the hash of the version that declares it.
 - **`WorkflowBuilder.init(payloadType, initialState)` is mandatory and may be called only once.** It must be the first builder call in a definition. Missing or duplicate `init` is rejected at registration with `WorkflowDefinitionException`.
 - **Logical names move the hash.** The plan hash digests logical type names. A class without `@WorkflowType` keeps its binary name and its hash; adding `@WorkflowType` with a value that differs from the binary name changes the hash of every version first published afterwards. With a durable registry store, versions published earlier keep the names recorded with their hash (see Name bindings).
 - **Plan hash pinning.** Each `WorkflowInstance` records the `definitionId`, `definitionVersion`, and `planHash` it started under. Resumes execute against that pinned plan, not the currently registered "latest" version. Use `WorkflowOperations.migrate(...)` plus a `WorkflowMigrationHandler` to move an in-flight instance to a newer version.

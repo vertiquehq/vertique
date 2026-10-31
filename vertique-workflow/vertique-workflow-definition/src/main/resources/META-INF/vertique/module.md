@@ -163,7 +163,7 @@ Each step has an `id` and `type`. Common step fields:
 | Type | Purpose | Important fields |
 |---|---|---|
 | `service` | Record a service-dispatch side effect | `target`, `payloadMapper`, `next`, optional `compensation` |
-| `wait-signal` | Suspend until a named signal arrives | `signal`, `payloadType`, `stateReducer`, `next`, optional `timeout` |
+| `wait-signal` | Suspend until a named signal arrives | `signal`, `payloadType`, `stateReducer`, `next`, optional `timeout`, optional `correlationKey` |
 | `timer` | Suspend until a resolved time | `fireAt`, `next` |
 | `human-task` | Create a task and wait for a decision | `taskType`, `assignment`, `decisions`, optional `due`, `reminders`, `requireVersionStability` |
 | `decision` | Route based on CEL expressions or named conditions | `routes`, `default` |
@@ -174,6 +174,8 @@ Each step has an `id` and `type`. Common step fields:
 | `fail` | End with failure and optional compensation | `errorType`, `messageFactory` |
 
 Callback-like fields are string identifiers resolved against registries contributed by the application. The document never embeds Java lambdas or scripts.
+
+A `wait-signal` step may declare `correlationKey: order.paymentReference`, the id of a registered correlation-key resolver (state -> key string). The compiler maps it to `correlateBy(...)` on the same `waitForSignal` chain a Java definition uses, so the document and the builder produce the same `WaitSignalNode`, with `correlationKeyCallbackId` set. An absent field leaves the id `null` and the plan hash unchanged. The key is recorded in the plan; a declared key is not evaluated yet.
 
 ---
 
@@ -210,7 +212,7 @@ A well-formed definition is one that passes both parsing and semantic validation
 - Type and contract names resolve through the `WorkflowTypeNames` index only (types for state and payload names, contracts for the contract name). The index holds the classes of every contributed `WorkflowTypeCatalog` and of every registered definition, under their logical and binary names. Before validation the pipeline resolves the contract, the state type, the start payload type, then the signal and decision payload types in step order, and the first name the index does not hold fails the load with `WorkflowUnknownTypeNameException`, which names the document field, and repeats the name only when it consists of letters, digits, underscore, dot, dollar sign and hyphen and is at most 255 characters long. No class is loaded by a name the document supplies.
 - The contract class must be annotated with `@WorkflowContract`. A contract names no definition, so several documents and versions can share one contract. A document's plan is built under the same plan rules as a Java definition's, including the check that every signal it waits for is declared on its contract.
 - Contract names and type names are separate namespaces: a contract name given as `stateType`, or a type name given as `contract`, is unknown.
-- Named callbacks must resolve through the registered callback registries.
+- Named callbacks must resolve through the registered callback registries. An unregistered `correlationKey` resolver id fails with `CORRELATION_KEY_RESOLVER_UNKNOWN`, naming the step and the id and suggesting the nearest registered ids.
 - Decision expressions must parse through the expression profile.
 - Step ids must be unique, reachable from `initialStep`, and all step references must point to existing steps.
 - The plan of a document is built through the registry's build path, so core plan validation and the contributed validators still apply. Publishing a loaded definition through the service builds its plan once to validate it and completes the row; nothing is registered, and the node builds the plan again from the row when it is first used. A definition loaded into one scope is not found under the default scope. Documents packaged with the application are recorded in the default scope.
@@ -232,11 +234,14 @@ Common callback categories:
 | State reducer | State + signal payload -> state |
 | State mutator | State -> state for timers, due dates, or timeout branches |
 | Timer resolver | State -> due instant or duration |
+| Correlation-key resolver | State -> key string identifying a signal wait |
 | Fail message factory | State -> human-readable failure message |
 | Subject resolver | State -> `WorkflowSubjectRef` |
 | Task assignment resolver | State -> task assignment |
 | Branch result reducer | State + branch results -> state |
 | Named condition | State -> boolean used by decisions |
+
+A correlation-key resolver is contributed as a `CorrelationKeyResolverContributor` into the `Set<CorrelationKeyResolverContributor>` multibinding, which `WorkflowDefinitionModule` declares empty by default; `DefaultCorrelationKeyResolverRegistry` collects it and refuses two different resolvers for one id. `RegisteredIdentifierLookup` exposes it as the eleventh registry, `correlationKeyResolvers()`. Its injected constructor takes all eleven; the earlier ten-argument constructor stays and passes an empty registry.
 
 Example:
 

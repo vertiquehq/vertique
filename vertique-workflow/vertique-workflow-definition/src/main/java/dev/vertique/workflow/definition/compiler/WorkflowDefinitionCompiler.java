@@ -4,6 +4,7 @@
 package dev.vertique.workflow.definition.compiler;
 
 import dev.vertique.workflow.definition.callbacks.NamedBranchResultReducer;
+import dev.vertique.workflow.definition.callbacks.NamedCorrelationKeyResolver;
 import dev.vertique.workflow.definition.callbacks.NamedFailMessageFactory;
 import dev.vertique.workflow.definition.callbacks.NamedPayloadMapper;
 import dev.vertique.workflow.definition.callbacks.NamedStartStateMapper;
@@ -265,19 +266,21 @@ public final class WorkflowDefinitionCompiler {
 
         Class<?> payloadClass = loadClass(step.payloadType(), "signal payload for step '" + step.id() + "'");
 
+        var declaration = builder.waitForSignal(step.id(), step.signal(), payloadClass);
+        if (step.correlationKey() != null) {
+            NamedCorrelationKeyResolver<?> keyResolver =
+                    lookup.correlationKeyResolvers().lookup(step.correlationKey());
+            declaration = declaration.correlateBy((Function<Object, String>) (Function<?, ?>) keyResolver.resolver());
+        }
+
         if (step.timeout() == null) {
-            builder.waitForSignal(step.id(), step.signal(), payloadClass)
-                    .onSignal(reducerFn)
-                    .toStepOnSignal(step.next())
-                    .build();
+            declaration.onSignal(reducerFn).toStepOnSignal(step.next()).build();
         } else {
             WaitSignalStep.TimeoutBlock timeout = step.timeout();
             NamedStateMutator<?> mutator = lookup.stateMutators().lookup(timeout.onTimeoutMutator());
             Function<Object, Object> mutatorFn = (Function<Object, Object>) (Function<?, ?>) mutator.mutator();
 
-            var withNext = builder.waitForSignal(step.id(), step.signal(), payloadClass)
-                    .onSignal(reducerFn)
-                    .toStepOnSignal(step.next());
+            var withNext = declaration.onSignal(reducerFn).toStepOnSignal(step.next());
 
             // Determine the timeout spec: Duration, Instant, or ref:id
             String after = timeout.after();

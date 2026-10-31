@@ -109,6 +109,8 @@ public final class WorkflowBuilder<S> {
     /** Timer resolvers keyed by CallbackId value. */
     private final Map<String, Function<Object, Instant>> timerResolvers = new HashMap<>();
 
+    private final Map<String, Function<Object, String>> correlationKeyResolvers = new HashMap<>();
+
     /** State mutators keyed by CallbackId value. */
     private final Map<String, Function<Object, Object>> stateMutators = new HashMap<>();
 
@@ -1030,7 +1032,8 @@ public final class WorkflowBuilder<S> {
                 Map.copyOf(decisionApplicators),
                 Map.copyOf(taskAssignmentResolvers),
                 Map.copyOf(subjectResolvers),
-                Map.copyOf(branchResultReducers));
+                Map.copyOf(branchResultReducers),
+                Map.copyOf(correlationKeyResolvers));
     }
 
     // --- Fluent inner classes ---
@@ -1083,6 +1086,7 @@ public final class WorkflowBuilder<S> {
         private final String stepId;
         private final String signalName;
         private final Class<P> payloadType;
+        private @Nullable CallbackId correlationKeyCbId;
 
         /**
          * Constructs a {@code SignalWaitBuilder}.
@@ -1095,6 +1099,24 @@ public final class WorkflowBuilder<S> {
             this.stepId = stepId;
             this.signalName = signalName;
             this.payloadType = payloadType;
+        }
+
+        /**
+         * Declares the value that identifies this wait, computed from the workflow state.
+         *
+         * <p>The function is registered under the step's {@code correlationKey} callback id and the
+         * emitted {@link WaitSignalNode} carries that id. Declaring no key leaves the id absent.
+         *
+         * @param key function that computes the key from the workflow state; must not be null
+         * @return this builder for continued chaining
+         */
+        @SuppressWarnings("unchecked")
+        public SignalWaitBuilder<P> correlateBy(Function<S, String> key) {
+            Objects.requireNonNull(key, "key");
+            CallbackId cbId = callbackId(stepId, "correlationKey");
+            correlationKeyResolvers.put(cbId.value(), (Function<Object, String>) (Function<?, ?>) key);
+            this.correlationKeyCbId = cbId;
+            return this;
         }
 
         /**
@@ -1112,7 +1134,7 @@ public final class WorkflowBuilder<S> {
             CallbackId cbId = callbackId(stepId, "updater");
             stateUpdaters.put(cbId.value(), (BiFunction<Object, Object, Object>) (BiFunction<?, ?, ?>) applicator);
             signalPayloadTypes.put(signalName, payloadType);
-            return new SignalWaitTerminator(stepId, signalName, payloadType, cbId);
+            return new SignalWaitTerminator(stepId, signalName, payloadType, cbId, correlationKeyCbId);
         }
     }
 
@@ -1127,6 +1149,7 @@ public final class WorkflowBuilder<S> {
         private final String signalName;
         private final Class<?> payloadType;
         private final CallbackId stateUpdaterCbId;
+        private final @Nullable CallbackId correlationKeyCbId;
 
         /**
          * Constructs a {@code SignalWaitTerminator}.
@@ -1135,13 +1158,19 @@ public final class WorkflowBuilder<S> {
          * @param signalName the signal name
          * @param payloadType the payload class
          * @param stateUpdaterCbId callback id for the signal applicator stored in stateUpdaters
+         * @param correlationKeyCbId callback id for the correlation key function; {@code null} if none
          */
         private SignalWaitTerminator(
-                String stepId, String signalName, Class<?> payloadType, CallbackId stateUpdaterCbId) {
+                String stepId,
+                String signalName,
+                Class<?> payloadType,
+                CallbackId stateUpdaterCbId,
+                @Nullable CallbackId correlationKeyCbId) {
             this.stepId = stepId;
             this.signalName = signalName;
             this.payloadType = payloadType;
             this.stateUpdaterCbId = stateUpdaterCbId;
+            this.correlationKeyCbId = correlationKeyCbId;
         }
 
         /**
@@ -1152,7 +1181,8 @@ public final class WorkflowBuilder<S> {
          * @return a {@link SignalWaitWithNextStep} to either finalise or add a timeout branch
          */
         public SignalWaitWithNextStep toStepOnSignal(String nextStepId) {
-            return new SignalWaitWithNextStep(stepId, signalName, payloadType, stateUpdaterCbId, nextStepId);
+            return new SignalWaitWithNextStep(
+                    stepId, signalName, payloadType, stateUpdaterCbId, nextStepId, correlationKeyCbId);
         }
     }
 
@@ -1168,6 +1198,7 @@ public final class WorkflowBuilder<S> {
         private final Class<?> payloadType;
         private final CallbackId stateUpdaterCbId;
         private final String nextStepId;
+        private final @Nullable CallbackId correlationKeyCbId;
 
         /**
          * Constructs a {@code SignalWaitWithNextStep}.
@@ -1177,18 +1208,21 @@ public final class WorkflowBuilder<S> {
          * @param payloadType the payload class
          * @param stateUpdaterCbId callback id for the signal applicator
          * @param nextStepId step to advance to after the signal is processed
+         * @param correlationKeyCbId callback id for the correlation key function; {@code null} if none
          */
         private SignalWaitWithNextStep(
                 String stepId,
                 String signalName,
                 Class<?> payloadType,
                 CallbackId stateUpdaterCbId,
-                String nextStepId) {
+                String nextStepId,
+                @Nullable CallbackId correlationKeyCbId) {
             this.stepId = stepId;
             this.signalName = signalName;
             this.payloadType = payloadType;
             this.stateUpdaterCbId = stateUpdaterCbId;
             this.nextStepId = nextStepId;
+            this.correlationKeyCbId = correlationKeyCbId;
         }
 
         /**
@@ -1199,7 +1233,13 @@ public final class WorkflowBuilder<S> {
          */
         public WorkflowBuilder<S> build() {
             nodes.add(new WaitSignalNode(
-                    stepId, signalName, payloadName(payloadType), stateUpdaterCbId, nextStepId, null));
+                    stepId,
+                    signalName,
+                    payloadName(payloadType),
+                    stateUpdaterCbId,
+                    nextStepId,
+                    null,
+                    correlationKeyCbId));
             return WorkflowBuilder.this;
         }
 
@@ -1213,7 +1253,13 @@ public final class WorkflowBuilder<S> {
          */
         public SignalWaitWithTimeout timeoutAfter(Duration delay) {
             return new SignalWaitWithTimeout(
-                    stepId, signalName, payloadType, stateUpdaterCbId, nextStepId, new TimerSpec.After(delay));
+                    stepId,
+                    signalName,
+                    payloadType,
+                    stateUpdaterCbId,
+                    nextStepId,
+                    new TimerSpec.After(delay),
+                    correlationKeyCbId);
         }
 
         /**
@@ -1225,7 +1271,13 @@ public final class WorkflowBuilder<S> {
          */
         public SignalWaitWithTimeout timeoutAt(Instant fireAt) {
             return new SignalWaitWithTimeout(
-                    stepId, signalName, payloadType, stateUpdaterCbId, nextStepId, new TimerSpec.At(fireAt));
+                    stepId,
+                    signalName,
+                    payloadType,
+                    stateUpdaterCbId,
+                    nextStepId,
+                    new TimerSpec.At(fireAt),
+                    correlationKeyCbId);
         }
 
         /**
@@ -1242,7 +1294,13 @@ public final class WorkflowBuilder<S> {
             CallbackId cbId = callbackId(stepId, "timeoutResolver");
             timerResolvers.put(cbId.value(), (Function<Object, Instant>) (Function<?, ?>) resolver);
             return new SignalWaitWithTimeout(
-                    stepId, signalName, payloadType, stateUpdaterCbId, nextStepId, new TimerSpec.FromState(cbId));
+                    stepId,
+                    signalName,
+                    payloadType,
+                    stateUpdaterCbId,
+                    nextStepId,
+                    new TimerSpec.FromState(cbId),
+                    correlationKeyCbId);
         }
     }
 
@@ -1259,6 +1317,7 @@ public final class WorkflowBuilder<S> {
         private final CallbackId stateUpdaterCbId;
         private final String nextStepId;
         private final TimerSpec timeoutSpec;
+        private final @Nullable CallbackId correlationKeyCbId;
 
         /**
          * Constructs a {@code SignalWaitWithTimeout}.
@@ -1269,6 +1328,7 @@ public final class WorkflowBuilder<S> {
          * @param stateUpdaterCbId callback id for the signal applicator
          * @param nextStepId step to advance to after the signal is processed
          * @param timeoutSpec how the timeout deadline is determined
+         * @param correlationKeyCbId callback id for the correlation key function; {@code null} if none
          */
         private SignalWaitWithTimeout(
                 String stepId,
@@ -1276,13 +1336,15 @@ public final class WorkflowBuilder<S> {
                 Class<?> payloadType,
                 CallbackId stateUpdaterCbId,
                 String nextStepId,
-                TimerSpec timeoutSpec) {
+                TimerSpec timeoutSpec,
+                @Nullable CallbackId correlationKeyCbId) {
             this.stepId = stepId;
             this.signalName = signalName;
             this.payloadType = payloadType;
             this.stateUpdaterCbId = stateUpdaterCbId;
             this.nextStepId = nextStepId;
             this.timeoutSpec = timeoutSpec;
+            this.correlationKeyCbId = correlationKeyCbId;
         }
 
         /**
@@ -1300,7 +1362,14 @@ public final class WorkflowBuilder<S> {
             CallbackId cbId = callbackId(stepId, "timeoutMutator");
             stateMutators.put(cbId.value(), (Function<Object, Object>) (Function<?, ?>) mutator);
             return new SignalWaitWithTimeoutMutator(
-                    stepId, signalName, payloadType, stateUpdaterCbId, nextStepId, timeoutSpec, cbId);
+                    stepId,
+                    signalName,
+                    payloadType,
+                    stateUpdaterCbId,
+                    nextStepId,
+                    timeoutSpec,
+                    cbId,
+                    correlationKeyCbId);
         }
 
         /**
@@ -1319,7 +1388,13 @@ public final class WorkflowBuilder<S> {
             WaitSignalNode.TimeoutBranch branch =
                     new WaitSignalNode.TimeoutBranch(timeoutSpec, cbId, timeoutNextStepId);
             nodes.add(new WaitSignalNode(
-                    stepId, signalName, payloadName(payloadType), stateUpdaterCbId, nextStepId, branch));
+                    stepId,
+                    signalName,
+                    payloadName(payloadType),
+                    stateUpdaterCbId,
+                    nextStepId,
+                    branch,
+                    correlationKeyCbId));
             return WorkflowBuilder.this;
         }
     }
@@ -1336,6 +1411,7 @@ public final class WorkflowBuilder<S> {
         private final String nextStepId;
         private final TimerSpec timeoutSpec;
         private final CallbackId timeoutMutatorCbId;
+        private final @Nullable CallbackId correlationKeyCbId;
 
         /**
          * Constructs a {@code SignalWaitWithTimeoutMutator}.
@@ -1347,6 +1423,7 @@ public final class WorkflowBuilder<S> {
          * @param nextStepId step to advance to after the signal is processed
          * @param timeoutSpec how the timeout deadline is determined
          * @param timeoutMutatorCbId callback id for the timeout state mutator
+         * @param correlationKeyCbId callback id for the correlation key function; {@code null} if none
          */
         private SignalWaitWithTimeoutMutator(
                 String stepId,
@@ -1355,7 +1432,8 @@ public final class WorkflowBuilder<S> {
                 CallbackId stateUpdaterCbId,
                 String nextStepId,
                 TimerSpec timeoutSpec,
-                CallbackId timeoutMutatorCbId) {
+                CallbackId timeoutMutatorCbId,
+                @Nullable CallbackId correlationKeyCbId) {
             this.stepId = stepId;
             this.signalName = signalName;
             this.payloadType = payloadType;
@@ -1363,6 +1441,7 @@ public final class WorkflowBuilder<S> {
             this.nextStepId = nextStepId;
             this.timeoutSpec = timeoutSpec;
             this.timeoutMutatorCbId = timeoutMutatorCbId;
+            this.correlationKeyCbId = correlationKeyCbId;
         }
 
         /**
@@ -1377,7 +1456,13 @@ public final class WorkflowBuilder<S> {
             WaitSignalNode.TimeoutBranch branch =
                     new WaitSignalNode.TimeoutBranch(timeoutSpec, timeoutMutatorCbId, timeoutNextStepId);
             nodes.add(new WaitSignalNode(
-                    stepId, signalName, payloadName(payloadType), stateUpdaterCbId, nextStepId, branch));
+                    stepId,
+                    signalName,
+                    payloadName(payloadType),
+                    stateUpdaterCbId,
+                    nextStepId,
+                    branch,
+                    correlationKeyCbId));
             return WorkflowBuilder.this;
         }
     }
@@ -1927,6 +2012,8 @@ public final class WorkflowBuilder<S> {
      * {@link WaitSignalNode} with a non-null {@code timeout}, the timeout spec and mutator callback
      * id are appended. Cycle-1 plans that have no {@link TimerNode}s and no timeout branches hash
      * identically to before.
+     * A {@link WaitSignalNode} that declares a correlation key appends the key callback id after any
+     * timeout branch; a wait with no key writes nothing for it, so its hash is unchanged.
      *
      * @param definitionId the definition id
      * @param definitionVersion the definition version
@@ -1971,6 +2058,11 @@ public final class WorkflowBuilder<S> {
                                     digest,
                                     n.timeout().onTimeoutMutatorCallbackId().value());
                             update(digest, n.timeout().timeoutNextStepId());
+                        }
+                        // Appended after the timeout branch, and only when declared, so a plan
+                        // without a key hashes as it did before the key existed
+                        if (n.correlationKeyCallbackId() != null) {
+                            update(digest, n.correlationKeyCallbackId().value());
                         }
                     }
                     case TimerNode n -> {
@@ -2211,7 +2303,8 @@ public final class WorkflowBuilder<S> {
             Map<String, BiFunction<Object, Object, Object>> decisionApplicators,
             Map<String, Function<Object, TaskAssignment>> taskAssignmentResolvers,
             Map<String, Function<Object, WorkflowSubjectRef>> subjectResolvers,
-            Map<String, BiFunction<Object, Map<String, BranchResult>, Object>> branchResultReducers)
+            Map<String, BiFunction<Object, Map<String, BranchResult>, Object>> branchResultReducers,
+            Map<String, Function<Object, String>> correlationKeyResolvers)
             implements WorkflowCallbackRegistry {
 
         @SuppressWarnings("unchecked")
@@ -2252,6 +2345,15 @@ public final class WorkflowBuilder<S> {
             Function<Object, Instant> fn = timerResolvers.get(id.value());
             if (fn == null) throw new IllegalArgumentException("No timer resolver for CallbackId: " + id.value());
             return (Function<S, Instant>) (Function<?, ?>) fn;
+        }
+
+        @SuppressWarnings("unchecked")
+        @Override
+        public <S> Function<S, String> correlationKeyResolver(CallbackId id) {
+            Function<Object, String> fn = correlationKeyResolvers.get(id.value());
+            if (fn == null)
+                throw new IllegalArgumentException("No correlation key resolver for CallbackId: " + id.value());
+            return (Function<S, String>) (Function<?, ?>) fn;
         }
 
         @SuppressWarnings("unchecked")

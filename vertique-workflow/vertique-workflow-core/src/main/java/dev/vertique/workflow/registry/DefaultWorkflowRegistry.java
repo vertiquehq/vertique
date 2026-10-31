@@ -832,6 +832,8 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      *   <li>For every {@link WaitSignalNode} with a non-null {@code timeout}: the
      *       {@code onTimeoutMutatorCallbackId} must resolve via
      *       {@link WorkflowCallbackRegistry#stateMutator(CallbackId)}.</li>
+     *   <li>For every {@link WaitSignalNode} with a non-null {@code correlationKeyCallbackId}: the
+     *       id must resolve via {@link WorkflowCallbackRegistry#correlationKeyResolver(CallbackId)}.</li>
      * </ul>
      *
      * @param plan the validated plan
@@ -863,6 +865,16 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                     }
                 }
                 case WaitSignalNode wsn -> {
+                    if (wsn.correlationKeyCallbackId() != null) {
+                        CallbackId keyId = wsn.correlationKeyCallbackId();
+                        try {
+                            callbacks.correlationKeyResolver(keyId);
+                        } catch (IllegalArgumentException | UnsupportedOperationException ex) {
+                            throw new WorkflowDefinitionException("WaitSignalNode '" + wsn.stepId() + "' in " + label
+                                    + " declares a correlation key but no correlationKeyResolver is registered"
+                                    + " for callback '" + keyId.value() + "'");
+                        }
+                    }
                     if (wsn.timeout() != null) {
                         CallbackId mutatorId = wsn.timeout().onTimeoutMutatorCallbackId();
                         try {

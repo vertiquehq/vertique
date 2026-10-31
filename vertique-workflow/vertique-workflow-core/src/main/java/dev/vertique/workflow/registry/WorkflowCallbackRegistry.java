@@ -101,6 +101,27 @@ public interface WorkflowCallbackRegistry {
     }
 
     /**
+     * Retrieves the correlation-key function registered under the given callback id.
+     *
+     * <p>Correlation-key functions have type {@code Function<S, String>} where {@code S} is the
+     * workflow state type. The function computes the value that identifies a signal wait from the
+     * workflow state, as declared by
+     * {@link dev.vertique.workflow.plan.WaitSignalNode#correlationKeyCallbackId()}.
+     *
+     * <p>The default implementation throws {@link UnsupportedOperationException}. Workflow
+     * definitions that declare no correlation key need not override this method.
+     *
+     * @param <S> the workflow state type
+     * @param id the callback id to look up
+     * @return the registered correlation-key function; never null
+     * @throws UnsupportedOperationException if no correlation-key function is registered for the
+     *     given id
+     */
+    default <S> Function<S, String> correlationKeyResolver(CallbackId id) {
+        throw new UnsupportedOperationException("correlationKeyResolver not registered for " + id);
+    }
+
+    /**
      * Retrieves the signal-applicator function registered under the given callback id.
      *
      * <p>Signal applicators have type {@code BiFunction<S, P, S>} where {@code S} is the workflow
