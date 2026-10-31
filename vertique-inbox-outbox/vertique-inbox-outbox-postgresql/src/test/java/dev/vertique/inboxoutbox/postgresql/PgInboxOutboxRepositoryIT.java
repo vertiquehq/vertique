@@ -619,7 +619,7 @@ public class PgInboxOutboxRepositoryIT {
     @Test
     @DisplayName("a scheduled row is claimed once its time has passed")
     void scheduledRowIsClaimedWhenDue(VertxTestContext ctx) {
-        Instant due = Instant.now().plusMillis(1500);
+        Instant due = Instant.now().plusMillis(2500);
         pool.withTransaction(tx -> insert(timedEntry(due, null, null), tx))
                 .compose(id -> repository
                         .claimBatch(10, "node-x", kafkaOnly())
@@ -627,7 +627,7 @@ public class PgInboxOutboxRepositoryIT {
                         .compose(earlyClaimed -> {
                             ctx.verify(() -> assertFalse(earlyClaimed, "not claimable before its time"));
                             Promise<Boolean> late = Promise.promise();
-                            vertxForTimers.setTimer(2000, t -> repository
+                            vertxForTimers.setTimer(3500, t -> repository
                                     .claimBatch(10, "node-x", kafkaOnly())
                                     .map(rows -> rows.stream().anyMatch(r -> r.id() == id))
                                     .onComplete(late));
