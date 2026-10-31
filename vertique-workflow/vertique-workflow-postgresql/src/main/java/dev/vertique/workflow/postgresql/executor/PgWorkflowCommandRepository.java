@@ -255,14 +255,19 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
                 + " (workflow_id, seq, kind, state, recorded_at, available_at, payload_json, dedup_key, target_json,"
                 + " context_json, " + ACTOR_COLUMNS + ") SELECT $1, $2, 'START', 'PENDING', recorded.at, recorded.at,"
                 + " $3::jsonb, $4, $5::jsonb, $6::jsonb, " + actorValues(7) + " FROM recorded RETURNING id";
+        // The limit applies to the commands before the instances are joined, so that the statement can stop reading the
+        // partial index on available_at once it has found enough claimable heads instead of judging every runnable
+        // command first. The state filter repeats what claimable implies so that the planner can use that index. Every
+        // command has its instance (the foreign key cascades), so the join drops no row and the limit cannot return
+        // fewer heads than the unbounded join would.
         this.peekHeads = "SELECT c.id, c.workflow_id, c.kind, i.definition_scope_key, i.definition_id,"
                 + " i.definition_version, i.plan_hash, i.status IN " + ENDED + " AS instance_ended,"
                 + " CASE WHEN c.kind = 'MIGRATION' THEN (c.target_json->>'version')::bigint END AS migration_version,"
                 + " CASE WHEN c.kind = 'MIGRATION' THEN c.target_json->>'scope' END AS migration_scope,"
-                + " i.scope_key AS instance_scope_key FROM " + commands
-                + " c JOIN " + instances
-                + " i ON i.id = c.workflow_id WHERE " + eligibility.claimable("c")
-                + " ORDER BY c.available_at, c.id LIMIT $1";
+                + " i.scope_key AS instance_scope_key FROM (SELECT c.* FROM " + commands
+                + " c WHERE c.state IN ('PENDING','DEFERRED','CLAIMED') AND " + eligibility.claimable("c")
+                + " ORDER BY c.available_at, c.id LIMIT $1) c JOIN " + instances
+                + " i ON i.id = c.workflow_id ORDER BY c.available_at, c.id";
         this.claimLookup =
                 "SELECT c.state, c.attempts, c.kind, i.status AS instance_status, c.target_json->>'name' AS signal_name,"
                         + " c.target_json->>'branchId' IS NOT NULL AS branch_signal FROM " + commands + " c JOIN "
@@ -639,6 +644,11 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     /** A JSON text as the value the PostgreSQL client binds to a {@code jsonb} parameter, so it is stored as JSON. */
     private static @Nullable Object jsonValue(@Nullable String json) {
         return json == null ? null : Json.decodeValue(json);
+    }
+
+    /** The statement {@link #peek} runs, with {@code $1} for the limit. */
+    String peekStatement() {
+        return peekHeads;
     }
 
     @Override
