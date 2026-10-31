@@ -496,7 +496,7 @@ class NamedJobMigrationIT {
                     "job".equals(name) ? jobApplied : appApplied,
                     result.migrationsApplied(),
                     name + " applied scripts");
-            assertEquals("job".equals(name) ? "002" : "1", result.currentVersion(), name + " current version");
+            assertEquals("job".equals(name) ? "003" : "1", result.currentVersion(), name + " current version");
         }
     }
 

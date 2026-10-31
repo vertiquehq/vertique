@@ -209,6 +209,23 @@ class DelayedJobServiceTest {
     }
 
     @Test
+    @DisplayName("a scoped service replaces the scope a job selected")
+    void scopedServiceReplacesTheJobScope() {
+        // Given: a job selecting globex, on a service bound to acme
+        DelayedJob job =
+                DelayedJob.builder().handler("my-handler").scopeKey("globex").build();
+        when(repository.save(any())).thenReturn(Future.succeededFuture(UUID.randomUUID()));
+
+        // When: it is enqueued
+        service.scopedTo("acme").enqueue(job);
+
+        // Then: the bound key wins
+        ArgumentCaptor<JobExecution> captor = ArgumentCaptor.forClass(JobExecution.class);
+        verify(repository).save(captor.capture());
+        assertEquals("acme", captor.getValue().scopeKey());
+    }
+
+    @Test
     @DisplayName("an ambient scope is captured in metadata but never selects the row scope")
     void ambientScopeDoesNotSelectRowScope(Vertx vertx, VertxTestContext ctx) {
         // Given: ScopeContext bound to acme, and a job with no selection and a job selecting globex

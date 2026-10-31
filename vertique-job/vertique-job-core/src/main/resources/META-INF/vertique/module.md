@@ -48,8 +48,8 @@ attempts remain while `attemptNumber + 1 < maxAttempts`.
 ### Scope
 
 Every `JobExecution` carries a `scopeKey`, the application's partition label for the work (a tenant,
-project or workspace). The enqueue call selects it explicitly (`DelayedJob.scopeKey` in
-`vertique-job-delayed`); an execution that never selected one reads `default`
+project or workspace). The enqueue call selects it explicitly (`DelayedJobClientFactory.client(...).scope(...)` or
+`DelayedJob.scopeKey` in `vertique-job-delayed`); an execution that never selected one reads `default`
 (`ScopeKey.DEFAULT.value()`), and `scopeKey()` is never `null`. The ambient `ScopeContext` does not
 choose it. The scope is a label, not authorization: claiming, retry, retention and cron
 de-duplication ignore it, so a worker claims jobs of every scope from its queue.
