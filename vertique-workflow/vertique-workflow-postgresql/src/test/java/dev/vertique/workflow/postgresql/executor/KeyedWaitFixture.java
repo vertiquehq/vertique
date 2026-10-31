@@ -45,6 +45,7 @@ import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.SqlConnection;
 import io.vertx.sqlclient.Tuple;
 import jakarta.annotation.Nullable;
 import java.time.Duration;
@@ -78,6 +79,18 @@ final class KeyedWaitFixture implements AutoCloseable {
 
     /** An order that waits like {@link #ORDER} and gives up after an hour. */
     static final String ORDER_WITH_TIMEOUT = "order-with-timeout";
+
+    /**
+     * An approval that waits at {@code wait-received} for {@code received} and then at {@code wait-approved} for
+     * {@code approved}, neither wait declaring a key; its row declares both names among the instance names.
+     */
+    static final String APPROVAL = "approval";
+
+    /** An approval of the contract of {@link #APPROVAL} whose row declares {@code received} but not {@code approved}. */
+    static final String APPROVAL_NARROW = "approval-narrow";
+
+    /** An audit, of another contract, that waits at {@code wait-approved} for a signal named like the approval's. */
+    static final String AUDIT = "audit";
 
     /** An invoice, of another contract, that waits for a signal named like the order's {@code payment-captured}. */
     static final String INVOICE = "invoice";
@@ -354,6 +367,21 @@ final class KeyedWaitFixture implements AutoCloseable {
         Future<Void> refundIssued(WorkflowInstanceId id, Payment payload, @SignalDedupKey String key);
     }
 
+    /** The contract of the approval definitions. */
+    interface ApprovalContract {
+        @WorkflowSignal("received")
+        Future<Void> received(WorkflowInstanceId id, Payment payload, @SignalDedupKey String key);
+
+        @WorkflowSignal("approved")
+        Future<Void> approved(WorkflowInstanceId id, Payment payload, @SignalDedupKey String key);
+    }
+
+    /** The contract of the audit definition. */
+    interface AuditContract {
+        @WorkflowSignal("approved")
+        Future<Void> approved(WorkflowInstanceId id, Payment payload, @SignalDedupKey String key);
+    }
+
     /** The contract of the invoice definition. */
     interface InvoiceContract {
         @WorkflowSignal("payment-captured")
@@ -423,6 +451,9 @@ final class KeyedWaitFixture implements AutoCloseable {
             seed(order(ORDER_WITH_TIMEOUT, true), List.of("payment-captured", "refund-issued"));
             seed(refundOrder(), List.of("payment-captured", "refund-issued"));
             seed(invoice(), List.of("payment-captured"));
+            seed(approval(APPROVAL), List.of("received", "approved"));
+            seed(approval(APPROVAL_NARROW), List.of("received"));
+            seed(audit(), List.of("approved"));
             seed(chain(), List.of("a-done", "b-done"));
             seed(fork(FORK, ForkState::refA, ForkState::refB, false), List.of(), forkBranches());
             seed(fork(FORK_WITH_TIMEOUT, ForkState::refA, ForkState::refB, true), List.of(), forkBranches());
@@ -564,17 +595,75 @@ final class KeyedWaitFixture implements AutoCloseable {
     }
 
     private WorkflowInstanceId startWith(Node node, String definitionId, Object payload, @Nullable String scope) {
+        return startWith(node, definitionId, payload, null, scope);
+    }
+
+    private WorkflowInstanceId startWith(
+            Node node, String definitionId, Object payload, @Nullable String businessKey, @Nullable String scope) {
         StartCommand command = new StartCommand(
                 definitionId,
                 runtimeOf(definitionId).contractName(),
                 payload,
                 "idem-" + UUID.randomUUID(),
-                null,
+                businessKey,
                 null,
                 1L,
                 scope,
                 null);
         return await(caller(() -> node.pool.withTransaction(tx -> node.engine.start(command, tx))));
+    }
+
+    /**
+     * Records, and commits, the start of {@link #APPROVAL} in the order scope with a business key, and leaves it
+     * unrun: the instance is {@code PENDING} until an executor runs its start.
+     *
+     * @param node        the node whose engine records the start
+     * @param businessKey the business key of the instance
+     * @return the instance
+     */
+    WorkflowInstanceId startPending(Node node, String businessKey) {
+        return startWithBusinessKey(node, APPROVAL, businessKey, SCOPE);
+    }
+
+    /**
+     * Records, and commits, the start of a definition that starts from {@link OrderStart}, with a business key.
+     *
+     * @param node         the node whose engine records the start
+     * @param definitionId the definition to start
+     * @param businessKey  the business key of the instance
+     * @param scope        the start scope, or {@code null} for the default scope
+     * @return the instance
+     */
+    WorkflowInstanceId startWithBusinessKey(
+            Node node, String definitionId, String businessKey, @Nullable String scope) {
+        String ref = definitionId + "-" + businessKey + "-" + UUID.randomUUID();
+        return startWith(node, definitionId, new OrderStart(ref, businessKey), businessKey, scope);
+    }
+
+    /**
+     * Records, and commits, the start of a fork definition in the order scope with a business key.
+     *
+     * @param node         the node whose engine records the start
+     * @param definitionId the fork definition to start
+     * @param businessKey  the business key of the instance
+     * @return the instance
+     */
+    WorkflowInstanceId startForkWithBusinessKey(Node node, String definitionId, String businessKey) {
+        String ref = definitionId + "-" + businessKey + "-" + UUID.randomUUID();
+        return startWith(node, definitionId, new ForkStart(ref, "SHIP-A", "SHIP-B"), businessKey, SCOPE);
+    }
+
+    /**
+     * Sets the signal names the stored definition rows of the definition declare, as the plan wrote them.
+     *
+     * @param definitionId the definition
+     * @param names        the document of the instance and branch names, or {@code null} for a row written before the
+     *                     column existed, which has no name list
+     */
+    void setSignalNames(String definitionId, @Nullable JsonObject names) {
+        await(fixture.observer()
+                .preparedQuery("UPDATE workflow_definitions SET signal_names_json = $2::jsonb WHERE definition_id = $1")
+                .execute(Tuple.of(definitionId, names)));
     }
 
     /**
@@ -683,19 +772,48 @@ final class KeyedWaitFixture implements AutoCloseable {
      * @return a future of the receipt or the failure
      */
     Future<Delivery> startDelivery(Node node, CorrelatedSignal signal) {
-        return caller(() -> node.pool
-                .getConnection()
-                .compose(connection -> connection.begin().compose(transaction -> node.engine
-                        .signalByKey(signal, connection)
-                        .transform(outcome -> {
-                            Delivery delivery = outcome.succeeded()
-                                    ? new Delivery(outcome.result(), null)
-                                    : new Delivery(null, outcome.cause());
-                            return transaction
-                                    .commit()
-                                    .transform(committed -> connection.close())
-                                    .map(closed -> delivery);
-                        }))));
+        return startDelivery(node, connection -> node.engine.signalByKey(signal, connection), () -> {});
+    }
+
+    /**
+     * Delivers the signal by business key in a caller transaction that commits whatever the outcome was, so that
+     * anything a refusal wrote would stay.
+     *
+     * @param node   the node whose engine delivers
+     * @param signal the signal; its key is the business key
+     * @return the receipt or the failure
+     */
+    Delivery deliverByBusinessKey(Node node, CorrelatedSignal signal) {
+        return await(startBusinessKeyDelivery(node, signal, () -> {}));
+    }
+
+    /**
+     * Starts the delivery of {@link #deliverByBusinessKey} and returns before it ends, running the action after the
+     * delivery answered and before the caller commits.
+     *
+     * @param node         the node whose engine delivers
+     * @param signal       the signal; its key is the business key
+     * @param beforeCommit what the caller does once it has the answer and before it commits
+     * @return a future of the receipt or the failure
+     */
+    Future<Delivery> startBusinessKeyDelivery(Node node, CorrelatedSignal signal, Runnable beforeCommit) {
+        return startDelivery(node, connection -> node.engine.signalByBusinessKey(signal, connection), beforeCommit);
+    }
+
+    private Future<Delivery> startDelivery(
+            Node node, Function<SqlConnection, Future<CorrelatedSignalReceipt>> operation, Runnable beforeCommit) {
+        return caller(() -> node.pool.getConnection().compose(connection -> connection
+                .begin()
+                .compose(transaction -> operation.apply(connection).transform(outcome -> {
+                    Delivery delivery = outcome.succeeded()
+                            ? new Delivery(outcome.result(), null)
+                            : new Delivery(null, outcome.cause());
+                    beforeCommit.run();
+                    return transaction
+                            .commit()
+                            .transform(committed -> connection.close())
+                            .map(closed -> delivery);
+                }))));
     }
 
     /**
@@ -1338,6 +1456,36 @@ final class KeyedWaitFixture implements AutoCloseable {
                         new ForkState(state.ref(), state.refA(), state.refB(), payment.reference(), state.printed()))
                 .toStepOnSignal(next)
                 .build();
+    }
+
+    /** An approval that waits for {@code received} and then for {@code approved}, with no key on either wait. */
+    private static Definition<OrderState, ApprovalContract> approval(String id) {
+        return orderDefinition(id, ApprovalContract.class, wf -> {
+            wf.initialStep("wait-received");
+            wf.waitForSignal("wait-received", "received", Payment.class)
+                    .onSignal((state, payment) -> state)
+                    .toStepOnSignal("wait-approved")
+                    .build();
+            wf.waitForSignal("wait-approved", "approved", Payment.class)
+                    .onSignal((state, payment) ->
+                            new OrderState(state.ref(), state.paymentReference(), payment.reference()))
+                    .toStepOnSignal("done")
+                    .build();
+            wf.complete("done");
+        });
+    }
+
+    /** An audit, of a contract other than the approval's, that waits for {@code approved}. */
+    private static Definition<OrderState, AuditContract> audit() {
+        return orderDefinition(AUDIT, AuditContract.class, wf -> {
+            wf.initialStep("wait-approved");
+            wf.waitForSignal("wait-approved", "approved", Payment.class)
+                    .onSignal((state, payment) ->
+                            new OrderState(state.ref(), state.paymentReference(), payment.reference()))
+                    .toStepOnSignal("done")
+                    .build();
+            wf.complete("done");
+        });
     }
 
     private static Definition<OrderState, InvoiceContract> invoice() {
