@@ -34,7 +34,7 @@ class ScopeKeyRulesParityTest {
                 Arguments.of("256 code points", "x".repeat(256), false),
                 Arguments.of("256 supplementary code points", SUPPLEMENTARY.repeat(256), false),
                 Arguments.of("control character", "bad\u0001key", false),
-                Arguments.of("format character", "bad​key", false),
+                Arguments.of("format character", "bad\u200Bkey", false),
                 Arguments.of("unpaired high surrogate", "bad\uD800key", false),
                 Arguments.of("unpaired low surrogate", "bad\uDC00key", false),
                 Arguments.of("leading whitespace", " acme", false),
