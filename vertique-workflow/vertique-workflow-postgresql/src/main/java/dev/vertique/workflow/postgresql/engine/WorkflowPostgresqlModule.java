@@ -25,6 +25,7 @@ import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
+import dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.history.WorkflowInstanceHistoryService;
@@ -38,6 +39,7 @@ import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
+import dev.vertique.workflow.postgresql.repository.PgWorkflowSignalWaitRepository;
 import dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionRepository;
 import dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionService;
 import dev.vertique.workflow.postgresql.tasks.PgTaskReservations;
@@ -242,6 +244,22 @@ public abstract class WorkflowPostgresqlModule {
     }
 
     /**
+     * Provides the {@link PgWorkflowSignalWaitRepository}, applying the schema mapping for the
+     * {@code workflow} instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL wait record repository
+     */
+    @Provides
+    @Singleton
+    static PgWorkflowSignalWaitRepository pgWorkflowSignalWaitRepository(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgWorkflowSignalWaitRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
      * Provides the {@link PgBranchTokenRepository}, applying the schema mapping for the
      * {@code workflow} instance when a {@link DbSchemas} binding exists.
      *
@@ -412,6 +430,17 @@ public abstract class WorkflowPostgresqlModule {
     @Binds
     @Singleton
     abstract WorkflowDedupRepository<SqlClient> bindDedupRepository(PgWorkflowDedupRepository impl);
+
+    /**
+     * Binds {@link PgWorkflowSignalWaitRepository} as the {@link WorkflowSignalWaitRepository} implementation for the
+     * {@link SqlClient}-typed stack.
+     *
+     * @param impl the wait record repository singleton
+     * @return the repository as the transaction-handle-generic SPI
+     */
+    @Binds
+    @Singleton
+    abstract WorkflowSignalWaitRepository<SqlClient> bindSignalWaitRepository(PgWorkflowSignalWaitRepository impl);
 
     /**
      * Binds {@link PgBranchTokenRepository} as the {@link BranchTokenRepository} implementation for

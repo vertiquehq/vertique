@@ -21,6 +21,7 @@ import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
+import dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
 import dev.vertique.workflow.history.WorkflowHistoryRedactor;
@@ -59,6 +60,7 @@ public final class WorkflowEngineParts {
     private final WorkflowInstanceRepository<SqlClient> instances;
     private final WorkflowHistoryRepository<SqlClient> history;
     private final WorkflowDedupRepository<SqlClient> dedup;
+    private final WorkflowSignalWaitRepository<SqlClient> signalWaits;
     private final BranchTokenRepository<SqlClient> branchTokens;
     private final JoinStateRepository<SqlClient> joinStates;
     private final TimerStore<SqlClient> timerStore;
@@ -92,6 +94,7 @@ public final class WorkflowEngineParts {
         this.instances = Objects.requireNonNull(b.instances, "instances");
         this.history = Objects.requireNonNull(b.history, "history");
         this.dedup = Objects.requireNonNull(b.dedup, "dedup");
+        this.signalWaits = Objects.requireNonNull(b.signalWaits, "signalWaits");
         this.branchTokens = Objects.requireNonNull(b.branchTokens, "branchTokens");
         this.joinStates = Objects.requireNonNull(b.joinStates, "joinStates");
         this.timerStore = Objects.requireNonNull(b.timerStore, "timerStore");
@@ -156,6 +159,11 @@ public final class WorkflowEngineParts {
     /** The dedup repository SPI. */
     public WorkflowDedupRepository<SqlClient> dedup() {
         return dedup;
+    }
+
+    /** The wait record repository SPI. */
+    public WorkflowSignalWaitRepository<SqlClient> signalWaits() {
+        return signalWaits;
     }
 
     /** The branch-token repository SPI. */
@@ -321,6 +329,7 @@ public final class WorkflowEngineParts {
         private WorkflowInstanceRepository<SqlClient> instances;
         private WorkflowHistoryRepository<SqlClient> history;
         private WorkflowDedupRepository<SqlClient> dedup;
+        private WorkflowSignalWaitRepository<SqlClient> signalWaits;
         private BranchTokenRepository<SqlClient> branchTokens;
         private JoinStateRepository<SqlClient> joinStates;
         private TimerStore<SqlClient> timerStore;
@@ -382,6 +391,12 @@ public final class WorkflowEngineParts {
         /** Sets the dedup repository. */
         public Builder dedup(WorkflowDedupRepository<SqlClient> dedup) {
             this.dedup = dedup;
+            return this;
+        }
+
+        /** Sets the wait record repository. */
+        public Builder signalWaits(WorkflowSignalWaitRepository<SqlClient> signalWaits) {
+            this.signalWaits = signalWaits;
             return this;
         }
 

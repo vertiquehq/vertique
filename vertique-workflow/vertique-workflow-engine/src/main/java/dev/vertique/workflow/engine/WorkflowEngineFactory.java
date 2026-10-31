@@ -174,6 +174,7 @@ public final class WorkflowEngineFactory {
                 instances,
                 history,
                 dedup,
+                parts.signalWaits(),
                 recorderRouter,
                 timerStore,
                 taskStore,

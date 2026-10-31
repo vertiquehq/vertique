@@ -115,6 +115,7 @@ class WorkflowEngineReplayContractTest {
                 .instances(instances)
                 .history(mock(WorkflowHistoryRepository.class))
                 .dedup(dedup)
+                .signalWaits(org.mockito.Mockito.mock())
                 .branchTokens(mock(BranchTokenRepository.class))
                 .joinStates(mock(JoinStateRepository.class))
                 .timerStore(mock(dev.vertique.workflow.timer.TimerStore.class))

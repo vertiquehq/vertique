@@ -27,6 +27,7 @@ import dev.vertique.workflow.engine.spi.CommandHead;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.SettledCommand;
+import dev.vertique.workflow.engine.spi.SignalWaitRecord;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
 import dev.vertique.workflow.engine.spi.TaskReservations;
 import dev.vertique.workflow.engine.spi.TransactionalDefinitionReads;
@@ -36,6 +37,7 @@ import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
+import dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
@@ -50,6 +52,8 @@ import dev.vertique.workflow.exception.WorkflowSignalLimitException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
 import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
+import dev.vertique.workflow.ops.CorrelatedSignal;
+import dev.vertique.workflow.ops.CorrelatedSignalReceipt;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
@@ -92,8 +96,12 @@ import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -143,6 +151,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private final WorkflowInstanceRepository<SqlClient> instances;
     private final WorkflowHistoryRepository<SqlClient> history;
     private final WorkflowDedupRepository<SqlClient> dedup;
+    private final WorkflowSignalWaitRepository<SqlClient> signalWaits;
+    private final WorkflowTypeNames typeNames;
     private final TimerStore<SqlClient> timerStore;
     private final TaskStore<SqlClient> taskStore;
     private final Clock clock;
@@ -287,6 +297,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowHistoryRepository<SqlClient> history,
             WorkflowDedupRepository<SqlClient> dedup,
+            WorkflowSignalWaitRepository<SqlClient> signalWaits,
             TimerStore<SqlClient> timerStore,
             TaskStore<SqlClient> taskStore,
             Clock clock,
@@ -311,7 +322,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             Optional<WorkflowRecordingConfig> recording,
             CommandActors actors,
             RecorderRouter recorderRouter,
-            WorkflowHistoryEventPublisher historyPublisher) {
+            WorkflowHistoryEventPublisher historyPublisher,
+            WorkflowTypeNames typeNames) {
         WorkflowRecordingConfig recordingConfig = recording.orElseGet(WorkflowRecordingConfig::defaults);
         this.historyPublisher = historyPublisher;
         this.actors = actors;
@@ -328,6 +340,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.instances = instances;
         this.history = history;
         this.dedup = dedup;
+        this.signalWaits = signalWaits;
+        this.typeNames = typeNames;
         this.timerStore = timerStore;
         this.taskStore = taskStore;
         this.clock = clock;
@@ -357,6 +371,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowHistoryRepository<SqlClient> history,
             WorkflowDedupRepository<SqlClient> dedup,
+            WorkflowSignalWaitRepository<SqlClient> signalWaits,
             RecorderRouter recorders,
             TimerStore<SqlClient> timerStore,
             TaskStore<SqlClient> taskStore,
@@ -387,6 +402,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 instances,
                 history,
                 dedup,
+                signalWaits,
                 recorders,
                 timerStore,
                 taskStore,
@@ -459,7 +475,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * task-lifecycle service built below.
      *
      * <p>The {@code typeNames} parameter is the type-name index a decision payload's declared type
-     * name resolves through; the factory passes the one index the registry fills. The
+     * name resolves through, and the contract class of a delivery by key names through; the factory passes the one
+     * index the registry fills. The {@code signalWaits} parameter is the repository of the open wait records a
+     * delivery by key matches. The
      * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes. The {@code executionProbe} parameter is the probe the handle exposes. The {@code commands} parameter is the
      * command repository whose execution lock every instance-changing entry point takes. The {@code reservations}
      * parameter reserves a task for a recorded completion; the {@code schemaProducer} parameter, when present, supplies
@@ -475,6 +493,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowHistoryRepository<SqlClient> history,
             WorkflowDedupRepository<SqlClient> dedup,
+            WorkflowSignalWaitRepository<SqlClient> signalWaits,
             RecorderRouter recorders,
             TimerStore<SqlClient> timerStore,
             TaskStore<SqlClient> taskStore,
@@ -520,6 +539,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.instances = instances;
         this.history = history;
         this.dedup = dedup;
+        this.signalWaits = signalWaits;
+        this.typeNames = typeNames;
         this.timerStore = timerStore;
         this.taskStore = taskStore;
         this.clock = clock;
@@ -577,6 +598,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 this.forkJoin,
                 clock,
                 decisions,
+                new SignalWaits(signalWaits, clock),
                 () -> timerLifecycleHolder[0],
                 () -> taskLifecycleHolder[0]);
         driverHolder[0] = this.driver;
@@ -2001,6 +2023,127 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         DurableMetadata sanitizedMetadata =
                 propagator.sanitizeInboundCarrier(signalMetadata).without(IDENTITY_SNAPSHOT_NAMESPACE);
         return recordSignal(id, null, signalName, payload, signalDedupKey, forkStepId, branchId, sanitizedMetadata, tx);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Rejects a client that has no pending transaction before any collaborator is reached, then runs inside the
+     * history announcement of every engine entry. In the caller's transaction it finds the open wait records of the
+     * signal's contract, signal name and key (at most two, narrowed by the signal's definition id and scope), takes the
+     * execution lock of the matched instance, re-checks that the record is still the one open, and then records the
+     * signal as {@link #signal(WorkflowInstanceId, String, Object, String, SqlClient)} does: admission, the size and
+     * depth bounds of the payload, the actor of the caller, the open-signal cap and the {@code SIGNAL} command. The
+     * command's dedup key is the SHA-256 hex digest of the signal's dedup key. An executor applies the command later.
+     *
+     * <p>A delivery that matches no record, several records, or a record that changed under the lock fails the
+     * returned future without recording anything. The failure names the contract and the signal and never the key.
+     *
+     * @param signal the signal, addressed by contract, signal name and key; must not be null
+     * @param tx the active SQL transaction; must not be null
+     * @return a {@link Future} with a {@link CorrelatedSignalReceipt.Outcome#RECORDED} receipt that carries the id of
+     *     the definition of the matched instance, once the signal is recorded
+     */
+    @Override
+    public Future<CorrelatedSignalReceipt> signalByKey(CorrelatedSignal signal, SqlClient tx) {
+        Future<CorrelatedSignalReceipt> invalidClient = WorkflowTransactionClientGuard.reject("signalByKey", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+        return historyPublisher.around(
+                WorkflowHistoryFailure.Action.SIGNAL, null, tx, () -> recordSignalByKey(signal, tx));
+    }
+
+    /** The delivery of {@link #signalByKey}, inside the announcement of its failures. */
+    private Future<CorrelatedSignalReceipt> recordSignalByKey(CorrelatedSignal signal, SqlClient tx) {
+        String contractName = typeNames.contractNameOf(signal.contract());
+        String signalName = signal.signalName();
+        if (signalName.length() > MAX_NAME_LENGTH) {
+            return Future.failedFuture(new WorkflowInvalidPayloadException(
+                    "Signal for contract '" + EchoedNames.bounded(contractName) + "' is refused: the signal name"
+                            + " exceeds " + MAX_NAME_LENGTH + " characters",
+                    List.of(ViolationDetail.unlocated("the signal name is too long", "payload"))));
+        }
+        return signalWaits
+                .findOpen(contractName, signalName, signal.key(), signal.definitionId(), signal.scopeKey(), tx)
+                .compose(open -> {
+                    if (open.size() != 1) {
+                        return Future.<CorrelatedSignalReceipt>failedFuture(
+                                new IllegalStateException("Signal '" + EchoedNames.bounded(signalName)
+                                        + "' of contract '" + EchoedNames.bounded(contractName) + "' matched "
+                                        + (open.isEmpty() ? "no" : "several") + " open waits"));
+                    }
+                    SignalWaitRecord match = open.getFirst();
+                    WorkflowInstanceId id = match.instanceId();
+                    return commands.lockInstance(id, tx)
+                            .compose(locked -> signalWaits.findById(match.waitId(), tx))
+                            .compose(current -> {
+                                if (current.isEmpty()) {
+                                    return Future.<CorrelatedSignalReceipt>failedFuture(
+                                            new IllegalStateException("The wait for signal '"
+                                                    + EchoedNames.bounded(signalName) + "' of contract '"
+                                                    + EchoedNames.bounded(contractName)
+                                                    + "' changed before the signal was recorded"));
+                                }
+                                return recordCorrelated(signal, contractName, match, tx);
+                            });
+                });
+    }
+
+    /**
+     * Records the signal for the instance of a wait that is still open under the instance's execution lock: the
+     * admission, the bounds, the actor, the open-signal cap and the command. A refusal before the command is inserted
+     * writes nothing.
+     */
+    private Future<CorrelatedSignalReceipt> recordCorrelated(
+            CorrelatedSignal signal, String contractName, SignalWaitRecord match, SqlClient tx) {
+        WorkflowInstanceId id = match.instanceId();
+        String signalName = signal.signalName();
+        String forkStepId = match.forkStepId().isEmpty() ? null : match.forkStepId();
+        String branchId = match.branchId().isEmpty() ? null : match.branchId();
+        return admitSignal(id, contractName, signalName, forkStepId, branchId, tx)
+                .compose(admitted -> {
+                    String payloadJson;
+                    try {
+                        recordValidator.validate(signal.payload());
+                        payloadJson = signal.payload() == null ? null : Json.encode(signal.payload());
+                    } catch (WorkflowInvalidPayloadException e) {
+                        return Future.<CorrelatedSignalReceipt>failedFuture(new WorkflowInvalidPayloadException(
+                                "Signal '" + EchoedNames.bounded(signalName) + "' for instance '" + id.value()
+                                        + "' is refused: " + e.getMessage(),
+                                e.violations()));
+                    }
+                    return actors.captured().compose(actor -> commands.raiseOpenSignals(id, maxOpenSignals, tx)
+                            .compose(raised -> {
+                                if (!raised) {
+                                    return Future.<CorrelatedSignalReceipt>failedFuture(
+                                            new WorkflowSignalLimitException(id, maxOpenSignals));
+                                }
+                                return commands.recordSignal(
+                                                id,
+                                                signalName,
+                                                forkStepId,
+                                                branchId,
+                                                sha256Hex(signal.dedupKey()),
+                                                payloadJson,
+                                                null,
+                                                actor,
+                                                tx)
+                                        .onSuccess(recorded -> actors.reportAbsence(actor, "SIGNAL"))
+                                        .map(recorded -> new CorrelatedSignalReceipt(
+                                                CorrelatedSignalReceipt.Outcome.RECORDED, match.definitionId()));
+                            }));
+                });
+    }
+
+    /** The lowercase hex SHA-256 digest of a string's UTF-8 bytes, which a correlated command stores as its dedup key. */
+    private static String sha256Hex(String value) {
+        try {
+            return HexFormat.of()
+                    .formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException unavailable) {
+            throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+        }
     }
 
     /**

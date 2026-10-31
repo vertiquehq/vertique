@@ -272,6 +272,7 @@ class WorkflowEngineSharedTypeNamesTest {
                 .instances(instances)
                 .history(history)
                 .dedup(dedup)
+                .signalWaits(org.mockito.Mockito.mock())
                 .branchTokens(branchTokens)
                 .joinStates(joinStates)
                 .timerStore(timerStore)

@@ -122,6 +122,7 @@ class WorkflowEngineReplayStoredContractTest {
                 instances,
                 mock(WorkflowHistoryRepository.class),
                 dedup,
+                mock(dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository.class),
                 mock(RecorderRouter.class),
                 mock(dev.vertique.workflow.timer.TimerStore.class),
                 mock(dev.vertique.workflow.tasks.TaskStore.class),

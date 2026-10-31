@@ -173,6 +173,7 @@ class WorkflowEngineStartTenantTest {
                 instances,
                 history,
                 dedup,
+                mock(dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository.class),
                 recorderRouter,
                 timerStore,
                 taskStore,

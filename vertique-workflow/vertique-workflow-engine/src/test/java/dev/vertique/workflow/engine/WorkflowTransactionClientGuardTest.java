@@ -21,6 +21,7 @@ import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
+import dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
@@ -28,6 +29,7 @@ import dev.vertique.workflow.engine.testsupport.InMemoryWorkflowDefinitionRegist
 import dev.vertique.workflow.engine.testsupport.TenantCtxCodec;
 import dev.vertique.workflow.migration.WorkflowMigrationHandler;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
+import dev.vertique.workflow.ops.CorrelatedSignal;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
@@ -103,6 +105,9 @@ class WorkflowTransactionClientGuardTest {
             null,
             null);
 
+    /** The contract class a correlated signal is addressed to. */
+    private interface Contract {}
+
     /** Raised by every SQL-capable collaborator mock, so a reached boundary is visible as a failure. */
     private static final class SqlBoundaryReached extends RuntimeException {
         SqlBoundaryReached(String method) {
@@ -137,6 +142,7 @@ class WorkflowTransactionClientGuardTest {
             WorkflowInstanceRepository<SqlClient> instances,
             WorkflowHistoryRepository<SqlClient> history,
             WorkflowDedupRepository<SqlClient> dedup,
+            WorkflowSignalWaitRepository<SqlClient> signalWaits,
             BranchTokenRepository<SqlClient> branchTokens,
             JoinStateRepository<SqlClient> joinStates,
             TimerStore<SqlClient> timerStore,
@@ -168,6 +174,10 @@ class WorkflowTransactionClientGuardTest {
                         "signal with branch carrier",
                         (engine, client) -> engine.signal(
                                 INSTANCE, SIGNAL_NAME, Map.of(), "signal-key", "fork", "branch", CARRIER, client)),
+                new EngineOperation(
+                        "signalByKey",
+                        (engine, client) -> engine.signalByKey(
+                                CorrelatedSignal.of(Contract.class, "approve", "K-1", Map.of(), "d-1"), client)),
                 new EngineOperation("cancel", (engine, client) -> engine.cancel(INSTANCE, "reason", client)),
                 new EngineOperation("retry", (engine, client) -> engine.retry(INSTANCE, client)),
                 new EngineOperation("migrate", (engine, client) -> engine.migrate(INSTANCE, 2L, client)),
@@ -224,6 +234,7 @@ class WorkflowTransactionClientGuardTest {
                 harness.instances(),
                 harness.history(),
                 harness.dedup(),
+                harness.signalWaits(),
                 harness.branchTokens(),
                 harness.joinStates(),
                 harness.timerStore(),
@@ -280,6 +291,7 @@ class WorkflowTransactionClientGuardTest {
         WorkflowInstanceRepository<SqlClient> instances = boundaryMock(WorkflowInstanceRepository.class);
         WorkflowHistoryRepository<SqlClient> history = boundaryMock(WorkflowHistoryRepository.class);
         WorkflowDedupRepository<SqlClient> dedup = boundaryMock(WorkflowDedupRepository.class);
+        WorkflowSignalWaitRepository<SqlClient> signalWaits = boundaryMock(WorkflowSignalWaitRepository.class);
         BranchTokenRepository<SqlClient> branchTokens = boundaryMock(BranchTokenRepository.class);
         JoinStateRepository<SqlClient> joinStates = boundaryMock(JoinStateRepository.class);
         TimerStore<SqlClient> timerStore = boundaryMock(TimerStore.class);
@@ -319,6 +331,7 @@ class WorkflowTransactionClientGuardTest {
                 .instances(instances)
                 .history(history)
                 .dedup(dedup)
+                .signalWaits(signalWaits)
                 .branchTokens(branchTokens)
                 .joinStates(joinStates)
                 .timerStore(timerStore)
@@ -334,7 +347,16 @@ class WorkflowTransactionClientGuardTest {
                 .definitionStore(new InMemoryWorkflowDefinitionRegistryStore().seedCode(runtime))
                 .build());
         return new Harness(
-                engine, txRunner, instances, history, dedup, branchTokens, joinStates, timerStore, taskStore);
+                engine,
+                txRunner,
+                instances,
+                history,
+                dedup,
+                signalWaits,
+                branchTokens,
+                joinStates,
+                timerStore,
+                taskStore);
     }
 
     /** A mock whose every future-returning method fails, so reaching any SQL boundary is observable. */

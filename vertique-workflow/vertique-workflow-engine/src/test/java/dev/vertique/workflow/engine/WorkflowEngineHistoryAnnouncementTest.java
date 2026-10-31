@@ -17,6 +17,7 @@ import dev.vertique.workflow.engine.spi.JoinStateRepository;
 import dev.vertique.workflow.engine.spi.WorkflowDedupRepository;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
+import dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.engine.testsupport.AcceptingTaskReservations;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
@@ -26,6 +27,7 @@ import dev.vertique.workflow.history.WorkflowHistoryFailure.Action;
 import dev.vertique.workflow.history.WorkflowHistoryListener;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.migration.WorkflowStateCompatibility;
+import dev.vertique.workflow.ops.CorrelatedSignal;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskReassignmentCommand;
@@ -40,6 +42,8 @@ import dev.vertique.workflow.tasks.TaskStore;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -61,6 +65,9 @@ class WorkflowEngineHistoryAnnouncementTest {
     private static final String ID = "order";
     private static final Instant NOW = Instant.parse("2026-10-22T10:00:00Z");
 
+    /** The contract class a correlated signal is addressed to. */
+    private interface Contract {}
+
     private final WorkflowInstanceId instance = new WorkflowInstanceId(UUID.randomUUID());
     private final WorkflowInstanceId existing = new WorkflowInstanceId(UUID.randomUUID());
     private final SqlClient tx = ActiveTransactionClient.create();
@@ -68,6 +75,7 @@ class WorkflowEngineHistoryAnnouncementTest {
     private final WorkflowDedupRepository<SqlClient> dedup = mock();
     private final WorkflowHistoryRepository<SqlClient> history = mock();
     private final TaskStore<SqlClient> tasks = mock();
+    private final WorkflowSignalWaitRepository<SqlClient> signalWaits = waitsWithNoOpenRecord();
     private final List<WorkflowHistoryFailure> failures = new ArrayList<>();
     private final List<WorkflowHistoryChange> changes = new ArrayList<>();
     private final WorkflowEngine engine = engine();
@@ -100,6 +108,7 @@ class WorkflowEngineHistoryAnnouncementTest {
                 instances,
                 history,
                 dedup,
+                signalWaits,
                 mock(RecorderRouter.class),
                 mock(dev.vertique.workflow.timer.TimerStore.class),
                 tasks,
@@ -137,6 +146,19 @@ class WorkflowEngineHistoryAnnouncementTest {
         assertThat(engine.signal(instance, "go", "payload", "k", tx).failed()).isTrue();
 
         assertReported(Action.SIGNAL, instance);
+    }
+
+    @Test
+    @DisplayName("a refused delivery by key reports SIGNAL without an instance")
+    void deliveryByKeyIsWrapped() {
+        // Given an engine with a history listener bound and a wait repository that finds no open record for the key
+        CorrelatedSignal signal = CorrelatedSignal.of(Contract.class, "go", "K-1", "payload", "d-1");
+
+        // When the signal is delivered by key in the active transaction
+        assertThat(engine.signalByKey(signal, tx).failed()).isTrue();
+
+        // Then the listener received one SIGNAL failure with an error type and no instance, and no change
+        assertReported(Action.SIGNAL, null);
     }
 
     @Test
@@ -196,6 +218,28 @@ class WorkflowEngineHistoryAnnouncementTest {
         assertThat(failures).hasSize(1);
         assertThat(failures.getFirst().action()).isEqualTo(Action.START);
         assertThat(changes).isEmpty();
+    }
+
+    /** A wait repository whose every read finds nothing, so a delivery by key matches no open record. */
+    @SuppressWarnings("rawtypes")
+    private static WorkflowSignalWaitRepository<SqlClient> waitsWithNoOpenRecord() {
+        return mock(WorkflowSignalWaitRepository.class, invocation -> {
+            Type returned = invocation.getMethod().getGenericReturnType();
+            if (!Future.class.isAssignableFrom(invocation.getMethod().getReturnType())) {
+                return null;
+            }
+            Type element = ((ParameterizedType) returned).getActualTypeArguments()[0];
+            Class<?> raw = element instanceof ParameterizedType parameterized
+                    ? (Class<?>) parameterized.getRawType()
+                    : (Class<?>) element;
+            if (List.class.isAssignableFrom(raw)) {
+                return Future.succeededFuture(List.of());
+            }
+            if (Optional.class.isAssignableFrom(raw)) {
+                return Future.succeededFuture(Optional.empty());
+            }
+            return Future.succeededFuture();
+        });
     }
 
     private void assertReported(Action action, WorkflowInstanceId id) {

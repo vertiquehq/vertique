@@ -651,7 +651,7 @@ and returns the engine as a `WorkflowEngineHandle`.
 
 `WorkflowEngineParts` is a final class with a builder as its only way in (`WorkflowEngineParts.builder()`), so a later
 release can add a part without breaking a caller. One setter per part, named like its accessor: `txRunner`, `registry`,
-`definitionStore`, `instances`, `history`, `dedup`, `branchTokens`, `joinStates`, `timerStore`, `taskStore`, `taskReservations`, `commands`, `clock`,
+`definitionStore`, `instances`, `history`, `dedup`, `signalWaits`, `branchTokens`, `joinStates`, `timerStore`, `taskStore`, `taskReservations`, `commands`, `clock`,
 `recorders`, `optionalIntentKinds`, `migrationRegistry`, `propagator`, `inboundContextInitializers`, `beanValidator`,
 `typeNames`, `stateCompatibility`, `executorConfig`, `recordingConfig`, `executorObservers`, `commandWakeups`, `schemaProducer`, `historyRedactor`, `historyPublisher` and `vertx`. `build()` throws a `NullPointerException` that names the first required part
 that is missing. Required: the repositories and stores (including the command repository, `commands`, and the task reservations, `taskReservations`, through which a recorded completion owns its task), the registry, the **definition store**, the type-name index and the
@@ -685,7 +685,7 @@ Key members:
 // Broad engine IT setup (non-Dagger path via PgWorkflowEngineTestSupport)
 WorkflowEngineHandle engine = WorkflowEngineFactory.create(WorkflowEngineParts.builder()
         .txRunner(txRunner).registry(registry).definitionStore(definitionStore)
-        .instances(instances).history(history).dedup(dedup)
+        .instances(instances).history(history).dedup(dedup).signalWaits(signalWaits)
         .branchTokens(branchTokens).joinStates(joinStates)
         .timerStore(timerStore).taskStore(taskStore).taskReservations(reservations).commands(commands)
         .clock(clock).recorders(recorders)
@@ -1257,6 +1257,20 @@ carry usage `0`.
 The deployment has no supervision and no liveness check: a crashed process leaves its claims to lease recovery, and process
 health comes from the platform's database liveness check and the runtime's restart policy.
 
+### Wait Records And Delivery By Key
+
+A signal wait that declares a key with `correlateBy` keeps an open wait record while an instance waits at it. The record is written through `WorkflowSignalWaitRepository` in the transaction of the segment that moves the instance into the wait, so a segment that rolls back leaves none, and the segment's retry leaves one. A wait that declares no key writes nothing. The engine computes the key from the instance's state as it stands on entry to the wait, through the node's `correlationKeyCallbackId`, and writes the record with the instance's start scope, the contract name of the plan the instance is pinned to, the instance's definition id, the signal name, a new version 7 `wait_id`, and `''` for the fork step and branch (the engine writes only main-path waits so far). Entering the same wait again replaces the row at its address. A key resolver that throws, or returns `null`, fails the segment with `WorkflowDefinitionException` naming the step and the exception class, never the key. A record is not closed when the signal applies or the wait exits.
+
+`signalByKey(CorrelatedSignal, tx)` records a signal for the one instance waiting on a key. In order, it:
+
+1. rejects a client that has no pending transaction, failing the returned future with `IllegalArgumentException` before any collaborator is reached;
+2. runs the rest inside the history announcement, as every engine entry does; a failure is reported to history listeners as a `SIGNAL` failure with no instance, because none is matched yet;
+3. resolves the contract class to its name through `WorkflowTypeNames.contractNameOf` and reads the open records of that contract name, signal name and key, narrowed by the signal's definition id and scope, at most two;
+4. takes the matched instance's execution lock and checks that the record is still held under the same `wait_id`;
+5. admits the signal as `signal` does (the instance is live, the pinned definition is of the contract, and declares the signal for the addressed wait), checks the payload's size and depth, captures the actor from the ambient security context, raises the open-signal count, and records the `SIGNAL` command.
+
+The command's `dedup_key` is the SHA-256 hex digest of the signal's dedup key. A delivery by key writes no `workflow_dedup` row of any kind and no branch address; an executor applies the command like any recorded signal, so `awaitIdle` observes the instance resumed with `SIGNAL_RECEIVED` in its history. The receipt is `RECORDED` with the matched definition id. A delivery that matches no record or several, or whose record changed under the lock, fails the returned future with an exception that names the contract and the signal and never the key. Instance-id delivery is unchanged.
+
 ### WorkflowExceptionMapper
 
 Stage-2 (workflow-boundary) exception mapper applied in the Pg runner's outer `recover` after the DB
@@ -1297,7 +1311,7 @@ constructor takes the recorder set only.
 
 ### Database Adapter SPIs (`dev.vertique.workflow.engine.spi`)
 
-A database adapter implements these eight interfaces to provide persistence for the engine. All are
+A database adapter implements these nine interfaces to provide persistence for the engine. All are
 parameterized over `<TX>` (typically `SqlClient`):
 
 | SPI | Responsibility |
@@ -1306,6 +1320,7 @@ parameterized over `<TX>` (typically `SqlClient`):
 | `WorkflowHistoryRepository<TX>` | History append, next-sequence generation, two list variants (recent, all; both leave out the `DECISION` and `STATE_BASELINE` entries, which the history service serves, so they do not count toward the recent limit nor carry a baseline's state into `query` and the migration context), and `appendDecision(DecisionEntry, tx)`, which appends an entry of the decision log (`DECISION` or `STATE_BASELINE`) with its command, step, outcome, definition, plan hash, state versions, executor and patch, assigns its sequence, and stores `entry_version = 2`; the default stores only the payload through `append`. `listRange(id, after, upTo, limit, tx)` returns up to `limit` of the enriched entries with sequence in `(after, upTo]`, ascending, without `STATE_BASELINE`, each as a `CommittedHistoryEntry` (the entry and the `kind` of the command it names, or `null`), for the caller to page by the last sequence read; its payload is filled only for the four task entry types and its state patch never; it serves the history listeners after a commit, and its default fails with `UnsupportedOperationException`, so an adapter that does not override it loses (and logs) every notification while a listener is bound. An entry type the node does not know is skipped, and a page is not shortened by it |
 | `WorkflowDedupRepository<TX>` | Start lookup and race-safe claim/resolve by start scope for start, race-safe claim/resolve for signal (scoped and unscoped), task completion/reassignment, and service dispatch; `findTaskCompletion(taskId, key, tx)` reads, without writing, the fingerprint of a committed completion (the lock-free duplicate lookup) |
 | `TaskReservations<TX>` | `markCompleting(taskId, commandId, tx)` moves an `OPEN` task to `COMPLETING` and stores the completion command as its owner; `reopen(taskId, commandId, tx)` moves a `COMPLETING` task owned by that command back to `OPEN` and clears the owner. Both are compare-and-set and answer `false` when the task is not in the expected state. Engine-internal wiring, not application API; `TaskStore` is unchanged |
+| `WorkflowSignalWaitRepository<TX>` | The open wait records of signal waits that declare a key: `write` replaces the row held at the same instance, step, fork step and branch with a new `wait_id`; `findOpen(contractName, signalName, key, definitionId, scopeKey, tx)` returns at most two records of instances that have not ended, with the definition id and scope filters optional; `findById(waitId, tx)` reads one |
 | `BranchTokenRepository<TX>` | Fork/join branch token CRUD and status queries |
 | `JoinStateRepository<TX>` | Fork/join state insert, read variants, open-for-workflow list, and the optimistic `decide` CAS |
 | `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping. The client it hands the work is a `SqlConnection` whose `transaction()` reports the underlying pending transaction; the deadline-guarded connection of `vertique-db` meets that. Its internal overload `inTransaction(level, deadline, work)` bounds the transaction (the executor's segment deadline) and returns `TransactionDeadlineExceededException` unchanged; the default fails with `UnsupportedOperationException` without running the work |

@@ -200,4 +200,37 @@ public interface TransactionalWorkflowOperations<TX> {
                         + " install vertique-workflow-postgresql + WorkflowMigrationModule"
                         + " (or another binding that implements migrate)"));
     }
+
+    /**
+     * Records a signal for the one open instance that waits on a key, within the given transaction. The signal is
+     * applied later, by an executor, in the order the instance's commands were recorded.
+     *
+     * <p>The delivery finds the open wait of the signal's contract, signal name and key, narrowed by the signal's
+     * definition id and scope when it names them, and records the signal for that wait's instance.
+     *
+     * <p>This default implementation fails the returned future with {@link UnsupportedOperationException}.
+     *
+     * @param signal the signal, addressed by contract, signal name and key
+     * @param tx the active transaction context
+     * @return a {@link Future} that completes when the signal has been recorded, not when it has been applied
+     */
+    default Future<CorrelatedSignalReceipt> signalByKey(CorrelatedSignal signal, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException(
+                "signalByKey() is not implemented by this TransactionalWorkflowOperations binding"));
+    }
+
+    /**
+     * Records a signal for the one live instance that carries a business key, within the given transaction. The signal
+     * is applied later, by an executor, in the order the instance's commands were recorded.
+     *
+     * <p>This default implementation fails the returned future with {@link UnsupportedOperationException}.
+     *
+     * @param signal the signal; its key is the business key of the instance
+     * @param tx the active transaction context
+     * @return a {@link Future} that completes when the signal has been recorded, not when it has been applied
+     */
+    default Future<CorrelatedSignalReceipt> signalByBusinessKey(CorrelatedSignal signal, TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException(
+                "signalByBusinessKey() is not implemented by this TransactionalWorkflowOperations binding"));
+    }
 }

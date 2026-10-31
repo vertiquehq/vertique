@@ -95,9 +95,25 @@ wf.waitForSignal("await-payment", "payment.captured", PaymentCaptured.class)
   .toStepOnSignal("ship");
 ```
 
-The function is registered under the callback id `<stepId>.correlationKey`, and the resulting `WaitSignalNode` carries that id as `correlationKeyCallbackId` (the plan holds the id, never the function). The id is `null` when the wait declares no key, and the deprecated `waitFor` declares none. `WorkflowCallbackRegistry.correlationKeyResolver(CallbackId)` returns the function; like `timerResolver`, its default throws `UnsupportedOperationException`, and registration fails a plan whose node names a key callback the registry cannot resolve. The declaration is recorded in the plan; a declared key is not evaluated yet.
+The function is registered under the callback id `<stepId>.correlationKey`, and the resulting `WaitSignalNode` carries that id as `correlationKeyCallbackId` (the plan holds the id, never the function). The id is `null` when the wait declares no key, and the deprecated `waitFor` declares none. `WorkflowCallbackRegistry.correlationKeyResolver(CallbackId)` returns the function; like `timerResolver`, its default throws `UnsupportedOperationException`, and registration fails a plan whose node names a key callback the registry cannot resolve. The declaration is recorded in the plan; the engine computes the key each time an instance enters the wait (see `dev.vertique:vertique-workflow-engine`).
 
 `WaitSignalNode` has seven components and keeps its six-argument constructor, which leaves the key absent. A component added later is appended after `correlationKeyCallbackId`.
+
+### Delivery By Key
+
+`TransactionalWorkflowOperations<TX>` has two delivery methods that address a signal by a key instead of an instance id:
+
+```java
+Future<CorrelatedSignalReceipt> signalByKey(CorrelatedSignal signal, TX tx);
+Future<CorrelatedSignalReceipt> signalByBusinessKey(CorrelatedSignal signal, TX tx);
+```
+
+Both are default methods that fail the returned future with `UnsupportedOperationException`, so an implementer written before them keeps compiling; a binding opts in by overriding. `dev.vertique:vertique-workflow-engine` overrides `signalByKey`.
+
+`CorrelatedSignal` is a record of `contract`, `signalName`, `key`, `payload`, `dedupKey`, `definitionId`, `scopeKey` and `provenance`. `CorrelatedSignal.of(contract, signalName, key, payload, dedupKey)` leaves `definitionId`, `scopeKey` and `provenance` null, so the delivery matches across definitions and scopes; `withDefinition`, `withScope` and `withProvenance` return a copy that differs in that one component. The key must be non-blank, at most 255 characters and free of NUL; the dedup key must be non-blank; `withScope` applies the scope key rules. A refusal names the component and never repeats the value, and `toString` prints the contract and signal name only, never the key, dedup key or payload.
+
+`CorrelatedSignalReceipt(outcome, definitionId)` reports `RECORDED` with the id of the definition of the matched instance, or `DUPLICATE` with a null definition id. `SignalProvenance(transport, source, attributes)` names where a signal came from: `SignalProvenance.kafka(source, topic, partition, offset)` and `SignalProvenance.camel(source, triggerId, messageHash)` fill `transport` and `source` and put their other arguments in `attributes` (numbers as decimal strings); the map is copied immutably. The engine does not read the provenance yet.
+
 
 ### Parallel Branches
 
@@ -416,7 +432,7 @@ Add the type catalog module that `vertique-codegen-workflow` generates (`Generat
 |---|---|
 | `WorkflowContributor` | Register workflow definitions with the registry |
 | `WorkflowSideEffectRecorder<TX>` | Persist workflow side-effect intents |
-| `TransactionalWorkflowOperations<TX>` | Drive workflows inside an existing transaction |
+| `TransactionalWorkflowOperations<TX>` | Drive workflows inside an existing transaction, including delivery by key |
 | `TaskStore<TX>` | Store human task rows |
 | `TransactionalTaskCallbacks<TX>` | Engine callback surface used by the task service |
 | `TimerStore<TX>` | Timer persistence; the timer row links to the command that fires it |

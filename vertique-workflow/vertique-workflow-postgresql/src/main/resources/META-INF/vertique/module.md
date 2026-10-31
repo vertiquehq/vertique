@@ -15,7 +15,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 `vertique-workflow-postgresql` is the **PostgreSQL adapter** for the Vertique Workflow engine. It provides PostgreSQL implementations of the engine's internal repository and transaction-runner SPIs, owns the schema and Flyway migrations, and supplies Pg-specific query and retention services. `WorkflowMigrationsModule` declares those migrations as the `workflow` migration instance for named Flyway instances, and the optional `db.schemas.workflow` setting places every workflow table in one schema for the migrations and for all nine stores.
 
-For the dialect-neutral orchestration logic — `WorkflowEngine`, the eight SPI interfaces (`WorkflowInstanceRepository`, `WorkflowHistoryRepository`, `WorkflowDedupRepository`, `TaskReservations`, `BranchTokenRepository`, `JoinStateRepository`, `WorkflowCommandRepository`, `WorkflowTransactionRunner`), `RecorderRouter`, `WorkflowReminderComposeValidator`, and the Dagger module that binds `WorkflowOperations` — see `dev.vertique:vertique-workflow-engine`.
+For the dialect-neutral orchestration logic — `WorkflowEngine`, the nine SPI interfaces (`WorkflowInstanceRepository`, `WorkflowHistoryRepository`, `WorkflowDedupRepository`, `WorkflowSignalWaitRepository`, `TaskReservations`, `BranchTokenRepository`, `JoinStateRepository`, `WorkflowCommandRepository`, `WorkflowTransactionRunner`), `RecorderRouter`, `WorkflowReminderComposeValidator`, and the Dagger module that binds `WorkflowOperations` — see `dev.vertique:vertique-workflow-engine`.
 
 Install this module when workflows must survive process restarts, run across more than one node, or coordinate with the transactional outbox module. `WorkflowPostgresqlModule` includes `WorkflowEngineModule` transitively, so consumer wiring is unchanged — no `@Component` edits are required.
 
@@ -25,7 +25,7 @@ Install this module when workflows must survive process restarts, run across mor
 
 | Binding | Purpose |
 |---|---|
-| Pg repo impls | `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository` — implement the engine SPIs; each is one scoped instance built with the optional `DbSchemas` placement |
+| Pg repo impls | `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgWorkflowSignalWaitRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository` — implement the engine SPIs; each is one scoped instance built with the optional `DbSchemas` placement |
 | `TaskStore<SqlClient>` | Human task persistence (`PgTaskStore`), one scoped instance built with the placement |
 | `TaskReservations<SqlClient>` | The `OPEN` to `COMPLETING` reservation of a recorded completion and its reopening (`PgTaskReservations`), one scoped instance built with the placement; two conditional updates, each a compare-and-set on the task's status and owner |
 | `TimerStore<SqlClient>` | Workflow timer persistence (`PgTimerStore`), one scoped instance built with the placement |
@@ -45,12 +45,12 @@ The module `includes WorkflowEngineModule`, which provides the `WorkflowOperatio
 
 ## Key Classes
 
-### The nine stores and their constructors
+### The ten stores and their constructors
 
-Nine PostgreSQL classes own every workflow SQL statement: `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository`, `PgTaskStore`, `PgTimerStore`, `PgWorkflowDefinitionRegistryStore` and `PgWorkflowRetentionRepository`. Each has two public constructors:
+Ten PostgreSQL classes own every workflow SQL statement: `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgWorkflowSignalWaitRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository`, `PgTaskStore`, `PgTimerStore`, `PgWorkflowDefinitionRegistryStore` and `PgWorkflowRetentionRepository`. Each has two public constructors:
 
 ```java
-// the other six stores: (Pool pool, PgDbExceptionMapper mapper)
+// the other seven stores: (Pool pool, PgDbExceptionMapper mapper)
 @Inject
 public PgWorkflowInstanceRepository(Pool pool, PgDbExceptionMapper mapper)
 
@@ -174,7 +174,7 @@ AND state IN ('ENQUEUED', 'PROCESSING', 'FAILED', 'ABANDONED');
 
 - `workflow_signal_waits` holds one row per open wait entry. `wait_id` is the `UUID` primary key and has no column default, because the engine generates it as a version 7 UUID. `instance_id` is a foreign key to `workflow_instances(id)` with `ON DELETE CASCADE`, so purging an instance removes its wait records and no retention code reads the table. `step_id`, `fork_step_id`, `branch_id`, `scope_key`, `contract_name`, `definition_id`, `signal_name` and `correlation_key` are each `VARCHAR(255) NOT NULL`, and `created_at` is `TIMESTAMPTZ NOT NULL`. A correlation key longer than 255 characters is rejected by the column (SQLSTATE `22001`).
 - `(instance_id, step_id, fork_step_id, branch_id)` is unique. `fork_step_id` and `branch_id` are `NOT NULL` and hold the empty string outside a branch, so the key binds the main path as well.
-- `idx_workflow_signal_waits_contract_signal_key` on `(contract_name, signal_name, correlation_key)` serves delivery by key.
+- `idx_workflow_signal_waits_contract_signal_key` on `(contract_name, signal_name, correlation_key)` serves delivery by key. `PgWorkflowSignalWaitRepository` writes the table: its insert replaces, with `ON CONFLICT` on the unique address, the row an instance left at the same step, fork step and branch, giving it the new `wait_id`; its match joins `workflow_instances`, leaves out instances in an end status (`COMPLETED`, `COMPENSATED`, `CANCELLED`, `EXPIRED`), filters contract name, signal name and key with the definition id and scope optional, and returns at most two rows; a read by `wait_id` serves the re-check under the execution lock. No row is deleted yet when a signal applies or a wait exits.
 - `workflow_commands.provenance_json` is a nullable `JSONB` column; existing commands read `NULL`.
 - `idx_workflow_instances_business_key_scope_key_definition_id` on `workflow_instances (business_key, scope_key, definition_id)` is not unique and serves business-key lookup without a definition or scope. It is the only index the script adds to `workflow_instances`; the unique per-scope index from `V002` stays.
 
@@ -494,8 +494,8 @@ Tests that run no engine build a probe from a pool with `PgExecutionProbeSupport
 
 | Binding | Scope | Description |
 |---|---|---|
-| `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository`, `PgTaskStore`, `PgTimerStore`, `PgWorkflowDefinitionRegistryStore`, `PgWorkflowRetentionRepository` | Singleton | Nine explicit providers, each built from `Optional<DbSchemas>`: placed in the schema mapped to `workflow` when the component supplies `DbSchemas` (a component that installs `DbModule` gets it from `db.schemas.workflow`), unqualified when it does not |
-| The five repository SPIs, `TaskStore<SqlClient>`, `TimerStore<SqlClient>` | Singleton | Aliases of the concrete instances above, so a concrete lookup and an SPI lookup return the same instance |
+| `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgWorkflowSignalWaitRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository`, `PgTaskStore`, `PgTimerStore`, `PgWorkflowDefinitionRegistryStore`, `PgWorkflowRetentionRepository` | Singleton | Ten explicit providers, each built from `Optional<DbSchemas>`: placed in the schema mapped to `workflow` when the component supplies `DbSchemas` (a component that installs `DbModule` gets it from `db.schemas.workflow`), unqualified when it does not |
+| The six repository SPIs, `TaskStore<SqlClient>`, `TimerStore<SqlClient>` | Singleton | Aliases of the concrete instances above, so a concrete lookup and an SPI lookup return the same instance |
 | `PgTaskReservations`, `TaskReservations<SqlClient>` | Singleton | The task reservations, built from the `Pool`, the failure mapper and `Optional<DbSchemas>` like the stores, and bound as the engine's `TaskReservations` SPI |
 | `WorkflowTransactionRunner<SqlClient>` | Singleton | The PostgreSQL transaction seam |
 | `CommandWakeups` | Singleton | The node's `CommandNotificationListener` (see [Executor wake-up](#executor-wake-up)), built from the optional `Vertx`, the optional `PgConnectOptions` that `DbPostgresqlModule` supplies, the `Pool`, the `Set<WorkflowExecutorObserver>` and the optional `WorkflowExecutorConfig` (its `pollIntervalMs` is the reconnect interval); a graph without `Vertx` or connect options binds a source that never wakes anyone, and its executors poll |
@@ -505,7 +505,7 @@ Tests that run no engine build a probe from a pool with `PgExecutionProbeSupport
 | `Set<MigrationDefinition>` | `@IntoSet` | The `workflow` declaration from `WorkflowMigrationsModule`: location `classpath:db/migration/workflow`, no dependencies |
 
 
-**Compatibility note.** The nine concrete store types are now provided by explicit `@Provides` methods. A component that installs this module and also provides any of them itself sees a duplicate binding; remove its own provider. The `@Inject` constructors remain for components that do not install this module; they leave the SQL unqualified.
+**Compatibility note.** The ten concrete store types are provided by explicit `@Provides` methods. A component that installs this module and also provides any of them itself sees a duplicate binding; remove its own provider. The `@Inject` constructors remain for components that do not install this module; they leave the SQL unqualified.
 
 ---
 
