@@ -35,7 +35,7 @@ Install this module when workflows must survive process restarts, run across mor
 | Query services | `PgWorkflowInstanceQueryService` — read model for workflow instances and branch state |
 | Retention service | `PgWorkflowRetentionService` — archive + purge sweep that tries each candidate's execution lock without waiting, before it touches the instance's row, and skips an instance whose lock is held or that has an active command (a purge also needs an ended or `FAILED` instance, and an instance a retry returns to work loses its archive stamp); the application drives the batch loop and cadence, there is no built-in scheduler. It archives and purges through the scoped `PgWorkflowRetentionRepository`, so it follows the same placement |
 | Migration declaration | `WorkflowMigrationsModule` — contributes the `workflow` `MigrationDefinition` (`classpath:db/migration/workflow`) with `@IntoSet`; see [Flyway Configuration](#flyway-configuration) |
-| Flyway schema | Shipped `V1__create_workflow_tables.sql` plus the additive `V002__workflow_definitions_and_scopes.sql` and `V003__recorded_execution.sql` |
+| Flyway schema | Shipped `V1__create_workflow_tables.sql` plus the additive `V002__workflow_definitions_and_scopes.sql`, `V003__recorded_execution.sql` and `V004__signal_correlation.sql` |
 
 The module `includes WorkflowEngineModule`, which provides the `WorkflowOperations` binding and recorder-router wiring. It also includes `WorkflowMigrationsModule` and `DbSchemasModule` (the optional `DbSchemas` binding). It does not deliver downstream service calls by itself; that is a separate module. Branch failures need no recovery service: a failed segment rolls back and its command is retried.
 
@@ -118,6 +118,7 @@ The module owns workflow persistence tables, including:
 | `workflow_definition_activations` | The current version of a definition id per scope, added by the same script (see [Definition Registry And Source Storage](#definition-registry-and-source-storage)) |
 | `workflow_commands` | The recorded command log per instance, added by `V003__recorded_execution.sql` (see [Recorded-execution schema](#recorded-execution-schema)) |
 | `workflow_command_queues` | One row per instance holding the next command sequence and the open-signal counter, added by the same script |
+| `workflow_signal_waits` | One open wait record per wait entry of a computed signal correlation key, added by `V004__signal_correlation.sql` (see [Signal correlation schema](#signal-correlation-schema)) |
 
 The migration files live with the module under `db/migration/workflow`. The shipped `V1__create_workflow_tables.sql` contains the instance/runtime tables, including branch tokens and durable metadata. The additive `V002__workflow_definitions_and_scopes.sql` creates the definition registry and converts the released tables to scope keys:
 
@@ -166,6 +167,23 @@ AND state IN ('ENQUEUED', 'PROCESSING', 'FAILED', 'ABANDONED');
 ```
 
 `PgWorkflowInstanceRepository.insert` writes `scope_key` and `definition_scope_key` from `WorkflowInstance.scopeKey()` and `definitionScopeKey()` and no update statement changes them. `PgTaskStore.insertOpen` writes the task's `scope_key` from the owning instance row (`SELECT scope_key FROM workflow_instances WHERE id = …`; the instances table is qualified like every other reference when a `workflow` schema is mapped) and ignores the value on the `TaskRecord`, so every task creation path inherits the start scope of its instance; the guarantee belongs to this store, not to the `TaskStore` SPI. `WorkflowInstanceQuery.scopeKey()` and `TaskFilter.scopeKey()` add an exact-match `scope_key = ?` condition when non-null and leave keyset order and archived handling unchanged; `null` matches every scope. The columns and the filters are information and a filter, not an isolation or authorization boundary: callers must not pass an unresolved scope as `null` expecting scoping. No operation addressed by instance or task id checks the scope either. Start dedup statements (`findStart`, `claimOrResolveStart`) and `findByBusinessKey` take the start scope and filter on `scope_key`; signal, task and dispatch dedup statements address the `default` scope. `PgWorkflowInstanceRepository.findDefinitionContract(key, tx)` reads `contract_name` from `workflow_definitions` through the caller's transaction, so a start replay on a node without the pinned plan takes no second pool connection.
+
+### Signal correlation schema
+
+`V004__signal_correlation.sql` adds the storage for signal correlation. It is additive: no existing column, constraint, index or row changes.
+
+- `workflow_signal_waits` holds one row per open wait entry. `wait_id` is the `UUID` primary key and has no column default, because the engine generates it as a version 7 UUID. `instance_id` is a foreign key to `workflow_instances(id)` with `ON DELETE CASCADE`, so purging an instance removes its wait records and no retention code reads the table. `step_id`, `fork_step_id`, `branch_id`, `scope_key`, `contract_name`, `definition_id`, `signal_name` and `correlation_key` are each `VARCHAR(255) NOT NULL`, and `created_at` is `TIMESTAMPTZ NOT NULL`. A correlation key longer than 255 characters is rejected by the column (SQLSTATE `22001`).
+- `(instance_id, step_id, fork_step_id, branch_id)` is unique. `fork_step_id` and `branch_id` are `NOT NULL` and hold the empty string outside a branch, so the key binds the main path as well.
+- `idx_workflow_signal_waits_contract_signal_key` on `(contract_name, signal_name, correlation_key)` serves delivery by key.
+- `workflow_commands.provenance_json` is a nullable `JSONB` column; existing commands read `NULL`.
+- `idx_workflow_instances_business_key_scope_key_definition_id` on `workflow_instances (business_key, scope_key, definition_id)` is not unique and serves business-key lookup without a definition or scope. It is the only index the script adds to `workflow_instances`; the unique per-scope index from `V002` stays.
+
+**Rollout.** Apply the migration first, then start the nodes of the new release in any order. Nodes that still carry only the earlier migrations keep running against the upgraded database: Flyway ignores a future migration by default, so they validate and migrate without error, and no read of `workflow_commands` selects every column, so the new column does not disturb them. The migration needs no stop of older nodes. Every statement is `IF [NOT] EXISTS`, so the script reruns safely after a failure. On a large installation, build the `workflow_instances` index ahead of the upgrade without blocking writers, on an autocommit connection, and the migration keeps it:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_instances_business_key_scope_key_definition_id
+    ON workflow_instances (business_key, scope_key, definition_id);
+```
 
 ---
 
