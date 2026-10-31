@@ -350,6 +350,7 @@ public final class EmptyCommandRepository implements WorkflowCommandRepository<S
             String dedupKey,
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,
+            @Nullable String provenanceJson,
             CommandActor actor,
             SqlClient tx) {
         recordedSignals.add(new RecordedSignal(

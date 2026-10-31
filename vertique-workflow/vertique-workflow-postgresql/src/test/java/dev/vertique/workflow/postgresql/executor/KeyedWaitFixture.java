@@ -14,6 +14,9 @@ import dev.vertique.core.scope.ScopeContext;
 import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
+import dev.vertique.security.SecurityContext;
+import dev.vertique.security.SecurityContexts;
+import dev.vertique.security.SecurityIdentity;
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
@@ -802,18 +805,113 @@ final class KeyedWaitFixture implements AutoCloseable {
 
     private Future<Delivery> startDelivery(
             Node node, Function<SqlConnection, Future<CorrelatedSignalReceipt>> operation, Runnable beforeCommit) {
-        return caller(() -> node.pool.getConnection().compose(connection -> connection
-                .begin()
-                .compose(transaction -> operation.apply(connection).transform(outcome -> {
-                    Delivery delivery = outcome.succeeded()
-                            ? new Delivery(outcome.result(), null)
-                            : new Delivery(null, outcome.cause());
-                    beforeCommit.run();
-                    return transaction
-                            .commit()
-                            .transform(committed -> connection.close())
-                            .map(closed -> delivery);
-                }))));
+        return startDelivery(null, node, operation, beforeCommit);
+    }
+
+    private Future<Delivery> startDelivery(
+            @Nullable SecurityIdentity identity,
+            Node node,
+            Function<SqlConnection, Future<CorrelatedSignalReceipt>> operation,
+            Runnable beforeCommit) {
+        return caller(() -> {
+            ContextHolder.Scope bound = identity == null
+                    ? null
+                    : fixture.holder().bind(SecurityContext.class, SecurityContexts.unauthenticated(identity));
+            try {
+                Future<Delivery> delivery = node.pool.getConnection().compose(connection -> connection
+                        .begin()
+                        .compose(transaction -> operation.apply(connection).transform(outcome -> {
+                            Delivery answered = outcome.succeeded()
+                                    ? new Delivery(outcome.result(), null)
+                                    : new Delivery(null, outcome.cause());
+                            beforeCommit.run();
+                            return transaction
+                                    .commit()
+                                    .transform(committed -> connection.close())
+                                    .map(closed -> answered);
+                        })));
+                return bound == null ? delivery : delivery.onComplete(ignored -> bound.close());
+            } catch (Throwable failure) {
+                if (bound != null) {
+                    bound.close();
+                }
+                return Future.failedFuture(failure);
+            }
+        });
+    }
+
+    /**
+     * Delivers the signal by key in a caller transaction that commits whatever the outcome was, under the security
+     * identity, or under none when the identity is {@code null}. The identity is bound for the call and released when
+     * it ends.
+     *
+     * @param node     the node whose engine delivers
+     * @param identity the identity the call runs under, or {@code null} for none
+     * @param signal   the signal
+     * @return the receipt or the failure
+     */
+    Delivery deliverAs(Node node, @Nullable SecurityIdentity identity, CorrelatedSignal signal) {
+        return await(
+                startDelivery(identity, node, connection -> node.engine.signalByKey(signal, connection), () -> {}));
+    }
+
+    /**
+     * Delivers the signal by business key in a caller transaction that commits whatever the outcome was, under the
+     * security identity, or under none when the identity is {@code null}. The identity is bound for the call and
+     * released when it ends.
+     *
+     * @param node     the node whose engine delivers
+     * @param identity the identity the call runs under, or {@code null} for none
+     * @param signal   the signal; its key is the business key
+     * @return the receipt or the failure
+     */
+    Delivery deliverByBusinessKeyAs(Node node, @Nullable SecurityIdentity identity, CorrelatedSignal signal) {
+        return await(startDelivery(
+                identity, node, connection -> node.engine.signalByBusinessKey(signal, connection), () -> {}));
+    }
+
+    /**
+     * The stored provenance of a command, by name.
+     *
+     * @param commandId the id of the command
+     * @return the document of {@code provenance_json}, or {@code null} when the column is null
+     */
+    @Nullable
+    JsonObject provenanceOf(long commandId) {
+        Row row = await(fixture.observer()
+                        .preparedQuery("SELECT provenance_json FROM workflow_commands WHERE id = $1")
+                        .execute(Tuple.of(commandId)))
+                .iterator()
+                .next();
+        return (JsonObject) row.getValue("provenance_json");
+    }
+
+    /** The number of commands, of any instance, whose {@code provenance_json} is not null. */
+    long provenanceRows() {
+        return count("SELECT count(*) FROM workflow_commands WHERE provenance_json IS NOT NULL", Tuple.tuple());
+    }
+
+    /**
+     * The actor columns of a command.
+     *
+     * @param commandId the id of the command
+     * @return the columns, labelled with the kind of the command
+     */
+    ActorScenario.Attributed actorOf(long commandId) {
+        Row row = await(fixture.observer()
+                        .preparedQuery("SELECT kind, id, actor_kind, actor_id, actor_reason, on_behalf_of,"
+                                + " attribution_status FROM workflow_commands WHERE id = $1")
+                        .execute(Tuple.of(commandId)))
+                .iterator()
+                .next();
+        return new ActorScenario.Attributed(
+                row.getString("kind"),
+                row.getLong("id"),
+                row.getString("actor_kind"),
+                row.getString("actor_id"),
+                row.getString("actor_reason"),
+                row.getString("on_behalf_of"),
+                row.getString("attribution_status"));
     }
 
     /**

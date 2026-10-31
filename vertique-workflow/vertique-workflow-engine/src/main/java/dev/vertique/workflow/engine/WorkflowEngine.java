@@ -48,6 +48,7 @@ import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
+import dev.vertique.workflow.exception.WorkflowSignalActorException;
 import dev.vertique.workflow.exception.WorkflowSignalAmbiguousException;
 import dev.vertique.workflow.exception.WorkflowSignalLimitException;
 import dev.vertique.workflow.exception.WorkflowSignalNoMatchException;
@@ -56,6 +57,7 @@ import dev.vertique.workflow.exception.WorkflowVersionNotRunnableException;
 import dev.vertique.workflow.history.WorkflowHistoryFailure;
 import dev.vertique.workflow.ops.CorrelatedSignal;
 import dev.vertique.workflow.ops.CorrelatedSignalReceipt;
+import dev.vertique.workflow.ops.SignalProvenance;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
@@ -2260,7 +2262,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                         + "' is refused: " + e.getMessage(),
                                 e.violations()));
                     }
-                    return actors.captured().compose(actor -> commands.raiseOpenSignals(id, maxOpenSignals, tx)
+                    return capturedForDelivery(signal, contractName).compose(actor -> commands.raiseOpenSignals(
+                                    id, maxOpenSignals, tx)
                             .compose(raised -> {
                                 if (!raised) {
                                     return Future.<CorrelatedSignalReceipt>failedFuture(
@@ -2282,6 +2285,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                                             dedupKey,
                                                             payloadJson,
                                                             null,
+                                                            provenanceJson(signal.provenance()),
                                                             actor,
                                                             tx)
                                                     .onSuccess(recorded -> actors.reportAbsence(actor, "SIGNAL"))
@@ -2290,6 +2294,49 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                         });
                             }));
                 });
+    }
+
+    /**
+     * Takes the actor of a correlated delivery from the ambient identity. A delivery that carries a provenance is
+     * refused with {@link WorkflowSignalActorException} when the capture yields no actor (no identity, or an anonymous
+     * one) or the actor mapper refuses the identity, so a source never records a command that no actor stands behind. A
+     * delivery without provenance keeps the capture as it is: an absent actor is recorded and a mapper failure
+     * propagates unchanged.
+     */
+    private Future<CommandActor> capturedForDelivery(CorrelatedSignal signal, String contractName) {
+        Future<CommandActor> captured = actors.captured();
+        if (signal.provenance() == null) {
+            return captured;
+        }
+        return captured.transform(result -> {
+            if (result.failed()) {
+                WorkflowSignalActorException refusal =
+                        new WorkflowSignalActorException(contractName, signal.signalName());
+                refusal.initCause(result.cause());
+                return Future.failedFuture(refusal);
+            }
+            if (result.result().kind() == CommandActor.Kind.NONE) {
+                return Future.failedFuture(new WorkflowSignalActorException(contractName, signal.signalName()));
+            }
+            return Future.succeededFuture(result.result());
+        });
+    }
+
+    /**
+     * The provenance as the JSON text stored in the command's own provenance column: the transport, the source and an
+     * object of the string attributes, or {@code null} when the delivery carries none.
+     */
+    private static @Nullable String provenanceJson(@Nullable SignalProvenance provenance) {
+        if (provenance == null) {
+            return null;
+        }
+        JsonObject attributes = new JsonObject();
+        provenance.attributes().forEach(attributes::put);
+        return new JsonObject()
+                .put("transport", provenance.transport())
+                .put("source", provenance.source())
+                .put("attributes", attributes)
+                .encode();
     }
 
     /**
@@ -2436,6 +2483,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                                                 signalDedupKey,
                                                 payloadJson,
                                                 carrierJson,
+                                                null,
                                                 actor,
                                                 tx)
                                         .onSuccess(recorded -> actors.reportAbsence(actor, "SIGNAL"))

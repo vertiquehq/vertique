@@ -437,6 +437,8 @@ public interface WorkflowCommandRepository<TX> {
      * @param dedupKey            the caller's idempotency key, kept for display
      * @param payloadJson         the payload as JSON, or {@code null} when the signal has none
      * @param explicitCarrierJson the sanitized explicit durable-context carrier as JSON, or {@code null}
+     * @param provenanceJson      where a correlated signal came from, as JSON, stored in a column of its own and never
+     *                            in the target, or {@code null} to store SQL null
      * @param actor               who sent the signal, stored on the command
      * @param tx                  the caller's transaction handle
      * @return a {@link Future} containing the command's row id
@@ -450,6 +452,7 @@ public interface WorkflowCommandRepository<TX> {
             String dedupKey,
             @Nullable String payloadJson,
             @Nullable String explicitCarrierJson,
+            @Nullable String provenanceJson,
             CommandActor actor,
             TX tx);
 
@@ -484,6 +487,7 @@ public interface WorkflowCommandRepository<TX> {
                 dedupKey,
                 payloadJson,
                 explicitCarrierJson,
+                null,
                 CommandActor.none(),
                 tx);
     }
