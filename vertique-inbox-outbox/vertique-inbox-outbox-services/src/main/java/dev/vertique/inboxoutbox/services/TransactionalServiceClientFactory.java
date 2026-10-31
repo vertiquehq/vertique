@@ -20,7 +20,6 @@ import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * Creates transaction-scoped JDK proxy clients for service contract interfaces that write to
@@ -116,15 +115,14 @@ public class TransactionalServiceClientFactory {
      * @param scopeKey the scope of every entry the proxy writes; validated as a {@link ScopeKey}
      * @param tx       the open database transaction to use when persisting outbox entries
      * @return a proxy that records each method invocation as an outbox entry within {@code tx}
-     * @throws NullPointerException     if {@code scopeKey} is {@code null}
-     * @throws IllegalArgumentException if {@code scopeKey} is not a valid {@link ScopeKey}, or any
-     *                                  method is missing {@link ServiceOperation} or violates the
-     *                                  outbox contract constraints
+     * @throws IllegalArgumentException if {@code scopeKey} is {@code null} or not a valid
+     *                                  {@link ScopeKey}, or any method is missing
+     *                                  {@link ServiceOperation} or violates the outbox contract
+     *                                  constraints
      */
     @SuppressWarnings("unchecked")
     public <T> T create(Class<T> contract, String scopeKey, SqlClient tx) {
-        Objects.requireNonNull(scopeKey, "scopeKey");
-        String validatedScope = new ScopeKey(scopeKey).value();
+        String validatedScope = ScopeKey.requireValid(scopeKey);
         Map<Method, PrecomputedTarget> targets = validateAndPrecompute(contract);
 
         return (T)

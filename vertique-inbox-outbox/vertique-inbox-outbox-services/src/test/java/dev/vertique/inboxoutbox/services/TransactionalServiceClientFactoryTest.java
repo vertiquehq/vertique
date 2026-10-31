@@ -235,7 +235,7 @@ class TransactionalServiceClientFactoryTest {
         assertEquals(
                 List.of("acme", "default"),
                 entryCaptor.getAllValues().stream().map(OutboxEntry::scopeKey).toList());
-        assertThrows(NullPointerException.class, () -> factory.create(ValidContract.class, (String) null, tx));
+        assertThrows(IllegalArgumentException.class, () -> factory.create(ValidContract.class, (String) null, tx));
         assertThrows(IllegalArgumentException.class, () -> factory.create(ValidContract.class, " ", tx));
     }
 

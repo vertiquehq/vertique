@@ -47,10 +47,10 @@ NotificationService txNotification =
         factory.create(NotificationService.class, "acme", tx);
 ```
 
-The two-argument form writes the `default` scope. A `null` `scopeKey` throws `NullPointerException`
-and a key that is not a valid core `ScopeKey` (blank, longer than 255 code points, or containing a
-control or format character) throws `IllegalArgumentException`, both when `create` is called and not
-when a method is invoked. The message does not repeat the key.
+The two-argument form writes the `default` scope. A `null` `scopeKey`, or a key that is not a
+valid core `ScopeKey` (blank, longer than 255 code points, or containing a control or format
+character), throws `IllegalArgumentException` when `create` is called and not when a method is
+invoked. The message does not repeat the key.
 
 Invoking a method on the returned proxy:
 1. Looks up the precomputed stable service target id for that method.

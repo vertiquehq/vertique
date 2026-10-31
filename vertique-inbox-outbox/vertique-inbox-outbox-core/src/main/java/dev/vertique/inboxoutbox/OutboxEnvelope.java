@@ -112,6 +112,6 @@ public record OutboxEnvelope(
      */
     public OutboxEnvelope {
         headers = OutboxEntry.unmodifiableCopy(headers);
-        scopeKey = scopeKey != null ? scopeKey : ScopeKey.DEFAULT.value();
+        scopeKey = ScopeKey.orDefault(scopeKey);
     }
 }

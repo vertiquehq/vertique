@@ -74,6 +74,6 @@ public record TransactionalMessageContext(
      */
     public TransactionalMessageContext {
         headers = headers != null ? Map.copyOf(headers) : Map.of();
-        scopeKey = scopeKey != null ? scopeKey : ScopeKey.DEFAULT.value();
+        scopeKey = ScopeKey.orDefault(scopeKey);
     }
 }

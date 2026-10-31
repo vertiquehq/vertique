@@ -111,7 +111,7 @@ public record JobDispatchContext(
     public JobDispatchContext {
         parameters = parameters != null ? Map.copyOf(parameters) : Map.of();
         attributes = attributes != null ? Map.copyOf(attributes) : Map.of();
-        scopeKey = scopeKey != null ? scopeKey : ScopeKey.DEFAULT.value();
+        scopeKey = ScopeKey.orDefault(scopeKey);
     }
 
     // --- Factory methods ---

@@ -11,7 +11,6 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.lang.reflect.Proxy;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * Factory for obtaining proxies that implement typed {@link DelayedJobClient} contract interfaces.
@@ -176,9 +175,8 @@ public class DelayedJobClientFactory {
 
         @Override
         public DelayedJobClientBuilder<T> scope(String scope) {
-            Objects.requireNonNull(scope, "scope");
             // ScopeKey messages never repeat the key, so the failure text stays free of caller-supplied scope text.
-            this.scope = new ScopeKey(scope).value();
+            this.scope = ScopeKey.requireValid(scope);
             return this;
         }
 

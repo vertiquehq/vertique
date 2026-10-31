@@ -22,7 +22,6 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Instant;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -150,12 +149,10 @@ public class DelayedJobService {
      *
      * @param scopeKey the scope every enqueue is stored in
      * @return the scoped service
-     * @throws NullPointerException     if {@code scopeKey} is {@code null}
-     * @throws IllegalArgumentException if {@code scopeKey} is not a valid {@link ScopeKey}
+     * @throws IllegalArgumentException if {@code scopeKey} is {@code null} or not a valid {@link ScopeKey}
      */
     DelayedJobService scopedTo(String scopeKey) {
-        Objects.requireNonNull(scopeKey, "scopeKey");
-        return new DelayedJobService(this, new ScopeKey(scopeKey).value());
+        return new DelayedJobService(this, ScopeKey.requireValid(scopeKey));
     }
 
     /**
@@ -344,11 +341,8 @@ public class DelayedJobService {
         if (job.maxAttempts() < 1 || job.maxAttempts() > 1000) {
             throw new IllegalArgumentException("maxAttempts must be between 1 and 1000, got: " + job.maxAttempts());
         }
-        if (job.scopeKey() == null) {
-            throw new IllegalArgumentException("scopeKey must not be null");
-        }
         // ScopeKey messages never repeat the key, so the failure text stays free of caller-supplied scope text.
-        new ScopeKey(job.scopeKey());
+        ScopeKey.requireValid(job.scopeKey());
     }
 
     /**

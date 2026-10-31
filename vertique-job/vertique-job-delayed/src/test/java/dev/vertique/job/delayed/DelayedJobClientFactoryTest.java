@@ -297,9 +297,9 @@ class DelayedJobClientFactoryTest {
         // When: scope is called with the key
         RuntimeException thrown = assertThrows(RuntimeException.class, () -> builder.scope(key));
 
-        // Then: it throws, and the text does not contain the key
+        // Then: it throws IllegalArgumentException, and the text does not contain the key
+        assertInstanceOf(IllegalArgumentException.class, thrown);
         if (key != null) {
-            assertInstanceOf(IllegalArgumentException.class, thrown);
             assertTrue(
                     key.isEmpty() || !String.valueOf(thrown.getMessage()).contains(key),
                     "the failure text must not repeat the key");

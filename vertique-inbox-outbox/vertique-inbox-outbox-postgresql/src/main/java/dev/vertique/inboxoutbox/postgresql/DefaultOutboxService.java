@@ -136,9 +136,10 @@ class DefaultOutboxService implements OutboxService {
             return Future.failedFuture(undeliverable);
         }
         // The row's scope is chosen by the entry alone; the ambient ScopeContext never selects it.
-        IllegalArgumentException invalidScope = invalidScopeKey(entry.scopeKey());
-        if (invalidScope != null) {
-            return Future.failedFuture(invalidScope);
+        try {
+            ScopeKey.requireValid(entry.scopeKey());
+        } catch (IllegalArgumentException e) {
+            return Future.failedFuture(e);
         }
         // F3b row binding: allocate the carrier id up front so the durable snapshot this call
         // captures is signed for THIS row, then persist the same id into the first-class column.
@@ -153,27 +154,6 @@ class DefaultOutboxService implements OutboxService {
         return repository
                 .insert(entry, metadata, carrierId, tx)
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox publish")));
-    }
-
-    /**
-     * Checks that the entry's scope key is a valid {@link ScopeKey}.
-     *
-     * <p>{@link ScopeKey} messages never repeat the key, so the failure text stays free of
-     * caller-supplied scope text.
-     *
-     * @param scopeKey the entry's scope key; may be {@code null}
-     * @return the exception to fail {@code publish} with, or {@code null} when the key is valid
-     */
-    private static IllegalArgumentException invalidScopeKey(String scopeKey) {
-        if (scopeKey == null) {
-            return new IllegalArgumentException("scopeKey must not be null");
-        }
-        try {
-            new ScopeKey(scopeKey);
-            return null;
-        } catch (IllegalArgumentException e) {
-            return e;
-        }
     }
 
     /**

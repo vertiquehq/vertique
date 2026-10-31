@@ -169,7 +169,7 @@ public record JobExecution(
         attributes = attributes != null ? Map.copyOf(attributes) : Map.of();
         metadata = metadata != null ? metadata : DurableMetadata.empty();
         progress = progress != null ? progress : ProgressSnapshot.EMPTY;
-        scopeKey = scopeKey != null ? scopeKey : ScopeKey.DEFAULT.value();
+        scopeKey = ScopeKey.orDefault(scopeKey);
     }
 
     /**

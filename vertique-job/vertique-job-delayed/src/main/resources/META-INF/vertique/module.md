@@ -302,9 +302,9 @@ acme.enqueue(payload);   // stored in scope "acme"
 - Every overload of the client stores the scope, including enqueue inside a transaction and with
   `DelayedJobOptions`. The scope replaces any `DelayedJob.scopeKey` and is applied by the service
   that the client enqueues through.
-- `scope` throws `NullPointerException` for `null` and `IllegalArgumentException` for a blank,
-  over-long (more than 255 code points) or control- or format-character key, when it is called. The
-  message does not repeat the key.
+- `scope` throws `IllegalArgumentException` for `null`, and for a blank, over-long (more than 255
+  code points) or control- or format-character key, when it is called. The message does not repeat
+  the key.
 - `client(C.class).create()` without `scope`, and `create(C.class)`, store `default`.
 - A generated `{Contract}_DelayedJobProxy` needs no regeneration: the scope travels in the service
   the proxy is given, not in a constructor argument or a `DelayedJobOptions` field.

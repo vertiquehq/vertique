@@ -167,6 +167,6 @@ public record OutboxRecord(
      */
     public OutboxRecord {
         headers = OutboxEntry.unmodifiableCopy(headers);
-        scopeKey = scopeKey != null ? scopeKey : ScopeKey.DEFAULT.value();
+        scopeKey = ScopeKey.orDefault(scopeKey);
     }
 }

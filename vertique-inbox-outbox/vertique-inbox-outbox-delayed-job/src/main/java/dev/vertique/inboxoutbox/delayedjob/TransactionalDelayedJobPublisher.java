@@ -128,11 +128,8 @@ public class TransactionalDelayedJobPublisher {
             @Nullable Instant scheduledAt,
             String scopeKey,
             SqlClient tx) {
-        if (scopeKey == null) {
-            return Future.failedFuture(new IllegalArgumentException("scope key must not be null"));
-        }
         try {
-            new ScopeKey(scopeKey);
+            ScopeKey.requireValid(scopeKey);
         } catch (IllegalArgumentException e) {
             return Future.failedFuture(e);
         }

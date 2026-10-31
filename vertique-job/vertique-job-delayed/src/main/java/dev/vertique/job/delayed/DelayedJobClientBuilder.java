@@ -23,9 +23,8 @@ public interface DelayedJobClientBuilder<C> {
      * @param scope the scope key; must not be {@code null} and must be a valid
      *     {@link dev.vertique.core.scope.ScopeKey}
      * @return this builder
-     * @throws NullPointerException if {@code scope} is {@code null}
-     * @throws IllegalArgumentException if {@code scope} is not a valid scope key; the message does not
-     *     repeat the key
+     * @throws IllegalArgumentException if {@code scope} is {@code null} or not a valid scope key; the
+     *     message does not repeat the key
      */
     DelayedJobClientBuilder<C> scope(String scope);
 

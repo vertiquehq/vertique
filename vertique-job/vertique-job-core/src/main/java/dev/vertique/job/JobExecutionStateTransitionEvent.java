@@ -107,6 +107,6 @@ public record JobExecutionStateTransitionEvent(
 
     /** Compact constructor that reads a {@code null} scope as the default. */
     public JobExecutionStateTransitionEvent {
-        scopeKey = scopeKey != null ? scopeKey : ScopeKey.DEFAULT.value();
+        scopeKey = ScopeKey.orDefault(scopeKey);
     }
 }
