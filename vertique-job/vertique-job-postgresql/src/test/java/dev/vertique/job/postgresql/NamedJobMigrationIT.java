@@ -135,9 +135,9 @@ class NamedJobMigrationIT {
             MigrationReport first = await(migration.runner().run(vertx));
 
             // Then: both instances migrated once into their own schema and histories, the decoy is untouched
-            assertEveryInstanceMigrated(first, 1);
+            assertEveryInstanceMigrated(first, 2, 1);
             assertObjectsLiveOnlyInTheirMappedSchemas();
-            assertEquals(List.of("1"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
+            assertEquals(List.of("1", "002"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
             assertEquals(List.of("1"), versionedHistory(APP_SCHEMA, APP_HISTORY));
             assertEquals(List.of("1"), column("SELECT count(*) FROM " + APP_SCHEMA + ".app_items"));
 
@@ -154,8 +154,8 @@ class NamedJobMigrationIT {
             await(startupStep(migration).start());
 
             // Then: no script is applied again
-            assertEveryInstanceMigrated(second, 0);
-            assertEquals(List.of("1"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
+            assertEveryInstanceMigrated(second, 0, 0);
+            assertEquals(List.of("1", "002"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
             assertEquals(List.of("1"), versionedHistory(APP_SCHEMA, APP_HISTORY));
             assertDecoyDefaultSchemaUntouched();
         } finally {
@@ -483,7 +483,7 @@ class NamedJobMigrationIT {
 
     // --- Migration assertions ---
 
-    private static void assertEveryInstanceMigrated(MigrationReport report, int expectedApplied) {
+    private static void assertEveryInstanceMigrated(MigrationReport report, int jobApplied, int appApplied) {
         List<MigrationInstanceResult> results = report.instances();
 
         assertEquals(
@@ -492,8 +492,11 @@ class NamedJobMigrationIT {
         for (MigrationInstanceResult result : results) {
             String name = result.instance().name();
             assertEquals(MigrationStatus.MIGRATED, result.status(), name);
-            assertEquals(expectedApplied, result.migrationsApplied(), name + " applied scripts");
-            assertEquals("1", result.currentVersion(), name + " current version");
+            assertEquals(
+                    "job".equals(name) ? jobApplied : appApplied,
+                    result.migrationsApplied(),
+                    name + " applied scripts");
+            assertEquals("job".equals(name) ? "002" : "1", result.currentVersion(), name + " current version");
         }
     }
 
@@ -508,6 +511,7 @@ class NamedJobMigrationIT {
             assertFalse(tables.contains(APP_SCHEMA + "." + table), "job table must not appear in app schema: " + table);
         }
         assertTrue(indexes.contains(JOB_SCHEMA + ".idx_job_executions_claim"));
+        assertTrue(indexes.contains(JOB_SCHEMA + ".idx_job_executions_retention"));
         assertTrue(tables.contains(JOB_SCHEMA + "." + JOB_HISTORY));
         assertFalse(tables.contains(JOB_SCHEMA + "." + APP_HISTORY));
 
