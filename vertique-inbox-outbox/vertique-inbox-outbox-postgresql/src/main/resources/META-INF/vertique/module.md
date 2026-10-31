@@ -229,7 +229,7 @@ is frozen from this Stable release.** Every later schema change ships as `V2+`, 
 | `headers` | `JSONB` | Application and transport headers only, as one JSON object of text values; no framework keys are merged in |
 | `metadata` | `JSONB NOT NULL DEFAULT '{}'` | Structured document `{"context": …, "delivery": …}` — durable propagation context and relay control |
 | `scheduled_at` | `TIMESTAMPTZ` | Optional scheduled publish time |
-| `available_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Earliest publish time |
+| `available_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Earliest publish time. At insert it is the later of the entry's `availableAt` (`NOW()` when absent) and `scheduled_at`, so a row scheduled for later sits behind every row that can be claimed now and an idle claim does not walk it. A retry backoff sets it to the computed retry time |
 | `state` | `VARCHAR(32) NOT NULL DEFAULT 'PENDING'` | Relay state |
 | `attempt` | `INTEGER NOT NULL DEFAULT 0` | Current attempt count |
 | `max_attempts` | `INTEGER NOT NULL DEFAULT 20` | Max attempts |
