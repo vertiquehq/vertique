@@ -34,6 +34,9 @@ import java.util.UUID;
  * held at the address of the record it writes, so a wait entered again leaves one row with a new {@code wait_id}. The
  * columns {@code fork_step_id} and {@code branch_id} hold the empty string outside a branch, never {@code NULL}.
  *
+ * <p>{@link #delete} removes the one row at an address and {@link #deleteAll} every row of an instance; neither is an
+ * error when no row is held.
+ *
  * <p>{@link #findOpen} joins {@code workflow_instances} and leaves out the records of instances that have ended. The
  * index on {@code (contract_name, signal_name, correlation_key)} serves it.
  */
@@ -57,6 +60,8 @@ public final class PgWorkflowSignalWaitRepository extends PgSqlRepository
             + " w.scope_key, w.contract_name, w.definition_id, w.signal_name, w.correlation_key, w.created_at";
 
     private final String sqlWrite;
+    private final String sqlDelete;
+    private final String sqlDeleteAll;
     private final String sqlFindOpen;
     private final String sqlFindById;
 
@@ -98,6 +103,11 @@ public final class PgWorkflowSignalWaitRepository extends PgSqlRepository
                 + " signal_name = EXCLUDED.signal_name, correlation_key = EXCLUDED.correlation_key,"
                 + " created_at = EXCLUDED.created_at";
 
+        this.sqlDelete = "DELETE FROM " + waits
+                + " WHERE instance_id = $1 AND step_id = $2 AND fork_step_id = $3 AND branch_id = $4";
+
+        this.sqlDeleteAll = "DELETE FROM " + waits + " WHERE instance_id = $1";
+
         this.sqlFindOpen =
                 "SELECT " + COLUMNS + " FROM " + waits + " w JOIN " + instances + " i ON i.id = w.instance_id"
                         + " WHERE w.contract_name = $1 AND w.signal_name = $2 AND w.correlation_key = $3"
@@ -135,6 +145,40 @@ public final class PgWorkflowSignalWaitRepository extends PgSqlRepository
                         OffsetDateTime.ofInstant(wait.createdAt(), ZoneOffset.UTC))))
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_signal_waits write")));
+    }
+
+    /**
+     * Deletes the record held at an address.
+     *
+     * @param instanceId the instance that owns the wait
+     * @param stepId     the step of the wait
+     * @param forkStepId the fork step of the branch, or the empty string for the main wait
+     * @param branchId   the branch, or the empty string for the main wait
+     * @param tx         the active transaction
+     * @return a {@link Future} of {@code true} when a record was deleted, {@code false} when none was held
+     */
+    @Override
+    public Future<Boolean> delete(
+            WorkflowInstanceId instanceId, String stepId, String forkStepId, String branchId, SqlClient tx) {
+        return tx.preparedQuery(sqlDelete)
+                .execute(Tuple.of(instanceId.value(), stepId, forkStepId, branchId))
+                .map(rs -> rs.rowCount() > 0)
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_signal_waits delete")));
+    }
+
+    /**
+     * Deletes every record of an instance.
+     *
+     * @param instanceId the instance whose records are deleted
+     * @param tx         the active transaction
+     * @return a {@link Future} that completes when the records are deleted
+     */
+    @Override
+    public Future<Void> deleteAll(WorkflowInstanceId instanceId, SqlClient tx) {
+        return tx.preparedQuery(sqlDeleteAll)
+                .execute(Tuple.of(instanceId.value()))
+                .<Void>mapEmpty()
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_signal_waits deleteAll")));
     }
 
     // --- Reads ---

@@ -124,6 +124,10 @@ final class MigrationExecutor {
     /** Logs the migration: its own patch and the full state after it. */
     private final DecisionLog decisions;
 
+    /** Deletes the record of the wait a migration leaves; {@code null} in legacy test constructors. */
+    @jakarta.annotation.Nullable
+    private final SignalWaits signalWaits;
+
     /**
      * Constructs a new migration executor.
      *
@@ -153,6 +157,8 @@ final class MigrationExecutor {
      *     is refused; may be {@code null}
      * @param actors takes the actor a recorded migration is logged with from the caller's identity
      * @param decisions the decision log that records the migration's patch and baseline
+     * @param signalWaits deletes the record of the wait the migration leaves; may be {@code null} in legacy test
+     *     constructors
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -168,7 +174,9 @@ final class MigrationExecutor {
             WorkflowCommandRepository<SqlClient> commands,
             @jakarta.annotation.Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
             CommandActors actors,
-            DecisionLog decisions) {
+            DecisionLog decisions,
+            @jakarta.annotation.Nullable SignalWaits signalWaits) {
+        this.signalWaits = signalWaits;
         this.decisions = decisions;
         this.actors = actors;
         // migrationRegistryOpt is null only from test-only constructors that delegate with null;
@@ -204,6 +212,7 @@ final class MigrationExecutor {
      * @param definitionReads the reads of definition rows on a transaction, when the store offers them
      * @param actors takes the actor a recorded migration is logged with from the caller's identity
      * @param decisions the decision log that records the migration's patch and baseline
+     * @param signalWaits deletes the record of the wait the migration leaves
      */
     @Inject
     MigrationExecutor(
@@ -220,7 +229,8 @@ final class MigrationExecutor {
             WorkflowCommandRepository<SqlClient> commands,
             Optional<TransactionalDefinitionReads<SqlClient>> definitionReads,
             CommandActors actors,
-            DecisionLog decisions) {
+            DecisionLog decisions,
+            SignalWaits signalWaits) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -235,7 +245,8 @@ final class MigrationExecutor {
                 commands,
                 definitionReads.orElse(null),
                 actors,
-                decisions);
+                decisions,
+                signalWaits);
     }
 
     /**
@@ -279,7 +290,8 @@ final class MigrationExecutor {
                 commands,
                 null,
                 CommandActors.ambient(),
-                decisions);
+                decisions,
+                null);
     }
 
     /**
@@ -829,9 +841,22 @@ final class MigrationExecutor {
                                     Json.encode(histPayload),
                                     now),
                             tx))
+                    // --- The source wait is left: its record goes before the drive, which may enter a wait again ---
+                    .compose(v -> closeSourceWait(id, sourceStepId, tx))
                     // --- Drive transitions in the target plan ---
                     .compose(v -> driver.driveTransitions(migrated, targetRw, tx));
         });
+    }
+
+    /**
+     * Deletes the record of the main wait the migrated instance leaves, which is the source's current step. A migrating
+     * instance holds at most its main wait. Nothing is deleted where no wait record collaborator is present.
+     */
+    private Future<Void> closeSourceWait(WorkflowInstanceId id, String sourceStepId, SqlClient tx) {
+        if (signalWaits == null) {
+            return Future.succeededFuture();
+        }
+        return signalWaits.close(id, sourceStepId, null, null, null, tx).mapEmpty();
     }
 
     /** Logs a migration to the decision log: the patch of its state change, then the full state after it. */

@@ -117,6 +117,61 @@ final class SignalHandler {
     private final DecisionLog decisions;
     private final RecorderRouter recorderRouter;
 
+    /** Deletes the record of a wait the handler leaves; {@code null} in legacy test constructors. */
+    @Nullable
+    private final SignalWaits signalWaits;
+
+    /**
+     * Constructs a signal handler that deletes no wait record, for tests that never reach a wait.
+     *
+     * @param registry the workflow registry used to resolve the pinned {@link RuntimeWorkflow}
+     * @param instances the instance repository
+     * @param history the history repository
+     * @param branchTokens the branch-token repository; may be {@code null}
+     * @param timerStore the timer store
+     * @param branchEngine the branch transition engine; may be {@code null}
+     * @param forkJoin the fork/join coordinator
+     * @param driver the transition driver
+     * @param timerLifecycle the timer-lifecycle service
+     * @param clock the clock
+     * @param commands the command repository
+     * @param contextBinder the binder that installs the durable context of a drive
+     * @param historyRecorder the recorder of the history entries of command outcomes
+     * @param recorderRouter the router that attributes the intents of a drained parked signal; may be {@code null}
+     */
+    SignalHandler(
+            WorkflowRegistry registry,
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            BranchTokenRepository<SqlClient> branchTokens,
+            TimerStore<SqlClient> timerStore,
+            BranchTransitionEngine branchEngine,
+            ForkJoinCoordinator forkJoin,
+            WorkflowTransitionDriver driver,
+            TimerLifecycleService timerLifecycle,
+            Clock clock,
+            WorkflowCommandRepository<SqlClient> commands,
+            WorkflowContextBinder contextBinder,
+            WorkflowHistoryRecorder historyRecorder,
+            RecorderRouter recorderRouter) {
+        this(
+                registry,
+                instances,
+                history,
+                branchTokens,
+                timerStore,
+                branchEngine,
+                forkJoin,
+                driver,
+                timerLifecycle,
+                clock,
+                commands,
+                contextBinder,
+                historyRecorder,
+                recorderRouter,
+                null);
+    }
+
     /**
      * Constructs a new signal handler.
      *
@@ -139,6 +194,8 @@ final class SignalHandler {
      * @param historyRecorder the recorder of the history entries of command outcomes
      * @param recorderRouter the router that attributes the intents of a drained parked signal to that signal's command;
      *     may be {@code null} in tests that do not route intents
+     * @param signalWaits deletes the record of the wait a signal leaves, in the transaction that applies it; may be
+     *     {@code null} in legacy test constructors
      */
     @Inject
     SignalHandler(
@@ -155,7 +212,9 @@ final class SignalHandler {
             WorkflowCommandRepository<SqlClient> commands,
             WorkflowContextBinder contextBinder,
             WorkflowHistoryRecorder historyRecorder,
-            RecorderRouter recorderRouter) {
+            RecorderRouter recorderRouter,
+            @Nullable SignalWaits signalWaits) {
+        this.signalWaits = signalWaits;
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -300,7 +359,15 @@ final class SignalHandler {
                                         : updatedInst.subjectRef().version();
                                 return decisions
                                         .record(inst, updatedInst, waiting.currentStepId(), "signal-applied", tx)
-                                        .compose(logged -> branchEngine
+                                        // The wait is left: its record goes before the drive, which may enter a wait
+                                        // again.
+                                        .compose(logged -> closeWait(
+                                                inst.id(),
+                                                waiting.currentStepId(),
+                                                waiting.forkStepId(),
+                                                waiting.branchId(),
+                                                tx))
+                                        .compose(closed -> branchEngine
                                                 .driveExecutorBranchTransitions(
                                                         cleared,
                                                         updatedInst.stateJson(),
@@ -475,7 +542,26 @@ final class SignalHandler {
                                     inst.id(), seq, WorkflowEntryType.SIGNAL_RECEIVED, histPayload, clock.instant()),
                             tx);
                 })
+                // The wait is left: its record goes before the drive, which may enter the same wait again.
+                .compose(v -> closeWait(inst.id(), inst.currentStepId(), null, null, tx))
                 .compose(v -> driver.driveTransitions(updated, rw, tx));
+    }
+
+    /**
+     * Deletes the record of the wait a signal leaves. Nothing is deleted where no wait record collaborator is present.
+     */
+    private Future<Void> closeWait(
+            WorkflowInstanceId instance,
+            String stepId,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            SqlClient tx) {
+        if (signalWaits == null) {
+            return Future.succeededFuture();
+        }
+        return signalWaits
+                .close(instance, stepId, forkStepId, branchId, null, tx)
+                .mapEmpty();
     }
 
     // --- Recorded signals in a segment ---

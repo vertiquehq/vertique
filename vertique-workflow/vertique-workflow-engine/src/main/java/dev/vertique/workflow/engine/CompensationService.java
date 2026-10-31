@@ -73,6 +73,30 @@ final class CompensationService {
     private final Clock clock;
     private final DecisionLog decisions;
 
+    /** Deletes the records of the waits of an instance that ends compensated; {@code null} in legacy test constructors. */
+    @jakarta.annotation.Nullable
+    private final SignalWaits signalWaits;
+
+    /**
+     * Constructs a compensation service that deletes no wait record, for tests that never reach a wait.
+     *
+     * @param instances the instance repository
+     * @param history the history repository
+     * @param recorders the recorder router
+     * @param eventEmitter the event emitter
+     * @param clock the clock
+     * @param decisions the decision log
+     */
+    CompensationService(
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            RecorderRouter recorders,
+            WorkflowEventEmitter eventEmitter,
+            Clock clock,
+            DecisionLog decisions) {
+        this(instances, history, recorders, eventEmitter, clock, decisions, null);
+    }
+
     /**
      * Constructs a new compensation service.
      *
@@ -82,6 +106,8 @@ final class CompensationService {
      * @param eventEmitter the event emitter used to emit lifecycle events on state transitions
      * @param clock the clock used to timestamp entries and state updates
      * @param decisions the decision log that records each compensation transition
+     * @param signalWaits deletes the records of the waits of an instance that ends compensated; may be {@code null} in
+     *     legacy test constructors
      */
     @Inject
     CompensationService(
@@ -90,7 +116,9 @@ final class CompensationService {
             RecorderRouter recorders,
             WorkflowEventEmitter eventEmitter,
             Clock clock,
-            DecisionLog decisions) {
+            DecisionLog decisions,
+            @jakarta.annotation.Nullable SignalWaits signalWaits) {
+        this.signalWaits = signalWaits;
         this.decisions = decisions;
         this.instances = instances;
         this.history = history;
@@ -191,6 +219,8 @@ final class CompensationService {
                     .updateOptimistic(compensated, prevVersion, tx)
                     .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                             rowCount, "instance '" + currentInst.id().value() + "' transitioning to COMPENSATED"))
+                    // The instance ends: no wait record outlives it, the records of branches left open included.
+                    .compose(v -> closeAllWaits(currentInst, tx))
                     .compose(v -> decisions.record(currentInst, compensated, stepOf(currentInst), "compensated", tx))
                     .compose(v -> history.nextSequence(currentInst.id(), tx))
                     .compose(seq -> {
@@ -293,6 +323,14 @@ final class CompensationService {
                                         .map(done -> logged));
                     });
         });
+    }
+
+    /** Deletes every wait record of the instance. Nothing is deleted where no wait record collaborator is present. */
+    private Future<Void> closeAllWaits(WorkflowInstance inst, SqlClient tx) {
+        if (signalWaits == null) {
+            return Future.succeededFuture();
+        }
+        return signalWaits.closeAll(inst.id(), tx);
     }
 
     /** The step an instance is at, or the start when it has none. */

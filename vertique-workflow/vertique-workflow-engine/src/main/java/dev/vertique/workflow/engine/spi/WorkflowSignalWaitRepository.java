@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine.spi;
 
+import dev.vertique.workflow.ops.WorkflowInstanceId;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import java.util.List;
@@ -33,6 +34,30 @@ public interface WorkflowSignalWaitRepository<TX> {
      * @return a {@link Future} that completes when the record is written
      */
     Future<Void> write(SignalWaitRecord wait, TX tx);
+
+    /**
+     * Deletes the record held at an address, if there is one.
+     *
+     * <p>Deleting a record that is not there is not an error: an older node's cancel may have left a record, and a wait
+     * entered again may have replaced one.
+     *
+     * @param instanceId the instance that owns the wait
+     * @param stepId     the step of the wait
+     * @param forkStepId the fork step of the branch, or the empty string for the main wait
+     * @param branchId   the branch, or the empty string for the main wait
+     * @param tx         the active transaction
+     * @return a {@link Future} of {@code true} when a record was deleted, {@code false} when none was held
+     */
+    Future<Boolean> delete(WorkflowInstanceId instanceId, String stepId, String forkStepId, String branchId, TX tx);
+
+    /**
+     * Deletes every record of an instance, whatever its step, fork step or branch.
+     *
+     * @param instanceId the instance whose records are deleted
+     * @param tx         the active transaction
+     * @return a {@link Future} that completes when the records are deleted; it completes as well when there are none
+     */
+    Future<Void> deleteAll(WorkflowInstanceId instanceId, TX tx);
 
     // --- Reads ---
 

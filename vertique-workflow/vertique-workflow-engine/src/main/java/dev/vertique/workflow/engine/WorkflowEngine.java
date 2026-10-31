@@ -152,6 +152,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private final WorkflowHistoryRepository<SqlClient> history;
     private final WorkflowDedupRepository<SqlClient> dedup;
     private final WorkflowSignalWaitRepository<SqlClient> signalWaits;
+
+    /** Deletes the records of the signal waits of an instance that is cancelled. */
+    private final SignalWaits waitRecords;
+
     private final WorkflowTypeNames typeNames;
     private final TimerStore<SqlClient> timerStore;
     private final TaskStore<SqlClient> taskStore;
@@ -341,6 +345,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.history = history;
         this.dedup = dedup;
         this.signalWaits = signalWaits;
+        this.waitRecords = new SignalWaits(signalWaits, clock);
         this.typeNames = typeNames;
         this.timerStore = timerStore;
         this.taskStore = taskStore;
@@ -540,6 +545,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.history = history;
         this.dedup = dedup;
         this.signalWaits = signalWaits;
+        SignalWaits waitRecords = new SignalWaits(signalWaits, clock);
+        this.waitRecords = waitRecords;
         this.typeNames = typeNames;
         this.timerStore = timerStore;
         this.taskStore = taskStore;
@@ -585,7 +592,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 branchCompensation,
                 propagator,
                 clock,
-                decisions);
+                decisions,
+                waitRecords);
         this.driver = new WorkflowTransitionDriver(
                 instances,
                 history,
@@ -598,7 +606,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 this.forkJoin,
                 clock,
                 decisions,
-                new SignalWaits(signalWaits, clock),
+                waitRecords,
                 () -> timerLifecycleHolder[0],
                 () -> taskLifecycleHolder[0]);
         driverHolder[0] = this.driver;
@@ -645,7 +653,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 clock,
                 builtContextBinder,
                 commands,
-                historyRecorder);
+                historyRecorder,
+                waitRecords);
         timerLifecycleHolder[0] = this.timerLifecycle;
         // SignalHandler needs the driver, coordinator, and timer service eagerly; all are now built.
         // Nothing references the handler, so it is a plain leaf in the construction order.
@@ -663,7 +672,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 commands,
                 builtContextBinder,
                 historyRecorder,
-                recorderRouter);
+                recorderRouter,
+                waitRecords);
         // MigrationExecutor needs the driver eagerly (built above) plus the optional migration
         // registry; nothing references it back, so it is a plain leaf in the construction order.
         this.migrationExecutor = new MigrationExecutor(
@@ -680,7 +690,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 commands,
                 definitionReads,
                 actors,
-                decisions);
+                decisions,
+                waitRecords);
     }
 
     // --- WorkflowEngineHandle ---
@@ -2569,7 +2580,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             });
         });
 
-        return cancelBranchesFuture.compose(v -> {
+        // The instance ends: no wait record outlives it, the records of the branches still open included.
+        return cancelBranchesFuture.compose(v -> waitRecords.closeAll(id, tx)).compose(v -> {
             long prevVersion = inst.version();
             WorkflowInstance cancelled = inst.withVersion(prevVersion + 1)
                     .withStatus(WorkflowStatus.CANCELLED)

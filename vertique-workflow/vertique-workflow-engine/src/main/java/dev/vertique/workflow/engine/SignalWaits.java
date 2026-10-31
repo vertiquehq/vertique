@@ -15,6 +15,7 @@ import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
@@ -31,6 +32,9 @@ import org.slf4j.LoggerFactory;
  * 255 characters without a NUL; any other result, or an accessor that throws, fails the segment with a
  * {@link WorkflowCorrelationKeyException} before anything is written. No message, log line or failure of this class
  * repeats a key.
+ *
+ * <p>A record is deleted in the transaction that leaves its wait, by {@link #close} for one wait and by
+ * {@link #closeAll} for an instance that ends. These are the only places a record is deleted.
  */
 @Singleton
 final class SignalWaits {
@@ -127,6 +131,47 @@ final class SignalWaits {
                 node,
                 plan,
                 tx);
+    }
+
+    /**
+     * Deletes the record of one wait, in the transaction that leaves it.
+     *
+     * <p>Deleting a record that is not there is not an error: a wait that declares no key has none, an older node's
+     * cancel may have left one, and a wait entered again may have replaced one.
+     *
+     * @param instance the instance that leaves the wait
+     * @param stepId the step of the wait
+     * @param forkStepId the fork step of the branch that leaves the wait; {@code null} for the main wait
+     * @param branchId the branch that leaves the wait; {@code null} for the main wait
+     * @param applyingCommandId the id of the command whose application leaves the wait, or {@code null} where no command
+     *     applies; not used yet
+     * @param tx the transaction that leaves the wait
+     * @return a {@link Future} of {@code true} when a record was deleted and {@code false} when none was held
+     */
+    Future<Boolean> close(
+            WorkflowInstanceId instance,
+            String stepId,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            @Nullable Long applyingCommandId,
+            SqlClient tx) {
+        return waits.delete(
+                instance,
+                stepId,
+                forkStepId != null ? forkStepId : MAIN_PATH,
+                branchId != null ? branchId : MAIN_PATH,
+                tx);
+    }
+
+    /**
+     * Deletes every record of an instance that ends or is cancelled, the records of branches still open included.
+     *
+     * @param instance the instance that ends
+     * @param tx the transaction that ends it
+     * @return a {@link Future} that completes when the records are deleted
+     */
+    Future<Void> closeAll(WorkflowInstanceId instance, SqlClient tx) {
+        return waits.deleteAll(instance, tx);
     }
 
     private Future<Void> write(

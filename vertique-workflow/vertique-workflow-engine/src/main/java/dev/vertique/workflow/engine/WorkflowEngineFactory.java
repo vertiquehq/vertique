@@ -114,8 +114,14 @@ public final class WorkflowEngineFactory {
         WorkflowHistoryRecorder historyRecorder =
                 new WorkflowHistoryRecorder(history, eventEmitter, clock, decisionLog);
         ReminderScheduler reminderScheduler = new ReminderScheduler(history, parts.commands(), timerStore, clock);
-        CompensationService compensationService =
-                new CompensationService(instances, history, recorderRouter, eventEmitter, clock, decisionLog);
+        CompensationService compensationService = new CompensationService(
+                instances,
+                history,
+                recorderRouter,
+                eventEmitter,
+                clock,
+                decisionLog,
+                new SignalWaits(parts.signalWaits(), clock));
         // Build the substrate lifecycle helper ONCE from the (possibly-null) propagator and the
         // supplied initializer set, and thread the same instance into BranchTransitionEngine so
         // binder-row drives (WorkflowContextBinder, wired inside the WorkflowEngine constructor

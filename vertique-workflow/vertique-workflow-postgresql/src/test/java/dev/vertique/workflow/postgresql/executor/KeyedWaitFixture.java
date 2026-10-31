@@ -15,6 +15,10 @@ import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry;
+import dev.vertique.workflow.migration.MigrationContext;
+import dev.vertique.workflow.migration.MigrationResult;
+import dev.vertique.workflow.migration.WorkflowMigrationHandler;
 import dev.vertique.workflow.ops.CorrelatedSignal;
 import dev.vertique.workflow.ops.CorrelatedSignalReceipt;
 import dev.vertique.workflow.ops.StartCommand;
@@ -41,11 +45,14 @@ import io.vertx.sqlclient.Tuple;
 import jakarta.annotation.Nullable;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -81,6 +88,65 @@ final class KeyedWaitFixture implements AutoCloseable {
 
     /** The fork of {@link #FORK} whose wait at {@code wait-a} gives up after an hour. */
     static final String FORK_WITH_TIMEOUT = "order-fork-with-timeout";
+
+    /** An order that waits like {@link #ORDER}, then holds on a timer of an hour, so that it neither ends nor waits for a signal. */
+    static final String ORDER_HELD = "order-held";
+
+    /** The order of {@link #ORDER_HELD} whose wait gives up after an hour, to the hold. */
+    static final String ORDER_HELD_WITH_TIMEOUT = "order-held-with-timeout";
+
+    /** An order whose signal returns it to the same wait, with the same key. */
+    static final String LOOPING = "order-looping";
+
+    /** An order that waits like {@link #ORDER_HELD}; its timeout path throws while {@link #timeoutPathBroken} is set. */
+    static final String BREAKABLE_TIMEOUT = "order-breakable-timeout";
+
+    /** An order whose initial state throws while {@link #startBroken} is set. */
+    static final String BREAKABLE_START = "order-breakable-start";
+
+    /**
+     * A fork whose branch {@code a} waits on a timer whose next step throws while {@link #branchTimerPathBroken} is
+     * set, and whose branch {@code b} waits at {@code wait-b} for {@code label-printed} keyed by {@code refB}.
+     */
+    static final String FORK_BREAKABLE_TIMER = "fork-breakable-timer";
+
+    /**
+     * A {@code FIRST_SUCCESS} fork: {@code b1} waits at {@code wait-a} for {@code shipment-confirmed} keyed by
+     * {@code refA} and {@code b2} at {@code wait-b} for {@code label-printed} keyed by {@code refB}; the join holds
+     * on a timer.
+     */
+    static final String RACE = "fork-race";
+
+    /**
+     * Version one waits at {@code w} for {@code shipment-confirmed} keyed by {@code refA}; version two waits at
+     * {@code w2} for the same signal keyed by {@code refB}.
+     */
+    static final String MIGRATING = "order-migrating";
+
+    /** Version one waits at {@code w} keyed by {@code refA}; version two waits at {@code w} without a key. */
+    static final String MIGRATING_UNKEYED = "order-migrating-unkeyed";
+
+    /** Version one waits at {@code w} keyed by {@code refA}; version two runs sixty decisions before it waits. */
+    static final String MIGRATING_OVERRUN = "order-migrating-overrun";
+
+    /** An {@code ALL_REQUIRED} fork whose failure route is a {@code CompleteNode}, branch {@code a} failing. */
+    static final String FORK_FAILING_TO_COMPLETE = "fork-failing-to-complete";
+
+    /**
+     * An {@code ALL_REQUIRED} fork whose failure route is a {@code FailNode}, after a compensable dispatch and the wait
+     * {@code wait-reserved} for {@code shipment-confirmed} keyed by {@code refA}, which complete the dispatch before the
+     * fork.
+     */
+    static final String FORK_FAILING_TO_COMPENSATE = "fork-failing-to-compensate";
+
+    /** An {@code ALL_REQUIRED} fork whose failure route is a {@code FailNode}, with no compensable step. */
+    static final String FORK_FAILING_TO_FAIL = "fork-failing-to-fail";
+
+    /** An {@code ALL_REQUIRED} fork with no failure route. */
+    static final String FORK_FAILING_NO_ROUTE = "fork-failing-no-route";
+
+    /** An {@code ALL_REQUIRED} fork whose failure route is a later wait, a timer of an hour. */
+    static final String FORK_FAILING_TO_WAIT = "fork-failing-to-wait";
 
     /** The value inside the message of the throwing accessor of {@link KeyBehaviour#THROWING}. */
     static final String SECRET = "SECRET-KEY-7";
@@ -247,10 +313,19 @@ final class KeyedWaitFixture implements AutoCloseable {
     /** The fixture the nodes, pools and tables belong to. */
     final ExecutorFixture fixture;
 
+    /** While set, the timeout path of {@link #BREAKABLE_TIMEOUT} throws. */
+    final AtomicBoolean timeoutPathBroken = new AtomicBoolean(true);
+
+    /** While set, the step after the timer of {@link #FORK_BREAKABLE_TIMER} throws. */
+    final AtomicBoolean branchTimerPathBroken = new AtomicBoolean(true);
+
+    /** While set, the initial state of {@link #BREAKABLE_START} throws. */
+    final AtomicBoolean startBroken = new AtomicBoolean(true);
+
     private final DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
     private final PgWorkflowDefinitionRegistryStore store;
 
-    private KeyedWaitFixture(DbPoolConfig db) {
+    private KeyedWaitFixture(DbPoolConfig db, boolean withExits) {
         this.fixture = ExecutorFixture.open(db);
         try {
             store = new PgWorkflowDefinitionRegistryStore(
@@ -262,6 +337,9 @@ final class KeyedWaitFixture implements AutoCloseable {
             seed(chain(), List.of("a-done", "b-done"));
             seed(fork(FORK, ForkState::refA, ForkState::refB, false), List.of(), forkBranches());
             seed(fork(FORK_WITH_TIMEOUT, ForkState::refA, ForkState::refB, true), List.of(), forkBranches());
+            if (withExits) {
+                seedExitDefinitions();
+            }
         } catch (RuntimeException | AssertionError e) {
             fixture.close();
             throw e;
@@ -275,7 +353,18 @@ final class KeyedWaitFixture implements AutoCloseable {
      * @return the fixture
      */
     static KeyedWaitFixture open(DbPoolConfig db) {
-        return new KeyedWaitFixture(db);
+        return new KeyedWaitFixture(db, false);
+    }
+
+    /**
+     * Opens the fixture over the database and registers, besides every definition of {@link #open}, the definitions
+     * that leave a wait in every way a wait is left, all of them keyed on every signal wait.
+     *
+     * @param db the database under test, already migrated
+     * @return the fixture
+     */
+    static KeyedWaitFixture openWithExits(DbPoolConfig db) {
+        return new KeyedWaitFixture(db, true);
     }
 
     /** The description of an engine and its executor over the registered definitions. */
@@ -375,6 +464,94 @@ final class KeyedWaitFixture implements AutoCloseable {
     /** Records, and commits, a signal addressed to the instance. */
     void signalInstance(Node node, WorkflowInstanceId id, String signalName, Object payload, String dedupKey) {
         await(caller(() -> node.pool.withTransaction(tx -> node.engine.signal(id, signalName, payload, dedupKey, tx))));
+    }
+
+    /** Records, and commits, a retry of the instance in a caller transaction. */
+    void retry(Node node, WorkflowInstanceId id) {
+        await(caller(() -> node.pool.withTransaction(tx -> node.engine.retry(id, tx))));
+    }
+
+    /** Records, and commits, the cancellation of the instance in a caller transaction. */
+    void cancel(Node node, WorkflowInstanceId id) {
+        await(caller(() -> node.pool.withTransaction(tx -> node.engine.cancel(id, "cancelled by the test", tx))));
+    }
+
+    /** Records, and commits, the migration of the instance to the version in a caller transaction. */
+    void migrate(Node node, WorkflowInstanceId id, long version) {
+        await(caller(() -> node.pool.withTransaction(tx -> node.engine.migrate(id, version, tx))));
+    }
+
+    /**
+     * The failure of a delivery by key that the engine refuses, after a wait of a few seconds.
+     *
+     * @param node   the node whose engine delivers
+     * @param signal the signal
+     * @return the failure
+     */
+    Throwable deliverByKeyFailure(Node node, CorrelatedSignal signal) {
+        return ExecutorFixture.failureOf(
+                caller(() -> node.pool.withTransaction(tx -> node.engine.signalByKey(signal, tx))),
+                Duration.ofSeconds(15));
+    }
+
+    /**
+     * The description of an engine whose migration registry holds, for each of {@link #MIGRATING},
+     * {@link #MIGRATING_UNKEYED} and {@link #MIGRATING_OVERRUN}, one handler from version one to version two that keeps
+     * the state: the first resumes at {@code w2}, the second at {@code w}, the third at the initial step.
+     *
+     * @param name the name of the node
+     * @return the description
+     */
+    NodeSpec migratingNode(String name) {
+        Set<WorkflowMigrationHandler<?, ?>> handlers = Set.of(
+                stateKeepingHandler(MIGRATING, "w2"),
+                stateKeepingHandler(MIGRATING_UNKEYED, "w"),
+                stateKeepingHandler(MIGRATING_OVERRUN, null));
+        return node(name).migrations(new DefaultWorkflowMigrationRegistry(handlers, registry));
+    }
+
+    /** Makes the instance's timeout timer due now. */
+    void fireTimeout(WorkflowInstanceId id) {
+        dueNow(id, "TIMEOUT", null);
+    }
+
+    /** Makes the timeout timer of the instance's branch due now. */
+    void fireTimeout(WorkflowInstanceId id, String branchId) {
+        dueNow(id, "TIMEOUT", branchId);
+    }
+
+    /** Makes the instance's only fire timer due now. */
+    void fireTimer(WorkflowInstanceId id) {
+        dueNow(id, "FIRE", null);
+    }
+
+    private void dueNow(WorkflowInstanceId id, String timerKind, @Nullable String branchId) {
+        List<Long> commands = new ArrayList<>();
+        for (Row row : await(fixture.observer()
+                .preparedQuery("SELECT id FROM workflow_commands WHERE workflow_id = $1 AND kind = 'TIMER'"
+                        + " AND timer_kind = $2 AND state = 'PENDING'"
+                        + " AND ($3::text IS NULL OR target_json->>'branchId' = $3) ORDER BY seq")
+                .execute(Tuple.of(id.value(), timerKind, branchId)))) {
+            commands.add(row.getLong("id"));
+        }
+        if (commands.size() != 1) {
+            throw new AssertionError(
+                    "expected one pending " + timerKind + " timer command of " + id + " but found " + commands);
+        }
+        long commandId = commands.getFirst();
+        OffsetDateTime at = await(fixture.observer()
+                        .preparedQuery("UPDATE workflow_commands SET fire_at = clock_timestamp()"
+                                + " WHERE id = $1 RETURNING fire_at")
+                        .execute(Tuple.of(commandId)))
+                .iterator()
+                .next()
+                .getOffsetDateTime("fire_at");
+        await(fixture.observer()
+                .preparedQuery("UPDATE workflow_timers SET fire_at = $2 WHERE command_id = $1")
+                .execute(Tuple.of(commandId, at)));
+        await(fixture.observer()
+                .preparedQuery("UPDATE workflow_commands SET available_at = $2 WHERE id = $1")
+                .execute(Tuple.of(commandId, at)));
     }
 
     /** The open wait records of the instance, read on a connection of their own, oldest first. */
@@ -564,9 +741,32 @@ final class KeyedWaitFixture implements AutoCloseable {
         fixture.close();
     }
 
+    /**
+     * Whether the signal wait at the step of the registered version of the definition declares a correlation key.
+     *
+     * @param definitionId the definition
+     * @param version      the version the instance is pinned to
+     * @param stepId       the waiting step
+     * @return {@code true} when the plan declares a key for the wait
+     */
+    boolean declaresKey(String definitionId, long version, String stepId) {
+        return runtimeOf(definitionId, version).nodeById().get(stepId)
+                        instanceof dev.vertique.workflow.plan.WaitSignalNode wait
+                && wait.correlationKeyCallbackId() != null;
+    }
+
     private RuntimeWorkflow runtimeOf(String definitionId) {
         return registry.codeDefinitions().stream()
-                .filter(candidate -> candidate.plan().definitionId().equals(definitionId))
+                .filter(candidate -> candidate.plan().definitionId().equals(definitionId)
+                        && candidate.plan().definitionVersion() == 1L)
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private RuntimeWorkflow runtimeOf(String definitionId, long version) {
+        return registry.codeDefinitions().stream()
+                .filter(candidate -> candidate.plan().definitionId().equals(definitionId)
+                        && candidate.plan().definitionVersion() == version)
                 .findFirst()
                 .orElseThrow();
     }
@@ -577,11 +777,11 @@ final class KeyedWaitFixture implements AutoCloseable {
 
     private void seed(Definition<?, ?> code, List<String> signalNames, JsonObject branches) {
         registry.register(code);
-        RuntimeWorkflow runtime = runtimeOf(code.definitionId());
+        RuntimeWorkflow runtime = runtimeOf(code.definitionId(), code.definitionVersion());
         Instant now = Instant.now();
         await(store.upsertCode(
                 new WorkflowDefinitionRecord(
-                        new DefinitionKey(WorkflowScopes.DEFAULT, code.definitionId(), 1),
+                        new DefinitionKey(WorkflowScopes.DEFAULT, code.definitionId(), code.definitionVersion()),
                         DefinitionKind.CODE,
                         runtime.contractName(),
                         runtime.plan().stateTypeName(),
@@ -597,7 +797,7 @@ final class KeyedWaitFixture implements AutoCloseable {
                                 .put("instance", new JsonArray(signalNames))
                                 .put("branches", branches),
                         null),
-                true));
+                code.definitionVersion() == 1L));
     }
 
     /** The signals the branches of the fork definitions declare, by {@code fork/branch}. */
@@ -759,6 +959,315 @@ final class KeyedWaitFixture implements AutoCloseable {
                 });
     }
 
+    /** Registers the definitions that only the proofs of the exits from a wait need. */
+    private void seedExitDefinitions() {
+        List<String> orderSignals = List.of("payment-captured", "refund-issued");
+        seed(heldOrder(ORDER_HELD, false), orderSignals);
+        seed(heldOrder(ORDER_HELD_WITH_TIMEOUT, true), orderSignals);
+        seed(loopingOrder(), orderSignals);
+        seed(breakableTimeoutOrder(), orderSignals);
+        seed(breakableStartOrder(), orderSignals);
+        seed(breakableTimerFork(), List.of(), new JsonObject().put("fork/b", new JsonArray().add("label-printed")));
+        seed(race(), List.of(), forkBranches());
+        List<String> shipment = List.of("shipment-confirmed");
+        seed(migrating(MIGRATING, 1, "w", ForkState::refA, 0), shipment);
+        seed(migrating(MIGRATING, 2, "w2", ForkState::refB, 0), shipment);
+        seed(migrating(MIGRATING_UNKEYED, 1, "w", ForkState::refA, 0), shipment);
+        seed(migrating(MIGRATING_UNKEYED, 2, "w", null, 0), shipment);
+        seed(migrating(MIGRATING_OVERRUN, 1, "w", ForkState::refA, 0), shipment);
+        seed(migrating(MIGRATING_OVERRUN, 2, "w", ForkState::refB, 60), shipment);
+        JsonObject failingBranches = new JsonObject().put("fork/b", new JsonArray().add("label-printed"));
+        seed(failingFork(FORK_FAILING_TO_COMPLETE, FailureRoute.COMPLETE, false), List.of(), failingBranches);
+        seed(
+                failingFork(FORK_FAILING_TO_COMPENSATE, FailureRoute.FAIL, true),
+                List.of("shipment-confirmed"),
+                failingBranches);
+        seed(failingFork(FORK_FAILING_TO_FAIL, FailureRoute.FAIL, false), List.of(), failingBranches);
+        seed(failingFork(FORK_FAILING_NO_ROUTE, FailureRoute.NONE, false), List.of(), failingBranches);
+        seed(failingFork(FORK_FAILING_TO_WAIT, FailureRoute.WAIT, false), List.of(), failingBranches);
+    }
+
+    /** An order that waits keyed by its payment reference and then holds on a timer, whether the signal or the timeout leaves the wait. */
+    private static Definition<OrderState, OrderContract> heldOrder(String id, boolean withTimeout) {
+        return orderDefinition(id, OrderContract.class, wf -> {
+            wf.initialStep("wait-payment");
+            if (withTimeout) {
+                wf.waitForSignal("wait-payment", "payment-captured", Payment.class)
+                        .correlateBy(OrderState::paymentReference)
+                        .onSignal((state, payment) ->
+                                new OrderState(state.ref(), state.paymentReference(), payment.reference()))
+                        .toStepOnSignal("hold")
+                        .timeoutAfter(Duration.ofHours(1))
+                        .onTimeout(state -> state)
+                        .toStepOnTimeout("hold");
+            } else {
+                wf.waitForSignal("wait-payment", "payment-captured", Payment.class)
+                        .correlateBy(OrderState::paymentReference)
+                        .onSignal((state, payment) ->
+                                new OrderState(state.ref(), state.paymentReference(), payment.reference()))
+                        .toStepOnSignal("hold")
+                        .build();
+            }
+            wf.timer("hold", Duration.ofHours(1)).toStep("done");
+            wf.complete("done");
+        });
+    }
+
+    /** An order whose signal returns it to the wait it left, under the same key. */
+    private static Definition<OrderState, OrderContract> loopingOrder() {
+        return orderDefinition(LOOPING, OrderContract.class, wf -> {
+            wf.initialStep("wait-payment");
+            wf.waitForSignal("wait-payment", "payment-captured", Payment.class)
+                    .correlateBy(OrderState::paymentReference)
+                    .onSignal((state, payment) -> state)
+                    .toStepOnSignal("wait-payment")
+                    .build();
+        });
+    }
+
+    private Definition<OrderState, OrderContract> breakableTimeoutOrder() {
+        return orderDefinition(BREAKABLE_TIMEOUT, OrderContract.class, wf -> {
+            wf.initialStep("wait-payment");
+            wf.waitForSignal("wait-payment", "payment-captured", Payment.class)
+                    .correlateBy(OrderState::paymentReference)
+                    .onSignal((state, payment) ->
+                            new OrderState(state.ref(), state.paymentReference(), payment.reference()))
+                    .toStepOnSignal("hold")
+                    .timeoutAfter(Duration.ofMinutes(10))
+                    .onTimeout(state -> {
+                        if (timeoutPathBroken.get()) {
+                            throw new IllegalStateException("the timeout path is broken");
+                        }
+                        return state;
+                    })
+                    .toStepOnTimeout("hold");
+            wf.timer("hold", Duration.ofHours(1)).toStep("done");
+            wf.complete("done");
+        });
+    }
+
+    private Definition<OrderState, OrderContract> breakableStartOrder() {
+        return new Definition<>(
+                BREAKABLE_START,
+                OrderContract.class,
+                OrderState.class,
+                wf -> wf.init(OrderStart.class, start -> {
+                    if (startBroken.get()) {
+                        throw new IllegalStateException("the initial state is broken");
+                    }
+                    return new OrderState(start.ref(), start.paymentReference(), null);
+                }),
+                wf -> {
+                    wf.initialStep("wait-payment");
+                    wf.waitForSignal("wait-payment", "payment-captured", Payment.class)
+                            .correlateBy(OrderState::paymentReference)
+                            .onSignal((state, payment) ->
+                                    new OrderState(state.ref(), state.paymentReference(), payment.reference()))
+                            .toStepOnSignal("done")
+                            .build();
+                    wf.complete("done");
+                });
+    }
+
+    private Definition<ForkState, ForkContract> breakableTimerFork() {
+        return forkDefinition(FORK_BREAKABLE_TIMER, 1, wf -> {
+            wf.initialStep("fork");
+            wf.fork("fork")
+                    .branch("a", "a-timer", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .branch("b", "wait-b", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .join("join");
+            wf.timer("a-timer", Duration.ofSeconds(60)).toStep("a-work");
+            wf.decide("a-work", state -> {
+                if (branchTimerPathBroken.get()) {
+                    throw new IllegalStateException("the branch step is broken");
+                }
+                return "a-done";
+            });
+            wf.complete("a-done");
+            keyedPrintedWait(wf, "wait-b", "b-done");
+            wf.complete("b-done");
+            wf.join("join")
+                    .allRequired((state, results) -> state)
+                    .toStep("done")
+                    .onFailure("done")
+                    .endJoin();
+            wf.complete("done");
+        });
+    }
+
+    private static Definition<ForkState, ForkContract> race() {
+        return forkDefinition(RACE, 1, wf -> {
+            wf.initialStep("fork");
+            wf.fork("fork")
+                    .branch("b1", "wait-a", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .branch("b2", "wait-b", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .join("join");
+            wf.waitForSignal("wait-a", "shipment-confirmed", Payment.class)
+                    .correlateBy(ForkState::refA)
+                    .onSignal((state, payment) -> new ForkState(
+                            state.ref(), state.refA(), state.refB(), payment.reference(), state.printed()))
+                    .toStepOnSignal("a-done")
+                    .build();
+            wf.complete("a-done");
+            keyedPrintedWait(wf, "wait-b", "b-done");
+            wf.complete("b-done");
+            wf.join("join")
+                    .firstSuccess((state, results) -> state)
+                    .toStep("hold")
+                    .onFailure("done")
+                    .endJoin();
+            wf.timer("hold", Duration.ofHours(1)).toStep("done");
+            wf.complete("done");
+        });
+    }
+
+    /**
+     * A version of a definition that waits at one step for {@code shipment-confirmed}, preceded by the given number
+     * of decisions.
+     *
+     * @param key the key function of the wait, or {@code null} for a wait without a key
+     * @param spin the number of decisions the initial step runs before the wait
+     */
+    private static Definition<ForkState, ForkContract> migrating(
+            String id, long version, String waitStep, @Nullable Function<ForkState, String> key, int spin) {
+        return forkDefinition(id, version, wf -> {
+            if (spin > 0) {
+                wf.initialStep("spin-0");
+                for (int i = 0; i < spin - 1; i++) {
+                    String next = i == spin - 2 ? waitStep : "spin-" + (i + 1);
+                    wf.decide("spin-" + i, state -> next);
+                }
+            } else {
+                wf.initialStep(waitStep);
+            }
+            var wait = wf.waitForSignal(waitStep, "shipment-confirmed", Payment.class);
+            if (key != null) {
+                wait = wait.correlateBy(key);
+            }
+            wait.onSignal((state, payment) -> new ForkState(
+                            state.ref(), state.refA(), state.refB(), payment.reference(), state.printed()))
+                    .toStepOnSignal("done")
+                    .build();
+            wf.complete("done");
+        });
+    }
+
+    /** Where the join of {@link #failingFork} routes a failure. */
+    private enum FailureRoute {
+        /** To a {@code CompleteNode}. */
+        COMPLETE,
+        /** To a {@code FailNode}. */
+        FAIL,
+        /** To a timer of an hour. */
+        WAIT,
+        /** Nowhere: the join declares no failure route. */
+        NONE
+    }
+
+    /**
+     * An {@code ALL_REQUIRED} fork whose branch {@code a} fails at a {@code FailNode} while branch {@code b} waits
+     * at {@code wait-b} for {@code label-printed} keyed by {@code refB}.
+     *
+     * @param compensable whether a compensable dispatch, completed by a signal, runs before the fork
+     */
+    private static Definition<ForkState, ForkContract> failingFork(String id, FailureRoute route, boolean compensable) {
+        return forkDefinition(id, 1, wf -> {
+            if (compensable) {
+                wf.initialStep("reserve");
+                wf.dispatchWithCompensation(
+                        "reserve", "stock.reserve", state -> Map.of("ref", state.ref()), "release", "wait-reserved");
+                wf.compensate("release", "reserve", "stock.release", state -> Map.of("ref", state.ref()));
+                wf.waitForSignal("wait-reserved", "shipment-confirmed", Payment.class)
+                        .correlateBy(ForkState::refA)
+                        .onSignal((state, payment) -> new ForkState(
+                                state.ref(), state.refA(), state.refB(), payment.reference(), state.printed()))
+                        .toStepOnSignal("fork")
+                        .build();
+            } else {
+                wf.initialStep("fork");
+            }
+            wf.fork("fork")
+                    .branch("a", "a-fail", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .branch("b", "wait-b", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .join("join");
+            wf.fail("a-fail", "BranchAFailed", state -> "branch a fails");
+            keyedPrintedWait(wf, "wait-b", "b-done");
+            wf.complete("b-done");
+            var join = wf.join("join").allRequired((state, results) -> state).toStep("done");
+            if (route != FailureRoute.NONE) {
+                join.onFailure("join-failed");
+            }
+            join.endJoin();
+            switch (route) {
+                case COMPLETE -> wf.complete("join-failed");
+                case FAIL -> wf.fail("join-failed", "JoinFailed", state -> "the join failed");
+                case WAIT -> wf.timer("join-failed", Duration.ofHours(1)).toStep("done");
+                case NONE -> {}
+            }
+            wf.complete("done");
+        });
+    }
+
+    /** A wait for {@code label-printed} keyed by {@code refB}. */
+    private static void keyedPrintedWait(WorkflowBuilder<ForkState> wf, String step, String next) {
+        wf.waitForSignal(step, "label-printed", Payment.class)
+                .correlateBy(ForkState::refB)
+                .onSignal((state, payment) ->
+                        new ForkState(state.ref(), state.refA(), state.refB(), state.shipped(), payment.reference()))
+                .toStepOnSignal(next)
+                .build();
+    }
+
+    private static Definition<ForkState, ForkContract> forkDefinition(
+            String id, long version, Consumer<WorkflowBuilder<ForkState>> body) {
+        return new Definition<>(
+                id,
+                version,
+                ForkContract.class,
+                ForkState.class,
+                wf -> wf.init(
+                        ForkStart.class, start -> new ForkState(start.ref(), start.refA(), start.refB(), null, null)),
+                body);
+    }
+
+    /** A migration from version one to version two of the definition that keeps the state. */
+    private static WorkflowMigrationHandler<ForkState, ForkState> stateKeepingHandler(
+            String definitionId, @Nullable String resumeStepId) {
+        return new WorkflowMigrationHandler<>() {
+            @Override
+            public String definitionId() {
+                return definitionId;
+            }
+
+            @Override
+            public long fromDefinitionVersion() {
+                return 1L;
+            }
+
+            @Override
+            public long targetDefinitionVersion() {
+                return 2L;
+            }
+
+            @Override
+            public Class<ForkState> sourceStateType() {
+                return ForkState.class;
+            }
+
+            @Override
+            public Class<ForkState> targetStateType() {
+                return ForkState.class;
+            }
+
+            @Override
+            public MigrationResult<ForkState> migrate(ForkState sourceState, MigrationContext ctx) {
+                return resumeStepId == null
+                        ? MigrationResult.anchorAtInitial(sourceState)
+                        : MigrationResult.continueAt(sourceState, resumeStepId);
+            }
+        };
+    }
+
     private static <C> Definition<OrderState, C> orderDefinition(
             String id, Class<C> contract, Consumer<WorkflowBuilder<OrderState>> body) {
         return new Definition<>(
@@ -776,6 +1285,7 @@ final class KeyedWaitFixture implements AutoCloseable {
         private final Class<S> stateType;
         private final Consumer<WorkflowBuilder<S>> init;
         private final Consumer<WorkflowBuilder<S>> body;
+        private final long version;
 
         Definition(
                 String id,
@@ -783,6 +1293,17 @@ final class KeyedWaitFixture implements AutoCloseable {
                 Class<S> stateType,
                 Consumer<WorkflowBuilder<S>> init,
                 Consumer<WorkflowBuilder<S>> body) {
+            this(id, 1L, contract, stateType, init, body);
+        }
+
+        Definition(
+                String id,
+                long version,
+                Class<C> contract,
+                Class<S> stateType,
+                Consumer<WorkflowBuilder<S>> init,
+                Consumer<WorkflowBuilder<S>> body) {
+            this.version = version;
             this.id = id;
             this.contract = contract;
             this.stateType = stateType;
@@ -807,7 +1328,7 @@ final class KeyedWaitFixture implements AutoCloseable {
 
         @Override
         public long definitionVersion() {
-            return 1L;
+            return version;
         }
 
         @Override

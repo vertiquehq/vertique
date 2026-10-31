@@ -591,6 +591,8 @@ final class WorkflowTransitionDriver {
                 .updateOptimistic(completed, prevVersion, tx)
                 .compose(rowCount -> WorkflowPayloads.requireRowUpdated(
                         rowCount, "instance '" + inst.id().value() + "' at CompleteNode '" + cn.stepId() + "'"))
+                // The instance ends: no wait record outlives it, the records of branches left open included.
+                .compose(v -> signalWaits.closeAll(inst.id(), tx))
                 .compose(v -> decisions.record(inst, completed, cn.stepId(), "completed", tx))
                 .compose(v -> history.nextSequence(inst.id(), tx))
                 .compose(seq -> {

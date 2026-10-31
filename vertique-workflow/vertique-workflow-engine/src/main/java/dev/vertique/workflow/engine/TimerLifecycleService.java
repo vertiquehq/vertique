@@ -106,6 +106,7 @@ final class TimerLifecycleService {
     private final WorkflowCommandRepository<SqlClient> commands;
     private final WorkflowHistoryRecorder historyRecorder;
     private final DecisionLog decisions;
+    private final SignalWaits signalWaits;
 
     /**
      * Binder-row seam for the instance-owned (non-branch) timer drives (Contract Appendix C2): the
@@ -138,6 +139,7 @@ final class TimerLifecycleService {
      *     when durable-context wiring is not exercised)
      * @param commands the command repository that settles the {@code TIMER} command of a stale timer
      * @param historyRecorder the history recorder that logs what became of a {@code TIMER} command
+     * @param signalWaits deletes the record of the signal wait a timeout leaves, in the transaction that runs it
      */
     @Inject
     TimerLifecycleService(
@@ -152,7 +154,9 @@ final class TimerLifecycleService {
             Clock clock,
             WorkflowContextBinder contextBinder,
             WorkflowCommandRepository<SqlClient> commands,
-            WorkflowHistoryRecorder historyRecorder) {
+            WorkflowHistoryRecorder historyRecorder,
+            SignalWaits signalWaits) {
+        this.signalWaits = signalWaits;
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -540,7 +544,9 @@ final class TimerLifecycleService {
                                         tx);
                             });
                 })
-                .compose(v -> driver.driveTransitions(advanced, rw, tx))
+                // The wait is left: its record goes before the timeout path is driven, which may enter a wait again.
+                .compose(v -> signalWaits.close(inst.id(), wsn.stepId(), null, null, null, tx))
+                .compose(closed -> driver.driveTransitions(advanced, rw, tx))
                 .map(v -> TimerFiringResult.APPLIED);
     }
 
@@ -752,10 +758,22 @@ final class TimerLifecycleService {
                                                             "Optimistic concurrency conflict on branch token"
                                                                     + " during signal-timeout fire"));
                                                 }
-                                                // updatedInst carries the post-onTimeoutMutator state and the
-                                                // current subject ref; driveAndMaybeJoin reads both off it.
-                                                return forkJoin.driveAndMaybeJoin(
-                                                        updatedInst, cleared, rw, commandId, tx);
+                                                // The wait is left: its record goes before the branch's timeout
+                                                // path is driven, which may enter a wait again.
+                                                return signalWaits
+                                                        .close(
+                                                                workflowId,
+                                                                wsn.stepId(),
+                                                                branch.forkStepId(),
+                                                                branch.branchId(),
+                                                                null,
+                                                                tx)
+                                                        .compose(closed ->
+                                                                // updatedInst carries the post-onTimeoutMutator state
+                                                                // and the current subject ref; driveAndMaybeJoin reads
+                                                                // both off it.
+                                                                forkJoin.driveAndMaybeJoin(
+                                                                        updatedInst, cleared, rw, commandId, tx));
                                             });
                                 })
                                 .map(v -> TimerFiringResult.APPLIED);

@@ -189,7 +189,7 @@ class WorkflowLiveSignalContextTest {
                 .instances(instances)
                 .history(history)
                 .dedup(dedup)
-                .signalWaits(org.mockito.Mockito.mock())
+                .signalWaits(dev.vertique.workflow.engine.testsupport.EmptySignalWaits.create())
                 .branchTokens(branchTokens)
                 .joinStates(joinStates)
                 .timerStore(timerStore)
