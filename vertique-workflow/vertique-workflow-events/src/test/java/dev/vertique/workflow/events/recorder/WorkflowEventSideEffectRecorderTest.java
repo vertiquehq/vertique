@@ -156,6 +156,53 @@ class WorkflowEventSideEffectRecorderTest {
         }
 
         @Test
+        @DisplayName("the entry is in the start scope, not the definition scope, and the envelope is unchanged")
+        void entryIsInStartScope() {
+            // Given: an event intent for an instance started in scope acme and pinned to a definition in scope default
+            UUID instanceId = UUID.randomUUID();
+            Instant now = Instant.parse("2026-05-09T10:00:00Z");
+            WorkflowEventIntent eventIntent = new WorkflowEventIntent(
+                    WorkflowEventType.WORKFLOW_STARTED,
+                    new WorkflowInstanceId(instanceId),
+                    "order-fulfillment",
+                    1L,
+                    "default",
+                    "acme",
+                    null,
+                    "BK-12345",
+                    now,
+                    1L,
+                    null,
+                    null,
+                    Map.of(),
+                    "corr-abc",
+                    "cause-xyz");
+            WorkflowSideEffectIntent intent = intentWith(eventIntent, Map.of());
+            when(outboxService.publish(eq(tx), any(OutboxEntry.class))).thenReturn(Future.succeededFuture(1L));
+
+            // When: the recorder records it
+            Future<RecorderResult> result = recorder.record(intent, tx);
+
+            // Then: the entry is in the start scope and the envelope equals its baseline
+            assertThat(result.succeeded()).isTrue();
+            ArgumentCaptor<OutboxEntry> entryCaptor = ArgumentCaptor.forClass(OutboxEntry.class);
+            verify(outboxService).publish(eq(tx), entryCaptor.capture());
+            OutboxEntry entry = entryCaptor.getValue();
+            assertThat(entry.scopeKey()).isEqualTo("acme");
+            assertThat(entry.payload()).isInstanceOf(WorkflowEventEnvelope.class);
+            WorkflowEventEnvelope envelope = (WorkflowEventEnvelope) entry.payload();
+            assertThat(envelope.eventType()).isEqualTo("WORKFLOW_STARTED");
+            assertThat(envelope.workflowId()).isEqualTo(instanceId);
+            assertThat(envelope.definitionId()).isEqualTo("order-fulfillment");
+            assertThat(envelope.definitionScopeKey()).isEqualTo("default");
+            assertThat(envelope.scopeKey()).isEqualTo("acme");
+            assertThat(envelope.businessKey()).isEqualTo("BK-12345");
+            assertThat(envelope.occurredAt()).isEqualTo(now);
+            assertThat(envelope.correlationId()).isEqualTo("corr-abc");
+            assertThat(envelope.causationId()).isEqualTo("cause-xyz");
+        }
+
+        @Test
         @DisplayName("null intent headers — OutboxEntry gets empty headers map")
         void record_nullHeaders_usesEmptyMap() {
             WorkflowEventIntent eventIntent = minimalEventIntent(WorkflowEventType.WORKFLOW_STARTED);

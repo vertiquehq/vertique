@@ -156,6 +156,7 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
                 .aggregateId(intent.correlation().workflowId().value().toString())
                 .payload(intent.payload())
                 .headers(mergeHeaders(intentHeaders, intent.correlation()))
+                .scopeKey(intent.correlation().scopeKey())
                 .build();
 
         return outboxService.publish(tx, entry).map(v -> RecorderResult.empty());

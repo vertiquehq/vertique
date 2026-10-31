@@ -55,6 +55,8 @@ Consumer rules:
 - Filter or route by scope with `definitionScopeKey` (the scope of the definition the instance is pinned to) and `scopeKey` (the scope the instance was started in). Both keys are plain labels, not an isolation or authorization boundary.
 - Read `definitionScopeKey` and `scopeKey` as optional: envelopes written before the fields existed carry neither, and they read as `null`.
 
+The outbox row is written in the scope the instance was started in: `scope_key` carries it alongside the envelope's `scopeKey`. Rows written before the upgrade read `default` even when their envelope names another scope. The scope is a label, not authorization.
+
 The two scope fields were added without changing `schemaVersion`. Adding fields or event types is intended to be non-breaking. Removing or renaming existing fields requires a new schema version.
 
 ---
