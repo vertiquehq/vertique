@@ -246,7 +246,8 @@ final class NotifyingJobRepository implements JobRepository {
                 exec.enqueuedAt(),
                 exec.startedAt(),
                 exec.completedAt(),
-                exec.metadata());
+                exec.metadata(),
+                exec.scopeKey());
         // Deliberate observer-isolation broadening: forEachSwallowSync catches Exception (broader
         // than this site's original RuntimeException). For a conforming listener (no checked
         // exceptions) the behaviour is identical; a sneak-thrown checked exception now logs-and-

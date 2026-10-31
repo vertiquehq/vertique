@@ -83,6 +83,13 @@ and handler latency, not by `sleepDelayMs`.
 `JobDispatchContext` from `dev.vertique:vertique-job-core` are injected simply by declaring them as
 parameters; cancellation, progress and structured logging all go through `JobContext`.
 
+**The scope a handler sees.** `JobContext.scopeKey()` and `JobDispatchContext.scopeKey()` report the
+scope stored on the claimed row. The poller does not bind a `ScopeContext` from the row: the ambient
+`ScopeContext`, if any, is the one restored from the durable context captured at enqueue, and it is
+independent of the row scope. A handler that partitions data chooses one source for the scope,
+compares the other when both are present and fails on a mismatch, and authorizes access itself,
+because scope is not checked at enqueue, by execution id, or under a service principal.
+
 ---
 
 ## Key Classes

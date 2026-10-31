@@ -77,6 +77,11 @@ class NotifyingJobRepositoryTest {
 
         /** A minimal valid {@link JobExecution} fixture. */
         private JobExecution makeExecution(JobState state) {
+            return makeExecution(state, null);
+        }
+
+        /** A minimal valid {@link JobExecution} fixture in the given scope. */
+        private JobExecution makeExecution(JobState state, String scopeKey) {
             return new JobExecution(
                     execId,
                     "job-1",
@@ -98,7 +103,8 @@ class NotifyingJobRepositoryTest {
                     ProgressSnapshot.EMPTY,
                     null,
                     null,
-                    DurableMetadata.empty());
+                    DurableMetadata.empty(),
+                    scopeKey);
         }
 
         @Test
@@ -133,6 +139,22 @@ class NotifyingJobRepositoryTest {
             assertEquals(now, event.startedAt(), "startedAt mismatch");
             assertEquals(now, event.completedAt(), "completedAt mismatch");
             assertEquals(DurableMetadata.empty(), event.metadata(), "metadata mismatch");
+        }
+
+        @Test
+        @DisplayName("event reports the scope of the persisted execution")
+        void transitionEventCarriesScopeKey() {
+            JobExecution exec = makeExecution(JobState.SUCCEEDED, "acme");
+            when(delegate.completeExecution(any(), any(), any(), any(), any()))
+                    .thenReturn(Future.succeededFuture(Optional.of(exec)));
+
+            List<JobExecutionStateTransitionEvent> received = new ArrayList<>();
+            NotifyingJobRepository repo = new NotifyingJobRepository(delegate, Set.of(received::add));
+
+            repo.completeExecution(execId, JobState.SUCCEEDED, null, null, ProgressSnapshot.EMPTY);
+
+            assertEquals(1, received.size(), "exactly one event must be fired");
+            assertEquals("acme", received.get(0).scopeKey(), "scopeKey mismatch");
         }
 
         @Test

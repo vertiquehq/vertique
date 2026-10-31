@@ -6,8 +6,10 @@ package dev.vertique.job;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 
+import dev.vertique.core.context.DurableMetadata;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -71,5 +73,47 @@ class JobDispatchContextTest {
                 "id", UUID.randomUUID(), JobType.CRON, 0, 1, "q", Instant.now(), Instant.now(), null, null);
         assertEquals(0, ctx.parameters().size());
         assertEquals(0, ctx.attributes().size());
+    }
+
+    private static JobExecution executionIn(String scopeKey) {
+        Instant now = Instant.now();
+        return new JobExecution(
+                UUID.randomUUID(),
+                "scoped-job",
+                JobType.DELAYED,
+                "handler.address",
+                "default",
+                JobState.PROCESSING,
+                0,
+                3,
+                null,
+                0,
+                null,
+                now,
+                null,
+                null,
+                null,
+                null,
+                null,
+                ProgressSnapshot.EMPTY,
+                Map.of(),
+                Map.of(),
+                DurableMetadata.empty(),
+                scopeKey);
+    }
+
+    @Test
+    @DisplayName("carries the scope key through fromExecution and withAttribute")
+    void carriesScopeKey() {
+        JobDispatchContext fromRow =
+                JobDispatchContext.fromExecution(executionIn("acme"), UUID.randomUUID(), Instant.now());
+
+        assertEquals("acme", fromRow.scopeKey());
+        assertEquals("acme", fromRow.withAttribute("key", "value").scopeKey());
+        assertEquals("default", buildContext().scopeKey());
+        assertEquals("default", buildContext().withAttribute("key", "value").scopeKey());
+        assertEquals(
+                Set.of("job.id", "job.type", "job.executionId", "job.queue", "job.attempt"),
+                fromRow.toMdcContext().keySet());
     }
 }
