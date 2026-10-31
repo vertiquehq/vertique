@@ -135,9 +135,9 @@ class NamedJobMigrationIT {
             MigrationReport first = await(migration.runner().run(vertx));
 
             // Then: both instances migrated once into their own schema and histories, the decoy is untouched
-            assertEveryInstanceMigrated(first, 2, 1);
+            assertEveryInstanceMigrated(first, 3, 1);
             assertObjectsLiveOnlyInTheirMappedSchemas();
-            assertEquals(List.of("1", "002"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
+            assertEquals(List.of("1", "002", "003"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
             assertEquals(List.of("1"), versionedHistory(APP_SCHEMA, APP_HISTORY));
             assertEquals(List.of("1"), column("SELECT count(*) FROM " + APP_SCHEMA + ".app_items"));
 
@@ -155,7 +155,7 @@ class NamedJobMigrationIT {
 
             // Then: no script is applied again
             assertEveryInstanceMigrated(second, 0, 0);
-            assertEquals(List.of("1", "002"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
+            assertEquals(List.of("1", "002", "003"), versionedHistory(JOB_SCHEMA, JOB_HISTORY));
             assertEquals(List.of("1"), versionedHistory(APP_SCHEMA, APP_HISTORY));
             assertDecoyDefaultSchemaUntouched();
         } finally {
