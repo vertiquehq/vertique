@@ -27,6 +27,9 @@ import javax.lang.model.element.VariableElement;
  * generated source consumes the topic and would leave the handler without records. The rules that every transport
  * shares, such as the shape of the target methods, belong to the shared signal-target scan and are not repeated here.
  *
+ * <p>A blank {@code name} or {@code groupId} is an error too, because the source names its consumer and its consumer
+ * group by them.
+ *
  * <p>The settings are read from the explicit values of the annotation mirror, not from the defaults: the strategies
  * default to the forbidden {@code SKIP} and {@code AUTO}, which the generated source overrides, so only a value that
  * the listener writes can be an error.
@@ -89,6 +92,9 @@ public final class SignalListenerValidator {
             }
         }
 
+        ok &= requireText(type, name, "name", model.name());
+        ok &= requireText(type, name, "groupId", model.groupId());
+
         if (AnnotationMirrors.isPresent(type, JSON_PROFILE_FQN)) {
             ctx.diagnostics()
                     .error(
@@ -124,6 +130,21 @@ public final class SignalListenerValidator {
             ok = false;
         }
         return ok;
+    }
+
+    private boolean requireText(TypeElement type, String name, String attribute, String value) {
+        if (!value.isBlank()) {
+            return true;
+        }
+        ctx.diagnostics()
+                .error(
+                        type,
+                        "%s sets a blank %s, but the signal source generated for a listener with signal targets names"
+                                + " its consumer by it; write a non-blank %s",
+                        name,
+                        attribute,
+                        attribute);
+        return false;
     }
 
     private boolean requireConstant(TypeElement type, String name, String attribute, Object value, String allowed) {

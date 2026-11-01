@@ -15,6 +15,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
@@ -317,6 +318,63 @@ class AutoWireProcessorSignalSourceFormTest {
         assertEquals(List.of(), errorsIn(control, "CarrierFeed.java"));
     }
 
+    @Test
+    @DisplayName("a target on a type that no processor turns into a source is an error naming the type")
+    void targetOnATypeThatIsNoSourceIsAnErrorNamingTheType() {
+        // Given a plain class and an interface annotated with an annotation that carries no form, each with a target
+        // method; and for a control, a @KafkaListener interface and a form-annotated interface with targets and their
+        // classes
+        JavaFileObject plainClass = source("PlainClass", """
+                package dev.vertique.examples;
+
+                import dev.vertique.workflow.source.WorkflowSignalTarget;
+
+                public class PlainClass {
+                    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivered", key = "carrierRef")
+                    public void delivered(Shipment event) {}
+                }
+                """);
+        JavaFileObject noSource = source("NoSource", """
+                package dev.vertique.examples;
+
+                import dev.vertique.workflow.source.WorkflowSignalTarget;
+
+                @PlainSignals
+                public interface NoSource {
+                    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivered", key = "carrierRef")
+                    void delivered(Shipment event);
+                }
+                """);
+        JavaFileObject formWithTarget = source("CarrierFeed", """
+                package dev.vertique.examples;
+
+                import dev.vertique.workflow.source.WorkflowSignalTarget;
+
+                @FeedSignals
+                public interface CarrierFeed {
+                    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivered", key = "carrierRef")
+                    void delivered(Shipment event);
+                }
+                """);
+
+        // When the processor compiles them, and again with wiring disabled
+        var rejected = compile(plainClass, noSource);
+        var disabled = compile(Map.of("vertique.codegen.autoWire", "false"), plainClass);
+        var control = compile(
+                formWithTarget,
+                source("CarrierFeed_SignalSource", CARRIER_FEED_SOURCE),
+                source("CarrierSignals", CARRIER_SIGNALS),
+                source("CarrierSignals_SignalSource", CARRIER_SIGNALS_SOURCE));
+
+        // Then each type is reported on itself, naming it, with wiring disabled too, and the control compiles
+        rejected.assertFailed();
+        assertTrue(errorsIn(rejected, "PlainClass.java").stream().anyMatch(m -> m.contains(PACKAGE + ".PlainClass")));
+        assertTrue(errorsIn(rejected, "NoSource.java").stream().anyMatch(m -> m.contains(PACKAGE + ".NoSource")));
+        disabled.assertFailed();
+        assertTrue(errorsIn(disabled, "PlainClass.java").stream().anyMatch(m -> m.contains(PACKAGE + ".PlainClass")));
+        control.assertSuccess();
+    }
+
     /** The messages of the errors reported on the source file, which is where the processor puts an error on an element. */
     private static List<String> errorsIn(ProcessorTestHarness.Result result, String fileName) {
         return result.compilation().diagnostics().stream()
@@ -333,8 +391,13 @@ class AutoWireProcessorSignalSourceFormTest {
 
     /** Compiles the sources with the stubs of the annotations, the transport and the form's interface. */
     private static ProcessorTestHarness.Result compile(JavaFileObject... sources) {
+        return compile(Map.of(), sources);
+    }
+
+    private static ProcessorTestHarness.Result compile(Map<String, String> options, JavaFileObject... sources) {
         return ProcessorTestHarness.run(
                 new AutoWireProcessor(),
+                options,
                 Stream.concat(
                                 Stream.of(
                                         SourceFiles.inline(

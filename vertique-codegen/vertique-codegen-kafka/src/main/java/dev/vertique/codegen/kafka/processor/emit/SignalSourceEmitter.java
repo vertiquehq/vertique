@@ -18,14 +18,9 @@ import dev.vertique.codegen.kafka.processor.scan.ListenerModel;
 import java.io.IOException;
 import java.util.List;
 import javax.annotation.processing.Generated;
-import javax.lang.model.element.ElementKind;
-import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
-import javax.lang.model.type.DeclaredType;
-import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
-import javax.lang.model.util.ElementFilter;
 
 /**
  * Emits {@code <Interface>_SignalSource}, the {@code KafkaSignalSource} generated for a signal listener: a
@@ -88,7 +83,7 @@ public final class SignalSourceEmitter {
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
                 .addParameter(ParameterizedTypeName.get(KAFKA_SIGNALS, messageName), "source")
-                .addCode(defineBody(model, targets, messageName, message))
+                .addCode(defineBody(model, targets, messageName))
                 .build();
         TypeSpec type = TypeSpec.classBuilder(simpleName)
                 .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
@@ -112,48 +107,23 @@ public final class SignalSourceEmitter {
         }
     }
 
-    private CodeBlock defineBody(ListenerModel model, List<Target> targets, TypeName messageName, TypeMirror message) {
+    private CodeBlock defineBody(ListenerModel model, List<Target> targets, TypeName messageName) {
         CodeBlock.Builder chain = CodeBlock.builder()
                 .add("$[source.topic($S)\n.groupId($S)\n.name($S)", model.topic(), model.groupId(), model.name());
-        String dedupBy = targets.get(0).dedupBy();
-        if (!dedupBy.isBlank()) {
-            chain.add("\n.dedupBy($T::$L)", messageName, accessor(message, dedupBy));
+        String dedupByMethod = targets.get(0).dedupByMethod();
+        if (!dedupByMethod.isBlank()) {
+            chain.add("\n.dedupBy($T::$L)", messageName, dedupByMethod);
         }
         for (Target target : targets) {
             chain.add("\n.signal($T.class, $S)", ClassName.get(target.contract()), target.signal());
             if (!target.key().isBlank()) {
-                chain.add("\n.key($T::$L)", messageName, accessor(message, target.key()));
+                chain.add("\n.key($T::$L)", messageName, target.keyMethod());
             } else {
-                chain.add("\n.businessKey($T::$L)", messageName, accessor(message, target.businessKey()));
+                chain.add("\n.businessKey($T::$L)", messageName, target.keyMethod());
             }
             chain.add("\n.onNoMatch($T.$L)", SIGNAL_NO_MATCH, target.onNoMatch());
         }
         chain.add(";\n$]");
         return chain.build();
-    }
-
-    /**
-     * Returns the name of the method that reads the property: the record component or the {@code get} or {@code is}
-     * method of the same name, which the shared scan has already found to exist.
-     */
-    private String accessor(TypeMirror message, String property) {
-        TypeElement element = (TypeElement) ((DeclaredType) message).asElement();
-        String suffix = Character.toUpperCase(property.charAt(0)) + property.substring(1);
-        List<String> candidates = element.getKind() == ElementKind.RECORD
-                ? List.of(property, "get" + suffix, "is" + suffix)
-                : List.of("get" + suffix, "is" + suffix);
-        for (String candidate : candidates) {
-            for (ExecutableElement method :
-                    ElementFilter.methodsIn(ctx.elements().getAllMembers(element))) {
-                if (method.getSimpleName().contentEquals(candidate)
-                        && method.getParameters().isEmpty()
-                        && method.getReturnType().getKind() != TypeKind.VOID
-                        && method.getModifiers().contains(Modifier.PUBLIC)
-                        && !method.getModifiers().contains(Modifier.STATIC)) {
-                    return candidate;
-                }
-            }
-        }
-        return property;
     }
 }

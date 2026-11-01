@@ -5,6 +5,7 @@ package dev.vertique.codegen.dagger.processor;
 
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.PackageResolver;
+import dev.vertique.codegen.SignalTargetScan;
 import dev.vertique.codegen.dagger.processor.collect.DelayedJobExecutorScanner;
 import dev.vertique.codegen.dagger.processor.collect.GeneratedSignalSourceCollector;
 import dev.vertique.codegen.dagger.processor.collect.KafkaConsumerCollector;
@@ -55,6 +56,10 @@ import javax.lang.model.element.TypeElement;
  * annotation that carries {@code @SignalSourceForm}. The class does not exist yet, so the final round reports each
  * predicted class that no processor generated, naming the processor to add, unless an earlier round already raised an
  * error.
+ *
+ * <p>It also reports, once per round and whether or not wiring is enabled, each type that declares a
+ * {@code @WorkflowSignalTarget} and that is neither a {@code @KafkaListener} nor an interface annotated with a
+ * {@code @SignalSourceForm} annotation: no processor generates a source for it, so the target would never run.
  *
  * <p>JAX-RS resource binding ({@code @Path} &#8594; {@code GeneratedJaxRsResourcesModule}) is
  * owned by {@code JaxRsPipelineProcessor} in {@code vertique-codegen-jaxrs} (CG-010).
@@ -203,6 +208,10 @@ public final class AutoWireProcessor extends AbstractProcessor {
      */
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+        // A target on a type that no processor turns into a source does nothing, whether or not wiring is enabled.
+        if (!roundEnv.processingOver()) {
+            SignalTargetScan.rejectUnsupportedHosts(ctx, roundEnv);
+        }
         if (disabled) {
             return false;
         }

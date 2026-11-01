@@ -7,8 +7,11 @@ import java.util.ArrayList;
 import java.util.List;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.ElementFilter;
 
 /**
@@ -21,7 +24,8 @@ import javax.lang.model.util.ElementFilter;
  * because this module takes no dependency on the Kafka or workflow modules.
  *
  * <p>A signal listener is an interface annotated {@code dev.vertique.kafka.KafkaListener} with at least one method that
- * carries {@code dev.vertique.workflow.source.WorkflowSignalTarget} or its repeatable container. The class generated
+ * carries {@code dev.vertique.workflow.source.WorkflowSignalTarget} or its repeatable container, declared on the
+ * interface or inherited from a super-interface; an inherited target is then refused by the shared scan. The class generated
  * for it is {@code <Interface>_SignalSource} in the interface's package; a nested interface is named from its nesting,
  * joined by {@code _}, as {@code Outer_Inner_SignalSource}.
  */
@@ -45,15 +49,44 @@ public final class SignalListeners {
      *
      * @param type the type to test; must not be {@code null}
      * @return {@code true} for an interface annotated {@code @KafkaListener} that has a method carrying a signal target
-     *     or its container
+     *     or its container, declared or inherited
      */
     public static boolean isSignalListener(TypeElement type) {
         if (type.getKind() != ElementKind.INTERFACE || !AnnotationMirrors.isPresent(type, KAFKA_LISTENER_FQN)) {
             return false;
         }
+        return !targetMethods(type).isEmpty() || !inheritedTargetMethods(type).isEmpty();
+    }
+
+    /**
+     * Returns the methods that a type itself declares and that carry a signal target or its container.
+     *
+     * @param type the type to read; must not be {@code null}
+     * @return the methods in declaration order
+     */
+    static List<ExecutableElement> targetMethods(TypeElement type) {
         return ElementFilter.methodsIn(type.getEnclosedElements()).stream()
-                .anyMatch(method -> AnnotationMirrors.isPresent(method, SIGNAL_TARGET_FQN)
-                        || AnnotationMirrors.isPresent(method, SIGNAL_TARGETS_FQN));
+                .filter(method -> AnnotationMirrors.isPresent(method, SIGNAL_TARGET_FQN)
+                        || AnnotationMirrors.isPresent(method, SIGNAL_TARGETS_FQN))
+                .toList();
+    }
+
+    /**
+     * Returns the methods that carry a signal target or its container and that a super-interface of the type
+     * declares.
+     *
+     * @param type the type to read; must not be {@code null}
+     * @return the inherited target methods, nearest super-interface first
+     */
+    static List<ExecutableElement> inheritedTargetMethods(TypeElement type) {
+        List<ExecutableElement> inherited = new ArrayList<>();
+        for (TypeMirror parent : type.getInterfaces()) {
+            if (parent instanceof DeclaredType declared && declared.asElement() instanceof TypeElement element) {
+                inherited.addAll(targetMethods(element));
+                inherited.addAll(inheritedTargetMethods(element));
+            }
+        }
+        return inherited;
     }
 
     /**

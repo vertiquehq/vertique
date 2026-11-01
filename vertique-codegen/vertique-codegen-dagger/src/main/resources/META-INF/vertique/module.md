@@ -45,9 +45,13 @@ annotations by fully qualified name and takes no compile dependency on the workf
   a class that implements no `@SignalSourceType` interface, and a source the generated module cannot reference (a
   package-private class outside the output package, for example) each fail compilation, naming the class. An
   `@RegisterAs` or `@RegisterIntoSet` registration it cannot reference keeps its warning and is skipped.
-- **A forgotten module fails the build.** The transport module declares no `@Multibinds` for the `Set`, so a component
-  that leaves out the generated registrations module has no binding for it and fails to build, instead of consuming
-  nothing.
+- **A forgotten module leaves no source.** The generated registrations module carries both the sources and the transport
+  module that consumes them, so a component that leaves it out builds and consumes nothing, as with any generated module.
+  Name it in the component.
+- **A target on a type that is no source is an error.** A `@WorkflowSignalTarget` on a type that is neither a
+  `@KafkaListener` interface nor an interface annotated with an annotation that carries `@SignalSourceForm` fails
+  compilation, naming the type, because no processor generates a source for it. The check runs in every round, with
+  wiring disabled too.
 - **Opt-out.** `@NoAutoWire` and `-Avertique.codegen.autoWire=false` disable this registration like every other.
 
 A class that another processor generates is registered the same way, by name, in the round in which this processor sees

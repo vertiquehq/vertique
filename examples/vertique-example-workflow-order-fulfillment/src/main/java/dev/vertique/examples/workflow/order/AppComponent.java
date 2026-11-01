@@ -15,6 +15,7 @@ import dev.vertique.db.postgresql.DbPostgresqlModule;
 import dev.vertique.deploy.DeployerModule;
 import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.examples.workflow.order.di.AppModule;
+import dev.vertique.examples.workflow.order.di.KafkaConsumersLifecycleModule;
 import dev.vertique.examples.workflow.order.di.OrderFulfillmentDefinitionModule;
 import dev.vertique.examples.workflow.order.di.OrderFulfillmentFanOutDefinitionModule;
 import dev.vertique.examples.workflow.order.di.StubServicesModule;
@@ -129,6 +130,8 @@ import java.util.Set;
  *   <li>{@link StubServicesModule} — stub inventory, payment, shipping, and fraud-screening
  *       service implementations for integration tests.</li>
  *   <li>{@code KafkaModule} and {@code KafkaJsonModule} — the Kafka consumer runtime and its JSON format.</li>
+ *   <li>{@link KafkaConsumersLifecycleModule} — the steps that start the Kafka consumers after startup and stop them on
+ *       shutdown.</li>
  *   <li>{@code GeneratedRegistrationsModule} — registers the signal source the annotation processor generates from
  *       {@code PaymentEvents}, with the Kafka signal transport it needs.</li>
  *   <li>{@link AppModule} — management verticle deployment.</li>
@@ -169,6 +172,7 @@ import java.util.Set;
             StubServicesModule.class,
             KafkaModule.class,
             KafkaJsonModule.class,
+            KafkaConsumersLifecycleModule.class,
             GeneratedRegistrationsModule.class,
             AppModule.class
         })
@@ -214,7 +218,8 @@ public interface AppComponent extends VertiqueApplicationComponent {
     /**
      * Returns the manager that deploys the Kafka consumers, among them the {@code payment-events} consumer.
      *
-     * <p>Nothing starts the consumers on its own: an application calls {@code deployAll()} when it is ready to read.
+     * <p>Nothing starts the consumers on its own: {@link KafkaConsumersLifecycleModule} contributes the lifecycle steps
+     * that call {@code deployAll()} after startup and {@code undeployAll()} on shutdown.
      *
      * @return the Kafka consumer deployment manager
      */

@@ -116,7 +116,8 @@ class SignalListenersTest {
     void onlyAKafkaListenerInterfaceWithASignalTargetIsASignalListenerAndItsGeneratedNameIsStable() {
         // Given an interface with @KafkaListener and one target; one with two targets (the container form); one with
         // @KafkaListener and only @KafkaHandler methods; a concrete class with @KafkaListener and a target method; an
-        // interface with a target method and no @KafkaListener; and a nested interface Outer.Inner of the first kind
+        // interface with a target method and no @KafkaListener; one that only extends it; and a nested interface
+        // Outer.Inner of the first kind
         List<JavaFileObject> sources = List.of(
                 source("dev.vertique.kafka.KafkaListener", KAFKA_LISTENER),
                 source("dev.vertique.kafka.KafkaHandler", KAFKA_HANDLER),
@@ -143,6 +144,7 @@ class SignalListenersTest {
                 example(
                         "NotAListener",
                         "public interface NotAListener {\n    " + TARGET + "\n    void delivered(Object message);\n}"),
+                example("InheritedOnly", LISTENER + "\npublic interface InheritedOnly extends NotAListener {}"),
                 example(
                         "Outer",
                         "public final class Outer {\n    " + LISTENER + "\n    public interface Inner {\n        "
@@ -157,6 +159,8 @@ class SignalListenersTest {
         assertFalse(observed.listener().get("HandlerOnly"));
         assertFalse(observed.listener().get("ConcreteListener"));
         assertFalse(observed.listener().get("NotAListener"));
+        // And an interface that only inherits a target is a signal listener, so the scan can refuse it
+        assertTrue(observed.listener().get("InheritedOnly"));
         // And the nested interface of the first kind is a signal listener
         assertTrue(observed.listener().get("Outer.Inner"));
         // And the names are <Interface>_SignalSource in the interface's package, and Outer_Inner_SignalSource nested
@@ -168,8 +172,14 @@ class SignalListenersTest {
 
     // --- harness ---
 
-    private static final List<String> LISTENED =
-            List.of("SingleTarget", "ContainerForm", "HandlerOnly", "ConcreteListener", "NotAListener", "Outer.Inner");
+    private static final List<String> LISTENED = List.of(
+            "SingleTarget",
+            "ContainerForm",
+            "HandlerOnly",
+            "ConcreteListener",
+            "NotAListener",
+            "InheritedOnly",
+            "Outer.Inner");
 
     private record Observation(Map<String, Boolean> listener, Map<String, String> generatedName) {}
 

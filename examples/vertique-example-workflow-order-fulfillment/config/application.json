@@ -38,6 +38,9 @@
       "cleanupIntervalMs": 300000
     }
   },
+  "kafka": {
+    "bootstrap.servers": "localhost:9092"
+  },
   "services": {
     "inventory": {
       "instances": 1

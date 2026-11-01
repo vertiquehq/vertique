@@ -128,6 +128,18 @@ class KafkaSignalSourceGenerationTest {
             public record ShipmentCancelled(String eventId, String carrierRef) {}
             """);
 
+    private static final JavaFileObject SHIPMENT_WEIGHED = SourceFiles.inline(PACKAGE + ".ShipmentWeighed", """
+            package dev.vertique.examples;
+
+            public record ShipmentWeighed(String eventId, long grams) {}
+            """);
+
+    private static final JavaFileObject BATCH = SourceFiles.inline(PACKAGE + ".Batch", """
+            package dev.vertique.examples;
+
+            public record Batch<T>(String eventId, T body) {}
+            """);
+
     private static final JavaFileObject DELIVERY_CONFIRMED = SourceFiles.inline(PACKAGE + ".DeliveryConfirmed", """
             package dev.vertique.examples;
 
@@ -157,6 +169,14 @@ class KafkaSignalSourceGenerationTest {
                 @WorkflowSignal("shipment-cancelled")
                 Future<Void> shipmentCancelled(
                         WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, ShipmentCancelled payload);
+
+                @WorkflowSignal("shipment-weighed")
+                Future<Void> shipmentWeighed(
+                        WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, ShipmentWeighed payload);
+
+                @WorkflowSignal("batch-delivered")
+                Future<Void> batchDelivered(
+                        WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, Batch<String> payload);
             }
             """);
 
@@ -396,7 +416,54 @@ class KafkaSignalSourceGenerationTest {
                 Arguments.of(
                         "a target on a method of a concrete class",
                         concreteListener(),
-                        List.of("WorkflowSignalTarget")));
+                        List.of("WorkflowSignalTarget")),
+                Arguments.of(
+                        "a target inherited from a super-interface",
+                        SourceFiles.inline(PACKAGE + ".CarrierSignals", """
+                                package dev.vertique.examples;
+
+                                import dev.vertique.kafka.KafkaListener;
+                                import dev.vertique.workflow.source.WorkflowSignalTarget;
+
+                                @KafkaListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
+                                public interface CarrierSignals extends BaseSignals {}
+
+                                interface BaseSignals {
+                                    @WorkflowSignalTarget(contract = OrdersContract.class, %s, key = "carrierRef")
+                                    void carrierDelivery(ShipmentDelivered message);
+                                }
+                                """.formatted(DELIVERED)),
+                        List.of("BaseSignals", "carrierDelivery")),
+                Arguments.of(
+                        "a key accessor that does not return String",
+                        listener("", "", """
+                                @WorkflowSignalTarget(contract = OrdersContract.class,
+                                        signal = "shipment-weighed", key = "grams")
+                                void carrierWeight(ShipmentWeighed message);
+                                """),
+                        List.of("grams", "String")),
+                Arguments.of("a generic message type", listener("", "", """
+                                @WorkflowSignalTarget(contract = OrdersContract.class,
+                                        signal = "batch-delivered", key = "eventId")
+                                void carrierBatch(Batch<String> message);
+                                """), List.of("carrierBatch", "generic")),
+                Arguments.of("a blank name", namedListener("", "logistics"), List.of("blank name")),
+                Arguments.of("a blank groupId", namedListener("carrier-events", " "), List.of("blank groupId")));
+    }
+
+    /** The interface {@code CarrierSignals} with one valid target and the given name and group. */
+    private static JavaFileObject namedListener(String name, String groupId) {
+        return SourceFiles.inline(PACKAGE + ".CarrierSignals", """
+                package dev.vertique.examples;
+
+                import dev.vertique.kafka.KafkaListener;
+                import dev.vertique.workflow.source.WorkflowSignalTarget;
+
+                @KafkaListener(name = "%s", topic = "carrier.events", groupId = "%s")
+                public interface CarrierSignals {
+                %s
+                }
+                """.formatted(name, groupId, validTarget()));
     }
 
     // --- fixtures ---
@@ -469,6 +536,8 @@ class KafkaSignalSourceGenerationTest {
                 WORKFLOW_INSTANCE_ID,
                 SHIPMENT_DELIVERED,
                 SHIPMENT_CANCELLED,
+                SHIPMENT_WEIGHED,
+                BATCH,
                 DELIVERY_CONFIRMED,
                 ORDERS_CONTRACT,
                 CONFIRMATION_CONTRACT,

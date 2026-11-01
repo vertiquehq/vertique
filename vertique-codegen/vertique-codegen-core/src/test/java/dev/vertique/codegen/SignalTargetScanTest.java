@@ -31,6 +31,7 @@ import javax.tools.SimpleJavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -139,6 +140,28 @@ class SignalTargetScanTest {
             public record OtherMsg(String eventId, String carrierRef) {}
             """;
 
+    private static final String PLAIN_MESSAGE = """
+            package dev.vertique.examples;
+
+            public class PlainMsg {
+                public String reference() { return ""; }
+                public String getEventId() { return ""; }
+                public String isTag() { return ""; }
+            }
+            """;
+
+    private static final String NUMBERED_MESSAGE = """
+            package dev.vertique.examples;
+
+            public record NumberedMsg(String eventId, long count) {}
+            """;
+
+    private static final String GENERIC_MESSAGE = """
+            package dev.vertique.examples;
+
+            public record GenericMsg<T>(String eventId, T body) {}
+            """;
+
     private static final String CONTRACT = """
             package dev.vertique.examples;
 
@@ -158,6 +181,15 @@ class SignalTargetScanTest {
 
                 @WorkflowSignal("other-delivered")
                 Future<Void> otherDelivered(WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, OtherMsg payload);
+
+                @WorkflowSignal("plain-delivered")
+                Future<Void> plainDelivered(WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, PlainMsg payload);
+
+                @WorkflowSignal("numbered-delivered")
+                Future<Void> numberedDelivered(WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, NumberedMsg payload);
+
+                @WorkflowSignal("generic-delivered")
+                Future<Void> genericDelivered(WorkflowInstanceId instanceId, @SignalDedupKey String dedupKey, GenericMsg<String> payload);
             }
             """;
 
@@ -178,6 +210,9 @@ class SignalTargetScanTest {
     private static final String SHIPMENT = "contract = OrdersContract.class, signal = \"shipment-delivered\"";
     private static final String PARCEL = "contract = OrdersContract.class, signal = \"parcel-delivered\"";
     private static final String OTHER = "contract = OrdersContract.class, signal = \"other-delivered\"";
+    private static final String PLAIN = "contract = OrdersContract.class, signal = \"plain-delivered\"";
+    private static final String NUMBERED = "contract = OrdersContract.class, signal = \"numbered-delivered\"";
+    private static final String GENERIC = "contract = OrdersContract.class, signal = \"generic-delivered\"";
 
     private static final List<Case> CASES = List.of(
             new Case("BusinessKeyWithoutDedupBy", List.of("delivered"), """
@@ -232,6 +267,34 @@ class SignalTargetScanTest {
                         public void delivered(Msg message) {}
                     }
                     """.formatted(SHIPMENT)),
+            new Case("BaseTargets", List.of("delivered"), """
+                    public interface BaseTargets {
+                        @WorkflowSignalTarget(%s, key = "carrierRef", dedupBy = "eventId")
+                        void delivered(Msg message);
+                    }
+                    """.formatted(SHIPMENT)),
+            new Case("InheritedTarget", List.of("delivered"), """
+                    public interface InheritedTarget extends BaseTargets {}
+                    """),
+            new Case("NonStringKey", List.of("delivered"), """
+                    public interface NonStringKey {
+                        @WorkflowSignalTarget(%s, key = "count", dedupBy = "eventId")
+                        void delivered(NumberedMsg message);
+                    }
+                    """.formatted(NUMBERED)),
+            new Case("GenericMessage", List.of("delivered"), """
+                    public interface GenericMessage {
+                        @WorkflowSignalTarget(%s, key = "eventId", dedupBy = "eventId")
+                        void delivered(GenericMsg<String> message);
+                    }
+                    """.formatted(GENERIC)),
+            new Case("PlainMessageAccessors", List.of("delivered"), """
+                    public interface PlainMessageAccessors {
+                        @WorkflowSignalTarget(%s, key = "reference", dedupBy = "eventId")
+                        @WorkflowSignalTarget(%s, businessKey = "tag", dedupBy = "eventId")
+                        void delivered(PlainMsg message);
+                    }
+                    """.formatted(PLAIN, PLAIN)),
             new Case("AgreeingTargets", List.of("delivered"), """
                     public interface AgreeingTargets {
                         @WorkflowSignalTarget(%s, key = "carrierRef", dedupBy = "eventId")
@@ -243,7 +306,8 @@ class SignalTargetScanTest {
     private static final Map<DedupRequirement, Outcome> OUTCOMES = new EnumMap<>(DedupRequirement.class);
 
     /** What the probe saw for one setting: the targets each case yielded and the errors in each case's file. */
-    private record Outcome(Map<String, Integer> targets, Map<String, List<String>> errors) {}
+    private record Outcome(
+            Map<String, Integer> targets, Map<String, List<String>> errors, Map<String, List<String>> methods) {}
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("rows")
@@ -274,6 +338,15 @@ class SignalTargetScanTest {
                 Arguments.of("TwoParameters", 1, false, false),
                 Arguments.of("TwoMessageTypes", 2, false, false),
                 Arguments.of("ConcreteTarget", 1, false, false),
+                // a target inherited from a super-interface, a key whose accessor is no String and a generic message
+                // are
+                // refused under both, and the super-interface that declares the target is itself valid
+                Arguments.of("BaseTargets", 1, true, true),
+                Arguments.of("InheritedTarget", 0, false, false),
+                Arguments.of("NonStringKey", 1, false, false),
+                Arguments.of("GenericMessage", 1, false, false),
+                // a class message with a no-argument accessor named like the property, and get and is accessors
+                Arguments.of("PlainMessageAccessors", 2, true, true),
                 // the valid interface yields its two targets under both
                 Arguments.of("AgreeingTargets", 2, true, true));
     }
@@ -292,6 +365,20 @@ class SignalTargetScanTest {
                         .anyMatch(message ->
                                 message.contains(type) || row.names().stream().anyMatch(message::contains)),
                 () -> "the error of " + type + " must name the offending element but was " + errors);
+    }
+
+    @Test
+    @DisplayName("a target carries the method that reads its key and its dedup key, bare name first")
+    void targetCarriesTheResolvedAccessorMethods() {
+        // Given a message class with a bare-name method, a get method and an is method, and a record
+        // When the probe scans the interfaces over them
+        Outcome outcome = outcome(DedupRequirement.BUSINESS_KEY_TARGETS);
+
+        // Then each target names the method it resolved, for the key and for the dedup key
+        assertEquals(
+                List.of("reference/getEventId", "isTag/getEventId"),
+                outcome.methods().get("PlainMessageAccessors"));
+        assertEquals(List.of("carrierRef/eventId"), outcome.methods().get("BaseTargets"));
     }
 
     // --- harness ---
@@ -313,6 +400,9 @@ class SignalTargetScanTest {
                 source("io.vertx.core.Future", FUTURE),
                 source(PACKAGE + ".Msg", MESSAGE),
                 source(PACKAGE + ".OtherMsg", OTHER_MESSAGE),
+                source(PACKAGE + ".PlainMsg", PLAIN_MESSAGE),
+                source(PACKAGE + ".NumberedMsg", NUMBERED_MESSAGE),
+                source(PACKAGE + ".GenericMsg", GENERIC_MESSAGE),
                 source(PACKAGE + ".OrdersContract", CONTRACT)));
         CASES.forEach(c -> sources.add(source(PACKAGE + "." + c.type(), c.source())));
 
@@ -344,7 +434,7 @@ class SignalTargetScanTest {
                 .map(d -> d.getMessage(Locale.ROOT))
                 .toList();
         assertEquals(List.of(), stray, "the support sources must compile and the scan must report on the cases only");
-        return new Outcome(processor.targets, errors);
+        return new Outcome(processor.targets, errors, processor.methods);
     }
 
     private static JavaFileObject source(String fqn, String content) {
@@ -357,6 +447,7 @@ class SignalTargetScanTest {
 
         private final DedupRequirement requirement;
         private final Map<String, Integer> targets = new LinkedHashMap<>();
+        private final Map<String, List<String>> methods = new LinkedHashMap<>();
 
         private ScanProbeProcessor(DedupRequirement requirement) {
             this.requirement = requirement;
@@ -370,8 +461,13 @@ class SignalTargetScanTest {
             CodegenContext context = new CodegenContext(processingEnv);
             for (Case c : CASES) {
                 TypeElement type = processingEnv.getElementUtils().getTypeElement(PACKAGE + "." + c.type());
-                List<?> scanned = SignalTargetScan.scan(context, type, requirement);
+                List<SignalTargetScan.Target> scanned = SignalTargetScan.scan(context, type, requirement);
                 targets.put(c.type(), scanned.size());
+                methods.put(
+                        c.type(),
+                        scanned.stream()
+                                .map(target -> target.keyMethod() + "/" + target.dedupByMethod())
+                                .toList());
             }
             return false;
         }

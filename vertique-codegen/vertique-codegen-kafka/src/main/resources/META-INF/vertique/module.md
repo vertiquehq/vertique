@@ -55,7 +55,9 @@ dependency, and `AutoWireProcessor` binds that class by name into `Set<KafkaSign
 listener emits no `_BindingMeta`, so the runtime never loads a router with no routes for it. The generated source calls
 the same builder as a source written by hand (topic, group and name from the listener, `dedupBy` and, per target, the
 signal, the key accessor and the no-match policy), so an annotated and a builder source behave the same. It names no key
-value and builds no payload mapping.
+value and builds no payload mapping. A key is read by the no-argument method named like the property (a record component
+too), else by `getX()` or `isX()`, and that method returns `String`. Declare every target on the listener interface itself:
+a target on a super-interface is an error.
 
 ```java
 @KafkaListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
@@ -159,7 +161,7 @@ The NFR's "≥50% lower scan time" is a scan/classify-fraction claim. Measuring 
 | `@KafkaListener` class does not implement `KafkaRecordHandler` | ERROR | `@KafkaListener OrderEventHandler must implement KafkaRecordHandler<V>` |
 | `@KafkaListener#valueType()` not assignable to handler `V` | ERROR | `@KafkaListener on OrderEventHandler: declared valueType OtherEvent is not assignable to handler type OrderEvent` |
 | Raw-handler with unresolvable `V` | ERROR | `@KafkaListener on RawHandler: KafkaRecordHandler<V> type parameter V cannot be resolved; declare valueType` |
-| Signal listener: a signal the contract does not declare, an accessor the message type lacks, a message type that is not the signal's, a business-key target with no `dedupBy`, targets that disagree on `dedupBy`, a target method without exactly one parameter, both or neither of `key` and `businessKey`, two message types on one interface, or targets on a concrete class | ERROR | `CarrierSignals.delivered names signal 'shipment-delivred', which contract OrdersContract does not declare` |
+| Signal listener: a signal the contract does not declare, an accessor the message type lacks or one that does not return `String`, a generic message type, a message type that is not the signal's, a business-key target with no `dedupBy`, targets that disagree on `dedupBy`, a target inherited from a super-interface, a target method without exactly one parameter, both or neither of `key` and `businessKey`, two message types on one interface, a blank `name` or `groupId`, or targets on a concrete class | ERROR | `CarrierSignals.delivered names signal 'shipment-delivred', which contract OrdersContract does not declare` |
 | Signal listener: an explicit `commitStrategy` other than `MANUAL`, `errorStrategy` other than `RETRY`, a `deadLetterTopic`, a `valueType`, a `@JsonProfile`, or a `@KafkaHandler` method | ERROR | `CarrierSignals sets commitStrategy = AUTO, but the signal source generated for a listener with signal targets forces MANUAL` — read from the explicit values only, so a listener that writes none passes |
 | `@KafkaSource` on a contract interface method | ERROR | `@KafkaSource on OrderService.processOrder must be on a service-implementation method, not a contract interface` |
 

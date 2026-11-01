@@ -5,7 +5,6 @@ package dev.vertique.codegen.dagger.processor;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dagger.Binds;
@@ -17,7 +16,6 @@ import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
-import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -222,16 +220,16 @@ class AutoWireProcessorSignalSourcesTest {
     }
 
     @Test
-    @DisplayName("a component that leaves out the generated registrations module fails to build")
-    void componentThatLeavesOutTheGeneratedModuleFailsToBuildNamingTheMissingSet() {
-        // Given a consumer module that reads Set<Feed<?>> and declares it with no @Multibinds, and two components over
-        // it, one that also includes the generated registrations module and one that does not
+    @DisplayName("a component that leaves out the generated registrations module builds and has no source")
+    void componentThatLeavesOutTheGeneratedModuleBuildsWithNoSource() {
+        // Given a transport module that reads Set<Feed<?>> with no @Multibinds, which only the generated registrations
+        // module includes, and two components, one with the generated module and one without it
         JavaFileObject consumed = SourceFiles.inline(PACKAGE + ".Consumed", """
                 package dev.vertique.examples;
 
                 public final class Consumed {}
                 """);
-        JavaFileObject consumerModule = SourceFiles.inline(PACKAGE + ".ConsumerModule", """
+        JavaFileObject consumingFeedModule = SourceFiles.inline(PACKAGE + ".FeedModule", """
                 package dev.vertique.examples;
 
                 import dagger.Module;
@@ -240,7 +238,7 @@ class AutoWireProcessorSignalSourcesTest {
                 import java.util.Set;
 
                 @Module
-                public abstract class ConsumerModule {
+                public abstract class FeedModule {
                     @Provides
                     @ElementsIntoSet
                     static Set<Consumed> consumed(Set<Feed<?>> feeds) {
@@ -254,7 +252,7 @@ class AutoWireProcessorSignalSourcesTest {
                 import dagger.Component;
                 import java.util.Set;
 
-                @Component(modules = {ConsumerModule.class, GeneratedRegistrationsModule.class})
+                @Component(modules = GeneratedRegistrationsModule.class)
                 public interface ComponentWithRegistrations {
                     Set<Consumed> consumed();
                 }
@@ -263,37 +261,27 @@ class AutoWireProcessorSignalSourcesTest {
                 package dev.vertique.examples;
 
                 import dagger.Component;
-                import java.util.Set;
 
-                @Component(modules = ConsumerModule.class)
+                @Component
                 public interface ComponentLeavingOut {
-                    Set<Consumed> consumed();
+                    ShipmentRepository repository();
                 }
                 """);
 
-        // When the processor and Dagger compile each component in a run of its own, because Dagger reports a missing
-        // binding in the first round and javac then skips the round in which the other component would see the
-        // generated module
-        var leavingOutResult = ProcessorTestHarness.run(
+        // When the processor and Dagger compile both components
+        var result = ProcessorTestHarness.run(
                 List.of(new AutoWireProcessor(), new dagger.internal.codegen.ComponentProcessor()),
-                commonStubs(carrierFeed(), consumed, consumerModule, leavingOut));
-        var withRegistrationsResult = ProcessorTestHarness.run(
-                List.of(new AutoWireProcessor(), new dagger.internal.codegen.ComponentProcessor()),
-                commonStubs(carrierFeed(), consumed, consumerModule, withRegistrations));
+                Stream.concat(
+                                Arrays.stream(commonStubs(carrierFeed(), consumed, withRegistrations, leavingOut))
+                                        .filter(file -> !file.getName().contains("FeedModule")),
+                                Stream.of(consumingFeedModule))
+                        .toArray(JavaFileObject[]::new));
 
-        // Then compilation fails with a missing-binding error for Set<Feed<?>> against the component that leaves the
-        // module out, and nothing is reported against the component that includes it
-        leavingOutResult.assertFailed();
-        List<String> againstLeavingOut = errorsAbout(leavingOutResult, "ComponentLeavingOut");
-        assertFalse(againstLeavingOut.isEmpty(), "the component without the generated module must not build");
-        assertTrue(
-                againstLeavingOut.stream().anyMatch(message -> message.contains("Feed<?>")),
-                () -> "the error must name the missing Set<Feed<?>> but was " + againstLeavingOut);
-        withRegistrationsResult.assertSuccess();
-        assertEquals(
-                List.of(),
-                errorsAbout(withRegistrationsResult, "ComponentWithRegistrations"),
-                "the component that includes the generated module must build");
+        // Then both build, as when any generated module is left out: the component with the generated module wires the
+        // source and the component without it holds none, and neither is an error
+        result.assertSuccess();
+        result.assertGeneratedSourceContains(PACKAGE + ".DaggerComponentWithRegistrations", "CarrierFeed");
+        result.assertGeneratedSourceDoesNotContain(PACKAGE + ".DaggerComponentLeavingOut", "CarrierFeed");
     }
 
     @Test
@@ -338,16 +326,6 @@ class AutoWireProcessorSignalSourcesTest {
     }
 
     /** The messages of the errors that name the type or that sit in its source file. */
-    private static List<String> errorsAbout(ProcessorTestHarness.Result result, String simpleName) {
-        return result.compilation().diagnostics().stream()
-                .filter(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR)
-                .filter(diagnostic -> diagnostic.getMessage(null).contains(simpleName)
-                        || (diagnostic.getSource() != null
-                                && diagnostic.getSource().getName().contains(simpleName)))
-                .map(diagnostic -> diagnostic.getMessage(null))
-                .toList();
-    }
-
     private static JavaFileObject carrierFeed() {
         return SourceFiles.inline(PACKAGE + ".CarrierFeed", CARRIER_FEED);
     }

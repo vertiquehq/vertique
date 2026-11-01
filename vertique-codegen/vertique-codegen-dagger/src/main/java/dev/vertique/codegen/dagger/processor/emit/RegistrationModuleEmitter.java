@@ -54,9 +54,9 @@ public final class RegistrationModuleEmitter {
      *
      * <p>Registrations whose implementation or target cannot be referenced from the resolved
      * output package are skipped with a mandatory warning, avoiding uncompilable generated source.
-     * A required registration, such as a signal source class, that cannot be referenced is an error
-     * naming the class instead, because a skipped source would never consume. The generated module
-     * includes the distinct transport modules of the registrations it emits, and no others.
+     * The registration of a signal source, which is a class or a class generated for an interface, that cannot be
+     * referenced is an error naming the class instead, because a skipped source would never consume. The generated
+     * module includes the distinct transport modules of the registrations it emits, and no others.
      *
      * @param registrations the valid registrations to emit; must not be {@code null}
      * @param packageName   the package for the generated module; must not be {@code null}
@@ -105,7 +105,7 @@ public final class RegistrationModuleEmitter {
     private static TypeName returnType(Registration registration) {
         ClassName target = ClassName.get(registration.target());
         int arguments = registration.target().getTypeParameters().size();
-        if (!registration.bindsWildcardTarget() || arguments == 0) {
+        if (!registration.isSignalSource() || arguments == 0) {
             return target;
         }
         TypeName[] wildcards = new TypeName[arguments];
@@ -123,7 +123,7 @@ public final class RegistrationModuleEmitter {
         }
         String unreferenceable =
                 !implementationReferenceable ? "implementation" : !targetReferenceable ? "target" : "module";
-        if (registration.required()) {
+        if (registration.isSignalSource()) {
             ctx.diagnostics()
                     .error(
                             registration.origin(),

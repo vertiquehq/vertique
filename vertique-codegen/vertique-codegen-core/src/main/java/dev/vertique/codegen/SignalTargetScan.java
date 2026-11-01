@@ -4,10 +4,13 @@
 package dev.vertique.codegen;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
+import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
@@ -28,11 +31,17 @@ import javax.lang.model.util.ElementFilter;
  * set. The annotations are identified by fully qualified name, because this module takes no dependency on the workflow
  * modules. Transport-specific settings stay with the processor of the transport.
  *
- * <p>The scan refuses, on the offending element and naming it: a target on a concrete class, a target method with other
- * than one parameter, two message types on one interface, a signal the contract does not declare, a message type that
- * differs from the signal's payload type, both or neither of {@code key} and {@code businessKey}, a {@code key},
- * {@code businessKey} or {@code dedupBy} the message type has no accessor for, a missing {@code dedupBy} where the
+ * <p>The scan refuses, on the offending element and naming it: a target on a concrete class, a target inherited from a
+ * super-interface, a target method with other than one parameter, a generic message type, two message types on one
+ * interface, a signal the contract does not declare, a message type that differs from the signal's payload type, both
+ * or neither of {@code key} and {@code businessKey}, a {@code key}, {@code businessKey} or {@code dedupBy} the message
+ * type has no accessor for or whose accessor does not return {@code String}, a missing {@code dedupBy} where the
  * {@link DedupRequirement} demands one, and targets that disagree on {@code dedupBy}.
+ *
+ * <p>An accessor is a public, non-static, no-argument method that returns a value: the method named like the property,
+ * which is also a record component, or else {@code get} or {@code is} followed by the capitalized property.
+ * {@link #rejectUnsupportedHosts} covers the types the scan never sees, because no processor generates a source for
+ * them.
  */
 public final class SignalTargetScan {
 
@@ -55,6 +64,10 @@ public final class SignalTargetScan {
      * @param dedupBy the message accessor that yields the dedup key, or empty when the target names none
      * @param onNoMatch the name of the {@code SignalNoMatch} constant the target selects
      * @param messageType the type of the method's only parameter, which is the message
+     * @param keyMethod the name of the message method that reads {@code key}, or else {@code businessKey}, resolved
+     *     once by the scan
+     * @param dedupByMethod the name of the message method that reads {@code dedupBy}, or empty when the target names
+     *     none
      */
     public record Target(
             ExecutableElement method,
@@ -64,11 +77,14 @@ public final class SignalTargetScan {
             String businessKey,
             String dedupBy,
             String onNoMatch,
-            TypeMirror messageType) {}
+            TypeMirror messageType,
+            String keyMethod,
+            String dedupByMethod) {}
 
     private static final String WORKFLOW_CONTRACT_FQN = "dev.vertique.workflow.contract.WorkflowContract";
     private static final String WORKFLOW_SIGNAL_FQN = "dev.vertique.workflow.contract.WorkflowSignal";
     private static final String WORKFLOW_INSTANCE_ID_FQN = "dev.vertique.workflow.ops.WorkflowInstanceId";
+    private static final String SIGNAL_SOURCE_FORM_FQN = "dev.vertique.workflow.source.SignalSourceForm";
     private static final Set<String> KEY_PARAMETER_FQNS = Set.of(
             "dev.vertique.workflow.contract.IdempotencyKey",
             "dev.vertique.workflow.contract.BusinessKey",
@@ -87,14 +103,14 @@ public final class SignalTargetScan {
      *     rule was violated, after every violation has been reported
      */
     public static List<Target> scan(CodegenContext context, TypeElement type, DedupRequirement requirement) {
-        List<ExecutableElement> methods = ElementFilter.methodsIn(type.getEnclosedElements()).stream()
-                .filter(method -> !targetMirrors(method).isEmpty())
-                .toList();
-        if (methods.isEmpty()) {
+        List<ExecutableElement> methods = SignalListeners.targetMethods(type);
+        boolean isInterface = type.getKind() == ElementKind.INTERFACE;
+        List<ExecutableElement> inherited = isInterface ? SignalListeners.inheritedTargetMethods(type) : List.of();
+        if (methods.isEmpty() && inherited.isEmpty()) {
             return List.of();
         }
         String typeName = type.getQualifiedName().toString();
-        if (type.getKind() != ElementKind.INTERFACE) {
+        if (!isInterface) {
             for (ExecutableElement method : methods) {
                 context.diagnostics()
                         .error(
@@ -109,10 +125,58 @@ public final class SignalTargetScan {
         }
 
         Scanner scanner = new Scanner(context, typeName, requirement);
+        for (ExecutableElement method : inherited) {
+            scanner.refuseInherited(type, method);
+        }
         for (ExecutableElement method : methods) {
             scanner.scanMethod(method);
         }
         return scanner.result();
+    }
+
+    /**
+     * Reports, on its type, each type of the round that declares a target and that no processor turns into a signal
+     * source: a type that is neither annotated {@code @KafkaListener} nor an interface annotated with an annotation
+     * that carries {@code @SignalSourceForm}. Without this report the target compiles and does nothing.
+     *
+     * <p>A type annotated {@code @KafkaListener} is left to the Kafka processor, which reports a class and validates an
+     * interface, so no type is reported twice. A processor that sees every type of the round, such as the wiring
+     * processor, calls this once per round.
+     *
+     * @param context the codegen context that reports the diagnostics; must not be {@code null}
+     * @param roundEnv the current round; must not be {@code null}
+     */
+    public static void rejectUnsupportedHosts(CodegenContext context, RoundEnvironment roundEnv) {
+        Set<TypeElement> hosts = new LinkedHashSet<>();
+        for (String annotationName : List.of(SignalListeners.SIGNAL_TARGET_FQN, SignalListeners.SIGNAL_TARGETS_FQN)) {
+            TypeElement annotation = context.elements().getTypeElement(annotationName);
+            if (annotation == null) {
+                continue;
+            }
+            for (Element element : roundEnv.getElementsAnnotatedWith(annotation)) {
+                if (element instanceof ExecutableElement && element.getEnclosingElement() instanceof TypeElement host) {
+                    hosts.add(host);
+                }
+            }
+        }
+        for (TypeElement host : hosts) {
+            if (!AnnotationMirrors.isPresent(host, SignalListeners.KAFKA_LISTENER_FQN) && !isSignalSourceForm(host)) {
+                context.diagnostics()
+                        .error(
+                                host,
+                                "%s carries @WorkflowSignalTarget, but it is neither a @KafkaListener interface nor"
+                                        + " annotated with an annotation that carries @SignalSourceForm, so no signal"
+                                        + " source is generated for it and its targets would never run",
+                                host.getQualifiedName());
+            }
+        }
+    }
+
+    private static boolean isSignalSourceForm(TypeElement host) {
+        return host.getKind() == ElementKind.INTERFACE
+                && host.getAnnotationMirrors().stream()
+                        .anyMatch(mirror -> AnnotationMirrors.isPresent(
+                                mirror.getAnnotationType().asElement(), SIGNAL_SOURCE_FORM_FQN));
     }
 
     private static List<AnnotationMirror> targetMirrors(ExecutableElement method) {
@@ -178,6 +242,15 @@ public final class SignalTargetScan {
                 return;
             }
             TypeMirror message = method.getParameters().get(0).asType();
+            if (isGeneric(message)) {
+                fail(
+                        method,
+                        "%s takes message type %s, which is generic; the generated source names its message type by"
+                                + " class, so declare a type that has no type parameters",
+                        where,
+                        message);
+                return;
+            }
             if (messageType == null) {
                 messageType = message;
             } else if (!context.types().isSameType(messageType, message)) {
@@ -194,6 +267,28 @@ public final class SignalTargetScan {
             for (AnnotationMirror mirror : targetMirrors(method)) {
                 scanTarget(method, where, message, mirror);
             }
+        }
+
+        void refuseInherited(TypeElement type, ExecutableElement inherited) {
+            fail(
+                    type,
+                    "%s inherits @WorkflowSignalTarget on %s.%s from a super-interface; the generated source would"
+                            + " drop it, so declare the target on a method of %s itself",
+                    typeName,
+                    ((TypeElement) inherited.getEnclosingElement()).getQualifiedName(),
+                    inherited.getSimpleName(),
+                    typeName);
+        }
+
+        private static boolean isGeneric(TypeMirror message) {
+            if (message.getKind() == TypeKind.TYPEVAR) {
+                return true;
+            }
+            return message instanceof DeclaredType declared
+                    && (!declared.getTypeArguments().isEmpty()
+                            || !((TypeElement) declared.asElement())
+                                    .getTypeParameters()
+                                    .isEmpty());
         }
 
         private void scanTarget(ExecutableElement method, String where, TypeMirror message, AnnotationMirror mirror) {
@@ -248,9 +343,10 @@ public final class SignalTargetScan {
                         key.isBlank() ? "neither" : "both");
                 ok = false;
             }
-            ok &= requireAccessor(method, where, "key", key, message);
-            ok &= requireAccessor(method, where, "businessKey", businessKey, message);
-            ok &= requireAccessor(method, where, "dedupBy", targetDedupBy, message);
+            String keyMethod = resolveAccessor(method, where, "key", key, message);
+            String businessKeyMethod = resolveAccessor(method, where, "businessKey", businessKey, message);
+            String dedupByMethod = resolveAccessor(method, where, "dedupBy", targetDedupBy, message);
+            ok &= keyMethod != null && businessKeyMethod != null && dedupByMethod != null;
 
             boolean dedupRequired = requirement == DedupRequirement.EVERY_TARGET || !businessKey.isBlank();
             if (dedupRequired && targetDedupBy.isBlank()) {
@@ -285,45 +381,83 @@ public final class SignalTargetScan {
                         .attribute(mirror, "onNoMatch", VariableElement.class)
                         .map(constant -> constant.getSimpleName().toString())
                         .orElse("IGNORE");
-                targets.add(new Target(method, contract, signal, key, businessKey, targetDedupBy, onNoMatch, message));
+                targets.add(new Target(
+                        method,
+                        contract,
+                        signal,
+                        key,
+                        businessKey,
+                        targetDedupBy,
+                        onNoMatch,
+                        message,
+                        key.isBlank() ? businessKeyMethod : keyMethod,
+                        dedupByMethod));
             }
         }
 
-        private boolean requireAccessor(
+        /**
+         * Resolves the accessor of a property once.
+         *
+         * @return the name of the accessor method, empty when the property is not set, and {@code null} after the
+         *     violation was reported
+         */
+        private String resolveAccessor(
                 ExecutableElement method, String where, String attribute, String name, TypeMirror message) {
-            if (name.isBlank() || hasAccessor(message, name)) {
-                return true;
+            if (name.isBlank()) {
+                return "";
             }
-            fail(
-                    method,
-                    "%s sets %s '%s', but message type %s has no accessor for it",
-                    where,
-                    attribute,
-                    name,
-                    message);
-            return false;
+            ExecutableElement accessor = findAccessor(message, name);
+            if (accessor == null) {
+                fail(
+                        method,
+                        "%s sets %s '%s', but message type %s has no accessor for it",
+                        where,
+                        attribute,
+                        name,
+                        message);
+                return null;
+            }
+            if (!isString(accessor.getReturnType())) {
+                fail(
+                        method,
+                        "%s sets %s '%s', but %s.%s() returns %s; the accessor of a key must return String",
+                        where,
+                        attribute,
+                        name,
+                        message,
+                        accessor.getSimpleName(),
+                        accessor.getReturnType());
+                return null;
+            }
+            return accessor.getSimpleName().toString();
         }
 
-        private boolean hasAccessor(TypeMirror message, String property) {
+        private ExecutableElement findAccessor(TypeMirror message, String property) {
             if (message.getKind() != TypeKind.DECLARED) {
-                return false;
+                return null;
             }
             TypeElement element = (TypeElement) ((DeclaredType) message).asElement();
-            boolean bareName = element.getKind() == ElementKind.RECORD;
             String suffix = Character.toUpperCase(property.charAt(0)) + property.substring(1);
-            for (ExecutableElement candidate :
-                    ElementFilter.methodsIn(context.elements().getAllMembers(element))) {
-                String name = candidate.getSimpleName().toString();
-                if ((bareName && name.equals(property)) || name.equals("get" + suffix) || name.equals("is" + suffix)) {
-                    if (candidate.getParameters().isEmpty()
-                            && candidate.getReturnType().getKind() != TypeKind.VOID
-                            && candidate.getModifiers().contains(Modifier.PUBLIC)
-                            && !candidate.getModifiers().contains(Modifier.STATIC)) {
-                        return true;
+            List<ExecutableElement> methods =
+                    ElementFilter.methodsIn(context.elements().getAllMembers(element));
+            for (String candidate : List.of(property, "get" + suffix, "is" + suffix)) {
+                for (ExecutableElement method : methods) {
+                    if (method.getSimpleName().contentEquals(candidate)
+                            && method.getParameters().isEmpty()
+                            && method.getReturnType().getKind() != TypeKind.VOID
+                            && method.getModifiers().contains(Modifier.PUBLIC)
+                            && !method.getModifiers().contains(Modifier.STATIC)) {
+                        return method;
                     }
                 }
             }
-            return false;
+            return null;
+        }
+
+        private static boolean isString(TypeMirror type) {
+            return type instanceof DeclaredType declared
+                    && declared.asElement() instanceof TypeElement element
+                    && element.getQualifiedName().contentEquals("java.lang.String");
         }
 
         private TypeElement contractOf(AnnotationMirror mirror) {
@@ -368,9 +502,9 @@ public final class SignalTargetScan {
             return context.annotations().attribute(mirror, name, String.class).orElse("");
         }
 
-        private void fail(ExecutableElement method, String message, Object... args) {
+        private void fail(Element element, String message, Object... args) {
             valid = false;
-            context.diagnostics().error(method, message, args);
+            context.diagnostics().error(element, message, args);
         }
     }
 }
