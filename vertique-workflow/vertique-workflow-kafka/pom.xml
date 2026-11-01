@@ -25,6 +25,10 @@ SPDX-License-Identifier: EUPL-1.2
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <!-- Lets the recording-only test restore the process-wide JSON codec profile it installs. -->
+                    <argLine>@{argLine} -Dvertique.json.codec.allowReset=true</argLine>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
