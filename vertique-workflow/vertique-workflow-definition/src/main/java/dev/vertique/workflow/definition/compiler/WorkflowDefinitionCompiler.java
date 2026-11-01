@@ -273,14 +273,14 @@ public final class WorkflowDefinitionCompiler {
             declaration = declaration.correlateBy((Function<Object, String>) (Function<?, ?>) keyResolver.resolver());
         }
 
+        var withNext = declaration.onSignal(reducerFn).toStepOnSignal(step.next());
+
         if (step.timeout() == null) {
-            declaration.onSignal(reducerFn).toStepOnSignal(step.next()).build();
+            withNext.build();
         } else {
             WaitSignalStep.TimeoutBlock timeout = step.timeout();
             NamedStateMutator<?> mutator = lookup.stateMutators().lookup(timeout.onTimeoutMutator());
             Function<Object, Object> mutatorFn = (Function<Object, Object>) (Function<?, ?>) mutator.mutator();
-
-            var withNext = declaration.onSignal(reducerFn).toStepOnSignal(step.next());
 
             // Determine the timeout spec: Duration, Instant, or ref:id
             String after = timeout.after();

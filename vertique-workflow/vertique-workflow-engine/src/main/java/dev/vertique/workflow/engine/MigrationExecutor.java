@@ -126,8 +126,7 @@ final class MigrationExecutor {
     /** Logs the migration: its own patch and the full state after it. */
     private final DecisionLog decisions;
 
-    /** Deletes the record of the wait a migration leaves; {@code null} in legacy test constructors. */
-    @jakarta.annotation.Nullable
+    /** Deletes the record of the wait a migration leaves. */
     private final SignalWaits signalWaits;
 
     /** Cancels the timeout timer of the wait a migration leaves; {@code null} in legacy test constructors. */
@@ -167,8 +166,7 @@ final class MigrationExecutor {
      *     is refused; may be {@code null}
      * @param actors takes the actor a recorded migration is logged with from the caller's identity
      * @param decisions the decision log that records the migration's patch and baseline
-     * @param signalWaits deletes the record of the wait the migration leaves; may be {@code null} in legacy test
-     *     constructors
+     * @param signalWaits deletes the record of the wait the migration leaves
      * @param timerStore cancels the timeout timer of a keyed wait the migration leaves; may be {@code null} in legacy
      *     test constructors
      * @param timerLifecycle appends the history of that cancel; may be {@code null} in legacy test constructors
@@ -188,7 +186,7 @@ final class MigrationExecutor {
             @jakarta.annotation.Nullable TransactionalDefinitionReads<SqlClient> definitionReads,
             CommandActors actors,
             DecisionLog decisions,
-            @jakarta.annotation.Nullable SignalWaits signalWaits,
+            SignalWaits signalWaits,
             @jakarta.annotation.Nullable TimerStore<SqlClient> timerStore,
             @jakarta.annotation.Nullable TimerLifecycleService timerLifecycle) {
         this.signalWaits = signalWaits;
@@ -286,6 +284,7 @@ final class MigrationExecutor {
      * @param stateCompatibility the state comparison; empty refuses a migration between differing state classes
      * @param commands the command repository whose execution lock a migration takes
      * @param decisions the decision log that records the migration's patch and baseline
+     * @param signalWaits deletes the record of the wait the migration leaves
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -298,7 +297,8 @@ final class MigrationExecutor {
             WorkflowContextBinder contextBinder,
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
             WorkflowCommandRepository<SqlClient> commands,
-            DecisionLog decisions) {
+            DecisionLog decisions,
+            SignalWaits signalWaits) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -314,7 +314,7 @@ final class MigrationExecutor {
                 null,
                 CommandActors.ambient(),
                 decisions,
-                null,
+                signalWaits,
                 null,
                 null);
     }
@@ -333,6 +333,7 @@ final class MigrationExecutor {
      * @param contextBinder the binder-row seam
      * @param commands the command repository whose execution lock a migration takes
      * @param decisions the decision log that records the migration's patch and baseline
+     * @param signalWaits deletes the record of the wait the migration leaves
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -344,7 +345,8 @@ final class MigrationExecutor {
             Clock clock,
             WorkflowContextBinder contextBinder,
             WorkflowCommandRepository<SqlClient> commands,
-            DecisionLog decisions) {
+            DecisionLog decisions,
+            SignalWaits signalWaits) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -356,7 +358,8 @@ final class MigrationExecutor {
                 contextBinder,
                 Optional.empty(),
                 commands,
-                decisions);
+                decisions,
+                signalWaits);
     }
 
     // --- Recording ---
@@ -875,16 +878,13 @@ final class MigrationExecutor {
 
     /**
      * Deletes the record of the main wait the migrated instance leaves, which is the source's current step. A migrating
-     * instance holds at most its main wait. Nothing is deleted where no wait record collaborator is present.
+     * instance holds at most its main wait.
      *
      * <p>When a record was deleted and the wait carried a timeout timer, the timer is cancelled in the same
      * transaction, a dead-lettered one included, so that it cannot block the wait the migration enters. A wait that
      * declares no key holds no record, and its timer is left as it is.
      */
     private Future<Void> closeSourceWait(WorkflowInstance source, String sourceStepId, SqlClient tx) {
-        if (signalWaits == null) {
-            return Future.succeededFuture();
-        }
         return signalWaits
                 .close(source.id(), sourceStepId, null, null, null, tx)
                 .compose(deleted -> {

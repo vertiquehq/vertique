@@ -3,6 +3,7 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.workflow.engine.executor.EndedInstanceOutcomes;
 import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.JoinStateRepository;
@@ -481,10 +482,8 @@ final class ForkJoinCoordinator {
         // A sibling driven after an earlier branch's join decision ended the instance enters its wait after the end
         // and writes its record there; an ended instance has no record, so the ones written since go with the end.
         return chain.compose(v -> instances.findById(inst.id(), tx)).compose(opt -> {
-            boolean ended = opt.isPresent()
-                    && (opt.get().status() == WorkflowStatus.COMPLETED
-                            || opt.get().status() == WorkflowStatus.COMPENSATED
-                            || opt.get().status() == WorkflowStatus.CANCELLED);
+            boolean ended =
+                    opt.isPresent() && EndedInstanceOutcomes.isEnded(opt.get().status());
             return ended ? signalWaits.closeAll(inst.id(), tx) : Future.<Void>succeededFuture();
         });
     }

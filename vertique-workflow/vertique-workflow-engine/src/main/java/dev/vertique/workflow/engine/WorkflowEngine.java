@@ -2053,8 +2053,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * in the same transaction. The dedup row and the command's dedup key hold SHA-256 digests, never the key. An
      * executor applies the command later.
      *
-     * <p>A delivery that matches no record, a record that closed or whose instance ended before the lock, or several
-     * records fails the returned future with {@link WorkflowSignalNoMatchException} or
+     * <p>A delivery that matches no record, a record that closed, whose instance ended or whose pinned definition does
+     * not declare the signal before the lock, or several records fails the returned future with
+     * {@link WorkflowSignalNoMatchException} or
      * {@link WorkflowSignalAmbiguousException} and records nothing. The failure names the contract and the signal and
      * never the key.
      *
@@ -2079,59 +2080,32 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private Future<CorrelatedSignalReceipt> recordSignalByKey(CorrelatedSignal signal, SqlClient tx) {
         String contractName = typeNames.contractNameOf(signal.contract());
         String signalName = signal.signalName();
-        if (signalName.length() > MAX_NAME_LENGTH) {
-            return Future.failedFuture(new WorkflowInvalidPayloadException(
-                    "Signal for contract '" + EchoedNames.bounded(contractName) + "' is refused: the signal name"
-                            + " exceeds " + MAX_NAME_LENGTH + " characters",
-                    List.of(ViolationDetail.unlocated("the signal name is too long", "payload"))));
-        }
-        String namespace = WorkflowDedupScopes.correlatedScope(contractName, signalName, signal.scopeKey());
-        String dedupKey = WorkflowDedupScopes.correlatedKey(signal.dedupKey());
-        return dedup.findCorrelated(namespace, dedupKey, tx).compose(duplicate -> {
-            if (duplicate.isPresent()) {
-                return Future.succeededFuture(duplicateReceipt());
-            }
-            return signalWaits
-                    .findOpen(contractName, signalName, signal.key(), signal.definitionId(), signal.scopeKey(), tx)
-                    .compose(open -> {
-                        if (open.isEmpty()) {
-                            return Future.<CorrelatedSignalReceipt>failedFuture(
-                                    new WorkflowSignalNoMatchException(contractName, signalName));
-                        }
-                        if (open.size() > 1) {
-                            return Future.<CorrelatedSignalReceipt>failedFuture(
-                                    new WorkflowSignalAmbiguousException(contractName, signalName));
-                        }
-                        SignalWaitRecord match = open.getFirst();
-                        return commands.lockInstance(match.instanceId(), tx)
-                                .compose(locked -> dedup.findCorrelated(namespace, dedupKey, tx))
-                                .compose(again -> {
-                                    if (again.isPresent()) {
-                                        return Future.succeededFuture(duplicateReceipt());
-                                    }
-                                    return signalWaits
-                                            .findById(match.waitId(), tx)
-                                            .compose(current -> {
-                                                if (current.isEmpty()) {
-                                                    return Future.<CorrelatedSignalReceipt>failedFuture(
-                                                            new WorkflowSignalNoMatchException(
-                                                                    contractName, signalName));
-                                                }
-                                                return recordCorrelated(
-                                                        signal,
-                                                        contractName,
-                                                        match.instanceId(),
-                                                        match.definitionId(),
-                                                        match.forkStepId().isEmpty() ? null : match.forkStepId(),
-                                                        match.branchId().isEmpty() ? null : match.branchId(),
-                                                        match.waitId().toString(),
-                                                        namespace,
-                                                        dedupKey,
-                                                        tx);
-                                            });
-                                });
-                    });
-        });
+        return deliverCorrelated(
+                signal,
+                contractName,
+                () -> signalWaits.findOpen(
+                        contractName, signalName, signal.key(), signal.definitionId(), signal.scopeKey(), tx),
+                SignalWaitRecord::instanceId,
+                (match, namespace, dedupKey) -> signalWaits
+                        .findById(match.waitId(), tx)
+                        .compose(current -> {
+                            if (current.isEmpty()) {
+                                return Future.<CorrelatedSignalReceipt>failedFuture(
+                                        new WorkflowSignalNoMatchException(contractName, signalName));
+                            }
+                            return recordCorrelated(
+                                    signal,
+                                    contractName,
+                                    match.instanceId(),
+                                    match.definitionId(),
+                                    match.forkStepId().isEmpty() ? null : match.forkStepId(),
+                                    match.branchId().isEmpty() ? null : match.branchId(),
+                                    match.waitId().toString(),
+                                    namespace,
+                                    dedupKey,
+                                    tx);
+                        }),
+                tx);
     }
 
     /**
@@ -2175,6 +2149,51 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** The delivery of {@link #signalByBusinessKey}, inside the announcement of its failures. */
     private Future<CorrelatedSignalReceipt> recordSignalByBusinessKey(CorrelatedSignal signal, SqlClient tx) {
         String contractName = typeNames.contractNameOf(signal.contract());
+        return deliverCorrelated(
+                signal,
+                contractName,
+                () -> instances.findLiveByBusinessKey(
+                        contractName, signal.signalName(), signal.key(), signal.definitionId(), signal.scopeKey(), tx),
+                WorkflowInstance::id,
+                // The instance is re-read under the lock: one that ended meanwhile answers no-match, in
+                // recordCorrelated's admission.
+                (match, namespace, dedupKey) -> recordCorrelated(
+                        signal,
+                        contractName,
+                        match.id(),
+                        match.definitionId(),
+                        null,
+                        null,
+                        null,
+                        namespace,
+                        dedupKey,
+                        tx),
+                tx);
+    }
+
+    /** What a delivery does with the one match it found, once it holds the match's lock and no duplicate shows. */
+    @FunctionalInterface
+    private interface CorrelatedRecording<M> {
+        Future<CorrelatedSignalReceipt> record(M match, String namespace, String dedupKey);
+    }
+
+    /**
+     * The delivery both correlated entries share: the bound on the signal name, the committed duplicate lookup, the
+     * match (at most two found; none answers no-match, several answer ambiguity), the execution lock of the matched
+     * instance, the duplicate lookup again, and then the recording of the match.
+     *
+     * @param <M> what a match is: a wait record, or an instance
+     * @param find reads at most two matches
+     * @param instanceOf names the instance of a match, whose execution lock is taken
+     * @param recording records the signal for the match
+     */
+    private <M> Future<CorrelatedSignalReceipt> deliverCorrelated(
+            CorrelatedSignal signal,
+            String contractName,
+            Supplier<Future<List<M>>> find,
+            Function<M, WorkflowInstanceId> instanceOf,
+            CorrelatedRecording<M> recording,
+            SqlClient tx) {
         String signalName = signal.signalName();
         if (signalName.length() > MAX_NAME_LENGTH) {
             return Future.failedFuture(new WorkflowInvalidPayloadException(
@@ -2188,40 +2207,22 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             if (duplicate.isPresent()) {
                 return Future.succeededFuture(duplicateReceipt());
             }
-            return instances
-                    .findLiveByBusinessKey(
-                            contractName, signalName, signal.key(), signal.definitionId(), signal.scopeKey(), tx)
-                    .compose(live -> {
-                        if (live.isEmpty()) {
-                            return Future.<CorrelatedSignalReceipt>failedFuture(
-                                    new WorkflowSignalNoMatchException(contractName, signalName));
-                        }
-                        if (live.size() > 1) {
-                            return Future.<CorrelatedSignalReceipt>failedFuture(
-                                    new WorkflowSignalAmbiguousException(contractName, signalName));
-                        }
-                        WorkflowInstance match = live.getFirst();
-                        return commands.lockInstance(match.id(), tx)
-                                .compose(locked -> dedup.findCorrelated(namespace, dedupKey, tx))
-                                .compose(again -> {
-                                    if (again.isPresent()) {
-                                        return Future.succeededFuture(duplicateReceipt());
-                                    }
-                                    // The instance is re-read under the lock: one that ended meanwhile answers
-                                    // no-match, in recordCorrelated's admission.
-                                    return recordCorrelated(
-                                            signal,
-                                            contractName,
-                                            match.id(),
-                                            match.definitionId(),
-                                            null,
-                                            null,
-                                            null,
-                                            namespace,
-                                            dedupKey,
-                                            tx);
-                                });
-                    });
+            return find.get().compose(found -> {
+                if (found.isEmpty()) {
+                    return Future.<CorrelatedSignalReceipt>failedFuture(
+                            new WorkflowSignalNoMatchException(contractName, signalName));
+                }
+                if (found.size() > 1) {
+                    return Future.<CorrelatedSignalReceipt>failedFuture(
+                            new WorkflowSignalAmbiguousException(contractName, signalName));
+                }
+                M match = found.getFirst();
+                return commands.lockInstance(instanceOf.apply(match), tx)
+                        .compose(locked -> dedup.findCorrelated(namespace, dedupKey, tx))
+                        .compose(again -> again.isPresent()
+                                ? Future.succeededFuture(duplicateReceipt())
+                                : recording.record(match, namespace, dedupKey));
+            });
         });
     }
 
@@ -2258,8 +2259,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                         payloadJson = signal.payload() == null ? null : Json.encode(signal.payload());
                     } catch (WorkflowInvalidPayloadException e) {
                         return Future.<CorrelatedSignalReceipt>failedFuture(new WorkflowInvalidPayloadException(
-                                "Signal '" + EchoedNames.bounded(signalName) + "' for instance '" + id.value()
-                                        + "' is refused: " + e.getMessage(),
+                                "Signal '" + EchoedNames.bounded(signalName) + "' of contract '"
+                                        + EchoedNames.bounded(contractName) + "' is refused: " + e.getMessage(),
                                 e.violations()));
                     }
                     return capturedForDelivery(signal, contractName).compose(actor -> commands.raiseOpenSignals(
@@ -2267,7 +2268,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                             .compose(raised -> {
                                 if (!raised) {
                                     return Future.<CorrelatedSignalReceipt>failedFuture(
-                                            new WorkflowSignalLimitException(id, maxOpenSignals));
+                                            new WorkflowSignalLimitException(
+                                                    id, maxOpenSignals, contractName, signalName));
                                 }
                                 return dedup.claimOrResolveCorrelated(namespace, dedupKey, id, tx)
                                         .compose(inserted -> {
@@ -2509,8 +2511,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
 
     /**
      * As {@link #admitSignal(WorkflowInstanceId, String, String, String, String, SqlClient)}, except that when
-     * {@code noMatchContractName} is not null an instance that ended answers
-     * {@link WorkflowSignalNoMatchException} for that contract instead of a rejection.
+     * {@code noMatchContractName} is not null an instance that ended, or whose pinned definition does not declare the
+     * signal for the addressed wait, answers {@link WorkflowSignalNoMatchException} for that contract instead of a
+     * rejection.
      */
     private Future<WorkflowInstance> admitSignal(
             WorkflowInstanceId id,
@@ -2543,6 +2546,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     .compose(ok -> commands.declaredSignalNames(pin, forkStepId, branchId, tx))
                     .compose(declared -> {
                         if (declared.isPresent() && !declared.get().contains(signalName)) {
+                            if (noMatchContractName != null) {
+                                return Future.<WorkflowInstance>failedFuture(
+                                        new WorkflowSignalNoMatchException(noMatchContractName, signalName));
+                            }
                             return Future.<WorkflowInstance>failedFuture(
                                     new WorkflowSignalRejectedException("Instance '" + id.value()
                                             + "' cannot receive signal '" + EchoedNames.bounded(signalName)

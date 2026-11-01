@@ -10,6 +10,7 @@ import dev.vertique.workflow.engine.spi.SignalWaitRecord;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
 import dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository;
 import dev.vertique.workflow.exception.WorkflowCorrelationKeyException;
+import dev.vertique.workflow.ops.CorrelatedSignal;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -24,12 +25,11 @@ import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Clock;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,9 +56,6 @@ final class SignalWaits {
 
     /** The fork step and branch of a wait on the main path, which the record's columns hold as empty strings. */
     private static final String MAIN_PATH = "";
-
-    /** The longest key a wait accepts, in characters: the width of the column that holds it. */
-    private static final int MAX_KEY_LENGTH = 255;
 
     private final WorkflowSignalWaitRepository<SqlClient> waits;
     private final WorkflowCommandRepository<SqlClient> commands;
@@ -206,34 +203,24 @@ final class SignalWaits {
      * @return a {@link Future} of {@code true} when the entry is open for the instance
      */
     Future<Boolean> isOpen(WorkflowInstanceId instance, String waitId, SqlClient tx) {
-        return openEntries(instance, List.of(waitId), tx).map(open -> open.containsKey(waitId));
+        UUID id = entryId(waitId);
+        if (id == null) {
+            return Future.succeededFuture(false);
+        }
+        return waits.findById(id, tx)
+                .map(found ->
+                        found.filter(held -> held.instanceId().equals(instance)).isPresent());
     }
 
     /**
-     * Reads the records that are held for an instance among the entries with the given ids.
+     * Reads the records an instance holds: the open entries of its waits.
      *
      * @param instance the instance
-     * @param waitIds the ids of the entries; an id that is not a record's id names no open entry
      * @param tx the active transaction
-     * @return a {@link Future} of the held records of the instance, by the id of their entry
+     * @return a {@link Future} of the records the instance holds
      */
-    Future<Map<String, SignalWaitRecord>> openEntries(WorkflowInstanceId instance, List<String> waitIds, SqlClient tx) {
-        Map<String, SignalWaitRecord> open = new HashMap<>();
-        Future<Void> chain = Future.succeededFuture();
-        for (String waitId : waitIds.stream().distinct().toList()) {
-            UUID id;
-            try {
-                id = UUID.fromString(waitId);
-            } catch (IllegalArgumentException notAnId) {
-                continue;
-            }
-            chain = chain.compose(done -> waits.findById(id, tx).map(found -> {
-                found.filter(record -> record.instanceId().equals(instance))
-                        .ifPresent(record -> open.put(waitId, record));
-                return null;
-            }));
-        }
-        return chain.map(done -> open);
+    Future<List<SignalWaitRecord>> held(WorkflowInstanceId instance, SqlClient tx) {
+        return waits.findByInstance(instance, tx);
     }
 
     /**
@@ -249,24 +236,26 @@ final class SignalWaits {
             if (correlated.isEmpty()) {
                 return Future.<Void>succeededFuture();
             }
-            return openEntries(
-                            instance,
-                            correlated.stream().map(ParkedSignal::waitId).toList(),
-                            tx)
-                    .compose(open -> {
-                        List<ParkedSignal> closed = new ArrayList<>();
-                        for (ParkedSignal signal : correlated) {
-                            if (!open.containsKey(signal.waitId())) {
-                                closed.add(signal);
-                            }
-                        }
-                        Future<Void> chain = Future.succeededFuture();
-                        for (ParkedSignal signal : closed) {
-                            chain = chain.compose(done -> settleStale(instance, signal, tx));
-                        }
-                        return chain;
-                    });
+            return waits.findByInstance(instance, tx).compose(held -> {
+                Set<UUID> open = held.stream().map(SignalWaitRecord::waitId).collect(Collectors.toSet());
+                Future<Void> chain = Future.succeededFuture();
+                for (ParkedSignal signal : correlated) {
+                    if (!open.contains(entryId(signal.waitId()))) {
+                        chain = chain.compose(done -> settleStale(instance, signal, tx));
+                    }
+                }
+                return chain;
+            });
         });
+    }
+
+    /** The id of an entry as the record holds it, or {@code null} for a text that is not an id. */
+    private static @Nullable UUID entryId(String waitId) {
+        try {
+            return UUID.fromString(waitId);
+        } catch (IllegalArgumentException notAnId) {
+            return null;
+        }
     }
 
     private Future<Void> settleStale(WorkflowInstanceId instance, ParkedSignal signal, SqlClient tx) {
@@ -356,8 +345,9 @@ final class SignalWaits {
         if (key.isBlank()) {
             throw refusal(definitionId, node, "the key is blank");
         }
-        if (key.length() > MAX_KEY_LENGTH) {
-            throw refusal(definitionId, node, "the key is longer than " + MAX_KEY_LENGTH + " characters");
+        if (key.length() > CorrelatedSignal.MAX_KEY_LENGTH) {
+            throw refusal(
+                    definitionId, node, "the key is longer than " + CorrelatedSignal.MAX_KEY_LENGTH + " characters");
         }
         if (key.indexOf('\u0000') >= 0) {
             throw refusal(definitionId, node, "the key contains a NUL character");

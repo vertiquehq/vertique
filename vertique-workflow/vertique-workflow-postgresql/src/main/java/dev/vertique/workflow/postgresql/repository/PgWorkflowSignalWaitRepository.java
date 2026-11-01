@@ -64,6 +64,7 @@ public final class PgWorkflowSignalWaitRepository extends PgSqlRepository
     private final String sqlDeleteAll;
     private final String sqlFindOpen;
     private final String sqlFindById;
+    private final String sqlFindByInstance;
 
     /**
      * Creates a new repository whose tables are not schema-qualified, so they resolve through the connection's
@@ -117,6 +118,8 @@ public final class PgWorkflowSignalWaitRepository extends PgSqlRepository
                         + " ORDER BY w.created_at, w.wait_id LIMIT " + MATCH_LIMIT;
 
         this.sqlFindById = "SELECT " + COLUMNS + " FROM " + waits + " w WHERE w.wait_id = $1";
+
+        this.sqlFindByInstance = "SELECT " + COLUMNS + " FROM " + waits + " w WHERE w.instance_id = $1";
     }
 
     // --- Writes ---
@@ -221,6 +224,22 @@ public final class PgWorkflowSignalWaitRepository extends PgSqlRepository
                 .execute(Tuple.of(waitId))
                 .map(rs -> mapAll(rs).stream().findFirst())
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_signal_waits findById")));
+    }
+
+    /**
+     * Reads every record of an instance.
+     *
+     * @param instanceId the instance
+     * @param tx         the active transaction
+     * @return a {@link Future} of the records of the instance, empty when it holds none
+     */
+    @Override
+    public Future<List<SignalWaitRecord>> findByInstance(WorkflowInstanceId instanceId, SqlClient tx) {
+        return tx.preparedQuery(sqlFindByInstance)
+                .execute(Tuple.of(instanceId.value()))
+                .map(PgWorkflowSignalWaitRepository::mapAll)
+                .recover(
+                        t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_signal_waits findByInstance")));
     }
 
     // --- Row mapping ---

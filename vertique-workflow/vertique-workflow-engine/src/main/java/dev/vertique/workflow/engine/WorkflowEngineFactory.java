@@ -113,15 +113,10 @@ public final class WorkflowEngineFactory {
         DecisionLog decisionLog = new DecisionLog(new JsonPatchDiff(), history, parts.historyRedactor(), clock);
         WorkflowHistoryRecorder historyRecorder =
                 new WorkflowHistoryRecorder(history, eventEmitter, clock, decisionLog);
+        SignalWaits signalWaits = new SignalWaits(parts.signalWaits(), parts.commands(), historyRecorder, clock);
         ReminderScheduler reminderScheduler = new ReminderScheduler(history, parts.commands(), timerStore, clock);
         CompensationService compensationService = new CompensationService(
-                instances,
-                history,
-                recorderRouter,
-                eventEmitter,
-                clock,
-                decisionLog,
-                new SignalWaits(parts.signalWaits(), parts.commands(), historyRecorder, clock));
+                instances, history, recorderRouter, eventEmitter, clock, decisionLog, signalWaits);
         // Build the substrate lifecycle helper ONCE from the (possibly-null) propagator and the
         // supplied initializer set, and thread the same instance into BranchTransitionEngine so
         // binder-row drives (WorkflowContextBinder, wired inside the WorkflowEngine constructor
@@ -151,7 +146,7 @@ public final class WorkflowEngineFactory {
                         propagator,
                         null,
                         parts.schemaProducer(),
-                        new SignalWaits(parts.signalWaits(), parts.commands(), historyRecorder, clock))
+                        signalWaits)
                 : new BranchTransitionEngine(
                         branchTokens,
                         dedup,
@@ -163,7 +158,7 @@ public final class WorkflowEngineFactory {
                         propagator,
                         inboundExecScope,
                         parts.schemaProducer(),
-                        new SignalWaits(parts.signalWaits(), parts.commands(), historyRecorder, clock));
+                        signalWaits);
         BranchCompensationOrchestrator branchCompensation =
                 new BranchCompensationOrchestrator(history, recorderRouter, clock);
         WorkflowExecutorControl[] executorHolder = new WorkflowExecutorControl[1];

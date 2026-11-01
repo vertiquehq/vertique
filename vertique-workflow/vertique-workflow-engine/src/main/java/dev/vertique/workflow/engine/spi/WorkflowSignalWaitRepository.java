@@ -89,4 +89,13 @@ public interface WorkflowSignalWaitRepository<TX> {
      * @return a {@link Future} of the record, or {@link Optional#empty()} when it is no longer held
      */
     Future<Optional<SignalWaitRecord>> findById(UUID waitId, TX tx);
+
+    /**
+     * Reads every record of an instance, whatever its step, fork step or branch.
+     *
+     * @param instanceId the instance
+     * @param tx         the active transaction
+     * @return a {@link Future} of the records the instance holds, empty when it holds none
+     */
+    Future<List<SignalWaitRecord>> findByInstance(WorkflowInstanceId instanceId, TX tx);
 }

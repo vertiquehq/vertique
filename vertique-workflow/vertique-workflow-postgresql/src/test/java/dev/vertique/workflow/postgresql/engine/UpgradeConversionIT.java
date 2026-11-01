@@ -653,7 +653,7 @@ public class UpgradeConversionIT {
         // And (b) migrated without error to the latest version
         try (Connection connection = connection(noJobsDb)) {
             assertThat(rows(connection, "SELECT max(version::int)::text FROM flyway_schema_history WHERE success"))
-                    .containsExactly("3");
+                    .containsExactly("4");
         }
 
         // And in (c) the migration left every job row unchanged

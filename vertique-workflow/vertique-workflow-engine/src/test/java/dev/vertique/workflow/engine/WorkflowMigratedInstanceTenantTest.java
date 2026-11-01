@@ -20,6 +20,7 @@ import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.testsupport.EmptyCommandRepository;
+import dev.vertique.workflow.engine.testsupport.EmptySignalWaits;
 import dev.vertique.workflow.migration.MigrationContext;
 import dev.vertique.workflow.migration.MigrationResult;
 import dev.vertique.workflow.migration.WorkflowMigrationHandler;
@@ -180,7 +181,12 @@ class WorkflowMigratedInstanceTenantTest {
                 WorkflowContextBinder.noop(),
                 Optional.of((from, to) -> Optional.empty()),
                 new EmptyCommandRepository(),
-                new DecisionLog(new JsonPatchDiff(), history, Optional.empty(), FIXED_CLOCK));
+                new DecisionLog(new JsonPatchDiff(), history, Optional.empty(), FIXED_CLOCK),
+                new SignalWaits(
+                        EmptySignalWaits.create(),
+                        new EmptyCommandRepository(),
+                        mock(WorkflowHistoryRecorder.class),
+                        FIXED_CLOCK));
 
         SqlClient tx = ActiveTransactionClient.create();
         CommandHead head = new CommandHead(

@@ -94,7 +94,7 @@ final class BranchTransitionEngine {
     private final Optional<WorkflowPlanSchemaProducer> schemaProducer;
     private final Clock clock;
 
-    /** The open wait records of keyed signal waits; {@code null} for the legacy test constructors, which write none. */
+    /** The open wait records of keyed signal waits. */
     private final SignalWaits signalWaits;
 
     /**
@@ -199,7 +199,8 @@ final class BranchTransitionEngine {
             TaskStore<SqlClient> taskStore,
             Clock clock,
             dev.vertique.context.DurableContextPropagator propagator,
-            dev.vertique.context.InboundExecutionContextScope inboundExecScope) {
+            dev.vertique.context.InboundExecutionContextScope inboundExecScope,
+            SignalWaits signalWaits) {
         this(
                 branchTokens,
                 dedup,
@@ -211,7 +212,7 @@ final class BranchTransitionEngine {
                 propagator,
                 inboundExecScope,
                 Optional.empty(),
-                null);
+                signalWaits);
     }
 
     /**
@@ -226,8 +227,9 @@ final class BranchTransitionEngine {
             WorkflowCommandRepository<SqlClient> commands,
             TaskStore<SqlClient> taskStore,
             Clock clock,
-            dev.vertique.context.DurableContextPropagator propagator) {
-        this(branchTokens, dedup, history, recorders, commands, taskStore, clock, propagator, null);
+            dev.vertique.context.DurableContextPropagator propagator,
+            SignalWaits signalWaits) {
+        this(branchTokens, dedup, history, recorders, commands, taskStore, clock, propagator, null, signalWaits);
     }
 
     /**
@@ -241,8 +243,9 @@ final class BranchTransitionEngine {
             RecorderRouter recorders,
             WorkflowCommandRepository<SqlClient> commands,
             TaskStore<SqlClient> taskStore,
-            Clock clock) {
-        this(branchTokens, dedup, history, recorders, commands, taskStore, clock, null, null);
+            Clock clock,
+            SignalWaits signalWaits) {
+        this(branchTokens, dedup, history, recorders, commands, taskStore, clock, null, null, signalWaits);
     }
 
     // --- Public entry points ---
@@ -588,9 +591,6 @@ final class BranchTransitionEngine {
             RuntimeWorkflow rw,
             InstanceScope instanceScope,
             SqlClient tx) {
-        if (signalWaits == null) {
-            return Future.succeededFuture();
-        }
         return signalWaits.openBranch(
                 token.workflowId(),
                 instanceScope.scopeKey(),

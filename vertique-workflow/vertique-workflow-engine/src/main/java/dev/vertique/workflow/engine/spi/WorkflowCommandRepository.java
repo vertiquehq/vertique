@@ -432,6 +432,45 @@ public interface WorkflowCommandRepository<TX> {
      * @param signalName          the signal's name
      * @param forkStepId          the fork step of a branch-addressed signal, or {@code null}
      * @param branchId            the branch of a branch-addressed signal, or {@code null}
+     * @param dedupKey            the caller's idempotency key, kept for display
+     * @param payloadJson         the payload as JSON, or {@code null} when the signal has none
+     * @param explicitCarrierJson the sanitized explicit durable-context carrier as JSON, or {@code null}
+     * @param actor               who sent the signal, stored on the command
+     * @param tx                  the caller's transaction handle
+     * @return a {@link Future} containing the command's row id
+     * @deprecated this form cannot carry the id of a wait entry or the provenance of a signal delivered by key. Use
+     *     {@link #recordSignal(WorkflowInstanceId, String, String, String, String, String, String, String, String,
+     *     CommandActor, Object)} instead; it replaces this method. This form keeps working for a signal that carries
+     *     neither.
+     */
+    @Deprecated
+    Future<Long> recordSignal(
+            WorkflowInstanceId instance,
+            String signalName,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            String dedupKey,
+            @Nullable String payloadJson,
+            @Nullable String explicitCarrierJson,
+            CommandActor actor,
+            TX tx);
+
+    /**
+     * Records a {@code SIGNAL} command in the caller's transaction, as
+     * {@link #recordSignal(WorkflowInstanceId, String, String, String, String, String, String, CommandActor, Object)}
+     * does, and stores the id of the wait entry a delivery by key matched and the provenance of the signal.
+     *
+     * <p>The caller must hold the instance's execution lock and have raised the open-signal count.
+     *
+     * <p>The default implementation delegates to the form without those two values when {@code waitId} and
+     * {@code provenanceJson} are both {@code null}, and otherwise returns a failed future holding an
+     * {@link UnsupportedOperationException}, so that a repository written before signals were delivered by key keeps
+     * working and refuses what it cannot store.
+     *
+     * @param instance            the instance
+     * @param signalName          the signal's name
+     * @param forkStepId          the fork step of a branch-addressed signal, or {@code null}
+     * @param branchId            the branch of a branch-addressed signal, or {@code null}
      * @param waitId              the id of the wait entry a delivery by key matched, stored in the target only when set,
      *                            or {@code null}
      * @param dedupKey            the caller's idempotency key, kept for display
@@ -443,7 +482,7 @@ public interface WorkflowCommandRepository<TX> {
      * @param tx                  the caller's transaction handle
      * @return a {@link Future} containing the command's row id
      */
-    Future<Long> recordSignal(
+    default Future<Long> recordSignal(
             WorkflowInstanceId instance,
             String signalName,
             @Nullable String forkStepId,
@@ -454,7 +493,14 @@ public interface WorkflowCommandRepository<TX> {
             @Nullable String explicitCarrierJson,
             @Nullable String provenanceJson,
             CommandActor actor,
-            TX tx);
+            TX tx) {
+        if (waitId != null || provenanceJson != null) {
+            return Future.failedFuture(new UnsupportedOperationException(
+                    "This command repository cannot store the wait entry or the provenance of a signal"));
+        }
+        return recordSignal(
+                instance, signalName, forkStepId, branchId, dedupKey, payloadJson, explicitCarrierJson, actor, tx);
+    }
 
     /**
      * Records a {@code SIGNAL} command for a caller with no identity, as {@link CommandActor#none()}.
@@ -483,11 +529,9 @@ public interface WorkflowCommandRepository<TX> {
                 signalName,
                 forkStepId,
                 branchId,
-                null,
                 dedupKey,
                 payloadJson,
                 explicitCarrierJson,
-                null,
                 CommandActor.none(),
                 tx);
     }

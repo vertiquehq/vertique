@@ -116,9 +116,13 @@ public interface WorkflowDedupRepository<TX> {
      * @param key       the hashed dedup key
      * @param tx        the active transaction to use
      * @return a {@link Future} containing the id of the instance the row names, or {@link Optional#empty()} when no
-     *         row is visible
+     *         row is visible; the default implementation returns a failed future holding an
+     *         {@link UnsupportedOperationException}, for a repository that does not support signals delivered by key
      */
-    Future<Optional<WorkflowInstanceId>> findCorrelated(String namespace, String key, TX tx);
+    default Future<Optional<WorkflowInstanceId>> findCorrelated(String namespace, String key, TX tx) {
+        return Future.failedFuture(
+                new UnsupportedOperationException("This dedup repository does not support signals delivered by key"));
+    }
 
     /**
      * Atomically claims a {@code correlated} dedup slot or resolves an existing one. The row is unique per namespace
@@ -128,9 +132,15 @@ public interface WorkflowDedupRepository<TX> {
      * @param key        the hashed dedup key
      * @param workflowId the matched instance; stored as the FK reference
      * @param tx         the active transaction to use
-     * @return a {@link Future} of {@code true} when this call inserted the row, {@code false} when it already existed
+     * @return a {@link Future} of {@code true} when this call inserted the row, {@code false} when it already existed;
+     *         the default implementation returns a failed future holding an {@link UnsupportedOperationException}, for
+     *         a repository that does not support signals delivered by key
      */
-    Future<Boolean> claimOrResolveCorrelated(String namespace, String key, WorkflowInstanceId workflowId, TX tx);
+    default Future<Boolean> claimOrResolveCorrelated(
+            String namespace, String key, WorkflowInstanceId workflowId, TX tx) {
+        return Future.failedFuture(
+                new UnsupportedOperationException("This dedup repository does not support signals delivered by key"));
+    }
 
     // --- Task dedup ---
 

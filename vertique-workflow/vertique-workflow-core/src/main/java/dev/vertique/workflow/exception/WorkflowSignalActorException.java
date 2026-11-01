@@ -3,13 +3,16 @@
 
 package dev.vertique.workflow.exception;
 
+import dev.vertique.workflow.types.EchoedNames;
+
 /**
  * Thrown when a correlated signal that carries a provenance cannot be attributed to an actor: the recording captured no
  * identity (none is bound, or the bound one is anonymous), or the actor mapper refused the identity.
  *
  * <p>The delivery fails in the caller's transaction and writes nothing: no command, no deduplication row, no
  * open-signal count and no history entry. A delivery without provenance is not subject to this rule and records with an
- * absent actor as before. The message names the contract and the signal, never the key.
+ * absent actor as before. The message names the contract and the signal, each cut at a bounded length and cleaned of
+ * control characters, never the key. The accessors keep the full names.
  */
 public final class WorkflowSignalActorException extends WorkflowException {
 
@@ -23,7 +26,7 @@ public final class WorkflowSignalActorException extends WorkflowException {
      * @param signalName the name of the signal
      */
     public WorkflowSignalActorException(String contractName, String signalName) {
-        super("Signal '" + signalName + "' of contract '" + contractName
+        super("Signal '" + EchoedNames.bounded(signalName) + "' of contract '" + EchoedNames.bounded(contractName)
                 + "' carries a provenance and cannot be recorded without an actor");
         this.contractName = contractName;
         this.signalName = signalName;

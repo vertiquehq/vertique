@@ -73,29 +73,8 @@ final class CompensationService {
     private final Clock clock;
     private final DecisionLog decisions;
 
-    /** Deletes the records of the waits of an instance that ends compensated; {@code null} in legacy test constructors. */
-    @jakarta.annotation.Nullable
+    /** Deletes the records of the waits of an instance that ends compensated. */
     private final SignalWaits signalWaits;
-
-    /**
-     * Constructs a compensation service that deletes no wait record, for tests that never reach a wait.
-     *
-     * @param instances the instance repository
-     * @param history the history repository
-     * @param recorders the recorder router
-     * @param eventEmitter the event emitter
-     * @param clock the clock
-     * @param decisions the decision log
-     */
-    CompensationService(
-            WorkflowInstanceRepository<SqlClient> instances,
-            WorkflowHistoryRepository<SqlClient> history,
-            RecorderRouter recorders,
-            WorkflowEventEmitter eventEmitter,
-            Clock clock,
-            DecisionLog decisions) {
-        this(instances, history, recorders, eventEmitter, clock, decisions, null);
-    }
 
     /**
      * Constructs a new compensation service.
@@ -106,8 +85,7 @@ final class CompensationService {
      * @param eventEmitter the event emitter used to emit lifecycle events on state transitions
      * @param clock the clock used to timestamp entries and state updates
      * @param decisions the decision log that records each compensation transition
-     * @param signalWaits deletes the records of the waits of an instance that ends compensated; may be {@code null} in
-     *     legacy test constructors
+     * @param signalWaits deletes the records of the waits of an instance that ends compensated
      */
     @Inject
     CompensationService(
@@ -117,7 +95,7 @@ final class CompensationService {
             WorkflowEventEmitter eventEmitter,
             Clock clock,
             DecisionLog decisions,
-            @jakarta.annotation.Nullable SignalWaits signalWaits) {
+            SignalWaits signalWaits) {
         this.signalWaits = signalWaits;
         this.decisions = decisions;
         this.instances = instances;
@@ -325,11 +303,8 @@ final class CompensationService {
         });
     }
 
-    /** Deletes every wait record of the instance. Nothing is deleted where no wait record collaborator is present. */
+    /** Deletes every wait record of the instance. */
     private Future<Void> closeAllWaits(WorkflowInstance inst, SqlClient tx) {
-        if (signalWaits == null) {
-            return Future.succeededFuture();
-        }
         return signalWaits.closeAll(inst.id(), tx);
     }
 

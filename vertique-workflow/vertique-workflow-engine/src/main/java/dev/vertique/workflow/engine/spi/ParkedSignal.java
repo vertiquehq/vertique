@@ -17,8 +17,8 @@ import java.time.Instant;
  * @param signalName the signal's name
  * @param forkStepId the fork step a branch-addressed signal targets, or {@code null} for an instance-addressed one
  * @param branchId   the branch a branch-addressed signal targets, or {@code null} for an instance-addressed one
- * @param waitId     the id of the wait entry a signal delivered by key matched, or {@code null} for any other signal
  * @param recordedAt the database time at which the signal was recorded
+ * @param waitId     the id of the wait entry a signal delivered by key matched, or {@code null} for any other signal
  */
 public record ParkedSignal(
         long commandId,
@@ -26,5 +26,26 @@ public record ParkedSignal(
         String signalName,
         @Nullable String forkStepId,
         @Nullable String branchId,
-        @Nullable String waitId,
-        Instant recordedAt) {}
+        Instant recordedAt,
+        @Nullable String waitId) {
+
+    /**
+     * Creates a parked signal that matched no wait entry.
+     *
+     * @param commandId  the command's row id
+     * @param seq        the command's position in its instance's queue
+     * @param signalName the signal's name
+     * @param forkStepId the fork step a branch-addressed signal targets, or {@code null}
+     * @param branchId   the branch a branch-addressed signal targets, or {@code null}
+     * @param recordedAt the database time at which the signal was recorded
+     */
+    public ParkedSignal(
+            long commandId,
+            long seq,
+            String signalName,
+            @Nullable String forkStepId,
+            @Nullable String branchId,
+            Instant recordedAt) {
+        this(commandId, seq, signalName, forkStepId, branchId, recordedAt, null);
+    }
+}

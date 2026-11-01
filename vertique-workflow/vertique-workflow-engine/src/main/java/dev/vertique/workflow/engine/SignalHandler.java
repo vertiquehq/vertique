@@ -15,7 +15,6 @@ import dev.vertique.workflow.engine.history.DecisionLog;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandHead;
-import dev.vertique.workflow.engine.spi.ParkedSignal;
 import dev.vertique.workflow.engine.spi.SegmentCommand;
 import dev.vertique.workflow.engine.spi.SignalWaitRecord;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
@@ -54,8 +53,6 @@ import jakarta.inject.Singleton;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.BiFunction;
@@ -121,60 +118,8 @@ final class SignalHandler {
     private final DecisionLog decisions;
     private final RecorderRouter recorderRouter;
 
-    /** Deletes the record of a wait the handler leaves; {@code null} in legacy test constructors. */
-    @Nullable
+    /** Deletes the record of a wait the handler leaves. */
     private final SignalWaits signalWaits;
-
-    /**
-     * Constructs a signal handler that deletes no wait record, for tests that never reach a wait.
-     *
-     * @param registry the workflow registry used to resolve the pinned {@link RuntimeWorkflow}
-     * @param instances the instance repository
-     * @param history the history repository
-     * @param branchTokens the branch-token repository; may be {@code null}
-     * @param timerStore the timer store
-     * @param branchEngine the branch transition engine; may be {@code null}
-     * @param forkJoin the fork/join coordinator
-     * @param driver the transition driver
-     * @param timerLifecycle the timer-lifecycle service
-     * @param clock the clock
-     * @param commands the command repository
-     * @param contextBinder the binder that installs the durable context of a drive
-     * @param historyRecorder the recorder of the history entries of command outcomes
-     * @param recorderRouter the router that attributes the intents of a drained parked signal; may be {@code null}
-     */
-    SignalHandler(
-            WorkflowRegistry registry,
-            WorkflowInstanceRepository<SqlClient> instances,
-            WorkflowHistoryRepository<SqlClient> history,
-            BranchTokenRepository<SqlClient> branchTokens,
-            TimerStore<SqlClient> timerStore,
-            BranchTransitionEngine branchEngine,
-            ForkJoinCoordinator forkJoin,
-            WorkflowTransitionDriver driver,
-            TimerLifecycleService timerLifecycle,
-            Clock clock,
-            WorkflowCommandRepository<SqlClient> commands,
-            WorkflowContextBinder contextBinder,
-            WorkflowHistoryRecorder historyRecorder,
-            RecorderRouter recorderRouter) {
-        this(
-                registry,
-                instances,
-                history,
-                branchTokens,
-                timerStore,
-                branchEngine,
-                forkJoin,
-                driver,
-                timerLifecycle,
-                clock,
-                commands,
-                contextBinder,
-                historyRecorder,
-                recorderRouter,
-                null);
-    }
 
     /**
      * Constructs a new signal handler.
@@ -198,8 +143,7 @@ final class SignalHandler {
      * @param historyRecorder the recorder of the history entries of command outcomes
      * @param recorderRouter the router that attributes the intents of a drained parked signal to that signal's command;
      *     may be {@code null} in tests that do not route intents
-     * @param signalWaits deletes the record of the wait a signal leaves, in the transaction that applies it; may be
-     *     {@code null} in legacy test constructors
+     * @param signalWaits deletes the record of the wait a signal leaves, in the transaction that applies it
      */
     @Inject
     SignalHandler(
@@ -217,7 +161,7 @@ final class SignalHandler {
             WorkflowContextBinder contextBinder,
             WorkflowHistoryRecorder historyRecorder,
             RecorderRouter recorderRouter,
-            @Nullable SignalWaits signalWaits) {
+            SignalWaits signalWaits) {
         this.signalWaits = signalWaits;
         this.registry = registry;
         this.instances = instances;
@@ -554,7 +498,6 @@ final class SignalHandler {
 
     /**
      * Deletes the record of the wait a signal leaves, which settles the other signals parked on that entry as stale.
-     * Nothing is deleted where no wait record collaborator is present.
      *
      * @param applyingCommandId the command whose application leaves the wait, which is not settled, or {@code null}
      */
@@ -565,9 +508,6 @@ final class SignalHandler {
             @Nullable String branchId,
             @Nullable Long applyingCommandId,
             SqlClient tx) {
-        if (signalWaits == null) {
-            return Future.succeededFuture();
-        }
         return signalWaits
                 .close(instance, stepId, forkStepId, branchId, applyingCommandId, tx)
                 .mapEmpty();
@@ -686,7 +626,7 @@ final class SignalHandler {
      * none to compare, and is open as far as this check goes.
      */
     private Future<Boolean> entryOpen(WorkflowInstance inst, SignalTarget signal, SqlClient tx) {
-        if (!signal.correlated() || signalWaits == null) {
+        if (!signal.correlated()) {
             return Future.succeededFuture(true);
         }
         return signalWaits.isOpen(inst.id(), signal.waitId(), tx);
@@ -1009,35 +949,26 @@ final class SignalHandler {
         }
 
         /**
-         * Gives each open wait the id of its entry: the id the parked signals that matched an entry of it carry, when
-         * that entry's record is held and addresses this wait. A wait no parked signal matched keeps no id.
+         * Gives each open wait the id of its entry: the id of the record the instance holds at the wait's address, or
+         * none when it holds no record there.
          */
         private Future<List<ParkedSignals.WaitAddress>> withEntryIds(
                 WorkflowInstanceId instance, List<ParkedSignals.WaitAddress> open, SqlClient tx) {
-            if (signalWaits == null || open.isEmpty()) {
+            if (open.isEmpty()) {
                 return Future.succeededFuture(List.copyOf(open));
             }
-            return commands.parkedSignals(instance, tx).compose(parked -> {
-                List<String> waitIds = parked.stream()
-                        .map(ParkedSignal::waitId)
-                        .filter(Objects::nonNull)
-                        .toList();
-                if (waitIds.isEmpty()) {
-                    return Future.succeededFuture(List.copyOf(open));
+            return signalWaits.held(instance, tx).map(entries -> {
+                List<ParkedSignals.WaitAddress> addressed = new ArrayList<>(open.size());
+                for (ParkedSignals.WaitAddress wait : open) {
+                    String entryId = entries.stream()
+                            .filter(entry -> addresses(entry, wait))
+                            .map(entry -> entry.waitId().toString())
+                            .findFirst()
+                            .orElse(null);
+                    addressed.add(new ParkedSignals.WaitAddress(
+                            wait.stepId(), wait.signalName(), wait.forkStepId(), wait.branchId(), entryId));
                 }
-                return signalWaits.openEntries(instance, waitIds, tx).map(entries -> {
-                    List<ParkedSignals.WaitAddress> addressed = new ArrayList<>(open.size());
-                    for (ParkedSignals.WaitAddress wait : open) {
-                        String entryId = entries.entrySet().stream()
-                                .filter(entry -> addresses(entry.getValue(), wait))
-                                .map(Map.Entry::getKey)
-                                .findFirst()
-                                .orElse(null);
-                        addressed.add(new ParkedSignals.WaitAddress(
-                                wait.stepId(), wait.signalName(), wait.forkStepId(), wait.branchId(), entryId));
-                    }
-                    return List.copyOf(addressed);
-                });
+                return List.copyOf(addressed);
             });
         }
 

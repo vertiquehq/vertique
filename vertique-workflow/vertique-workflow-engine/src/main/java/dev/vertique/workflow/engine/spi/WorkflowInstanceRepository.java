@@ -146,15 +146,20 @@ public interface WorkflowInstanceRepository<TX> {
      * @param definitionId optional definition id the instance must be of, or {@code null} for any
      * @param scopeKey optional start scope the instance must have been created in, or {@code null} for any
      * @param tx the active transaction to use
-     * @return a {@link Future} of at most two live instances
+     * @return a {@link Future} of at most two live instances; the default implementation returns a failed future
+     *     holding an {@link UnsupportedOperationException}, for a repository that does not support signals delivered by
+     *     business key
      */
-    Future<List<WorkflowInstance>> findLiveByBusinessKey(
+    default Future<List<WorkflowInstance>> findLiveByBusinessKey(
             String contractName,
             String signalName,
             String businessKey,
             @Nullable String definitionId,
             @Nullable String scopeKey,
-            TX tx);
+            TX tx) {
+        return Future.failedFuture(new UnsupportedOperationException(
+                "This instance repository does not support signals delivered by business key"));
+    }
 
     /**
      * Returns a keyset-paginated, filtered list of workflow instances. Executes read-only (no row

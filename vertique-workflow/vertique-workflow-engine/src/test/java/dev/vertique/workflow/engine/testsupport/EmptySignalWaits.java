@@ -10,8 +10,9 @@ import static org.mockito.Mockito.mock;
 import dev.vertique.workflow.engine.spi.WorkflowSignalWaitRepository;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
+import java.util.List;
 
-/** A wait record repository for tests that never read a record: a delete finds none and every write succeeds. */
+/** A wait record repository for tests that never read a record: a delete finds none, an instance holds none and every write succeeds. */
 public final class EmptySignalWaits {
 
     private EmptySignalWaits() {}
@@ -27,6 +28,7 @@ public final class EmptySignalWaits {
         lenient().when(waits.write(any(), any())).thenReturn(Future.succeededFuture());
         lenient().when(waits.delete(any(), any(), any(), any(), any())).thenReturn(Future.succeededFuture(false));
         lenient().when(waits.deleteAll(any(), any())).thenReturn(Future.succeededFuture());
+        lenient().when(waits.findByInstance(any(), any())).thenReturn(Future.succeededFuture(List.of()));
         return waits;
     }
 }
