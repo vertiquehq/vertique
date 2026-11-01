@@ -6,6 +6,7 @@ package dev.vertique.workflow.services.source;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.scope.ScopeContext;
 import dev.vertique.core.scope.ScopeKey;
+import dev.vertique.core.util.Strings;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
@@ -187,7 +188,10 @@ final class SignalSourceRun<T> {
             Throwable failure = result.thrown() != null ? result.thrown() : result.failed();
             SignalSourceRefusal refusal = refusalIn(failure);
             if (refusal != null) {
-                return conclude(null, Verdict.of(Outcome.REFUSED_IDENTITY, Fate.TERMINAL, refusal.errorType()));
+                return conclude(
+                        null,
+                        Verdict.of(
+                                Outcome.REFUSED_IDENTITY, Fate.TERMINAL, Strings.errorTypeToken(refusal.errorType())));
             }
             if (result.thrown() != null) {
                 return conclude(null, thrownVerdict(result.thrown()));
@@ -247,7 +251,8 @@ final class SignalSourceRun<T> {
     // --- the signals, one at a time ---
 
     private Future<SourceDisposition> signals() {
-        Future<SourceDisposition> folded = Future.succeededFuture(new SourceDisposition(Fate.DONE, null));
+        Future<SourceDisposition> folded = Future.succeededFuture(
+                new SourceDisposition(Fate.DONE, null, effective.security().snapshot()));
         for (Target<T> target : plan.targets()) {
             folded = folded.compose(sofar -> signal(target).map(next -> fold(sofar, next)));
         }
@@ -407,7 +412,10 @@ final class SignalSourceRun<T> {
                 verdict.definitionId(),
                 verdict.outcome()));
         logNoCommand(target, verdict);
-        return new SourceDisposition(verdict.fate(), verdict.fate() == Fate.DONE ? null : verdict.errorType());
+        return new SourceDisposition(
+                verdict.fate(),
+                verdict.fate() == Fate.DONE ? null : verdict.errorType(),
+                effective.security().snapshot());
     }
 
     /**

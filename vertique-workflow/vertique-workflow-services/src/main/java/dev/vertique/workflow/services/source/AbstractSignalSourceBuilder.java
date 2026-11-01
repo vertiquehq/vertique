@@ -58,6 +58,7 @@ public abstract class AbstractSignalSourceBuilder<T, SELF, R> implements SourceS
     private @Nullable Function<SignalMessage<T>, Future<Optional<SecurityIdentity>>> dispatchAs;
     private boolean restoreCorrelationFromHeaders;
     private @Nullable SignalNoMatch sourcePolicy;
+    private boolean sharedStages;
     private @Nullable SignalSourcePlan<T> built;
 
     /**
@@ -74,6 +75,7 @@ public abstract class AbstractSignalSourceBuilder<T, SELF, R> implements SourceS
     public SELF when(Predicate<T> predicate) {
         Objects.requireNonNull(predicate, "predicate");
         requireOpen();
+        sharedStages = true;
         this.when = predicate;
         return self();
     }
@@ -82,6 +84,7 @@ public abstract class AbstractSignalSourceBuilder<T, SELF, R> implements SourceS
     public SELF scope(Function<SignalMessage<T>, Optional<String>> scope) {
         Objects.requireNonNull(scope, "scope");
         requireOpen();
+        sharedStages = true;
         this.scope = scope;
         return self();
     }
@@ -89,6 +92,7 @@ public abstract class AbstractSignalSourceBuilder<T, SELF, R> implements SourceS
     @Override
     public SELF anyScope() {
         requireOpen();
+        sharedStages = true;
         this.anyScope = true;
         return self();
     }
@@ -104,6 +108,7 @@ public abstract class AbstractSignalSourceBuilder<T, SELF, R> implements SourceS
     @Override
     public SELF lookupTimeoutMs(long timeoutMs) {
         requireOpen();
+        sharedStages = true;
         this.lookupTimeoutMs = timeoutMs;
         return self();
     }
@@ -112,6 +117,7 @@ public abstract class AbstractSignalSourceBuilder<T, SELF, R> implements SourceS
     public SELF dispatchAs(Function<SignalMessage<T>, Future<Optional<SecurityIdentity>>> identity) {
         Objects.requireNonNull(identity, "identity");
         requireOpen();
+        sharedStages = true;
         this.dispatchAs = identity;
         return self();
     }
@@ -127,6 +133,7 @@ public abstract class AbstractSignalSourceBuilder<T, SELF, R> implements SourceS
     public SELF onNoMatch(SignalNoMatch policy) {
         Objects.requireNonNull(policy, "policy");
         requireOpen();
+        sharedStages = true;
         this.sourcePolicy = policy;
         return self();
     }
@@ -136,6 +143,7 @@ public abstract class AbstractSignalSourceBuilder<T, SELF, R> implements SourceS
         Objects.requireNonNull(contract, "contract");
         Objects.requireNonNull(signalName, "signalName");
         requireOpen();
+        sharedStages = true;
         Draft<T> draft = new Draft<>(contract, signalName);
         drafts.add(draft);
         return new TargetStage(draft);
@@ -175,6 +183,20 @@ public abstract class AbstractSignalSourceBuilder<T, SELF, R> implements SourceS
                 sourceName, when, scope, dedupBy, lookupTimeoutMs, dispatchAs, restoreCorrelationFromHeaders, targets);
         built = plan;
         return plan;
+    }
+
+    /**
+     * Tells whether any shared stage was set: {@code when}, {@code scope}, {@code anyScope},
+     * {@code dedupBy}, {@code dispatchAs}, {@code onNoMatch}, {@code lookupTimeoutMs} or
+     * {@code restoreCorrelationFromHeaders}, or a {@code signal} target. A transport whose own
+     * shorthand cannot carry these stages uses it to refuse a mix instead of dropping them.
+     *
+     * <p>{@code dedupBy} and {@code restoreCorrelationFromHeaders} do not count, because a transport's older form takes them too.
+     *
+     * @return {@code true} when a shared stage or a signal target was set
+     */
+    protected final boolean hasSharedStages() {
+        return sharedStages;
     }
 
     @SuppressWarnings("unchecked")

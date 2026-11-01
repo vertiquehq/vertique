@@ -3,8 +3,7 @@
 
 package dev.vertique.kafka;
 
-import java.util.Objects;
-import java.util.regex.Pattern;
+import dev.vertique.core.util.Strings;
 
 /**
  * Failure a {@link KafkaRecordHandler} raises to say that retrying the record cannot help. The
@@ -26,11 +25,6 @@ public final class KafkaTerminalFailure extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
 
-    /** The error type that stands in for one that is not a simple token. */
-    private static final String INVALID_ERROR_TYPE = "InvalidErrorType";
-
-    private static final Pattern ERROR_TYPE_TOKEN = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$.\\-]{0,127}");
-
     private final String errorType;
 
     /**
@@ -46,8 +40,7 @@ public final class KafkaTerminalFailure extends RuntimeException {
     }
 
     private static String checked(String errorType) {
-        Objects.requireNonNull(errorType, "errorType");
-        return ERROR_TYPE_TOKEN.matcher(errorType).matches() ? errorType : INVALID_ERROR_TYPE;
+        return Strings.errorTypeToken(errorType);
     }
 
     /**

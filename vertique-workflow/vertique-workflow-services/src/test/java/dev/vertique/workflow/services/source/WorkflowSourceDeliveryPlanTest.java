@@ -496,6 +496,11 @@ class WorkflowSourceDeliveryPlanTest {
             assertThat(disposition.fate()).isEqualTo(Fate.DONE);
             assertThat(rig.order()).containsExactly("when", "dedupBy", "dispatchAs", "scope", "lookup");
 
+            // and the disposition holds the dispatchAs identity, not the trigger's
+            assertThat(disposition.security().identity().actor().id()).isEqualTo("alice");
+            assertThat(disposition.security().identity())
+                    .isNotEqualTo(envelope.security().identity());
+
             // and the recording ran under alice, with the envelope's correlation and origin
             Call recording = rig.calls().get(0);
             assertThat(recording.ambient().security().identity().actor().id()).isEqualTo("alice");
@@ -507,19 +512,22 @@ class WorkflowSourceDeliveryPlanTest {
         // and a dispatchAs that answers empty keeps the envelope's identity
         try (DeliveryRig rig = DeliveryRig.over(vertx)) {
             SourceEnvelope envelope = envelope();
-            rig.deliver(orderedPlan(rig, Optional.empty()), shipment(), envelope);
+            SourceDisposition kept = rig.deliver(orderedPlan(rig, Optional.empty()), shipment(), envelope);
 
             assertThat(rig.order()).containsExactly("when", "dedupBy", "dispatchAs", "scope", "lookup");
             assertAmbientIs(rig.calls().get(0).ambient(), envelope);
+            assertThat(kept.security().identity()).isEqualTo(envelope.security().identity());
         }
 
         // and when the envelope's identity was contributed, dispatchAs never runs and the envelope's identity is kept
         try (DeliveryRig rig = DeliveryRig.over(vertx)) {
             SourceEnvelope contributed = contributedEnvelope();
-            rig.deliver(orderedPlan(rig, Optional.of(user("alice"))), shipment(), contributed);
+            SourceDisposition kept = rig.deliver(orderedPlan(rig, Optional.of(user("alice"))), shipment(), contributed);
 
             assertThat(rig.order()).containsExactly("when", "dedupBy", "scope", "lookup");
             assertAmbientIs(rig.calls().get(0).ambient(), contributed);
+            assertThat(kept.security().identity())
+                    .isEqualTo(contributed.security().identity());
         }
     }
 
@@ -814,6 +822,65 @@ class WorkflowSourceDeliveryPlanTest {
             // and nothing out holds the token
             rig.assertNothingLeaked(disposition, "abc-123");
         }
+    }
+
+    @Test
+    @DisplayName("a disposition that ends after dispatchAs holds the dispatchAs identity, whatever its fate")
+    void dispositionEndingAfterDispatchAsHoldsTheDispatchAsIdentityWhateverItsFate(Vertx vertx) {
+        // Given a plan whose dispatchAs answers alice, and operations that raise no-match with a retry policy
+        SignalSourcePlan<ShipmentDelivered> asAlice = ordersSignal(shipments()
+                .onNoMatch(SignalNoMatch.RETRY)
+                .dispatchAs(message -> Future.succeededFuture(Optional.of(user("alice")))));
+        try (DeliveryRig rig = DeliveryRig.over(vertx)
+                .operationsRaising(new WorkflowSignalNoMatchException("orders", SHIPMENT_DELIVERED))) {
+            // When it delivers one message
+            SourceEnvelope envelope = envelope();
+            SourceDisposition disposition = rig.deliver(asAlice, shipment(KEY), envelope);
+
+            // Then the fate is RETRY and the disposition holds alice, not the trigger's identity
+            assertThat(disposition.fate()).isEqualTo(Fate.RETRY);
+            assertThat(disposition.security().identity().actor().id()).isEqualTo("alice");
+            assertThat(disposition.security().identity())
+                    .isNotEqualTo(envelope.security().identity());
+        }
+
+        // and a message that stops before dispatchAs holds the trigger's identity
+        SignalSourcePlan<ShipmentDelivered> ignored = ordersSignal(shipments()
+                .when(body -> false)
+                .dispatchAs(message -> Future.succeededFuture(Optional.of(user("alice")))));
+        try (DeliveryRig rig = DeliveryRig.over(vertx)) {
+            SourceEnvelope envelope = envelope();
+            SourceDisposition disposition = rig.deliver(ignored, shipment(KEY), envelope);
+            assertThat(disposition.security().identity())
+                    .isEqualTo(envelope.security().identity());
+        }
+
+        // and the two-argument constructor carries no security
+        assertThat(new SourceDisposition(Fate.DONE, null).security()).isNull();
+    }
+
+    @Test
+    @DisplayName("a refusal whose error type is not a token reaches the disposition as InvalidErrorType")
+    void refusalWhoseErrorTypeIsNotATokenReachesTheDispositionAsInvalidErrorType(Vertx vertx) {
+        // Given plans whose dispatchAs refuses with a CRLF type, a type with a space and a type of 200 letters
+        Map<String, String> types = new LinkedHashMap<>();
+        types.put("crlf", "Rejected\r\n[2026-11-01 INFO] forged: admin granted");
+        types.put("space", "token abc-123 rejected");
+        types.put("long", "T".repeat(200));
+        types.forEach((row, type) -> {
+            SignalSourcePlan<ShipmentDelivered> plan =
+                    ordersSignal(shipments().dispatchAs(message -> Future.failedFuture(new SignalSourceRefusal(type))));
+            try (DeliveryRig rig = DeliveryRig.over(vertx)) {
+                // When each delivers one message
+                SourceDisposition disposition = rig.deliver(plan, shipment(KEY), envelope());
+
+                // Then it is TERMINAL with the stand-in type, and nothing of the type is left
+                assertThat(disposition.fate()).as(row).isEqualTo(Fate.TERMINAL);
+                assertThat(disposition.errorType()).as(row).isEqualTo("InvalidErrorType");
+                assertThat(rig.outcomes()).as(row).containsExactly(Outcome.REFUSED_IDENTITY);
+                rig.assertNothingLeaked(disposition, "forged", "abc-123", "T".repeat(200));
+            }
+        });
     }
 
     @Test

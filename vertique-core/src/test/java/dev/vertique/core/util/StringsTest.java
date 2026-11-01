@@ -59,4 +59,17 @@ class StringsTest {
     void singleNull() {
         assertNull(Strings.firstNonBlank((String) null));
     }
+
+    @Test
+    @DisplayName("errorTypeToken: a simple token is kept and any other text becomes InvalidErrorType")
+    void errorTypeToken() {
+        assertEquals("TokenRejected", Strings.errorTypeToken("TokenRejected"));
+        assertEquals("a.b-c$_1", Strings.errorTypeToken("a.b-c$_1"));
+        assertEquals("T".repeat(128), Strings.errorTypeToken("T".repeat(128)));
+        assertEquals("InvalidErrorType", Strings.errorTypeToken("T".repeat(129)));
+        assertEquals("InvalidErrorType", Strings.errorTypeToken(""));
+        assertEquals("InvalidErrorType", Strings.errorTypeToken("1st"));
+        assertEquals("InvalidErrorType", Strings.errorTypeToken("two words"));
+        assertEquals("InvalidErrorType", Strings.errorTypeToken("Bad\r\nforged"));
+    }
 }

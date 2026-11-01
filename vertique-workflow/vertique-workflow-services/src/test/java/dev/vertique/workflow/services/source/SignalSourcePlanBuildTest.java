@@ -26,6 +26,8 @@ import jakarta.annotation.Nullable;
 import java.lang.reflect.Method;
 import java.lang.reflect.TypeVariable;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -322,6 +324,38 @@ class SignalSourcePlanBuildTest {
         assertThatThrownBy(bothScopes::build)
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("carriers");
+    }
+
+    @Test
+    @DisplayName("hasSharedStages is true once any shared stage or a signal target is set")
+    void hasSharedStagesIsTrueOnceAnySharedStageOrASignalTargetIsSet() {
+        // Given a builder that has had nothing written on it
+        assertThat(new FakeTransportBuilder("carriers", DeliveryConfirmed.class).hasSharedStages())
+                .isFalse();
+
+        // When each shared stage is written alone on a fresh builder, then each one makes it true
+        Map<String, Function<FakeTransportBuilder, FakeTransportBuilder>> stages = new LinkedHashMap<>();
+        stages.put("when", builder -> builder.when(body -> true));
+        stages.put("scope", builder -> builder.scope(message -> Optional.of("acme")));
+        stages.put("anyScope", FakeTransportBuilder::anyScope);
+        stages.put("dispatchAs", builder -> builder.dispatchAs(message -> Future.succeededFuture(Optional.empty())));
+        stages.put("onNoMatch", builder -> builder.onNoMatch(SignalNoMatch.RETRY));
+        stages.put("lookupTimeoutMs", builder -> builder.lookupTimeoutMs(250));
+        stages.forEach((name, stage) -> assertThat(
+                        stage.apply(new FakeTransportBuilder("carriers", null)).hasSharedStages())
+                .as(name)
+                .isTrue());
+
+        // and a signal target alone makes it true
+        FakeTransportBuilder signalled = new FakeTransportBuilder("carriers", DeliveryConfirmed.class);
+        signalled.signal(OrdersContract.class, SHIPMENT_DELIVERED);
+        assertThat(signalled.hasSharedStages()).isTrue();
+
+        // and a transport's own stage does not
+        assertThat(new FakeTransportBuilder("carriers", DeliveryConfirmed.class)
+                        .topic("carrier.events")
+                        .hasSharedStages())
+                .isFalse();
     }
 
     @Test
