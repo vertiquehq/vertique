@@ -22,6 +22,13 @@ SPDX-License-Identifier: EUPL-1.2
     <name>Vertique Example Parent</name>
     <description>Internal build policy shared by the open-core examples</description>
 
+    <properties>
+        <!-- The JaCoCo aggregate (vertique-coverage-report) holds the published modules only, so no example
+             has coverage data, and the diff coverage gate already leaves examples out. Without this, Sonar
+             counts every line of a new example as uncovered. Quality rules still analyse examples. -->
+        <sonar.coverage.exclusions>**/*</sonar.coverage.exclusions>
+    </properties>
+
     <build>
         <plugins>
             <plugin>
