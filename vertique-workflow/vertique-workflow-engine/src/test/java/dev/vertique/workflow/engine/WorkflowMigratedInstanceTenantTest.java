@@ -186,7 +186,9 @@ class WorkflowMigratedInstanceTenantTest {
                         EmptySignalWaits.create(),
                         new EmptyCommandRepository(),
                         mock(WorkflowHistoryRecorder.class),
-                        FIXED_CLOCK));
+                        FIXED_CLOCK),
+                mock(),
+                mock(TimerLifecycleService.class));
 
         SqlClient tx = ActiveTransactionClient.create();
         CommandHead head = new CommandHead(

@@ -129,12 +129,10 @@ final class MigrationExecutor {
     /** Deletes the record of the wait a migration leaves. */
     private final SignalWaits signalWaits;
 
-    /** Cancels the timeout timer of the wait a migration leaves; {@code null} in legacy test constructors. */
-    @jakarta.annotation.Nullable
+    /** Cancels the timeout timer of the wait a migration leaves. */
     private final TimerStore<SqlClient> timerStore;
 
-    /** Appends the history of that cancel; {@code null} in legacy test constructors. */
-    @jakarta.annotation.Nullable
+    /** Appends the history of that cancel. */
     private final TimerLifecycleService timerLifecycle;
 
     /**
@@ -167,9 +165,8 @@ final class MigrationExecutor {
      * @param actors takes the actor a recorded migration is logged with from the caller's identity
      * @param decisions the decision log that records the migration's patch and baseline
      * @param signalWaits deletes the record of the wait the migration leaves
-     * @param timerStore cancels the timeout timer of a keyed wait the migration leaves; may be {@code null} in legacy
-     *     test constructors
-     * @param timerLifecycle appends the history of that cancel; may be {@code null} in legacy test constructors
+     * @param timerStore cancels the timeout timer of a keyed wait the migration leaves
+     * @param timerLifecycle appends the history of that cancel
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -187,11 +184,11 @@ final class MigrationExecutor {
             CommandActors actors,
             DecisionLog decisions,
             SignalWaits signalWaits,
-            @jakarta.annotation.Nullable TimerStore<SqlClient> timerStore,
-            @jakarta.annotation.Nullable TimerLifecycleService timerLifecycle) {
+            TimerStore<SqlClient> timerStore,
+            TimerLifecycleService timerLifecycle) {
         this.signalWaits = signalWaits;
-        this.timerStore = timerStore;
-        this.timerLifecycle = timerLifecycle;
+        this.timerStore = java.util.Objects.requireNonNull(timerStore, "timerStore");
+        this.timerLifecycle = java.util.Objects.requireNonNull(timerLifecycle, "timerLifecycle");
         this.decisions = decisions;
         this.actors = actors;
         // migrationRegistryOpt is null only from test-only constructors that delegate with null;
@@ -285,6 +282,8 @@ final class MigrationExecutor {
      * @param commands the command repository whose execution lock a migration takes
      * @param decisions the decision log that records the migration's patch and baseline
      * @param signalWaits deletes the record of the wait the migration leaves
+     * @param timerStore cancels the timeout timer of a keyed wait the migration leaves
+     * @param timerLifecycle appends the history of that cancel
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -298,7 +297,9 @@ final class MigrationExecutor {
             Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
             WorkflowCommandRepository<SqlClient> commands,
             DecisionLog decisions,
-            SignalWaits signalWaits) {
+            SignalWaits signalWaits,
+            TimerStore<SqlClient> timerStore,
+            TimerLifecycleService timerLifecycle) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -315,8 +316,8 @@ final class MigrationExecutor {
                 CommandActors.ambient(),
                 decisions,
                 signalWaits,
-                null,
-                null);
+                timerStore,
+                timerLifecycle);
     }
 
     /**
@@ -334,6 +335,8 @@ final class MigrationExecutor {
      * @param commands the command repository whose execution lock a migration takes
      * @param decisions the decision log that records the migration's patch and baseline
      * @param signalWaits deletes the record of the wait the migration leaves
+     * @param timerStore cancels the timeout timer of a keyed wait the migration leaves
+     * @param timerLifecycle appends the history of that cancel
      */
     MigrationExecutor(
             Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
@@ -346,7 +349,9 @@ final class MigrationExecutor {
             WorkflowContextBinder contextBinder,
             WorkflowCommandRepository<SqlClient> commands,
             DecisionLog decisions,
-            SignalWaits signalWaits) {
+            SignalWaits signalWaits,
+            TimerStore<SqlClient> timerStore,
+            TimerLifecycleService timerLifecycle) {
         this(
                 migrationRegistryOpt,
                 registry,
@@ -359,7 +364,9 @@ final class MigrationExecutor {
                 Optional.empty(),
                 commands,
                 decisions,
-                signalWaits);
+                signalWaits,
+                timerStore,
+                timerLifecycle);
     }
 
     // --- Recording ---
@@ -889,7 +896,7 @@ final class MigrationExecutor {
                 .close(source.id(), sourceStepId, null, null, null, tx)
                 .compose(deleted -> {
                     UUID timeoutTimerId = source.waitAuxId();
-                    if (!deleted || timeoutTimerId == null || timerStore == null || timerLifecycle == null) {
+                    if (!deleted || timeoutTimerId == null) {
                         return Future.<Void>succeededFuture();
                     }
                     return timerStore

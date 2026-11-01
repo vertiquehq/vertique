@@ -443,7 +443,7 @@ public interface WorkflowCommandRepository<TX> {
      *     CommandActor, Object)} instead; it replaces this method. This form keeps working for a signal that carries
      *     neither.
      */
-    @Deprecated
+    @Deprecated(since = "0.4.0", forRemoval = true)
     Future<Long> recordSignal(
             WorkflowInstanceId instance,
             String signalName,
