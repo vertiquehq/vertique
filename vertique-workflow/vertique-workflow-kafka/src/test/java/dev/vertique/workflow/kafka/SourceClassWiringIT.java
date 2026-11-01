@@ -105,7 +105,7 @@ class SourceClassWiringIT {
             // Then the lookup was called once with the record's tracking reference
             assertThat(lookup.asked()).containsExactly(trackingRef);
             // And the signal is recorded
-            assertThat(observer.outcomesOf(ShipmentDeliveredSource.NAME)).containsExactly(Outcome.APPLIED);
+            assertThat(observer.outcomesOf(ShipmentDeliveredSource.NAME)).containsExactly(Outcome.RECORDED);
             // And the instance resumed with the mapped payload
             Row instance = await(
                             pool.preparedQuery("SELECT state_json::text AS state FROM workflow_instances WHERE id = $1")

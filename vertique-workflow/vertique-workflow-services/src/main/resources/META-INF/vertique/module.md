@@ -154,7 +154,7 @@ A `SignalSourcePlan<T>` describes a transport-neutral signal source, and `Workfl
 
 | Cause | Outcome | Fate |
 |---|---|---|
-| Recorded | `APPLIED` | `DONE` |
+| Recorded | `RECORDED` | `DONE` |
 | No match | `NO_MATCH` | `DONE`, or `RETRY` under the signal's policy |
 | More than one match | `AMBIGUOUS` | `TERMINAL` |
 | Duplicate receipt | `DEDUPLICATED` | `DONE` |
@@ -172,7 +172,7 @@ A `SignalSourcePlan<T>` describes a transport-neutral signal source, and `Workfl
 
 `UNDECODABLE` is raised and reported by a transport itself. A failed stage is forwarded by exception class only, a `SignalSourceRefusal` by its `errorType()` alone, a refused input by the refusing exception's class, and a blank dedup key as `BlankDedupKey`; a message, which can hold the key, is never logged, put in a disposition or put in an event.
 
-**Identity log.** When the identity in force is not a system identity and a message ends without recording a command, at any stage and for any outcome except `APPLIED`, `DEDUPLICATED` and `IGNORED` (no match, ambiguity, a limit, a refusal, an empty scope, a refused key, scope or payload, or a failure), `deliver` writes one log record naming the actor id, contract, signal and outcome, because no command row then shows who attempted it. An outcome reached before a signal is chosen names no contract or signal. The actor id has control and line-separator characters removed and is cut to 255 code points; the key and the message are never logged. A system identity writes none.
+**Identity log.** When the identity in force is not a system identity and a message ends without recording a command, at any stage and for any outcome except `RECORDED`, `DEDUPLICATED` and `IGNORED` (no match, ambiguity, a limit, a refusal, an empty scope, a refused key, scope or payload, or a failure), `deliver` writes one log record naming the actor id, contract, signal and outcome, because no command row then shows who attempted it. An outcome reached before a signal is chosen names no contract or signal. The actor id has control and line-separator characters removed and is cut to 255 code points; the key and the message are never logged. A system identity writes none.
 
 ---
 

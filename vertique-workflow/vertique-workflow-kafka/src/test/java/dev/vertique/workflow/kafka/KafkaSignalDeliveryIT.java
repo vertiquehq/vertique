@@ -220,7 +220,7 @@ class KafkaSignalDeliveryIT {
             assertThat(scenario.commands(onReplay[loser])).isEmpty();
             assertThat(scenario.instance(onReplay[loser]).status()).isEqualTo("WAITING");
             assertThat(scenario.observer().outcomesOf("replay"))
-                    .containsExactlyInAnyOrder(Outcome.APPLIED, Outcome.DEDUPLICATED, Outcome.APPLIED);
+                    .containsExactlyInAnyOrder(Outcome.RECORDED, Outcome.DEDUPLICATED, Outcome.RECORDED);
             // And the third is recorded with a dedup key built from offset 7
             assertThat(scenario.dedupRows(onReplay[2]))
                     .extracting(SourceScenario.DedupRow::key)

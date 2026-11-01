@@ -42,8 +42,8 @@ public record SignalSourceEvent(
 
     /** What happened to a message. */
     public enum Outcome {
-        /** The signal was recorded for application. */
-        APPLIED,
+        /** The signal was recorded; the executor applies it afterwards. */
+        RECORDED,
         /** No instance matched the key. */
         NO_MATCH,
         /** More than one instance matched the key. */

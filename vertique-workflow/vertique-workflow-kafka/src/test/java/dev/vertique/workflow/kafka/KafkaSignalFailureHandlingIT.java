@@ -82,9 +82,9 @@ class KafkaSignalFailureHandlingIT {
             scenario.awaitSettled(matching, SourceScenario.PROMPT);
             scenario.awaitIdle(order);
             assertThat(scenario.commands(order)).hasSize(1);
-            // And the observer saw IGNORED, IGNORED and NO_MATCH, and then applied the matching event
+            // And the observer saw IGNORED, IGNORED and NO_MATCH, and then recorded the matching event
             assertThat(scenario.observer().outcomesOf("carriers"))
-                    .containsExactlyInAnyOrder(Outcome.IGNORED, Outcome.IGNORED, Outcome.NO_MATCH, Outcome.APPLIED);
+                    .containsExactlyInAnyOrder(Outcome.IGNORED, Outcome.IGNORED, Outcome.NO_MATCH, Outcome.RECORDED);
         }
     }
 
@@ -356,7 +356,7 @@ class KafkaSignalFailureHandlingIT {
             assertThat(carriers.committed(record)).isTrue();
             assertThat(scenario.completions().outcomesOf(record)).containsExactly(KafkaTerminalOutcome.SUCCESS);
             assertThat(carriers.dlq().read()).isEmpty();
-            assertThat(scenario.observer().count("carriers", Outcome.APPLIED)).isEqualTo(1);
+            assertThat(scenario.observer().count("carriers", Outcome.RECORDED)).isEqualTo(1);
         }
     }
 
@@ -428,7 +428,7 @@ class KafkaSignalFailureHandlingIT {
             scenario.awaitDelivered(record, order, returned);
             // And the retry answers a duplicate for the orders signal and records the returns signal, so that each
             // contract has exactly one command
-            assertThat(scenario.observer().outcomesOf("carriers")).contains(Outcome.DEDUPLICATED, Outcome.APPLIED);
+            assertThat(scenario.observer().outcomesOf("carriers")).contains(Outcome.DEDUPLICATED, Outcome.RECORDED);
             assertThat(scenario.commands(order)).hasSize(1);
             assertThat(scenario.commands(returned)).hasSize(1);
             assertThat(scenario.completions().outcomesOf(record)).last().isEqualTo(KafkaTerminalOutcome.SUCCESS);
@@ -447,9 +447,9 @@ class KafkaSignalFailureHandlingIT {
             Produced record = carriers.produce(scenario.delivered("1", order.key()));
             scenario.awaitDelivered(record, order);
 
-            // Then the orders instance resumed and the observer saw one APPLIED and one NO_MATCH
+            // Then the orders instance resumed and the observer saw one RECORDED and one NO_MATCH
             assertThat(scenario.signalsApplied(order)).isEqualTo(1);
-            assertThat(scenario.observer().count("carriers", Outcome.APPLIED)).isEqualTo(1);
+            assertThat(scenario.observer().count("carriers", Outcome.RECORDED)).isEqualTo(1);
             assertThat(scenario.observer().count("carriers", Outcome.NO_MATCH)).isEqualTo(1);
             assertThat(scenario.commandCount()).isEqualTo(1);
             // And the record completes with SUCCESS
@@ -511,7 +511,7 @@ class KafkaSignalFailureHandlingIT {
             assertThat(scenario.commands(globex)).isEmpty();
             // And the second record created no command, attempted no match, and the observer saw one SCOPE_EMPTY
             assertThat(scenario.observer().outcomesOf("carriers"))
-                    .containsExactlyInAnyOrder(Outcome.APPLIED, Outcome.SCOPE_EMPTY);
+                    .containsExactlyInAnyOrder(Outcome.RECORDED, Outcome.SCOPE_EMPTY);
             // And both records completed with SUCCESS
             assertThat(scenario.completions().outcomesOf(scoped)).containsExactly(KafkaTerminalOutcome.SUCCESS);
             assertThat(scenario.completions().outcomesOf(unscoped)).containsExactly(KafkaTerminalOutcome.SUCCESS);
@@ -553,7 +553,7 @@ class KafkaSignalFailureHandlingIT {
             scenario.awaitSettled(accepted, SourceScenario.PROMPT);
             scenario.awaitIdle(order);
             assertThat(scenario.observer().outcomesOf("carriers"))
-                    .containsExactlyInAnyOrder(Outcome.IGNORED, Outcome.APPLIED);
+                    .containsExactlyInAnyOrder(Outcome.IGNORED, Outcome.RECORDED);
             assertThat(scenario.commands(order)).hasSize(1);
         }
     }
@@ -715,7 +715,7 @@ class KafkaSignalFailureHandlingIT {
             scenario.awaitIdle(order);
             assertThat(scenario.commands(order)).hasSize(1);
             assertThat(scenario.observer().outcomesOf("carriers"))
-                    .containsExactlyInAnyOrder(Outcome.STAGE_FAILED, Outcome.APPLIED);
+                    .containsExactlyInAnyOrder(Outcome.STAGE_FAILED, Outcome.RECORDED);
         }
     }
 

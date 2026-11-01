@@ -142,10 +142,10 @@ public class WorkflowSourceDeliveryGraphIT {
         assertThat(observed.observers()).containsExactly(observer);
         assertThat(withObserver.fate()).isEqualTo(Fate.DONE);
 
-        // and the observer received one APPLIED event with the names and the definition id
+        // and the observer received one RECORDED event with the names and the definition id
         assertThat(observer.events()).hasSize(1);
         SignalSourceEvent event = observer.events().get(0);
-        assertThat(event.outcome()).isEqualTo(SignalSourceEvent.Outcome.APPLIED);
+        assertThat(event.outcome()).isEqualTo(SignalSourceEvent.Outcome.RECORDED);
         assertThat(event.source()).isEqualTo("carriers");
         assertThat(event.transport()).isEqualTo("kafka");
         assertThat(event.contractName()).isEqualTo("orders");

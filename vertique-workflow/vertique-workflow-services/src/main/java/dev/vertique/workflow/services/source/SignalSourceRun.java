@@ -364,7 +364,7 @@ final class SignalSourceRun<T> {
             if (receipt != null && receipt.outcome() == CorrelatedSignalReceipt.Outcome.DUPLICATE) {
                 return Verdict.of(Outcome.DEDUPLICATED, Fate.DONE, null);
             }
-            return new Verdict(Outcome.APPLIED, Fate.DONE, null, receipt == null ? null : receipt.definitionId());
+            return new Verdict(Outcome.RECORDED, Fate.DONE, null, receipt == null ? null : receipt.definitionId());
         }
         Verdict named = inChain(failure, cause -> named(target, cause));
         return named != null ? named : failedVerdict(failure);
@@ -456,7 +456,7 @@ final class SignalSourceRun<T> {
      * outcome, and nothing of the message. A recorded, deduplicated or ignored message needs none.
      */
     private void logNoCommand(@Nullable Target<T> target, Verdict verdict) {
-        if (verdict.outcome() == Outcome.APPLIED
+        if (verdict.outcome() == Outcome.RECORDED
                 || verdict.outcome() == Outcome.DEDUPLICATED
                 || verdict.outcome() == Outcome.IGNORED) {
             return;

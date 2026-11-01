@@ -572,7 +572,7 @@ A listener that targets a business key states the accessor of the dedup key, for
 
 | What happened | Outcome reported | Fate |
 |---|---|---|
-| The signal was recorded | `APPLIED` | Finished |
+| The signal was recorded | `RECORDED` | Finished |
 | A duplicate delivery | `DEDUPLICATED` | Finished |
 | No match | `NO_MATCH` | Finished; retried under `RETRY` |
 | More than one match | `AMBIGUOUS` | Terminal |

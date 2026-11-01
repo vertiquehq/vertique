@@ -87,8 +87,8 @@ class AnnotatedAndBuilderSourceIT {
             Observed onBuilder = scenario.run(builder, second, secondKey);
 
             // Then on both topics the matching record resumed its instance with the same payload, and the observer saw
-            // APPLIED and then NO_MATCH
-            assertThat(onAnnotated.signalOutcomes()).containsExactly(Outcome.APPLIED, Outcome.NO_MATCH);
+            // RECORDED and then NO_MATCH
+            assertThat(onAnnotated.signalOutcomes()).containsExactly(Outcome.RECORDED, Outcome.NO_MATCH);
             assertThat(onAnnotated.resumedWithMatchingEvent()).isTrue();
             // And the unmatched record committed with no retry and no dead-letter entry
             assertThat(onAnnotated.unmatchedCompletions()).hasSize(1);

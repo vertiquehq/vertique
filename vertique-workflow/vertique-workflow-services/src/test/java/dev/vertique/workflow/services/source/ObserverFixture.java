@@ -52,9 +52,9 @@ final class ObserverFixture {
         return new Built(delivery, reporter);
     }
 
-    static SignalSourceEvent applied() {
+    static SignalSourceEvent recorded() {
         return new SignalSourceEvent(
-                "carriers", "kafka", "orders", "shipment-delivered", "order-flow", SignalSourceEvent.Outcome.APPLIED);
+                "carriers", "kafka", "orders", "shipment-delivered", "order-flow", SignalSourceEvent.Outcome.RECORDED);
     }
 
     /** An observer that remembers every event it is told about. */

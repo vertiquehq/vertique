@@ -37,12 +37,12 @@ class WorkflowSourceDeliveryObserverTest {
         ThrowingObserver throwing = new ThrowingObserver(failure);
         RecordingObserver after = new RecordingObserver();
         Built built = ObserverFixture.deliveryWith(before, throwing, after);
-        SignalSourceEvent event = ObserverFixture.applied();
+        SignalSourceEvent event = ObserverFixture.recorded();
 
         try (LogCapture logs = new LogCapture()) {
             logs.probe("capture is attached");
 
-            // When an APPLIED outcome is reported
+            // When a RECORDED outcome is reported
             assertThatCode(() -> built.delivery().report(event)).doesNotThrowAnyException();
 
             // Then both recording observers received the one event
@@ -73,7 +73,7 @@ class WorkflowSourceDeliveryObserverTest {
                 ThrowingObserver throwing = new ThrowingObserver(error.get());
                 RecordingObserver after = new RecordingObserver();
                 Built built = ObserverFixture.deliveryWith(throwing, after);
-                SignalSourceEvent event = ObserverFixture.applied();
+                SignalSourceEvent event = ObserverFixture.recorded();
                 String errorName = throwing.failure().getClass().getSimpleName();
 
                 // When an outcome is reported

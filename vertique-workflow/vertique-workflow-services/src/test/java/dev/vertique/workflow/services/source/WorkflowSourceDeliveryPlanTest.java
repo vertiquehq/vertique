@@ -129,9 +129,9 @@ class WorkflowSourceDeliveryPlanTest {
                 assertThat(signal.dedupKey()).isEqualTo(DEFAULT_DEDUP_KEY);
                 assertThat(signal.scopeKey()).isNull();
 
-                // and the disposition is DONE with one APPLIED event
+                // and the disposition is DONE with one RECORDED event
                 assertThat(disposition.fate()).isEqualTo(Fate.DONE);
-                assertThat(rig.outcomes()).containsExactly(Outcome.APPLIED);
+                assertThat(rig.outcomes()).containsExactly(Outcome.RECORDED);
                 signals.add(rig.signals());
             }
         }
@@ -364,12 +364,12 @@ class WorkflowSourceDeliveryPlanTest {
         record Row(String name, Answer first, Answer second, SignalNoMatch policy, Fate fate, List<Outcome> outcomes) {}
         List<Row> rows = List.of(
                 new Row(
-                        "applied then limit",
+                        "recorded then limit",
                         DeliveryRig.recorded(),
                         DeliveryRig.raising(limit),
                         SignalNoMatch.IGNORE,
                         Fate.RETRY,
-                        List.of(Outcome.APPLIED, Outcome.LIMITED)),
+                        List.of(Outcome.RECORDED, Outcome.LIMITED)),
                 new Row(
                         "no-match under retry then ambiguous",
                         DeliveryRig.raising(new WorkflowSignalNoMatchException("orders", SHIPMENT_DELIVERED)),
@@ -378,12 +378,12 @@ class WorkflowSourceDeliveryPlanTest {
                         Fate.TERMINAL,
                         List.of(Outcome.NO_MATCH, Outcome.AMBIGUOUS)),
                 new Row(
-                        "applied then intake refusal",
+                        "recorded then intake refusal",
                         DeliveryRig.recorded(),
                         DeliveryRig.raising(new WorkflowIntakeRefusedException()),
                         SignalNoMatch.IGNORE,
                         Fate.WAIT,
-                        List.of(Outcome.APPLIED, Outcome.LIMITED)),
+                        List.of(Outcome.RECORDED, Outcome.LIMITED)),
                 new Row(
                         "intake refusal then open-signal limit",
                         DeliveryRig.raising(new WorkflowIntakeRefusedException()),
@@ -413,12 +413,12 @@ class WorkflowSourceDeliveryPlanTest {
                         Fate.WAIT,
                         List.of(Outcome.AMBIGUOUS, Outcome.LIMITED)),
                 new Row(
-                        "applied then applied",
+                        "recorded then recorded",
                         DeliveryRig.recorded(),
                         DeliveryRig.recorded(),
                         SignalNoMatch.IGNORE,
                         Fate.DONE,
-                        List.of(Outcome.APPLIED, Outcome.APPLIED)));
+                        List.of(Outcome.RECORDED, Outcome.RECORDED)));
 
         for (Row row : rows) {
             try (DeliveryRig rig = DeliveryRig.over(vertx).operations(row.first(), row.second())) {
@@ -713,7 +713,7 @@ class WorkflowSourceDeliveryPlanTest {
                 assertThat(disposition.fate()).as(row).isEqualTo(Fate.RETRY);
                 assertThat(disposition.errorType()).as(row).isEqualTo("IllegalStateException");
 
-                // and one STAGE_FAILED event is reported, and no APPLIED event
+                // and one STAGE_FAILED event is reported, and no RECORDED event
                 assertThat(rig.outcomes()).as(row).containsExactly(Outcome.STAGE_FAILED);
 
                 // and nothing out holds the key
@@ -832,7 +832,7 @@ class WorkflowSourceDeliveryPlanTest {
         try (DeliveryRig rig = DeliveryRig.over(vertx)) {
             SourceDisposition disposition = rig.deliver(keyed(body -> exactKey), shipment(), envelope());
             assertThat(disposition.fate()).isEqualTo(Fate.DONE);
-            assertThat(rig.outcomes()).containsExactly(Outcome.APPLIED);
+            assertThat(rig.outcomes()).containsExactly(Outcome.RECORDED);
             assertThat(rig.calls()).hasSize(1);
         }
     }
@@ -1118,7 +1118,7 @@ class WorkflowSourceDeliveryPlanTest {
                         "control",
                         rig -> ordersSignal(asAlice(rig).when(body -> true).dedupBy(PlanFixture::dedupKeyOf)),
                         Fate.DONE,
-                        Outcome.APPLIED,
+                        Outcome.RECORDED,
                         null,
                         1));
 
@@ -1358,7 +1358,7 @@ class WorkflowSourceDeliveryPlanTest {
                 assertThat(fates).as(kind).isEqualTo(baseline);
 
                 // and both recording observers received every event
-                List<Outcome> outcomes = List.of(Outcome.APPLIED, Outcome.NO_MATCH, Outcome.AMBIGUOUS);
+                List<Outcome> outcomes = List.of(Outcome.RECORDED, Outcome.NO_MATCH, Outcome.AMBIGUOUS);
                 assertThat(first.events())
                         .as(kind)
                         .extracting(SignalSourceEvent::outcome)

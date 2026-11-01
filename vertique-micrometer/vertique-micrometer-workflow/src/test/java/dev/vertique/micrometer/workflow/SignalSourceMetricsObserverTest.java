@@ -33,15 +33,15 @@ class SignalSourceMetricsObserverTest {
         SignalSourceMetricsObserver observer = new SignalSourceMetricsObserver(
                 registry, MetricsConfig.builder().build());
 
-        // When it receives two APPLIED events for one contract, signal and definition,
+        // When it receives two RECORDED events for one contract, signal and definition,
         // and one UNDECODABLE event with a null contract name, signal name and definition id
-        SignalSourceEvent applied = new SignalSourceEvent(
-                "carriers", "kafka", "orders", "shipment-delivered", "order-flow", Outcome.APPLIED);
-        observer.onOutcome(applied);
-        observer.onOutcome(applied);
+        SignalSourceEvent recorded = new SignalSourceEvent(
+                "carriers", "kafka", "orders", "shipment-delivered", "order-flow", Outcome.RECORDED);
+        observer.onOutcome(recorded);
+        observer.onOutcome(recorded);
         observer.onOutcome(new SignalSourceEvent("carriers", "kafka", null, null, null, Outcome.UNDECODABLE));
 
-        // Then the counter reads 2 under the applied tags
+        // Then the counter reads 2 under the recorded tags
         assertEquals(
                 2.0,
                 registry.get(COUNTER)
@@ -50,7 +50,7 @@ class SignalSourceMetricsObserverTest {
                                 "contract", "orders",
                                 "signal", "shipment-delivered",
                                 "definition", "order-flow",
-                                "outcome", "applied")
+                                "outcome", "recorded")
                         .counter()
                         .count());
 

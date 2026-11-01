@@ -77,7 +77,7 @@ class WorkflowSourceIdempotencyTest {
             // Then the first recorded and committed its row, and the replay recorded nothing
             assertThat(first.fate()).isEqualTo(Fate.DONE);
             assertThat(replay.fate()).isEqualTo(Fate.DONE);
-            assertThat(rig.outcomes()).containsExactly(Outcome.APPLIED, Outcome.DEDUPLICATED);
+            assertThat(rig.outcomes()).containsExactly(Outcome.RECORDED, Outcome.DEDUPLICATED);
             assertThat(rig.calls()).hasSize(1);
             assertThat(rig.inbox().committed).containsExactly(idOf("orders", SHIPMENT_DELIVERED, null, "D-1"));
         }
@@ -95,7 +95,7 @@ class WorkflowSourceIdempotencyTest {
             SourceDisposition retried = rig.deliver(ordersSignal(shipments()), shipment(KEY), envelope("D-1"));
 
             assertThat(retried.fate()).isEqualTo(Fate.DONE);
-            assertThat(rig.outcomes()).containsExactly(Outcome.STAGE_FAILED, Outcome.APPLIED);
+            assertThat(rig.outcomes()).containsExactly(Outcome.STAGE_FAILED, Outcome.RECORDED);
             assertThat(rig.inbox().committed).hasSize(1);
         }
     }
@@ -213,7 +213,7 @@ class WorkflowSourceIdempotencyTest {
             // Then it was recorded once
             assertThat(retried.fate()).isEqualTo(Fate.DONE);
             assertThat(replay.fate()).isEqualTo(Fate.DONE);
-            assertThat(rig.outcomes()).containsExactly(Outcome.NO_MATCH, Outcome.APPLIED, Outcome.DEDUPLICATED);
+            assertThat(rig.outcomes()).containsExactly(Outcome.NO_MATCH, Outcome.RECORDED, Outcome.DEDUPLICATED);
             assertThat(rig.calls()).hasSize(2);
         }
     }
