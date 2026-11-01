@@ -455,7 +455,7 @@ An event usually names something the business knows, such as an order id, and no
 A key identifies a wait for the lifetime of that wait. Declare it in code or in a document; both produce the same plan node.
 
 - **In code.** `correlateBy(Function<S, String>)` on the `waitForSignal` chain. The engine computes the key from the instance's state when the instance enters the wait and stores it with the wait.
-- **In a document.** `correlationKey` on a `wait-signal` step names the id of a registered correlation-key resolver, for example `correlationKey: order.paymentReference`. An unregistered id fails the load with `CORRELATION_KEY_RESOLVER_UNKNOWN`, naming the step and the id.
+- **In a document.** `correlationKey` on a `wait-signal` step names the id of a registered correlation-key resolver, for example `correlationKey: order.paymentReference`. An unregistered id fails the load with `CORRELATION_KEY_RESOLVER_UNKNOWN`, naming the step and the id. A resolver registered for a state type other than the document's fails it with `CORRELATION_KEY_RESOLVER_STATE_TYPE_MISMATCH`.
 - **A valid key** is a non-blank string of at most 255 characters with no NUL character. A key that is not, or a resolver that throws, fails the wait's segment with `WorkflowCorrelationKeyException`, which names the definition, the step and the reason and never the key. When a signal's application reached the wait, that signal is rejected and the instance stays where it was.
 - **Declare it in a new version.** A declared key changes the plan hash of the version that declares it; a wait without a key hashes as before.
 - **Branches.** A keyed wait inside a fork branch records its own key, computed from the parent instance's state as the branch enters the wait.

@@ -50,11 +50,17 @@ import org.mockito.Mockito;
 /**
  * Verifies the correlation key on a {@code wait-signal} document step: a document and the code-first
  * builder compile to the same wait, an absent field leaves the key out, and an unregistered resolver
- * id fails validation with its own code.
+ * id or a resolver of another state type fails validation with its own code.
  */
 class WaitSignalCorrelationKeyCompileTest {
 
-    record State(String carrierRef) {}
+    interface HasCarrier {
+        String carrierRef();
+    }
+
+    record State(String carrierRef) implements HasCarrier {}
+
+    record OtherState(String carrierRef) {}
 
     record Place(String id) {}
 
@@ -103,6 +109,34 @@ class WaitSignalCorrelationKeyCompileTest {
                 lookup,
                 profile,
                 new DecisionRouteCompiler(profile, new DefaultNamedConditionRegistry(Set.of()), mapperFactory));
+    }
+
+    /** The shared lookup with its correlation-key resolvers replaced by {@code resolvers}. */
+    private RegisteredIdentifierLookup lookupWith(NamedCorrelationKeyResolver<?>... resolvers) {
+        return new RegisteredIdentifierLookup(
+                lookup.payloadMappers(),
+                lookup.startStateMappers(),
+                lookup.stateReducers(),
+                lookup.stateMutators(),
+                lookup.timerResolvers(),
+                lookup.failMessageFactories(),
+                lookup.subjectResolvers(),
+                lookup.taskAssignmentResolvers(),
+                lookup.branchResultReducers(),
+                lookup.namedConditions(),
+                new DefaultCorrelationKeyResolverRegistry(Set.of(b -> {
+                    for (NamedCorrelationKeyResolver<?> resolver : resolvers) {
+                        b.register(resolver);
+                    }
+                })));
+    }
+
+    private static WorkflowDefinitionDocument documentNaming(String resolverId) {
+        List<StepNode> steps = List.of(
+                new WaitSignalStep("wait-carrier", "carrier.assigned", ASSIGNED_FQN, REDUCER, "done", null, resolverId),
+                new CompleteStep("done"));
+        return new WorkflowDefinitionDocument(
+                "order-wf", 1L, STATE_FQN, CONTRACT_FQN, PLACE_FQN, START_MAPPER, null, "wait-carrier", steps);
     }
 
     private static String yaml(String waitStepExtra) {
@@ -226,5 +260,56 @@ class WaitSignalCorrelationKeyCompileTest {
         assertThat(violation.code()).isEqualTo("CORRELATION_KEY_RESOLVER_UNKNOWN");
         assertThat(violation.stepId()).isEqualTo("wait-carrier");
         assertThat(violation.message()).contains("order.missing").contains(RESOLVER);
+    }
+
+    @Test
+    @DisplayName("a correlationKey resolver registered for another state type fails validation naming both types")
+    void resolverOfAnotherStateTypeFailsValidationWithItsCode() {
+        // Given: a resolver registered for OtherState, and a document over State whose wait names it
+        RegisteredIdentifierLookup other =
+                lookupWith(new NamedCorrelationKeyResolver<>("order.other", OtherState.class, OtherState::carrierRef));
+
+        // When: the document validator runs
+        WorkflowDefinitionViolations result =
+                new WorkflowDefinitionDocumentValidator(other).validate(documentNaming("order.other"));
+
+        // Then: exactly one violation, naming the step, the resolver id and both state types
+        assertThat(result.toList()).hasSize(1);
+        Violation violation = result.toList().get(0);
+        assertThat(violation.code()).isEqualTo("CORRELATION_KEY_RESOLVER_STATE_TYPE_MISMATCH");
+        assertThat(violation.stepId()).isEqualTo("wait-carrier");
+        assertThat(violation.message())
+                .contains("order.other")
+                .contains(OtherState.class.getName())
+                .contains(STATE_FQN);
+    }
+
+    @Test
+    @DisplayName("a correlationKey resolver registered for the document state type passes validation")
+    void resolverOfTheDocumentStateTypePassesValidation() {
+        // Given: the registry of the set-up, which holds order.carrierRef over State
+        // When: a document over State names it
+        WorkflowDefinitionViolations result =
+                new WorkflowDefinitionDocumentValidator(lookup).validate(documentNaming(RESOLVER));
+
+        // Then: no violation
+        assertThat(result.toList()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a correlationKey resolver registered for a supertype of the state is refused like any callback")
+    void resolverOfASupertypeOfTheStateIsRefused() {
+        // Given: a resolver registered for the interface State implements
+        RegisteredIdentifierLookup supertype = lookupWith(
+                new NamedCorrelationKeyResolver<>("order.supertype", HasCarrier.class, HasCarrier::carrierRef));
+
+        // When: the document validator runs over State
+        WorkflowDefinitionViolations result =
+                new WorkflowDefinitionDocumentValidator(supertype).validate(documentNaming("order.supertype"));
+
+        // Then: the exact-class rule of the other callbacks applies
+        assertThat(result.toList())
+                .extracting(Violation::code)
+                .containsExactly("CORRELATION_KEY_RESOLVER_STATE_TYPE_MISMATCH");
     }
 }
