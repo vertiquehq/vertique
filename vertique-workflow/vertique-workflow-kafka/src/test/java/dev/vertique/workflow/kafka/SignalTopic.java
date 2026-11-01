@@ -19,6 +19,7 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.errors.TopicExistsException;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 
@@ -58,7 +59,8 @@ final class SignalTopic implements AutoCloseable {
 
     /**
      * Creates the topic of the exact name, and its dead-letter topic, for a source whose class states its topic, group
-     * and name itself. The group is deleted on close; the topic is not, so one proof may use the name once per broker.
+     * and name itself. The group is deleted on close; the topic is not, so one proof may produce to the name once per
+     * broker.
      *
      * @param topic the topic the source reads
      * @param group the consumer group the source states
@@ -90,7 +92,16 @@ final class SignalTopic implements AutoCloseable {
             producer.close(Duration.ofSeconds(1));
             admin.close(Duration.ofSeconds(1));
             throw new AssertionError("interrupted while creating the topics", e);
-        } catch (ExecutionException | TimeoutException e) {
+        } catch (ExecutionException e) {
+            // A node of an earlier proof that installs the same generated listener subscribes to an exact name, and the
+            // broker then creates the topic. No proof but this one produces to it, so it is empty, and both topics
+            // exist.
+            if (!(e.getCause() instanceof TopicExistsException)) {
+                producer.close(Duration.ofSeconds(1));
+                admin.close(Duration.ofSeconds(1));
+                throw new AssertionError("the topics were not created", e);
+            }
+        } catch (TimeoutException e) {
             producer.close(Duration.ofSeconds(1));
             admin.close(Duration.ofSeconds(1));
             throw new AssertionError("the topics were not created", e);
