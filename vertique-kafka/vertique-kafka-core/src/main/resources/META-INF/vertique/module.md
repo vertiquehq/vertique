@@ -255,6 +255,8 @@ exactly as it did before them.
   seek does not poll, so it never sees a later rebalance and stays paused until it is restarted. A
   stop reports the record still pending, closes the consumer without committing it, and the next
   run delivers it. A stalled consumer needs a restart; watch for the error log.
+  A handler that fails with `KafkaRedeliverFailure` takes the same pause, seek back and backoff
+  without spending a retry (see `KafkaRedeliverFailure`).
 
 ### Model 3 — `@KafkaListener` routing interface
 
@@ -835,6 +837,21 @@ character reaches a header or a log line. The failure carries the error type onl
 log lines hold the error type alone, so keep record data out of it. A retry count left by an
 earlier failure of the same record is removed.
 
+### `KafkaRedeliverFailure`
+
+A handler fails a record with `new KafkaRedeliverFailure(errorType)` when the record is fine and must
+be delivered again later, such as when the system is busy. It applies on a `forceStrategies` binding:
+the consumer pauses, seeks back to the record and resumes after a backoff that grows with the
+redeliveries of that record up to `retry.maxBackoffMs`, and the outcome is `RETRY_SCHEDULED`. The
+record stays uncommitted and keeps its slot until the seek back is confirmed, a seek that cannot be
+confirmed is handled as for a failed dead-letter publish, and no later record is delivered ahead of
+it. It spends no retry: the record's retry count does not change, the number of redeliveries has no
+limit, and the record is never dead-lettered because of it. A handler that raises it for a failure
+that never clears stalls the consumer and lets its lag grow.
+
+On any other binding it is an ordinary failure, handled by the binding's error strategy. The error
+type follows the rules of `KafkaTerminalFailure`, and the failure carries the error type only.
+
 ### Poison-message guarantee
 
 A record that always fails leaves the stream after `maxRetries` attempts. The longest it can block a
@@ -1135,7 +1152,7 @@ public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRe
 | `SUCCESS` | The handler completed successfully |
 | `SKIP` | Skipped per `ErrorStrategy.SKIP`, filtered, or no matching route |
 | `RECOVERED` | An interceptor's `recoverError` handled the error |
-| `RETRY_SCHEDULED` | Consumer paused, offset not committed, Kafka will redeliver |
+| `RETRY_SCHEDULED` | Consumer paused, offset not committed, Kafka will redeliver. A `forceStrategies` binding reports it also for a `KafkaRedeliverFailure` |
 | `DLQ_PUBLISHED` | Forwarded to the dead-letter topic |
 | `DLQ_FAILED` | The DLQ publish failed; the offset was not committed. A `forceStrategies` binding is paused, seeks back and resumes after a backoff |
 | `ERROR_HANDLER_FAILED` | The error handler's own future failed; the record's disposition is unknown. A `forceStrategies` binding then seeks back once more, and stays paused with the record uncommitted when that is not confirmed |

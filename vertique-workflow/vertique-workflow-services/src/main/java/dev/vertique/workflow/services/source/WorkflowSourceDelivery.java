@@ -132,7 +132,7 @@ public final class WorkflowSourceDelivery {
      * its key, its payload and its recording. A message an earlier stage excludes or refuses reaches no
      * later stage. Each signal is judged alone and reported once; the disposition is the most severe of
      * them, {@link SourceDisposition.Fate#TERMINAL} over {@link SourceDisposition.Fate#RETRY} over
-     * {@link SourceDisposition.Fate#DONE}.
+     * {@link SourceDisposition.Fate#WAIT} over {@link SourceDisposition.Fate#DONE}.
      *
      * <p>The disposition and the events carry the type of a failure, never its message, and nothing of
      * the message: no key, header or payload.

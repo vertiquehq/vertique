@@ -318,6 +318,54 @@ class KafkaSignalFailureHandlingIT {
     }
 
     @Test
+    void intakeRefusalWaitsPastTheRetryBudgetAndNeverReachesTheDeadLetterTopic(Vertx vertx) {
+        try (SourceScenario scenario = SourceScenario.open(vertx, "intake-wait").intakeLimit(3, 1, 100)) {
+            // Given a source with a single retry and a steady 50 ms wait, an order waiting for a delivery, and a node
+            // that refuses intake because the executor is stopped while three orders are due
+            Feed<ShipmentDelivered> carriers = scenario.carriers(
+                            "carriers", source -> source.dedupBy(ShipmentDelivered::eventId)
+                                    .signal(OrdersContract.class, SHIPMENT_DELIVERED)
+                                    .key(ShipmentDelivered::carrierRef)
+                                    .payload(SourceScenario::confirmation)
+                                    .build())
+                    .steadyRetry(1, 50);
+            scenario.start();
+            Waiting order = scenario.waitingOrder("acme", scenario.ref("PAY-77"));
+            scenario.pauseExecutor();
+            scenario.fillIntake();
+
+            // When the test produces a matching record and the node refuses it more often than the retry budget allows
+            Produced record = carriers.produce(scenario.delivered("1", order.key()));
+            assertThat(scenario.observer().await("carriers", Outcome.LIMITED, 4, SourceScenario.PROMPT))
+                    .isTrue();
+
+            // Then the record has only been scheduled for redelivery, was not dead-lettered, and no command was
+            // recorded
+            assertThat(scenario.completions().outcomesOf(record))
+                    .isNotEmpty()
+                    .containsOnly(KafkaTerminalOutcome.RETRY_SCHEDULED);
+            assertThat(carriers.dlq().read()).isEmpty();
+            assertThat(scenario.commands(order)).isEmpty();
+
+            // When the executor runs again and the node admits intake
+            scenario.resumeExecutor();
+
+            // Then the same record is recorded once and committed, every earlier attempt was a scheduled redelivery,
+            // and the dead-letter topic stays empty
+            scenario.awaitDelivered(record, order);
+            assertThat(scenario.commands(order)).hasSize(1);
+            assertThat(carriers.committed(record)).isTrue();
+            List<KafkaTerminalOutcome> outcomes = scenario.completions().outcomesOf(record);
+            assertThat(outcomes).last().isEqualTo(KafkaTerminalOutcome.SUCCESS);
+            assertThat(outcomes.subList(0, outcomes.size() - 1))
+                    .hasSizeGreaterThan(1)
+                    .containsOnly(KafkaTerminalOutcome.RETRY_SCHEDULED);
+            assertThat(carriers.dlq().read()).isEmpty();
+            assertThat(scenario.observer().count("carriers", Outcome.APPLIED)).isEqualTo(1);
+        }
+    }
+
+    @Test
     void failedBusinessKeyLookupRetriesAndRecordsNothing(Vertx vertx) {
         try (SourceScenario scenario = SourceScenario.open(vertx, "lookup-fails")) {
             // Given a source whose business-key lookup fails on its first call with a message that holds the order

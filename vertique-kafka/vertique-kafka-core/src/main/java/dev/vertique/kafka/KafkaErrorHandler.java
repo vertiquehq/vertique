@@ -105,6 +105,11 @@ final class KafkaErrorHandler {
      * publish, and logging — is preserved byte-for-byte. The only addition is the returned
      * {@link KafkaTerminalOutcome} value.
      *
+     * <p>A {@link KafkaRedeliverFailure} on an entry that forces its strategies spends no retry: the
+     * consumer pauses, seeks back to the record and resumes after a backoff, and the outcome is
+     * {@link KafkaTerminalOutcome#RETRY_SCHEDULED}. On any other entry it takes the strategy like any
+     * other failure.
+     *
      * @param record   the failed consumer record
      * @param rawBytes the raw record bytes (for DLQ publishing)
      * @param headers  the record's headers as received; forwarded to the dead-letter topic
@@ -125,6 +130,12 @@ final class KafkaErrorHandler {
 
         if (cause instanceof KafkaTerminalFailure terminal) {
             return handleTerminalFailure(record, rawBytes, headers, terminal, control);
+        }
+
+        if (cause instanceof KafkaRedeliverFailure && entry.forceStrategies()) {
+            // The record is fine and the system is busy: deliver it again without spending a retry.
+            return seekBack(record, control, "the handler asked to receive it again")
+                    .map(v -> KafkaTerminalOutcome.RETRY_SCHEDULED);
         }
 
         ErrorStrategy strategy = entry.config().errorStrategy();

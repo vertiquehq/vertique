@@ -9,6 +9,7 @@ import dev.vertique.kafka.KafkaDlqHeaders;
 import dev.vertique.kafka.KafkaMessage;
 import dev.vertique.kafka.KafkaRecordHandler;
 import dev.vertique.kafka.KafkaRecordHeader;
+import dev.vertique.kafka.KafkaRedeliverFailure;
 import dev.vertique.kafka.KafkaTerminalFailure;
 import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SystemIdentities;
@@ -31,9 +32,10 @@ import java.util.Optional;
  * delivery answers onto the consumer's retry and dead-letter handling.
  *
  * <p>A fate of {@code DONE} completes the record. {@code RETRY} fails it with an ordinary exception,
- * so the binding retries it and then takes its exhausted strategy. {@code TERMINAL} fails it with a
- * {@link KafkaTerminalFailure}, so it takes the exhausted strategy at once. A failure carries an error
- * type only: never a key, a header or a payload.
+ * so the binding retries it and then takes its exhausted strategy. {@code WAIT} fails it with a
+ * {@link KafkaRedeliverFailure}, so the binding delivers it again after a backoff without spending a
+ * retry. {@code TERMINAL} fails it with a {@link KafkaTerminalFailure}, so it takes the exhausted
+ * strategy at once. A failure carries an error type only: never a key, a header or a payload.
  *
  * @param <T> the type of the decoded record value
  */
@@ -89,6 +91,7 @@ final class KafkaSignalHandler<T> implements KafkaRecordHandler<T> {
         return switch (disposition.fate()) {
             case DONE -> Future.succeededFuture();
             case RETRY -> Future.failedFuture(new SignalRetryRequested(retryType(disposition.errorType())));
+            case WAIT -> Future.failedFuture(new KafkaRedeliverFailure(terminalType(disposition.errorType())));
             case TERMINAL -> Future.failedFuture(new KafkaTerminalFailure(terminalType(disposition.errorType())));
         };
     }

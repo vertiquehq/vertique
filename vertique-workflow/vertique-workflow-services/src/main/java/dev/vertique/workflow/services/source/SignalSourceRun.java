@@ -371,8 +371,11 @@ final class SignalSourceRun<T> {
         if (cause instanceof WorkflowSignalAmbiguousException) {
             return Verdict.of(Outcome.AMBIGUOUS, Fate.TERMINAL, typeOf(cause));
         }
-        if (cause instanceof WorkflowSignalLimitException || cause instanceof WorkflowIntakeRefusedException) {
+        if (cause instanceof WorkflowSignalLimitException) {
             return Verdict.of(Outcome.LIMITED, Fate.RETRY, typeOf(cause));
+        }
+        if (cause instanceof WorkflowIntakeRefusedException) {
+            return Verdict.of(Outcome.LIMITED, Fate.WAIT, typeOf(cause));
         }
         if (cause instanceof WorkflowInvalidPayloadException) {
             return Verdict.of(Outcome.OVERSIZED, Fate.TERMINAL, typeOf(cause));
@@ -452,8 +455,9 @@ final class SignalSourceRun<T> {
     private static int rank(Fate fate) {
         return switch (fate) {
             case DONE -> 0;
-            case RETRY -> 1;
-            case TERMINAL -> 2;
+            case WAIT -> 1;
+            case RETRY -> 2;
+            case TERMINAL -> 3;
         };
     }
 

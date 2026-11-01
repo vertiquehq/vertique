@@ -565,7 +565,7 @@ A listener that targets a business key states the accessor of the dedup key, for
 
 - **One record at a time.** A Kafka source resolves `maxInFlight` and `max.poll.records` to 1 and handles one record per consumer instance at a time. Its throughput is one recording transaction, plus any lookup, per record; raise `kafka.consumers.{name}.instances` to add consumers.
 - **At-least-once from the start of the topic.** A source commits manually and retries, and the configuration cannot restore `AUTO` commit or the `SKIP` error strategies; registration fails naming the consumer and the option. A new group starts at the beginning of the topic, because `auto.offset.reset` defaults to `earliest`. The first deploy of a source therefore reads all retained history, and `dedupBy` does not catch those old events, so an old event can match a current wait or park on a live business key. Set `kafka.consumers.{name}.properties` `auto.offset.reset=latest` to start at the end of the topic instead; a first-ever record that fails before the first commit can then be lost when the consumer restarts or the partition moves.
-- **Finished, retried or terminal.** A message that is finished completes the record. One that may succeed later fails the record with an ordinary exception, so the consumer retries it with the backoff of `kafka.consumers.{name}.retry` and then dead-letters it. One that never will succeed is terminal: it is dead-lettered at once, never retried, and does not pause the consumer. When a message has several signals, the most severe fate wins.
+- **Finished, retried or terminal.** A message that is finished completes the record. One that may succeed later fails the record with an ordinary exception, so the consumer retries it with the backoff of `kafka.consumers.{name}.retry` and then dead-letters it. One that is fine while the node is busy waits and is delivered again without spending a retry (see Intake pressure below). One that never will succeed is terminal: it is dead-lettered at once, never retried, and does not pause the consumer. When a message has several signals, the most severe fate wins.
 
 | What happened | Outcome reported | Fate |
 |---|---|---|
@@ -577,7 +577,8 @@ A listener that targets a business key states the accessor of the dedup key, for
 | `scope` answered empty | `SCOPE_EMPTY` | Finished |
 | Anonymous identity, an actor the mapper refuses, or a `SignalSourceRefusal` from `dispatchAs` | `REFUSED_IDENTITY` | Terminal |
 | Input the message type or the database refuses (a blank or over-long key, a NUL character, an invalid scope), a payload that cannot be encoded as JSON, a blank dedup key, or a `dlqReplay` record with malformed replay headers and no `dedupBy` | `INVALID_INPUT` | Terminal |
-| The instance holds the open-signal cap, or the node refuses intake | `LIMITED` | Retried |
+| The instance holds the open-signal cap | `LIMITED` | Retried |
+| The node refuses intake | `LIMITED` | Waits |
 | An oversized payload | `OVERSIZED` | Terminal |
 | A stage threw | `STAGE_FAILED` | Terminal |
 | A lookup or `dispatchAs` failed or timed out, or the database failed | `STAGE_FAILED` | Retried |
@@ -586,7 +587,7 @@ A listener that targets a business key states the accessor of the dedup key, for
 - **Undecodable records.** A record that cannot be decoded is acknowledged and reported once. A transient decode failure, such as an unreachable schema registry, is retried and then dead-lettered instead.
 - **Outcome reports.** Each signal reports one outcome to every `SignalSourceObserver` contributed to the `Set<SignalSourceObserver>`; a message that ends before a signal is chosen reports once with no contract or signal name. The report names the source, transport and outcome and never a key, header or payload. A rising `NO_MATCH` count shows events that arrive before their wait, or for a key nothing waits on.
 - **Provenance.** Each recorded command stores the source name, topic, partition and offset of the record that caused it.
-- **Intake pressure.** A signal a node refuses under the [intake limit](#intake-limit) is an ordinary retry of the source, so give the source a retry budget that outlasts a pressure window. A record that spends it takes the source's exhausted strategy.
+- **Intake pressure.** A Kafka source waits out a refusal under the [intake limit](#intake-limit): the consumer pauses, the same record is delivered again after a backoff that grows up to `maxBackoffMs`, no retry is spent and nothing is dead-lettered. There is no limit on the wait, so an intake refusal that never clears stalls the source and lag grows, and records are safe only while the topic retains them: alert on `LIMITED` and on consumer lag. Stages such as `.when`, `.dispatchAs` and lookups run again on each attempt. A Camel source retries instead, under its route's policy.
 
 ### Intake limit
 

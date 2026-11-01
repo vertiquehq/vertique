@@ -23,6 +23,8 @@ import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.engine.intake.IntakePressureSampler;
+import dev.vertique.workflow.exception.WorkflowIntakeRefusedException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
@@ -540,6 +542,10 @@ final class SourceScenario implements AutoCloseable {
     private boolean installLosingPool;
     private int maxOpenSignals = 100;
     private int maxPayloadBytes = 262_144;
+    private boolean intakeLimited;
+    private int intakeHighMark;
+    private int intakeLowMark;
+    private long intakeSampleIntervalMs;
     private int logMark;
     private Pool nodePool;
     private Pool readPool;
@@ -609,6 +615,18 @@ final class SourceScenario implements AutoCloseable {
     SourceScenario limits(int maxOpenSignalsPerInstance, int maxPayloadBytes) {
         this.maxOpenSignals = maxOpenSignalsPerInstance;
         this.maxPayloadBytes = maxPayloadBytes;
+        return this;
+    }
+
+    /**
+     * Runs the intake limit with small marks and a short sampling interval, so that {@link #fillIntake()} can make the
+     * node refuse new starts and signals.
+     */
+    SourceScenario intakeLimit(int highMark, int lowMark, long sampleIntervalMs) {
+        this.intakeLimited = true;
+        this.intakeHighMark = highMark;
+        this.intakeLowMark = lowMark;
+        this.intakeSampleIntervalMs = sampleIntervalMs;
         return this;
     }
 
@@ -690,22 +708,45 @@ final class SourceScenario implements AutoCloseable {
                         "workflow",
                         new JsonObject()
                                 .put("executor", new JsonObject().put("pollIntervalMs", 100))
-                                .put(
-                                        "recording",
-                                        new JsonObject()
-                                                .put("maxOpenSignalsPerInstance", maxOpenSignals)
-                                                .put("maxPayloadBytes", maxPayloadBytes)));
+                                .put("recording", recordingConfig()));
         node = DaggerSourceNode.builder()
                 .vertxModule(new VertxModule(vertx, config))
                 .rig(new SourceNode.Rig(decorated, observer, interceptor, sources))
                 .build();
         runStartupSteps();
         resumeExecutor();
+        if (intakeLimited) {
+            deploy(IntakePressureSampler.DEPLOYMENT_NAME);
+        }
         await(node.consumerDeployments().deployAll());
         for (Feed<?> feed : feeds) {
             awaitAssigned(feed);
         }
         return this;
+    }
+
+    private JsonObject recordingConfig() {
+        JsonObject recording = new JsonObject()
+                .put("maxOpenSignalsPerInstance", maxOpenSignals)
+                .put("maxPayloadBytes", maxPayloadBytes);
+        if (intakeLimited) {
+            recording.put(
+                    "intake",
+                    new JsonObject()
+                            .put("enabled", true)
+                            .put("highMark", intakeHighMark)
+                            .put("lowMark", intakeLowMark)
+                            .put("sampleIntervalMs", intakeSampleIntervalMs));
+        }
+        return recording;
+    }
+
+    private void deploy(String name) {
+        VerticleDeployment deployment = node.verticleDeployments().stream()
+                .filter(candidate -> name.equals(candidate.name()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("the node contributes no " + name));
+        await(node.verticleDeployer().deploy(deployment));
     }
 
     private void runStartupSteps() {
@@ -836,6 +877,33 @@ final class SourceScenario implements AutoCloseable {
         Waiting waiting = new Waiting(started, scope, carrierRef);
         instances.add(waiting);
         return waiting;
+    }
+
+    /**
+     * Starts orders, with the executor stopped, until the node refuses a start with
+     * {@link WorkflowIntakeRefusedException}, so that it is known to refuse intake. The orders stay recorded and due until
+     * the executor runs again, which then lets the node admit intake again.
+     */
+    void fillIntake() {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            try {
+                await(node.workflowOperations()
+                        .start(new StartCommand(
+                                OrderShipping.ID,
+                                "orders",
+                                new StartShipping(ref("FILL-" + attempt)),
+                                "fill-" + id + "-" + starts.incrementAndGet(),
+                                null,
+                                null,
+                                null,
+                                "acme",
+                                null)));
+            } catch (WorkflowIntakeRefusedException refused) {
+                return;
+            }
+            pause(intakeSampleIntervalMs);
+        }
+        throw new AssertionError("the node did not refuse intake");
     }
 
     /** Waits until the engine has run the work recorded for each instance. */

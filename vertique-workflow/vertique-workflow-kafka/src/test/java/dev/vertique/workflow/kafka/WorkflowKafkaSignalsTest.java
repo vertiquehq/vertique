@@ -23,6 +23,7 @@ import dev.vertique.kafka.KafkaConsumerBinding;
 import dev.vertique.kafka.KafkaMessage;
 import dev.vertique.kafka.KafkaRecordFilter;
 import dev.vertique.kafka.KafkaRecordHeaders;
+import dev.vertique.kafka.KafkaRedeliverFailure;
 import dev.vertique.kafka.KafkaRegistrationException;
 import dev.vertique.kafka.KafkaTerminalFailure;
 import dev.vertique.workflow.kafka.SourceFixture.Carriers;
@@ -329,6 +330,46 @@ class WorkflowKafkaSignalsTest {
         assertThat(rejectingBinding.filter().accept(SECRET_KEY, KafkaRecordHeaders.empty()))
                 .isFalse();
         assertThat(rejecting.events()).extracting(SignalSourceEvent::outcome).containsExactly(Outcome.IGNORED);
+    }
+
+    @Test
+    void waitFateFailsTheRecordWithARedeliverFailureCarryingTheErrorType() {
+        // Given a source whose delivery answers WAIT with an error type, RETRY and TERMINAL
+        for (Fate fate : List.of(Fate.WAIT, Fate.RETRY, Fate.TERMINAL)) {
+            Carriers carriers = SourceFixture.carriers();
+            doReturn(Future.succeededFuture(new SourceDisposition(fate, "WorkflowIntakeRefusedException")))
+                    .when(carriers.delivery())
+                    .deliver(any(), any(), any());
+            KafkaConsumerBinding<ShipmentDelivered> binding = keyedByCarrier(carriers.source());
+
+            // When a record is handled
+            Throwable failure = catchThrowable(() -> binding.handler()
+                    .handle(new KafkaMessage<>(
+                            new ShipmentDelivered("ref-1", "order-1", "note"),
+                            "key-1",
+                            TOPIC,
+                            0,
+                            1L,
+                            0L,
+                            KafkaRecordHeaders.empty()))
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .get());
+
+            // Then WAIT fails it with KafkaRedeliverFailure carrying the error type and nothing more, and the other
+            // fates keep their own failures
+            Throwable cause = failure.getCause();
+            if (fate == Fate.WAIT) {
+                assertThat(cause).isInstanceOf(KafkaRedeliverFailure.class).hasNoCause();
+                assertThat(((KafkaRedeliverFailure) cause).errorType()).isEqualTo("WorkflowIntakeRefusedException");
+            } else if (fate == Fate.TERMINAL) {
+                assertThat(cause).isInstanceOf(KafkaTerminalFailure.class);
+            } else {
+                assertThat(cause)
+                        .isNotInstanceOf(KafkaRedeliverFailure.class)
+                        .isNotInstanceOf(KafkaTerminalFailure.class);
+            }
+        }
     }
 
     @Test

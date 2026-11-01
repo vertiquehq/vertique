@@ -83,6 +83,10 @@ import org.mockito.invocation.Invocation;
  *   <li>A retry on a forcing binding pauses, seeks and resumes once, after the backoff; an entry
  *       that does not force its strategies still releases its slot before its error handling
  *       settles.</li>
+ *   <li>A handler failure that asks for the record to be delivered again seeks back, commits and
+ *       sends nothing, spends no retry however often it is raised, and resumes once after each
+ *       backoff; a failed seek keeps the slot held until a second seek is confirmed. On an entry that
+ *       does not force its strategies it takes the entry's strategy like any other failure.</li>
  *   <li>A fault at each step of the failure handling (a send that throws or throws an
  *       {@link Error}, a pause that throws, a seek that throws, throws an {@link Error} or fails, a
  *       fallback that fails too) never commits and never resumes before a seek back is confirmed; when
@@ -312,6 +316,17 @@ class KafkaForcedSlotHoldTest {
             handled.add(message.offset());
             return message.offset() == failingOffset
                     ? Future.failedFuture(new RuntimeException("handler boom"))
+                    : Future.succeededFuture();
+        };
+    }
+
+    /** A handler that records the offsets it is given and asks for the record again the first {@code times} times. */
+    private static KafkaRecordHandler<Object> handlerRedelivering(int times, List<Long> handled) {
+        AtomicInteger calls = new AtomicInteger();
+        return message -> {
+            handled.add(message.offset());
+            return calls.incrementAndGet() <= times
+                    ? Future.failedFuture(new KafkaRedeliverFailure("Busy"))
                     : Future.succeededFuture();
         };
     }
@@ -563,6 +578,137 @@ class KafkaForcedSlotHoldTest {
         assertEquals(0, rig.inFlight());
         assertFalse(rig.broker().paused.get());
         assertEquals(1, rig.broker().resumes.get());
+    }
+
+    @Test
+    @DisplayName("a redeliver failure seeks back, commits and sends nothing, spends no retry, and resumes once")
+    void redeliverFailureSeeksBackWithoutSpendingARetry(Vertx vertx) throws Exception {
+        // Given: a forcing entry whose handler asks for the record again once and then succeeds
+        List<Long> handled = new CopyOnWriteArrayList<>();
+        Rig rig = wire(
+                vertx,
+                entry(true, ErrorStrategy.RETRY, handlerRedelivering(1, handled), null),
+                List.of(),
+                producerAnswering(Future.succeededFuture()));
+
+        // When: the record is handled
+        rig.process(record(FAILED_OFFSET, null));
+
+        // Then: it was sought back to, nothing was committed or sent, no retry was spent, and the consumer is
+        // paused for the backoff
+        verify(rig.consumer(), times(1)).seek(POSITION, FAILED_OFFSET);
+        assertEquals(List.of(), committedOffsets(rig), "nothing may be committed");
+        verify(rig.producer(), never()).sendForDlq(anyString(), any(), any(), any());
+        assertTrue(rig.errors().retryCounts.isEmpty(), "no retry may be spent");
+        assertEquals(0, rig.inFlight());
+        assertTrue(rig.broker().paused.get(), "the consumer must stay paused through the backoff");
+        assertEquals(0, rig.broker().resumes.get());
+
+        // When: the backoff is over
+        verify(rig.consumer(), timeout(5_000).times(1)).resume();
+
+        // Then: the consumer resumed exactly once
+        assertFalse(rig.broker().paused.get());
+        assertEquals(1, rig.broker().resumes.get());
+
+        // When: the record is delivered again and succeeds
+        rig.process(record(FAILED_OFFSET, null));
+
+        // Then: it is committed, and nothing was ever sent to the dead-letter topic
+        assertEquals(List.of(committed(FAILED_OFFSET + 1)), committedOffsets(rig));
+        verify(rig.producer(), never()).sendForDlq(anyString(), any(), any(), any());
+        assertEquals(List.of(FAILED_OFFSET, FAILED_OFFSET), handled);
+        assertTrue(rig.errors().dlqFailures.isEmpty(), "the backoff must start over for the next record");
+        assertEquals(0, rig.inFlight());
+    }
+
+    @Test
+    @DisplayName("repeated redeliveries beyond the retry limit spend no retry and dead-letter nothing")
+    void repeatedRedeliveriesSpendNoRetry(Vertx vertx) throws Exception {
+        // Given: a forcing entry with one retry, whose handler asks for the record again four times
+        int redeliveries = 4;
+        Rig rig = wire(
+                vertx,
+                entry(true, ErrorStrategy.RETRY, handlerRedelivering(redeliveries, new ArrayList<>()), null),
+                List.of(),
+                producerAnswering(Future.succeededFuture()));
+
+        for (int attempt = 1; attempt <= redeliveries; attempt++) {
+            // When: the record is delivered and asked for again, and the backoff is over
+            rig.process(record(FAILED_OFFSET, null));
+            verify(rig.consumer(), timeout(5_000).times(attempt)).resume();
+
+            // Then: no retry is spent, nothing is sent or committed, and the slot is free
+            assertTrue(rig.errors().retryCounts.isEmpty(), "no retry may be spent at attempt " + attempt);
+            verify(rig.producer(), never()).sendForDlq(anyString(), any(), any(), any());
+            assertEquals(List.of(), committedOffsets(rig), "nothing may be committed at attempt " + attempt);
+            assertEquals(0, rig.inFlight());
+        }
+
+        // When: the record is delivered once more and succeeds
+        rig.process(record(FAILED_OFFSET, null));
+
+        // Then: it is committed and still nothing went to the dead-letter topic
+        assertEquals(List.of(committed(FAILED_OFFSET + 1)), committedOffsets(rig));
+        verify(rig.producer(), never()).sendForDlq(anyString(), any(), any(), any());
+        verify(rig.consumer(), times(redeliveries)).seek(POSITION, FAILED_OFFSET);
+    }
+
+    @Test
+    @DisplayName("a redeliver failure whose seek fails keeps the slot held until a second seek is confirmed")
+    void redeliverFailureWithAFailedSeekKeepsTheSlotHeld(Vertx vertx) throws Exception {
+        // Given: a forcing entry that asks for the record again, whose first seek fails and whose second is held
+        Rig rig = wire(
+                vertx,
+                entry(true, ErrorStrategy.RETRY, handlerRedelivering(1, new ArrayList<>()), null),
+                List.of(),
+                producerAnswering(Future.succeededFuture()));
+        AtomicInteger attempts = new AtomicInteger();
+        List<Promise<Void>> held = scriptSeeks(rig, List.of(Seek.FAIL, Seek.HELD), attempts);
+
+        // When: the record is handled
+        rig.process(record(FAILED_OFFSET, null));
+
+        // Then: the seek was tried twice, nothing was committed, the slot is held and the consumer paused
+        assertEquals(2, attempts.get());
+        assertEquals(List.of(), committedOffsets(rig), "nothing may be committed");
+        assertEquals(1, rig.inFlight(), "the slot must stay held until a seek is confirmed");
+        assertTrue(rig.broker().paused.get());
+        assertEquals(0, rig.broker().resumes.get());
+
+        // When: the second seek is confirmed
+        held.get(0).complete();
+
+        // Then: the slot is released, the backoff holds the consumer, and it resumes once after it
+        assertEquals(0, rig.inFlight());
+        assertEquals(0, rig.broker().resumes.get());
+        verify(rig.consumer(), timeout(5_000).times(1)).resume();
+        assertEquals(List.of(), committedOffsets(rig), "nothing may be committed");
+        verify(rig.producer(), never()).sendForDlq(anyString(), any(), any(), any());
+        assertTrue(rig.errors().retryCounts.isEmpty(), "no retry may be spent");
+    }
+
+    @Test
+    @DisplayName("a redeliver failure on an entry that does not force its strategies takes the entry's strategy")
+    void redeliverFailureOnAnUnforcedEntryTakesTheEntrysStrategy(Vertx vertx) throws Exception {
+        // Given: an entry that does not force its strategies, whose retry is used up, and whose handler asks for
+        // the record again
+        List<Long> handled = new CopyOnWriteArrayList<>();
+        Rig rig = wire(
+                vertx,
+                entry(false, ErrorStrategy.RETRY, handlerRedelivering(1, handled), null),
+                List.of(),
+                producerAnswering(Future.succeededFuture()));
+        useUpRetries(rig);
+
+        // When: the record is handled
+        rig.process(record(FAILED_OFFSET, null));
+
+        // Then: it is dead-lettered and committed like any other exhausted failure, and not sought back to
+        verify(rig.producer(), times(1)).sendForDlq(anyString(), any(), any(), any());
+        assertEquals(List.of(committed(FAILED_OFFSET + 1)), committedOffsets(rig));
+        verify(rig.consumer(), never()).seek(any(), anyLong());
+        assertEquals(0, rig.inFlight());
     }
 
     @Test

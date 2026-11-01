@@ -309,8 +309,8 @@ class WorkflowSourceDeliveryPlanTest {
     }
 
     @Test
-    @DisplayName("refusals after the match retry or go straight to the dead-letter path")
-    void refusalsAfterTheMatchRetryOrGoStraightToTheDeadLetterPath(Vertx vertx) {
+    @DisplayName("refusals after the match retry, wait or go straight to the dead-letter path")
+    void refusalsAfterTheMatchRetryWaitOrGoStraightToTheDeadLetterPath(Vertx vertx) {
         // Given operations that raise the open-signal limit for an instance
         WorkflowSignalLimitException limit =
                 new WorkflowSignalLimitException(new WorkflowInstanceId(UUID.randomUUID()), 50);
@@ -323,10 +323,10 @@ class WorkflowSourceDeliveryPlanTest {
             assertThat(rig.outcomes()).containsExactly(Outcome.LIMITED);
         }
 
-        // and a node refusing intake is RETRY with one LIMITED event
+        // and a node refusing intake is WAIT with one LIMITED event
         try (DeliveryRig rig = DeliveryRig.over(vertx).operationsRaising(new WorkflowIntakeRefusedException())) {
             SourceDisposition disposition = rig.deliver(keyedPlan(), shipment(), envelope());
-            assertThat(disposition.fate()).isEqualTo(Fate.RETRY);
+            assertThat(disposition.fate()).isEqualTo(Fate.WAIT);
             assertThat(rig.outcomes()).containsExactly(Outcome.LIMITED);
         }
 
@@ -368,6 +368,34 @@ class WorkflowSourceDeliveryPlanTest {
                         SignalNoMatch.RETRY,
                         Fate.TERMINAL,
                         List.of(Outcome.NO_MATCH, Outcome.AMBIGUOUS)),
+                new Row(
+                        "applied then intake refusal",
+                        DeliveryRig.recorded(),
+                        DeliveryRig.raising(new WorkflowIntakeRefusedException()),
+                        SignalNoMatch.IGNORE,
+                        Fate.WAIT,
+                        List.of(Outcome.APPLIED, Outcome.LIMITED)),
+                new Row(
+                        "intake refusal then open-signal limit",
+                        DeliveryRig.raising(new WorkflowIntakeRefusedException()),
+                        DeliveryRig.raising(limit),
+                        SignalNoMatch.IGNORE,
+                        Fate.RETRY,
+                        List.of(Outcome.LIMITED, Outcome.LIMITED)),
+                new Row(
+                        "open-signal limit then intake refusal",
+                        DeliveryRig.raising(limit),
+                        DeliveryRig.raising(new WorkflowIntakeRefusedException()),
+                        SignalNoMatch.IGNORE,
+                        Fate.RETRY,
+                        List.of(Outcome.LIMITED, Outcome.LIMITED)),
+                new Row(
+                        "intake refusal then ambiguous",
+                        DeliveryRig.raising(new WorkflowIntakeRefusedException()),
+                        DeliveryRig.raising(new WorkflowSignalAmbiguousException("billing", INVOICE_SETTLED)),
+                        SignalNoMatch.IGNORE,
+                        Fate.TERMINAL,
+                        List.of(Outcome.LIMITED, Outcome.AMBIGUOUS)),
                 new Row(
                         "applied then applied",
                         DeliveryRig.recorded(),
