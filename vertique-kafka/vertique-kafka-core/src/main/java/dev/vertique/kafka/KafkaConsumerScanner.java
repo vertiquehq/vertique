@@ -327,10 +327,31 @@ final class KafkaConsumerScanner {
                     usedNames,
                     violations);
 
-            if (entry != null) {
-                entries.add(entry);
+            if (entry != null && checkDispatchGate(binding, config, violations)) {
+                entries.add(entry.withDispatchGate(binding.dispatchGate()));
             }
         }
+    }
+
+    /**
+     * Checks a binding that carries a dispatch gate against the commit strategy it resolved to. Only a
+     * {@code MANUAL} consumer settles its records, and so only it asks the gate, so a configuration that resolves the
+     * binding to {@code AUTO} would silently run it without the gate. A violation names the consumer and the option.
+     *
+     * @param binding the binding
+     * @param config the configuration the binding resolved to
+     * @param violations mutable list to collect violation messages
+     * @return {@code true} if the binding has no gate or its resolved configuration commits manually
+     */
+    private static boolean checkDispatchGate(
+            KafkaConsumerBinding<?> binding, ResolvedKafkaConsumerConfig config, List<String> violations) {
+        if (binding.dispatchGate() == null || config.commitStrategy() == CommitStrategy.MANUAL) {
+            return true;
+        }
+        violations.add("Consumer '" + binding.name() + "': dispatchGate() requires commitStrategy "
+                + CommitStrategy.MANUAL + " but the resolved configuration has " + config.commitStrategy()
+                + " (remove kafka.consumers." + binding.name() + ".commitStrategy)");
+        return false;
     }
 
     /**
@@ -393,7 +414,7 @@ final class KafkaConsumerScanner {
                 usedNames,
                 violations);
 
-        if (entry != null) {
+        if (entry != null && checkDispatchGate(binding, config, violations)) {
             entries.add(entry.withDispatchGate(binding.dispatchGate()));
         }
     }

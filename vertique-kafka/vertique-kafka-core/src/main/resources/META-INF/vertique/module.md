@@ -203,7 +203,7 @@ static KafkaConsumerBinding<?> orderBinding() {
 | `ignoreUndecodable(Runnable)` | off | Handler bindings: acknowledges a record that fails to decode, commits it when `MANUAL`, reports it `SKIP`, runs the callback, and skips the error strategy; a transient decode failure takes the error strategy |
 | `noHeaderContext()` | off | Handler bindings: installs no durable context from the record's headers for the handler |
 | `forceStrategies()` | off | Handler bindings, `commitStrategy(MANUAL)` required: registration fails unless the resolved configuration keeps the binding's `commitStrategy` and `errorStrategy` and a `DEAD_LETTER` `retry.exhaustedStrategy`; a new group starts at the beginning of the topic |
-| `dispatchGate(KafkaDispatchGate)` | none | `commitStrategy(MANUAL)` required: asked before a record starts. While it answers closed no record starts and no partition fetches, and the consumer keeps polling; see [A dispatch gate](#a-dispatch-gate) |
+| `dispatchGate(KafkaDispatchGate)` | none | `commitStrategy(MANUAL)` required, also after configuration: registration fails, naming `commitStrategy`, when `kafka.consumers.{name}` resolves the binding to `AUTO`. Works with `handler` and `dispatchTo` bindings. Asked before a record starts. While it answers closed no record starts and no partition fetches, and the consumer keeps polling; see [A dispatch gate](#a-dispatch-gate) |
 
 Use the durable operation id (`@ServiceOperation` value) in `dispatchTo` for stable-target-eligible
 operations so the binding survives a method rename.

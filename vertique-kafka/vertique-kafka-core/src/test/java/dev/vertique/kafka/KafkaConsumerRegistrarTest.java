@@ -392,6 +392,78 @@ class KafkaConsumerRegistrarTest {
         }
 
         @Test
+        @DisplayName("the dispatch gate of a binding that dispatches to a service reaches its entry")
+        void dispatchGateOfAServiceBindingReachesTheEntry() {
+            ServiceContractRegistry serviceRegistry = buildRegistry(new AnotherServiceImpl());
+            KafkaDispatchGate gate = () -> true;
+            KafkaConsumerBinding<TestEvent> binding = KafkaConsumerBinding.builder("binding-gated", TestEvent.class)
+                    .topic("binding.topic")
+                    .groupId("binding-group")
+                    .commitStrategy(CommitStrategy.MANUAL)
+                    .dispatchTo(AnotherService.class, "do-work")
+                    .dispatchGate(gate)
+                    .build();
+
+            List<ConsumerEntry> entries = scan(registrar(), Set.of(binding), Set.of(), serviceRegistry);
+
+            assertEquals(1, entries.size());
+            assertSame(gate, entries.get(0).dispatchGate());
+        }
+
+        @Test
+        @DisplayName("a gated binding that configuration resolves to AUTO fails registration naming the option")
+        void gatedBindingResolvedToAutoFailsRegistration() {
+            ServiceContractRegistry serviceRegistry = buildRegistry(new AnotherServiceImpl());
+            KafkaDispatchGate gate = () -> true;
+            KafkaConsumerBinding<TestEvent> service = KafkaConsumerBinding.builder("gated-service", TestEvent.class)
+                    .topic("binding.topic")
+                    .groupId("binding-group")
+                    .commitStrategy(CommitStrategy.MANUAL)
+                    .dispatchTo(AnotherService.class, "do-work")
+                    .dispatchGate(gate)
+                    .build();
+            KafkaConsumerBinding<TestEvent> handler = KafkaConsumerBinding.builder("gated-handler", TestEvent.class)
+                    .topic("handler.topic")
+                    .groupId("handler-group")
+                    .commitStrategy(CommitStrategy.MANUAL)
+                    .handler(message -> Future.succeededFuture())
+                    .dispatchGate(gate)
+                    .build();
+            JsonObject config = new JsonObject()
+                    .put(
+                            "kafka",
+                            new JsonObject()
+                                    .put(
+                                            "consumers",
+                                            new JsonObject()
+                                                    .put(
+                                                            "gated-service",
+                                                            new JsonObject().put("commitStrategy", "AUTO"))
+                                                    .put(
+                                                            "gated-handler",
+                                                            new JsonObject().put("commitStrategy", "AUTO"))));
+
+            KafkaRegistrationException ex = assertThrows(KafkaRegistrationException.class, () -> registrar()
+                    .scan(
+                            Set.of(service, handler),
+                            Set.of(),
+                            serviceRegistry,
+                            buildResolver(serviceRegistry),
+                            new dev.vertique.kafka.serialization.KafkaSerdeRegistry(
+                                    Set.of(new dev.vertique.kafka.serialization.TestJsonSerdeProvider())),
+                            dev.vertique.kafka.config.KafkaConfig.fromConfig(config, configParser())));
+
+            for (String consumer : List.of("gated-service", "gated-handler")) {
+                assertTrue(
+                        ex.violations().stream()
+                                .anyMatch(v -> v.contains(consumer)
+                                        && v.contains("dispatchGate()")
+                                        && v.contains("commitStrategy")),
+                        "Expected a violation naming " + consumer + " and commitStrategy, got: " + ex.violations());
+            }
+        }
+
+        @Test
         @DisplayName("binding targeting unregistered service triggers violation")
         void bindingTargetingUnregisteredServiceTriggersViolation() {
             ServiceContractRegistry serviceRegistry = buildRegistry(new AnotherServiceImpl());
