@@ -25,6 +25,7 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
 import dev.vertique.workflow.source.SignalMessage;
 import dev.vertique.workflow.source.SignalSourceRefusal;
 import io.vertx.core.Context;
@@ -710,7 +711,7 @@ final class SourceScenario implements AutoCloseable {
     private void runStartupSteps() {
         List<ApplicationStartupStep> steps = node.startupSteps().stream()
                 .filter(step -> step.phase().ordinal() < LifecyclePhase.BOOTSTRAP.ordinal()
-                        || step.getClass().getSimpleName().equals("WorkflowDefinitionRegistryBootstrapStep"))
+                        || step.getClass().getName().endsWith(".WorkflowDefinitionRegistryBootstrapStep"))
                 .sorted(LifecycleOrdered.comparator())
                 .toList();
         for (ApplicationStartupStep step : steps) {
@@ -1093,9 +1094,7 @@ final class SourceScenario implements AutoCloseable {
 
     private static boolean calledByDelivery() {
         return StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE)
-                .walk(frames -> frames.anyMatch(frame -> frame.getDeclaringClass()
-                        .getName()
-                        .equals("dev.vertique.workflow.services.source.WorkflowSourceDelivery")));
+                .walk(frames -> frames.anyMatch(frame -> frame.getDeclaringClass() == WorkflowSourceDelivery.class));
     }
 
     // --- shared infrastructure ---

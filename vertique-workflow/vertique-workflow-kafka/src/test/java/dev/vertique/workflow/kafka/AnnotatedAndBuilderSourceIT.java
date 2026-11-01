@@ -239,7 +239,7 @@ class AnnotatedAndBuilderSourceIT {
     private static void startUp(AnnotatedAndBuilderNode node) {
         List<ApplicationStartupStep> steps = node.startupSteps().stream()
                 .filter(step -> step.phase().ordinal() < LifecyclePhase.BOOTSTRAP.ordinal()
-                        || step.getClass().getSimpleName().equals("WorkflowDefinitionRegistryBootstrapStep"))
+                        || step.getClass().getName().endsWith(".WorkflowDefinitionRegistryBootstrapStep"))
                 .sorted(LifecycleOrdered.comparator())
                 .toList();
         for (ApplicationStartupStep step : steps) {

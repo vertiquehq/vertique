@@ -100,7 +100,7 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
                 .errorStrategy(ErrorStrategy.RETRY)
                 .forceStrategies()
                 .noHeaderContext()
-                .ignoreUndecodable(() -> report(sourceName, Outcome.UNDECODABLE))
+                .ignoreUndecodable(() -> reportOutcome(sourceName, Outcome.UNDECODABLE))
                 .handler(new KafkaSignalHandler<>(
                         sourceName, plan, delivery, dlqReplay, new KafkaCorrelationBaseline(correlationFactory)));
         KafkaRecordFilter given = filter;
@@ -117,11 +117,11 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
             try {
                 accepted = given.accept(key, headers);
             } catch (Exception e) {
-                report(sourceName, Outcome.STAGE_FAILED);
+                reportOutcome(sourceName, Outcome.STAGE_FAILED);
                 throw new KafkaTerminalFailure(errorTypeOf(e));
             }
             if (!accepted) {
-                report(sourceName, Outcome.IGNORED);
+                reportOutcome(sourceName, Outcome.IGNORED);
             }
             return accepted;
         };
@@ -138,7 +138,7 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
         return binary.substring(binary.lastIndexOf('.') + 1);
     }
 
-    private void report(String sourceName, Outcome outcome) {
+    private void reportOutcome(String sourceName, Outcome outcome) {
         delivery.report(new SignalSourceEvent(sourceName, TRANSPORT, null, null, null, outcome));
     }
 

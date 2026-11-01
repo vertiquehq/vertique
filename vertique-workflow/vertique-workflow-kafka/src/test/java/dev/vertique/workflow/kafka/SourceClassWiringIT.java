@@ -153,7 +153,7 @@ class SourceClassWiringIT {
     private static void startUp(SourceClassNode node) {
         List<ApplicationStartupStep> steps = node.startupSteps().stream()
                 .filter(step -> step.phase().ordinal() < LifecyclePhase.BOOTSTRAP.ordinal()
-                        || step.getClass().getSimpleName().equals("WorkflowDefinitionRegistryBootstrapStep"))
+                        || step.getClass().getName().endsWith(".WorkflowDefinitionRegistryBootstrapStep"))
                 .sorted(LifecycleOrdered.comparator())
                 .toList();
         for (ApplicationStartupStep step : steps) {

@@ -36,6 +36,7 @@ import io.vertx.sqlclient.DatabaseException;
 import jakarta.annotation.Nullable;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
@@ -200,8 +201,9 @@ final class SignalSourceRun<T> {
             if (result.failed() != null) {
                 return conclude(null, failedVerdict(result.failed()));
             }
-            Optional<SecurityIdentity> answer = result.value();
-            if (answer == null || answer.isEmpty()) {
+            // An application's future may answer null instead of an empty Optional.
+            Optional<SecurityIdentity> answer = Objects.requireNonNullElse(result.value(), Optional.empty());
+            if (answer.isEmpty()) {
                 return null;
             }
             effective = new SourceEnvelope(
@@ -233,8 +235,8 @@ final class SignalSourceRun<T> {
             if (result.thrown() != null) {
                 return conclude(null, thrownVerdict(result.thrown()));
             }
-            Optional<String> answer = result.value();
-            if (answer == null || answer.isEmpty()) {
+            Optional<String> answer = Objects.requireNonNullElse(result.value(), Optional.empty());
+            if (answer.isEmpty()) {
                 return conclude(null, Verdict.of(Outcome.SCOPE_EMPTY, Fate.DONE, null));
             }
             try {
@@ -288,8 +290,8 @@ final class SignalSourceRun<T> {
         }
         Function<SignalMessage<T>, Future<Optional<String>>> lookup = target.lookup();
         return lookup(bindings, () -> lookup.apply(message)).map(result -> {
-            Optional<String> answer = result.value();
-            return keyOf(target, result, answer == null ? null : answer.orElse(null));
+            Optional<String> answer = Objects.requireNonNullElse(result.value(), Optional.empty());
+            return keyOf(target, result, answer.orElse(null));
         });
     }
 

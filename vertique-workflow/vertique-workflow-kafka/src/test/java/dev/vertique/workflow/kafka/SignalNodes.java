@@ -298,7 +298,7 @@ final class SignalNodes implements AutoCloseable {
         private void runStartupSteps() {
             List<ApplicationStartupStep> steps = graph.startupSteps().stream()
                     .filter(step -> step.phase().ordinal() < LifecyclePhase.BOOTSTRAP.ordinal()
-                            || step.getClass().getSimpleName().equals("WorkflowDefinitionRegistryBootstrapStep"))
+                            || step.getClass().getName().endsWith(".WorkflowDefinitionRegistryBootstrapStep"))
                     .sorted(LifecycleOrdered.comparator())
                     .toList();
             for (ApplicationStartupStep step : steps) {
