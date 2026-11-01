@@ -4,6 +4,7 @@
 package dev.vertique.inboxoutbox;
 
 import dev.vertique.core.extension.OrderedExtension;
+import java.time.Duration;
 
 /**
  * SPI for observing every outbox publish attempt, of every destination type, at the relay.
@@ -54,6 +55,15 @@ import dev.vertique.core.extension.OrderedExtension;
  * {@link #priority()} (lower runs first within a phase), then {@link #orderKey()} as a stable
  * tie-break. Register via Dagger multibinding ({@code @IntoSet}).
  *
+ * <h2>Claims</h2>
+ *
+ * <p>The relay also reports each claim that completed, through {@link #onClaimCompleted}: how long the claim took and
+ * how many entries it returned. The report carries no entry, aggregate id or payload. A claim that takes long for the
+ * number of entries it returns is the sign of hot aggregates: the claim admits only the oldest entry of each
+ * aggregate, so many entries queued behind few aggregates make it walk past what it cannot take. Record the duration
+ * and the count as plain figures, for example a timer and a counter with no tag: the claim has no aggregate to label,
+ * and an aggregate id must never become a metric label.
+ *
  * @see OutboxPublishCompletedEvent
  */
 public interface OutboxPublishObserver extends OrderedExtension {
@@ -76,4 +86,16 @@ public interface OutboxPublishObserver extends OrderedExtension {
      *                 is registered for the destination type; never {@code null}
      */
     default void onPublishCompleted(OutboxPublishCompletedEvent event, OutboxEnvelope envelope) {}
+
+    /**
+     * Called once per claim that completed, on the relay's context, whether it returned entries or none. A claim that
+     * failed is not reported.
+     *
+     * <p>The same observer-only contract as {@link #onPublishCompleted} applies: exceptions are caught, logged and
+     * swallowed, and the implementation MUST NOT block. The report carries no entry, aggregate id or payload.
+     *
+     * @param duration the time from asking the repository for a batch to its completion; never {@code null}
+     * @param claimed  the number of entries the claim returned; zero for an empty claim
+     */
+    default void onClaimCompleted(Duration duration, int claimed) {}
 }

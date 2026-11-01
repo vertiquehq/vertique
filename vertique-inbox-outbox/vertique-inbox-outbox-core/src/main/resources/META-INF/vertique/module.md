@@ -399,8 +399,21 @@ by `TransactionalMessagingModule` and is empty by default.
 ```java
 public interface OutboxPublishObserver extends OrderedExtension {
     default void onPublishCompleted(OutboxPublishCompletedEvent event, OutboxEnvelope envelope) {}
+    default void onClaimCompleted(Duration duration, int claimed) {}
 }
 ```
+
+The relay also calls `onClaimCompleted` once per claim that completed, with or without entries, on the same context and with the
+same observer-only contract. `duration` is the time from asking the repository for a batch to its completion and `claimed` is the
+number of entries it returned (zero for an empty claim); a claim that failed is not reported. The report carries no entry,
+aggregate id or payload.
+
+**Aggregate-cardinality guidance.** The claim admits only the oldest unfinished entry of each aggregate, so a claim that is slow
+for the number of entries it returns is the sign of many entries queued behind few aggregates, such as many service dispatches of
+one workflow instance. Record `duration` and `claimed` as plain figures, for example a timer and a counter with no tag. An
+aggregate id, a destination or an entry id must never become a metric label: the cardinality is unbounded, and the claim has none to
+report. A workflow that dispatches several services in parallel branches still delivers them one at a time, because its entries
+share one aggregate.
 
 ```java
 @Provides @IntoSet
@@ -461,6 +474,9 @@ is reported as `UNRESOLVABLE` with `DEFERRED`.
 - **Threading.** The callback runs on the relay's context — the event-loop context of the relay
   instance that made the attempt — whichever thread completes the repository call. Do not block in
   it. Several relay instances, each on its own context, may call one observer concurrently.
+- **Outbox depth is not bounded by anything here.** Neither the claim report nor the workflow intake limit bounds the number of
+  outbox entries: a command that runs can move its backlog into the outbox. Watch the claim report, and the age of pending entries
+  in the table, to see it grow.
 
 ---
 
