@@ -619,7 +619,7 @@ build time.
 | `errorStrategy` | annotation value (`SKIP`) | `SKIP`, `DEAD_LETTER`, or `RETRY` |
 | `deadLetterTopic` | `"{topic}.dlq"` | Used by `DEAD_LETTER` |
 | `eventBusTimeoutMs` | `30000` | Must be `> 0` |
-| `maxInFlight` | `256` | Must be `>= 1`. The consumer pauses at this many in-flight dispatches and resumes as the queue drains |
+| `maxInFlight` | `256` | Must be `>= 1`. The consumer pauses at this many in-flight dispatches and resumes as the queue drains, unless another reason still holds it paused (see below) |
 | `instances` | `1` | Must be `>= 1` |
 | `worker` | unset | Event-loop threading unless a `mayBlock()` serde forces worker; see below |
 | `format` | per-endpoint, else `kafka.format`, else auto-detect, else `json` | Any registered provider format |
@@ -722,6 +722,11 @@ at build time.
 not committed, the consumer pauses, and after the backoff it resumes and Kafka redelivers from the
 uncommitted offset. The record then re-enters the full pipeline, including any service-level
 `@Retry`, `@Timeout`, and `@CircuitBreaker` policies.
+
+A consumer is paused for as long as any reason holds it, and it resumes only when none remains. The reasons are tracked
+separately: reaching `maxInFlight` is one, and each retried record's backoff is another. A dispatch that finishes while a record waits
+out its backoff therefore does not resume the consumer, a backoff that ends while the consumer is at `maxInFlight` does not resume
+it, and two overlapping retries keep it paused until both have ended.
 
 Retry delays use the shared `vertique-resilience` exponential backoff policy with zero jitter. The
 configured `backoffMs`, `backoffMultiplier`, and `maxBackoffMs` therefore retain deterministic Kafka

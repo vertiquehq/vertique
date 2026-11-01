@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.BusinessRuleException;
 import dev.vertique.core.exception.ConflictException;
 import dev.vertique.core.exception.TooManyRequestsException;
+import dev.vertique.core.exception.UnavailableException;
 import dev.vertique.core.exception.ValidationException;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.ViolationCarrier;
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.Test;
  *   <li>{@link BusinessRuleException} and subclasses → 400 (via {@code ValidationException} parent)
  *   <li>{@code dev.vertique.core.exception.UnauthorizedException} and subclasses → 401
  *   <li>{@code dev.vertique.core.exception.ForbiddenException} and subclasses → 403
+ *   <li>{@link UnavailableException} and subclasses → 503
  *   <li>{@link TooManyRequestsException} and subclasses → 429, with {@code Retry-After} when present
  *       (T020) — registered explicitly at the {@code Throwable}-level default; {@link
  *       TooManyRequestsException} extends {@code VertiqueException} directly (T021 W1), so no
@@ -68,6 +70,13 @@ class RestModuleDefaultMappingTest {
     /** Concrete subclass of {@link TooManyRequestsException} used to verify hierarchy walking. */
     private static final class CustomTooManyRequestsException extends TooManyRequestsException {
         CustomTooManyRequestsException(String message) {
+            super(message);
+        }
+    }
+
+    /** Concrete subclass of {@link UnavailableException} used to verify hierarchy walking. */
+    private static final class PausedIntakeException extends UnavailableException {
+        PausedIntakeException(String message) {
             super(message);
         }
     }
@@ -152,6 +161,16 @@ class RestModuleDefaultMappingTest {
         Response response = mapper.toResponse(new dev.vertique.core.exception.NotFoundException("item not found"));
 
         assertEquals(404, response.getStatus());
+    }
+
+    @Test
+    @DisplayName("UnavailableException subclass should map to 503 Service Unavailable via hierarchy walking")
+    void unavailableExceptionSubclassShouldMapTo503() {
+        DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
+
+        Response response = mapper.toResponse(new PausedIntakeException("try again later"));
+
+        assertEquals(503, response.getStatus());
     }
 
     @Test

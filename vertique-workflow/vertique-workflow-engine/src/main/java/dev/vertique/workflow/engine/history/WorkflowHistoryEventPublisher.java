@@ -165,7 +165,8 @@ public final class WorkflowHistoryEventPublisher {
      * Runs the work of an action on a known instance and reports what it wrote once its transaction commits. The
      * execution lock of the instance is taken first, before the range starts, so no other transaction can write
      * entries inside it; the work takes it again at no cost. The cost is that a call which would have returned without
-     * writing, such as a duplicate signal, waits for the lock when a listener is bound.
+     * writing, such as a duplicate signal, waits for the lock when a listener is bound. A call that is certain to write
+     * nothing uses {@link #aroundNotWriting} instead.
      *
      * @param action the caller-driven action, for the failure report
      * @param id     the instance the action concerns, or {@code null} when it never resolved one (only a failure is
@@ -180,7 +181,25 @@ public final class WorkflowHistoryEventPublisher {
             @Nullable WorkflowInstanceId id,
             SqlClient tx,
             Supplier<Future<T>> work) {
-        return run(action, id, tx, true, work);
+        return run(action, id, tx, true, true, work);
+    }
+
+    /**
+     * Runs the work of an action on a known instance that is certain to write nothing to its history, and reports only
+     * a failure: the work is not preceded by the execution lock or by a read of the sequence, and no range is
+     * announced. A caller that must answer without waiting for the lock, such as one that refuses a signal before it
+     * records anything, uses this form. If the work did write history, those entries would not be announced.
+     *
+     * @param action the caller-driven action, for the failure report
+     * @param id     the instance the action concerns
+     * @param tx     the transaction the work runs in
+     * @param work   the work, which writes nothing to the history
+     * @param <T>    the result of the work
+     * @return the future of the work, unchanged
+     */
+    public <T> Future<T> aroundNotWriting(
+            WorkflowHistoryFailure.Action action, WorkflowInstanceId id, SqlClient tx, Supplier<Future<T>> work) {
+        return run(action, id, tx, false, false, work);
     }
 
     /**
@@ -196,7 +215,7 @@ public final class WorkflowHistoryEventPublisher {
      */
     public <T> Future<T> aroundLocked(
             WorkflowHistoryFailure.Action action, WorkflowInstanceId id, SqlClient tx, Supplier<Future<T>> work) {
-        return run(action, id, tx, false, work);
+        return run(action, id, tx, false, true, work);
     }
 
     private <T> Future<T> run(
@@ -204,6 +223,7 @@ public final class WorkflowHistoryEventPublisher {
             @Nullable WorkflowInstanceId id,
             SqlClient tx,
             boolean takeLock,
+            boolean readSequence,
             Supplier<Future<T>> work) {
         if (!hasListeners()) {
             return work.get();
@@ -217,8 +237,10 @@ public final class WorkflowHistoryEventPublisher {
             Attempt attempt = attempt(action, id);
             Future<Void> locked =
                     takeLock && id != null ? invoke(attempt, () -> lock.apply(id, tx)) : Future.succeededFuture();
-            announced = locked.compose(ignored -> highestSequence(id, tx).compose(after -> invoke(attempt, work)
-                    .compose(result -> settle(attempt, after, tx).map(settled -> result))));
+            announced = locked.compose(
+                    ignored -> (readSequence ? highestSequence(id, tx) : Future.<Long>succeededFuture(null))
+                            .compose(after -> invoke(attempt, work).compose(result -> settle(attempt, after, tx)
+                                    .map(settled -> result))));
         } catch (RuntimeException | Error thrown) {
             leave(transaction, id);
             throw thrown;

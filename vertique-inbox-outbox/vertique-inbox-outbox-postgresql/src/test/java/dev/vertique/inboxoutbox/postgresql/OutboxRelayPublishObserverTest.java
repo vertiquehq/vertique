@@ -704,6 +704,95 @@ class OutboxRelayPublishObserverTest {
         }
     }
 
+    // --- Claim reports ---
+
+    @Nested
+    @DisplayName("claim reports")
+    class ClaimReports {
+
+        @Test
+        @DisplayName("each claim that completed is reported with its duration and count, on the relay's context")
+        void reportsEveryCompletedClaim() throws Exception {
+            RecordingObserver observer = new RecordingObserver();
+            claim(record(DestinationType.SERVICE, 0, 3));
+            deploy(envelope -> Future.succeededFuture(OutboxPublishResult.success()), observer);
+
+            await(() -> observer.claims.size() >= 3, "the observer was not told of three claims");
+
+            ClaimReport first = observer.claims.get(0);
+            assertEquals(1, first.claimed(), "the first claim returned one entry");
+            assertFalse(first.duration().isNegative(), "the duration of a claim is not negative");
+            assertEquals(0, observer.claims.get(1).claimed(), "an empty claim is reported with a count of zero");
+            assertEquals(0, observer.claims.get(2).claimed());
+            assertNotNull(first.context(), "the report is made on a Vert.x context");
+            assertTrue(
+                    observer.claims.stream()
+                                    .map(ClaimReport::context)
+                                    .distinct()
+                                    .count()
+                            == 1,
+                    "every report is made on the relay's one context");
+        }
+
+        @Test
+        @DisplayName("a claim that failed is not reported, and polling goes on")
+        void aFailedClaimIsNotReported() throws Exception {
+            RecordingObserver observer = new RecordingObserver();
+            when(outboxRepository.claimBatch(anyInt(), anyString(), any()))
+                    .thenReturn(Future.failedFuture(new IllegalStateException("pool closed")))
+                    .thenReturn(Future.succeededFuture(List.of()));
+            deploy(envelope -> Future.succeededFuture(OutboxPublishResult.success()), observer);
+
+            await(() -> observer.claims.size() >= 2, "the later claims were not reported");
+            verify(outboxRepository, timeout(WAIT_MS).atLeast(3)).claimBatch(eq(BATCH_SIZE), eq(NODE), any());
+
+            assertTrue(
+                    observer.claims.stream().allMatch(report -> report.claimed() == 0),
+                    "only the claims that completed were reported, and none of them returned an entry");
+        }
+
+        @Test
+        @DisplayName("an observer that throws from the claim report changes neither the later observers nor the loop")
+        void aThrowingObserverIsIsolated() throws Exception {
+            OutboxPublishObserver throwing = new OutboxPublishObserver() {
+                @Override
+                public int priority() {
+                    return -1;
+                }
+
+                @Override
+                public void onClaimCompleted(Duration duration, int claimed) {
+                    throw new IllegalStateException("observer broke");
+                }
+            };
+            RecordingObserver second = new RecordingObserver(1, "second");
+            claim(record(DestinationType.SERVICE, 0, 3));
+            deploy(envelope -> Future.succeededFuture(OutboxPublishResult.success()), throwing, second);
+
+            await(() -> second.claims.size() >= 3, "the later observer was not told of three claims");
+            Notification n = awaitTheOnlyNotification(second);
+
+            assertAttemptFacts(n, OutboxPublishOutcome.SUCCESS, OutboxEntryDisposition.PUBLISHED, 0, 3);
+            verify(outboxRepository).markPublished(ENTRY_ID, NODE);
+        }
+
+        @Test
+        @DisplayName("an error that escapes the claim report does not strand the claimed entries, and polling goes on")
+        void anErrorFromTheClaimReportDoesNotSkipTheBatch() throws Exception {
+            OutboxPublishObserver fatal = new OutboxPublishObserver() {
+                @Override
+                public void onClaimCompleted(Duration duration, int claimed) {
+                    throw new Error("not contained by the relay");
+                }
+            };
+            claim(record(DestinationType.SERVICE, 0, 3));
+            deploy(envelope -> Future.succeededFuture(OutboxPublishResult.success()), fatal);
+
+            verify(outboxRepository, timeout(WAIT_MS)).markPublished(ENTRY_ID, NODE);
+            verify(outboxRepository, timeout(WAIT_MS).atLeast(3)).claimBatch(eq(BATCH_SIZE), eq(NODE), any());
+        }
+    }
+
     // --- Helpers ---
 
     private void claim(OutboxRecord record) {
@@ -785,10 +874,16 @@ class OutboxRelayPublishObserverTest {
     /** One call of {@link OutboxPublishObserver#onPublishCompleted}. */
     private record Notification(OutboxPublishCompletedEvent event, OutboxEnvelope envelope) {}
 
+    /** One call of {@link OutboxPublishObserver#onClaimCompleted}, with the context it ran on. */
+    private record ClaimReport(Duration duration, int claimed, Context context) {}
+
     /** Observer that records every call, with a configurable place in the order. */
     private static final class RecordingObserver implements OutboxPublishObserver {
 
         final List<Notification> notifications = new CopyOnWriteArrayList<>();
+
+        /** Every claim report. */
+        final List<ClaimReport> claims = new CopyOnWriteArrayList<>();
 
         /** The Vert.x context each call ran on; {@code null} for a call made off any context. */
         final List<Context> contexts = new CopyOnWriteArrayList<>();
@@ -819,6 +914,11 @@ class OutboxRelayPublishObserverTest {
         @Override
         public String orderKey() {
             return orderKey;
+        }
+
+        @Override
+        public void onClaimCompleted(Duration duration, int claimed) {
+            claims.add(new ClaimReport(duration, claimed, Vertx.currentContext()));
         }
 
         @Override

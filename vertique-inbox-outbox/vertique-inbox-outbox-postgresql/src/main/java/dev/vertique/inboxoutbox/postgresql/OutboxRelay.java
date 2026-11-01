@@ -84,7 +84,8 @@ import lombok.extern.slf4j.Slf4j;
  * the next poll is scheduled without waiting for the repository call; only the notification waits
  * for it. Observers are always called on this verticle's own context: when the repository call
  * settles on another context or thread, the relay hops back before it notifies. An observer that
- * throws changes neither the state transition nor the relay loop.
+ * throws changes neither the state transition nor the relay loop. Each claim that completed is also reported
+ * to every observer, on this verticle's context, with the time it took and the number of entries it returned.
  *
  * <p><b>Stale lease recovery and cleanup</b> are no longer owned by this verticle — they run as
  * cluster-singleton cron jobs in
@@ -359,6 +360,7 @@ public class OutboxRelay extends AbstractVerticle {
     private void poll() {
         polling = true;
         wakeRequested = false;
+        long claimStartedNanos = System.nanoTime();
         Future<List<OutboxRecord>> claimed;
         try {
             int capacity = config.batchSize() - inFlight.get();
@@ -389,7 +391,11 @@ public class OutboxRelay extends AbstractVerticle {
                 if (ar.succeeded()) {
                     List<OutboxRecord> records = ar.result() != null ? ar.result() : List.of();
                     full = records.size() >= claimCapacity;
+                    Duration claimDuration = Duration.ofNanos(System.nanoTime() - claimStartedNanos);
+                    // The entries are dispatched first: an error that escapes an observer must not strand a
+                    // claimed batch until its lease expires.
                     dispatchClaimed(records);
+                    notifyClaimCompleted(claimDuration, records.size());
                 } else {
                     log.warn(
                             "OutboxRelay nodeId={}: poll failed: {}",
@@ -876,6 +882,24 @@ public class OutboxRelay extends AbstractVerticle {
                 observer.onPublishCompleted(event, envelope);
             } catch (Exception | LinkageError | AssertionError | StackOverflowError e) {
                 observerFailureReporter.report(observer.getClass(), "onPublishCompleted", e);
+            }
+        }
+    }
+
+    /**
+     * Tells every registered {@link OutboxPublishObserver} that a claim completed, in sorted order, with the time it
+     * took and the number of entries it returned. Called on the relay's context; a failure of one observer is
+     * contained exactly as in {@link #notifyObservers}.
+     *
+     * @param duration the time from asking for the batch to its completion
+     * @param claimed  the number of entries the claim returned
+     */
+    private void notifyClaimCompleted(Duration duration, int claimed) {
+        for (OutboxPublishObserver observer : observers) {
+            try {
+                observer.onClaimCompleted(duration, claimed);
+            } catch (Exception | LinkageError | AssertionError | StackOverflowError e) {
+                observerFailureReporter.report(observer.getClass(), "onClaimCompleted", e);
             }
         }
     }

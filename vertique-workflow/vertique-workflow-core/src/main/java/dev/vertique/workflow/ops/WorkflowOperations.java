@@ -24,6 +24,12 @@ public interface WorkflowOperations {
      * already exists, the existing instance id is returned without creating a duplicate (idempotent
      * start).
      *
+     * <p>A start that creates an instance is refused with
+     * {@link dev.vertique.workflow.exception.WorkflowIntakeRefusedException}, a retryable 503, while the node refuses new
+     * intake because the cluster holds more due commands than its executors have run. The refusal comes after the
+     * replay lookup, the version selection and the payload checks and writes nothing, so the same start can be sent
+     * again later with the same idempotency key.
+     *
      * @param cmd command describing the definition, payload, and idempotency key
      * @return a {@link Future} that resolves to the id of the created (or existing) workflow
      *     instance
@@ -37,9 +43,11 @@ public interface WorkflowOperations {
      * afterwards, in the order the instance's commands were recorded. A signal the instance does not await yet is
      * parked and applied when the instance reaches a wait that accepts it. The call is refused only for a missing or
      * ended instance, a name the instance's pinned definition does not declare for the addressed wait, a payload over
-     * the record-time size or depth bounds, or an instance that already holds the configured number of open signals.
+     * the record-time size or depth bounds, an instance that already holds the configured number of open signals, or
+     * a node that refuses new intake while the cluster holds more due commands than its executors have run
+     * ({@link dev.vertique.workflow.exception.WorkflowIntakeRefusedException}, a retryable 503 that writes nothing).
      * The {@code signalDedupKey} prevents duplicate signal delivery: a repeated key returns success and records
-     * nothing.
+     * nothing, also while the node refuses new intake.
      *
      * @param id id of the workflow instance to signal
      * @param signalName name of the signal to deliver

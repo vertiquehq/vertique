@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 
@@ -43,8 +42,9 @@ import lombok.extern.slf4j.Slf4j;
  * without creating a Kafka connection.
  *
  * <p>Backpressure is enforced via an {@link AtomicInteger} tracking in-flight dispatches. When
- * {@link ResolvedKafkaConsumerConfig#maxInFlight()} is reached, the consumer is paused. It is resumed once
- * the in-flight count drops below the threshold.
+ * {@link ResolvedKafkaConsumerConfig#maxInFlight()} is reached, the consumer is paused. The in-flight count dropping
+ * below the threshold releases that pause, and the consumer resumes once no other pause reason, such as the backoff of
+ * a retried record, remains.
  *
  * <p>Error handling follows the configured {@link ErrorStrategy}:
  *
@@ -118,7 +118,12 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
 
     private KafkaConsumer<String, byte[]> consumer;
     private final AtomicInteger inFlight = new AtomicInteger(0);
-    private final AtomicBoolean paused = new AtomicBoolean(false);
+
+    /**
+     * The reasons the consumer is paused: the in-flight limit and the backoff of each retried record. It resumes only
+     * when none remains.
+     */
+    private final KafkaPauseReasons pauses = new KafkaPauseReasons(() -> consumer.pause(), () -> consumer.resume());
 
     // --- Collaborators (initialised in start()) ---
 
@@ -596,27 +601,21 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      *
      * @return a consumer control delegating to the current consumer and verticle state
      */
-    private KafkaErrorHandler.ConsumerControl consumerControl() {
+    KafkaErrorHandler.ConsumerControl consumerControl() {
         return new KafkaErrorHandler.ConsumerControl() {
+            // Each pause is ended by exactly one scheduleResume. Ending it releases the backoff hold only: a consumer
+            // that is also at its in-flight limit, or waiting out the backoff of another record, stays paused.
             @Override
             public void pause() {
-                if (paused.compareAndSet(false, true)) {
-                    consumer.pause();
-                }
+                pauses.hold(KafkaPauseReasons.Reason.ERROR_BACKOFF);
             }
 
             @Override
             public void scheduleResume(long delayMs) {
                 if (delayMs <= 0) {
-                    if (paused.compareAndSet(true, false)) {
-                        consumer.resume();
-                    }
+                    pauses.release(KafkaPauseReasons.Reason.ERROR_BACKOFF);
                 } else {
-                    vertx.setTimer(delayMs, id -> {
-                        if (paused.compareAndSet(true, false)) {
-                            consumer.resume();
-                        }
-                    });
+                    vertx.setTimer(delayMs, id -> pauses.release(KafkaPauseReasons.Reason.ERROR_BACKOFF));
                 }
             }
 
@@ -674,10 +673,10 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     /**
      * Increments the in-flight counter and pauses the consumer if the threshold is reached.
      */
-    private void incrementInFlight() {
+    void incrementInFlight() {
         int current = inFlight.incrementAndGet();
-        if (current >= entry.config().maxInFlight() && paused.compareAndSet(false, true)) {
-            consumer.pause();
+        if (current >= entry.config().maxInFlight() && !pauses.isHeld(KafkaPauseReasons.Reason.IN_FLIGHT)) {
+            pauses.hold(KafkaPauseReasons.Reason.IN_FLIGHT);
             log.debug(
                     "[{}] Paused consumer: inFlight={} maxInFlight={}",
                     entry.name(),
@@ -687,14 +686,14 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     }
 
     /**
-     * Decrements the in-flight counter and resumes the consumer if it was paused and the count has
-     * dropped below the max-in-flight threshold.
+     * Decrements the in-flight counter and releases the in-flight pause once the count has dropped below the
+     * max-in-flight threshold. The consumer resumes only if no other reason, such as a retry's backoff, still holds it.
      */
-    private void decrementInFlight() {
+    void decrementInFlight() {
         int current = inFlight.decrementAndGet();
-        if (current < entry.config().maxInFlight() && paused.compareAndSet(true, false)) {
-            consumer.resume();
-            log.debug("[{}] Resumed consumer: inFlight={}", entry.name(), current);
+        if (current < entry.config().maxInFlight() && pauses.isHeld(KafkaPauseReasons.Reason.IN_FLIGHT)) {
+            pauses.release(KafkaPauseReasons.Reason.IN_FLIGHT);
+            log.debug("[{}] Released the in-flight pause: inFlight={}", entry.name(), current);
         }
     }
 

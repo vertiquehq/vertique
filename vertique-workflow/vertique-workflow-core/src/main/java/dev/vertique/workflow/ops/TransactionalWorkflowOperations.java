@@ -32,6 +32,10 @@ public interface TransactionalWorkflowOperations<TX> {
     /**
      * Starts a new workflow instance within the given transaction.
      *
+     * <p>As {@link WorkflowOperations#start(StartCommand)}, a start that creates an instance fails with
+     * {@link dev.vertique.workflow.exception.WorkflowIntakeRefusedException} while the node refuses new intake, and
+     * writes nothing then.
+     *
      * @param cmd command describing the definition, payload, and idempotency key
      * @param tx the active transaction context
      * @return a {@link Future} that resolves to the id of the created (or existing) workflow
@@ -41,7 +45,11 @@ public interface TransactionalWorkflowOperations<TX> {
 
     /**
      * Records an external signal for a workflow instance within the given transaction. The signal is applied later, by
-     * an executor, in the order the instance's commands were recorded.
+     * an executor, in the order the instance's commands were recorded. As in
+     * {@link WorkflowOperations#signal(WorkflowInstanceId, String, Object, String)}, the call also fails with
+     * {@link dev.vertique.workflow.exception.WorkflowIntakeRefusedException} while the node refuses new intake, and
+     * writes nothing then. A signal that is already durable, such as one the outbox relay delivers, is recorded
+     * through {@link RelayedSignals} instead.
      *
      * @param id id of the workflow instance to signal
      * @param signalName name of the signal to deliver

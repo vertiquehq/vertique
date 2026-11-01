@@ -9,8 +9,8 @@ import dev.vertique.core.exception.ConfigurationException;
 import jakarta.annotation.Nullable;
 
 /**
- * Parsed {@code workflow.recording} configuration: execution-lock waits, encoded payload bounds, the open-signal limit
- * and the size of the compiled-schema cache.
+ * Parsed {@code workflow.recording} configuration: execution-lock waits, encoded payload bounds, the open-signal limit,
+ * the size of the compiled-schema cache and the limit on intake from outside.
  *
  * @param lockTimeoutMs the longest time, in milliseconds, a caller waits to take an instance's execution lock before
  *     its transaction fails with a retryable persistence error; at least 1
@@ -19,9 +19,15 @@ import jakarta.annotation.Nullable;
  *     before recording another is refused; from 1 to 10000
  * @param schemaCacheMaxEntries the most compiled payload schemas the record-time validation keeps, keyed by schema
  *     hash; at least 1
+ * @param intake the limit on starts and signals from outside while many commands are due; see
+ *     {@link WorkflowIntakeConfig}; {@code null} means {@link WorkflowIntakeConfig#defaults()}
  */
 public record WorkflowRecordingConfig(
-        long lockTimeoutMs, int maxPayloadBytes, int maxOpenSignalsPerInstance, int schemaCacheMaxEntries) {
+        long lockTimeoutMs,
+        int maxPayloadBytes,
+        int maxOpenSignalsPerInstance,
+        int schemaCacheMaxEntries,
+        WorkflowIntakeConfig intake) {
 
     /** The default wait for an instance's execution lock, in milliseconds. */
     public static final long DEFAULT_LOCK_TIMEOUT_MS = 5000L;
@@ -58,6 +64,28 @@ public record WorkflowRecordingConfig(
         if (schemaCacheMaxEntries < 1) {
             throw new ConfigurationException("workflow.recording.schemaCacheMaxEntries must be at least 1");
         }
+        if (intake == null) {
+            intake = WorkflowIntakeConfig.defaults();
+        }
+    }
+
+    /**
+     * Creates a configuration with the default intake limit.
+     *
+     * @param lockTimeoutMs the execution-lock wait in milliseconds; at least 1
+     * @param maxPayloadBytes the maximum encoded JSON payload size in bytes; at least 1024
+     * @param maxOpenSignalsPerInstance the most signals an instance may hold open; from 1 to 10000
+     * @param schemaCacheMaxEntries the most compiled payload schemas kept by record-time validation; at least 1
+     * @throws ConfigurationException if a bound is violated
+     */
+    public WorkflowRecordingConfig(
+            long lockTimeoutMs, int maxPayloadBytes, int maxOpenSignalsPerInstance, int schemaCacheMaxEntries) {
+        this(
+                lockTimeoutMs,
+                maxPayloadBytes,
+                maxOpenSignalsPerInstance,
+                schemaCacheMaxEntries,
+                WorkflowIntakeConfig.defaults());
     }
 
     /**
@@ -98,25 +126,28 @@ public record WorkflowRecordingConfig(
             @JsonProperty("lockTimeoutMs") @Nullable Long lockTimeoutMs,
             @JsonProperty("maxPayloadBytes") @Nullable Integer maxPayloadBytes,
             @JsonProperty("maxOpenSignalsPerInstance") @Nullable Integer maxOpenSignalsPerInstance,
-            @JsonProperty("schemaCacheMaxEntries") @Nullable Integer schemaCacheMaxEntries) {
+            @JsonProperty("schemaCacheMaxEntries") @Nullable Integer schemaCacheMaxEntries,
+            @JsonProperty("intake") @Nullable WorkflowIntakeConfig intake) {
         return new WorkflowRecordingConfig(
                 lockTimeoutMs == null ? DEFAULT_LOCK_TIMEOUT_MS : lockTimeoutMs,
                 maxPayloadBytes == null ? DEFAULT_MAX_PAYLOAD_BYTES : maxPayloadBytes,
                 maxOpenSignalsPerInstance == null ? DEFAULT_MAX_OPEN_SIGNALS_PER_INSTANCE : maxOpenSignalsPerInstance,
-                schemaCacheMaxEntries == null ? DEFAULT_SCHEMA_CACHE_MAX_ENTRIES : schemaCacheMaxEntries);
+                schemaCacheMaxEntries == null ? DEFAULT_SCHEMA_CACHE_MAX_ENTRIES : schemaCacheMaxEntries,
+                intake == null ? WorkflowIntakeConfig.defaults() : intake);
     }
 
     /**
      * Returns the configuration that applies when none is supplied.
      *
-     * @return a configuration with the default lock timeout, maximum payload size, open-signal limit and schema cache
-     *     size
+     * @return a configuration with the default lock timeout, maximum payload size, open-signal limit, schema cache
+     *     size and intake limit
      */
     public static WorkflowRecordingConfig defaults() {
         return new WorkflowRecordingConfig(
                 DEFAULT_LOCK_TIMEOUT_MS,
                 DEFAULT_MAX_PAYLOAD_BYTES,
                 DEFAULT_MAX_OPEN_SIGNALS_PER_INSTANCE,
-                DEFAULT_SCHEMA_CACHE_MAX_ENTRIES);
+                DEFAULT_SCHEMA_CACHE_MAX_ENTRIES,
+                WorkflowIntakeConfig.defaults());
     }
 }

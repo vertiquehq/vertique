@@ -38,6 +38,7 @@ import dev.vertique.workflow.contract.WorkflowSignal;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.engine.intake.IntakeAdmission;
 import dev.vertique.workflow.engine.spi.ClaimedCommand;
 import dev.vertique.workflow.engine.spi.CommandWakeups;
 import dev.vertique.workflow.engine.spi.WorkflowCommandRepository;
@@ -370,6 +371,7 @@ final class ExecutorFixture implements AutoCloseable {
         private WorkflowHistoryRedactor historyRedactor;
         private Set<WorkflowSideEffectRecorder<SqlClient>> additionalRecorders = Set.of();
         private Set<WorkflowHistoryListener> historyListeners = Set.of();
+        private IntakeAdmission intakeAdmission = IntakeAdmission.alwaysAdmitting();
         private final SegmentControl segmentControl = new SegmentControl();
         private boolean listening;
         private WorkflowRegistry registry;
@@ -385,6 +387,12 @@ final class ExecutorFixture implements AutoCloseable {
         /** The engine announces committed history and failed actions to these listeners. */
         NodeSpec historyListeners(Set<WorkflowHistoryListener> historyListeners) {
             this.historyListeners = historyListeners;
+            return this;
+        }
+
+        /** The engine checks a new start or signal from outside against this admission; it accepts every call by default. */
+        NodeSpec intakeAdmission(IntakeAdmission intakeAdmission) {
+            this.intakeAdmission = intakeAdmission;
             return this;
         }
 
@@ -595,6 +603,7 @@ final class ExecutorFixture implements AutoCloseable {
                     .executorConfig(executorConfig())
                     .executorObservers(observers)
                     .historyListeners(historyListeners)
+                    .intakeAdmission(intakeAdmission)
                     .commandsDecorator(real -> segmentControl.enabled
                             ? segmentControl.commands(commandsDecorator.apply(real))
                             : commandsDecorator.apply(real));
