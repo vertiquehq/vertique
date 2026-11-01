@@ -490,6 +490,11 @@ final class DeliveryFixture {
     private Future<CorrelatedSignalReceipt> receive(String method, CorrelatedSignal signal, SqlClient transaction) {
         ContextInternal context = (ContextInternal) Vertx.currentContext();
         Entry entry = new Entry(method, signal, transaction, context, ambient());
+        if (mode == Mode.HOLD) {
+            ContextInternal on = home != null ? home : context;
+            entry.heldOpen.set(on != null ? on.promise() : Promise.promise());
+        }
+        // Announced only now: a proof releases the entry as soon as it sees it, so the promise must already be there.
         observed.arrived(entry);
         switch (mode) {
             case FAIL:
@@ -497,10 +502,7 @@ final class DeliveryFixture {
             case THROW:
                 throw (RuntimeException) cause;
             case HOLD:
-                ContextInternal on = home != null ? home : context;
-                Promise<CorrelatedSignalReceipt> promise = on != null ? on.promise() : Promise.promise();
-                entry.heldOpen.set(promise);
-                return promise.future().map(receipt -> {
+                return entry.heldOpen.get().future().map(receipt -> {
                     entry.afterResumption.set(ambient());
                     return receipt;
                 });
