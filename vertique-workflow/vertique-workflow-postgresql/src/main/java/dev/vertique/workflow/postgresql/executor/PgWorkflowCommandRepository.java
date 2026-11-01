@@ -1071,32 +1071,6 @@ public final class PgWorkflowCommandRepository implements WorkflowCommandReposit
     }
 
     @Override
-    @Deprecated
-    public Future<Long> recordSignal(
-            WorkflowInstanceId instance,
-            String signalName,
-            @Nullable String forkStepId,
-            @Nullable String branchId,
-            String dedupKey,
-            @Nullable String payloadJson,
-            @Nullable String explicitCarrierJson,
-            CommandActor actor,
-            SqlClient tx) {
-        return recordSignal(
-                instance,
-                signalName,
-                forkStepId,
-                branchId,
-                null,
-                dedupKey,
-                payloadJson,
-                explicitCarrierJson,
-                null,
-                actor,
-                tx);
-    }
-
-    @Override
     public Future<Long> recordSignal(
             WorkflowInstanceId instance,
             String signalName,
