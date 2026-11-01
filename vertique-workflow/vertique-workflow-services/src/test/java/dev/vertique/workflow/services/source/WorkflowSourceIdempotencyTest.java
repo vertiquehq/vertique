@@ -128,6 +128,44 @@ class WorkflowSourceIdempotencyTest {
     }
 
     @Test
+    @DisplayName("two replays of a record with one target recorded and one failing record the finished target once")
+    void twoReplaysOfAPartiallyRecordedMessage(Vertx vertx) {
+        // Given a message of two targets with no dedupBy, so the dedup key is the one the transport gives its
+        // position: the same for the record and for every replay of it
+        SignalSourcePlan<ShipmentDelivered> plan = SignalSourcePlan.builder("carriers", ShipmentDelivered.class)
+                .signal(OrdersContract.class, SHIPMENT_DELIVERED)
+                .key(ShipmentDelivered::carrierRef)
+                .payload(PlanFixture::confirmation)
+                .signal(BillingContract.class, INVOICE_SETTLED)
+                .key(ShipmentDelivered::carrierRef)
+                .payload(PlanFixture::confirmation)
+                .build();
+        WorkflowSignalLimitException limit =
+                new WorkflowSignalLimitException(new WorkflowInstanceId(UUID.randomUUID()), 50);
+        try (DeliveryRig rig = DeliveryRig.over(vertx).operations(DeliveryRig.recorded(), DeliveryRig.raising(limit))) {
+            // When the first target is recorded and the second fails at the record, and again at the first replay
+            rig.deliver(plan, shipment(KEY), envelope("source:3:42"));
+            rig.operations(DeliveryRig.raising(limit));
+            SourceDisposition firstReplay = rig.deliver(plan, shipment(KEY), envelope("source:3:42"));
+            assertThat(firstReplay.fate()).isEqualTo(Fate.RETRY);
+
+            // And: at the second replay the second target records
+            rig.operations(DeliveryRig.recorded());
+            SourceDisposition secondReplay = rig.deliver(plan, shipment(KEY), envelope("source:3:42"));
+
+            // Then the finished target was recorded once, and the other was attempted at each run
+            assertThat(secondReplay.fate()).isEqualTo(Fate.DONE);
+            assertThat(rig.calls())
+                    .extracting(call -> call.signal().signalName())
+                    .containsExactly(SHIPMENT_DELIVERED, INVOICE_SETTLED, INVOICE_SETTLED, INVOICE_SETTLED);
+            assertThat(rig.inbox().committed)
+                    .containsExactlyInAnyOrder(
+                            idOf("orders", SHIPMENT_DELIVERED, null, "source:3:42"),
+                            idOf("billing", INVOICE_SETTLED, null, "source:3:42"));
+        }
+    }
+
+    @Test
     @DisplayName(
             "a no-match under an ignoring policy commits its row in a transaction of its own, so a replay stays ignored")
     void ignoredNoMatchStaysIgnored(Vertx vertx) {

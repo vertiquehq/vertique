@@ -389,6 +389,42 @@ class WorkflowKafkaSignalsTest {
     }
 
     @Test
+    void aRecordReplayedAnyNumberOfTimesKeepsTheDedupKeyOfTheRecordItStartedAs() throws Exception {
+        // Given a replay source with no dedupBy, and a delivery double that keeps the envelope of each record
+        Carriers carriers = SourceFixture.carriers();
+        ArgumentCaptor<SourceEnvelope> envelopes = ArgumentCaptor.forClass(SourceEnvelope.class);
+        doReturn(Future.succeededFuture(new SourceDisposition(Fate.DONE, null)))
+                .when(carriers.delivery())
+                .deliver(any(), any(), envelopes.capture());
+        KafkaConsumerBinding<ShipmentDelivered> binding =
+                keyedByCarrier(carriers.source().dlqReplay());
+        KafkaRecordHeaders original = KafkaRecordHeaders.of(new java.util.LinkedHashMap<>(
+                Map.of("x-dlq-source-topic", TOPIC, "x-dlq-source-partition", "3", "x-dlq-source-offset", "42")));
+
+        // When the dead letter is replayed from its own position, fails again, and its next dead letter, which keeps
+        // the headers of the original, is replayed from another position, and so is the one after that
+        for (long dlqOffset : List.of(7L, 19L, 31L)) {
+            binding.handler()
+                    .handle(new KafkaMessage<>(
+                            new ShipmentDelivered("ref-1", "order-1", "note"),
+                            "key-1",
+                            TOPIC + ".dlq",
+                            0,
+                            dlqOffset,
+                            0L,
+                            original))
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .get();
+        }
+
+        // Then every replay computes the dedup key of the original record
+        assertThat(envelopes.getAllValues())
+                .extracting(SourceEnvelope::defaultDedupKey)
+                .containsExactly(TOPIC + ":3:42", TOPIC + ":3:42", TOPIC + ":3:42");
+    }
+
+    @Test
     void injectedCorrelationFactorySeedsTheCorrelationOfAnOptInSource() throws Exception {
         // Given a delivery double that keeps the envelope it is handed, and a correlation factory over an
         // application-supplied id generator

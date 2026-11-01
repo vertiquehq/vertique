@@ -6,6 +6,7 @@ package dev.vertique.kafka;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import io.vertx.core.Future;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
+import jakarta.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -113,9 +114,22 @@ final class KafkaErrorHandler {
                 dlqHeaders.add(header);
             }
         }
-        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_TOPIC, record.topic()));
-        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_PARTITION, String.valueOf(record.partition())));
-        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_OFFSET, String.valueOf(record.offset())));
+        // A record that already names where it came from keeps that position: a dead letter dead-lettered again still
+        // points at the record it started as, so whatever identifies a record by its source position, such as the
+        // replay of a dead letter, sees the same position however many times it is dead-lettered.
+        KafkaRecordHeader sourceTopic = lastValued(headers, KafkaDlqHeaders.SOURCE_TOPIC);
+        KafkaRecordHeader sourcePartition = lastValued(headers, KafkaDlqHeaders.SOURCE_PARTITION);
+        KafkaRecordHeader sourceOffset = lastValued(headers, KafkaDlqHeaders.SOURCE_OFFSET);
+        if (sourceTopic != null && sourcePartition != null && sourceOffset != null) {
+            dlqHeaders.add(sourceTopic);
+            dlqHeaders.add(sourcePartition);
+            dlqHeaders.add(sourceOffset);
+        } else {
+            dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_TOPIC, record.topic()));
+            dlqHeaders.add(
+                    KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_PARTITION, String.valueOf(record.partition())));
+            dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_OFFSET, String.valueOf(record.offset())));
+        }
         dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.CONSUMER, entry.name()));
         String errorDetail;
         if (cause instanceof KafkaTerminalFailure terminal) {
@@ -130,5 +144,16 @@ final class KafkaErrorHandler {
         return producerFactory
                 .sendForDlq(dlqTopic, record.key(), rawBytes, new KafkaRecordHeaders(dlqHeaders))
                 .mapEmpty();
+    }
+
+    /** The last header of the key that carries a value, or {@code null}. */
+    private static @Nullable KafkaRecordHeader lastValued(KafkaRecordHeaders headers, String key) {
+        KafkaRecordHeader found = null;
+        for (KafkaRecordHeader header : headers.headers(key)) {
+            if (header.hasValue()) {
+                found = header;
+            }
+        }
+        return found;
     }
 }

@@ -81,9 +81,9 @@ new group then reads all retained history. A binding that forces its strategies 
 | `x-correlation-id` | read on consume | Seeds the record's correlation id. A record without it gets a generated UUID. Bound to MDC as `kafka.correlationId` for the dispatch |
 | the `matchHeader` of a route | read on consume | Selects a model-3 route |
 | `vertique-<namespace>` | read on consume | Decoded into the durable context that is bound for the dispatch. A value that is not a JSON object is skipped |
-| `x-dlq-source-topic` | written on DLQ publish | Original topic |
-| `x-dlq-source-partition` | written on DLQ publish | Original partition |
-| `x-dlq-source-offset` | written on DLQ publish | Original offset |
+| `x-dlq-source-topic` | written on DLQ publish | Original topic; kept when the record already carries all three source headers |
+| `x-dlq-source-partition` | written on DLQ publish | Original partition; kept likewise |
+| `x-dlq-source-offset` | written on DLQ publish | Original offset; kept likewise |
 | `x-dlq-consumer` | written on DLQ publish | Name of the consumer that failed |
 | `x-dlq-error` | written on DLQ publish | Exception simple name, plus up to 200 characters of its message |
 | `vertique-<namespace>` | written on every send except the DLQ publish | One text header per durable-context namespace, value = the namespace body as JSON. Appended after the application headers. The `vertique-` prefix is reserved: an application header that uses it fails the send |
@@ -97,9 +97,14 @@ failed record's headers **as received** — in order, with repeated keys and bin
 byte — followed by the five `x-dlq-*` headers. Their names are constants on `KafkaDlqHeaders`. Two kinds of
 original header are left out:
 
-- one whose key is exactly one of the five `x-dlq-*` names, so a record that is dead-lettered a
-  second time carries only the new ones;
+- one whose key is `x-dlq-consumer` or `x-dlq-error`, so a record that is dead-lettered a second time carries
+  only the newest of those two;
 - one with a `null` value, because a producer record cannot carry it.
+
+The three source-position headers are written once. A record that already carries all three, because it is a
+dead letter being dead-lettered again, keeps them as they are: they go on naming the record it started as,
+not the position of the dead letter it was read from, however many times it is dead-lettered. A record that
+carries only some of them is given the position it was read at.
 
 The original headers include the framework's own `vertique-<namespace>` context headers. They are
 forwarded as they were received, so the dead-letter record carries the failed record's context. No
