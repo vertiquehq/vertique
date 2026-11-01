@@ -174,7 +174,8 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
                 outboxEnvelope.eventType(),
                 outboxEnvelope.aggregateType(),
                 outboxEnvelope.aggregateId(),
-                outboxEnvelope.headers() != null ? outboxEnvelope.headers() : Map.of());
+                outboxEnvelope.headers() != null ? outboxEnvelope.headers() : Map.of(),
+                outboxEnvelope.scopeKey());
 
         // A payload this node cannot decode may be decodable by a newer node during a rolling deploy,
         // so the failure is retryable; the entry's maximum attempts bound a payload no node decodes.

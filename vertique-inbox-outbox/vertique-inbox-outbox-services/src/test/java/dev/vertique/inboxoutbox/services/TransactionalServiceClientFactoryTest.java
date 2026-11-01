@@ -218,6 +218,27 @@ class TransactionalServiceClientFactoryTest {
         }
     }
 
+    // --- Scope ---
+
+    @Test
+    @DisplayName("create with a scope writes every entry in that scope and the previous form writes default")
+    void selectsScope() throws Exception {
+        when(targetResolver.resolve(eq(ValidContract.class), any(Method.class))).thenReturn(makeValidTarget());
+        ArgumentCaptor<OutboxEntry> entryCaptor = forClass(OutboxEntry.class);
+        when(outboxService.publish(eq(tx), entryCaptor.capture())).thenReturn(Future.succeededFuture(1L));
+
+        factory.create(ValidContract.class, "acme", tx)
+                .sendNotification("hello")
+                .result();
+        factory.create(ValidContract.class, tx).sendNotification("hello").result();
+
+        assertEquals(
+                List.of("acme", "default"),
+                entryCaptor.getAllValues().stream().map(OutboxEntry::scopeKey).toList());
+        assertThrows(IllegalArgumentException.class, () -> factory.create(ValidContract.class, (String) null, tx));
+        assertThrows(IllegalArgumentException.class, () -> factory.create(ValidContract.class, " ", tx));
+    }
+
     // --- Object method delegation ---
 
     @Nested

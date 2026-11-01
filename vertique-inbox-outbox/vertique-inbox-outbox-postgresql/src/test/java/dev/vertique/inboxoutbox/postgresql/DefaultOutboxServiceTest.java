@@ -15,9 +15,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import dagger.Component;
+import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.context.ContextScopeBinder;
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.DurableContextMetadataRegistry;
@@ -27,7 +30,10 @@ import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.context.DurableContextMetadataEncoder;
 import dev.vertique.core.context.DurableEncodeContext;
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.scope.ScopeContext;
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.db.exception.DataAccessException;
+import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxDeliveryMetadata;
 import dev.vertique.inboxoutbox.OutboxEntry;
 import dev.vertique.inboxoutbox.OutboxMetadata;
@@ -40,15 +46,20 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.sqlclient.SqlClient;
+import jakarta.inject.Singleton;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -82,6 +93,7 @@ class DefaultOutboxServiceTest {
         DurableContextPropagator propagator = new DurableContextPropagator(
                 new DurableContextMetadataRegistry(Set.of(), Set.of()), holder, new ContextScopeBinder(holder));
         service = new DefaultOutboxService(repository, propagator, new PgInboxOutboxExceptionMapper());
+        when(entry.scopeKey()).thenReturn(ScopeKey.DEFAULT.value());
     }
 
     @Test
@@ -119,6 +131,7 @@ class DefaultOutboxServiceTest {
     void publishDoesNotMergeDurableContextIntoHeaders() {
         OutboxEntry entryWithHeaders = mock(OutboxEntry.class);
         when(entryWithHeaders.headers()).thenReturn(java.util.Map.of("x-app", "val"));
+        when(entryWithHeaders.scopeKey()).thenReturn(ScopeKey.DEFAULT.value());
         when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(1L));
 
         service.publish(tx, entryWithHeaders);
@@ -147,6 +160,139 @@ class DefaultOutboxServiceTest {
         assertSame(dbFailure, result.cause().getCause(), "original DataAccessException must be chained as the cause");
     }
 
+    /**
+     * One scope selection on an entry and what publish does with it.
+     *
+     * @param label  the case name shown in the report
+     * @param given  whether the entry builder is given a scope key at all
+     * @param key    the key given to the builder; read only when {@code given}
+     * @param stored the key the repository must be given, or {@code null} when publish must fail
+     */
+    private record ScopeSelection(String label, boolean given, String key, String stored) {
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    static Stream<ScopeSelection> scopeSelections() {
+        return Stream.of(
+                new ScopeSelection("omitted", false, null, "default"),
+                new ScopeSelection("default", true, "default", "default"),
+                new ScopeSelection("acme", true, "acme", "acme"),
+                new ScopeSelection("null", true, null, null),
+                new ScopeSelection("empty", true, "", null),
+                new ScopeSelection("blank", true, "   ", null),
+                new ScopeSelection("over-long", true, "x".repeat(256), null),
+                new ScopeSelection("control character", true, "bad\u0001key", null),
+                new ScopeSelection("format character", true, "bad\u200Bkey", null),
+                new ScopeSelection("leading whitespace", true, " acme", null),
+                new ScopeSelection("trailing whitespace", true, "acme ", null),
+                new ScopeSelection("unpaired surrogate", true, "bad\uD800key", null));
+    }
+
+    @ParameterizedTest
+    @MethodSource("scopeSelections")
+    @DisplayName("publish stores an omitted, default or valid scope key, and fails on a null or invalid key")
+    void publishSelectsScope(ScopeSelection selection) {
+        // Given: a repository that accepts an insert, and an entry with the scope selection
+        when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(7L));
+        OutboxEntry published = selection.given() ? entryIn(selection.key()) : plainEntry();
+
+        // When: it is published
+        Future<Long> result = service.publish(tx, published);
+
+        // Then: a valid selection is stored as given, and the default when omitted
+        if (selection.stored() != null) {
+            assertTrue(result.succeeded(), "publish must succeed for " + selection);
+            ArgumentCaptor<OutboxEntry> inserted = forClass(OutboxEntry.class);
+            verify(repository).insert(inserted.capture(), any(OutboxMetadata.class), any(UUID.class), eq(tx));
+            assertEquals(selection.stored(), inserted.getValue().scopeKey());
+            return;
+        }
+        // And: a null or invalid selection is a failed future without the key, and nothing is inserted
+        assertTrue(result.failed(), "publish must fail for " + selection);
+        assertInstanceOf(IllegalArgumentException.class, result.cause());
+        String message = String.valueOf(result.cause().getMessage());
+        assertTrue(
+                selection.key() == null || selection.key().isEmpty() || !message.contains(selection.key()),
+                "the failure text must not repeat the key: " + message);
+        verify(repository, never()).insert(any(), any(), any(), any());
+    }
+
+    @Singleton
+    @Component(modules = ContextRuntimeModule.class)
+    interface ScopeGraph {
+        ContextHolder holder();
+
+        DurableContextPropagator propagator();
+    }
+
+    @Test
+    @DisplayName("a scope bound in the context is captured in the metadata and does not select the row scope")
+    void ambientScopeDoesNotSelectRowScope(Vertx vertx, VertxTestContext ctx) {
+        // Given: the runtime context codecs, and a context bound to acme
+        ScopeGraph graph = DaggerDefaultOutboxServiceTest_ScopeGraph.create();
+        DefaultOutboxService scoped =
+                new DefaultOutboxService(repository, graph.propagator(), new PgInboxOutboxExceptionMapper());
+        when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(1L));
+        ContextInternal producer = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
+
+        producer.runOnContext(ignored -> {
+            // When: an entry with no selection, then one selecting globex, are published
+            try (ContextHolder.Scope bound =
+                    graph.holder().bind(ScopeContext.class, new ScopeContext(new ScopeKey("acme")))) {
+                scoped.publish(tx, plainEntry());
+                scoped.publish(tx, entryIn("globex"));
+            } catch (Throwable failure) {
+                ctx.failNow(failure);
+                return;
+            }
+            ctx.verify(() -> {
+                ArgumentCaptor<OutboxEntry> entries = forClass(OutboxEntry.class);
+                ArgumentCaptor<OutboxMetadata> metadata = forClass(OutboxMetadata.class);
+                verify(repository, times(2)).insert(entries.capture(), metadata.capture(), any(UUID.class), eq(tx));
+                // Then: the entries hold default and globex
+                assertEquals(
+                        List.of("default", "globex"),
+                        entries.getAllValues().stream()
+                                .map(OutboxEntry::scopeKey)
+                                .toList());
+                // And: the metadata holds acme in both
+                assertEquals(
+                        List.of(scopeBody("acme"), scopeBody("acme")),
+                        metadata.getAllValues().stream()
+                                .map(captured ->
+                                        captured.context().body("scope").orElseThrow())
+                                .toList());
+                ctx.completeNow();
+            });
+        });
+    }
+
+    private static JsonObject scopeBody(String scopeKey) {
+        return new JsonObject().put("scopeKey", scopeKey);
+    }
+
+    private static OutboxEntry plainEntry() {
+        return OutboxEntry.builder()
+                .eventType("order.placed")
+                .destinationType(DestinationType.SERVICE)
+                .destination("orders/handle")
+                .payload("p")
+                .build();
+    }
+
+    private static OutboxEntry entryIn(String scopeKey) {
+        return OutboxEntry.builder()
+                .eventType("order.placed")
+                .destinationType(DestinationType.SERVICE)
+                .destination("orders/handle")
+                .payload("p")
+                .scopeKey(scopeKey)
+                .build();
+    }
+
     @Nested
     @DisplayName("undeliverable headers are rejected before insert")
     class HeaderValidation {
@@ -154,6 +300,7 @@ class DefaultOutboxServiceTest {
         private OutboxEntry entryWithHeaders(java.util.Map<String, String> headers) {
             OutboxEntry candidate = mock(OutboxEntry.class);
             when(candidate.headers()).thenReturn(headers);
+            when(candidate.scopeKey()).thenReturn(ScopeKey.DEFAULT.value());
             return candidate;
         }
 

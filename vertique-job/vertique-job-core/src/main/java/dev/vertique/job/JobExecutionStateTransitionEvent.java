@@ -4,6 +4,7 @@
 package dev.vertique.job;
 
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.scope.ScopeKey;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.UUID;
@@ -33,6 +34,9 @@ import java.util.UUID;
  * @param startedAt     when processing began, or {@code null} if the job never ran
  * @param completedAt   when the execution reached {@code newState}
  * @param metadata      the persisted durable context document (never {@code null})
+ * @param scopeKey      the scope of the execution, a partition label recorded on the job row;
+ *                      {@code null} is read as {@link ScopeKey#DEFAULT}, so the accessor never
+ *                      returns {@code null}
  */
 public record JobExecutionStateTransitionEvent(
         UUID executionId,
@@ -47,4 +51,62 @@ public record JobExecutionStateTransitionEvent(
         Instant enqueuedAt,
         Instant startedAt,
         Instant completedAt,
-        DurableMetadata metadata) {}
+        DurableMetadata metadata,
+        @Nullable String scopeKey) {
+
+    /**
+     * Creates an event in the default scope.
+     *
+     * <p>This is the constructor shape that predates {@code scopeKey}; it passes {@code null}, which
+     * the canonical constructor reads as {@link ScopeKey#DEFAULT}.
+     *
+     * @param executionId   the unique execution identifier
+     * @param jobId         the logical job identifier
+     * @param jobType       the scheduling mechanism that created the execution
+     * @param queue         the queue the execution ran on
+     * @param newState      the state the execution transitioned to
+     * @param attemptNumber the zero-based attempt number for this execution
+     * @param maxAttempts   the configured maximum attempts
+     * @param errorType     the persisted exception class name, or {@code null} on success
+     * @param scheduledAt   when the execution was scheduled
+     * @param enqueuedAt    when the execution was enqueued
+     * @param startedAt     when processing began, or {@code null} if the job never ran
+     * @param completedAt   when the execution reached {@code newState}
+     * @param metadata      the persisted durable context document
+     */
+    public JobExecutionStateTransitionEvent(
+            UUID executionId,
+            String jobId,
+            JobType jobType,
+            String queue,
+            JobState newState,
+            int attemptNumber,
+            int maxAttempts,
+            @Nullable String errorType,
+            Instant scheduledAt,
+            Instant enqueuedAt,
+            Instant startedAt,
+            Instant completedAt,
+            DurableMetadata metadata) {
+        this(
+                executionId,
+                jobId,
+                jobType,
+                queue,
+                newState,
+                attemptNumber,
+                maxAttempts,
+                errorType,
+                scheduledAt,
+                enqueuedAt,
+                startedAt,
+                completedAt,
+                metadata,
+                null);
+    }
+
+    /** Compact constructor that reads a {@code null} scope as the default. */
+    public JobExecutionStateTransitionEvent {
+        scopeKey = ScopeKey.orDefault(scopeKey);
+    }
+}

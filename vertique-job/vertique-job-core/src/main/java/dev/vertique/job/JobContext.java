@@ -5,6 +5,7 @@ package dev.vertique.job;
 
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.eventbus.DispatchContextValue;
+import dev.vertique.core.scope.ScopeKey;
 import io.vertx.core.Future;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -58,6 +59,20 @@ public interface JobContext extends ContextValue {
      * @return the job type
      */
     JobType jobType();
+
+    /**
+     * Returns the scope of this execution: the partition label recorded on the job row when it was
+     * enqueued.
+     *
+     * <p>This is independent of the ambient {@link dev.vertique.core.scope.ScopeContext}; the
+     * framework does not bind one from the row. An execution that carries no scope, such as a cron
+     * fire, reports {@link ScopeKey#DEFAULT}.
+     *
+     * @return the scope key (never {@code null})
+     */
+    default String scopeKey() {
+        return ScopeKey.DEFAULT.value();
+    }
 
     /**
      * Returns the progress reporter for this execution.

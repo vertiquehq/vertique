@@ -4,6 +4,7 @@
 package dev.vertique.inboxoutbox;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import dev.vertique.core.scope.ScopeKey;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -125,6 +126,19 @@ public class OutboxEntry {
     private final Instant availableAt;
 
     /**
+     * The scope this entry belongs to, a partition label the application chooses when it publishes
+     * the entry (for example a tenant, project or workspace). Defaults to
+     * {@link ScopeKey#DEFAULT}'s value, {@code "default"}, when the builder does not set it.
+     *
+     * <p>{@link OutboxService#publish(io.vertx.sqlclient.SqlClient, OutboxEntry)} validates the text
+     * as a {@link ScopeKey} and fails the returned future, before any write, when it is {@code null}
+     * or invalid. The entry itself holds the text as given and does not validate it. The ambient
+     * {@code ScopeContext} does not select it. The scope is a label, not authorization.
+     */
+    @Builder.Default
+    private final String scopeKey = ScopeKey.DEFAULT.value();
+
+    /**
      * Creates an entry from the builder's values, taking an unmodifiable copy of the header map.
      *
      * @param aggregateType   optional domain aggregate type
@@ -138,6 +152,7 @@ public class OutboxEntry {
      * @param scheduledAt     optional intended delivery time
      * @param delayedJob      optional delayed-job scheduling snapshot
      * @param availableAt     earliest time at which the entry may be claimed
+     * @param scopeKey        scope label; held as given and validated when the entry is published
      */
     OutboxEntry(
             String aggregateType,
@@ -150,7 +165,8 @@ public class OutboxEntry {
             int maxAttempts,
             Instant scheduledAt,
             DelayedJobControl delayedJob,
-            Instant availableAt) {
+            Instant availableAt,
+            String scopeKey) {
         this.aggregateType = aggregateType;
         this.aggregateId = aggregateId;
         this.eventType = eventType;
@@ -162,6 +178,7 @@ public class OutboxEntry {
         this.scheduledAt = scheduledAt;
         this.delayedJob = delayedJob;
         this.availableAt = availableAt;
+        this.scopeKey = scopeKey;
     }
 
     /**

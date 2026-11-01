@@ -686,8 +686,8 @@ public class DelayedJobPoller extends AbstractVerticle {
         UUID executionId = execution.id();
         Instant startedAt = Instant.now();
 
-        DefaultJobContext jobContext =
-                new DefaultJobContext(execution.jobId(), executionId, execution.attemptNumber(), JobType.DELAYED);
+        DefaultJobContext jobContext = new DefaultJobContext(
+                execution.jobId(), executionId, execution.attemptNumber(), JobType.DELAYED, execution.scopeKey());
 
         JobDispatchContext dispatchCtx = JobDispatchContext.fromExecution(execution, executionId, startedAt);
 

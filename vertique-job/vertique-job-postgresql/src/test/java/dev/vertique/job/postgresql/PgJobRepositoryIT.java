@@ -34,15 +34,21 @@ import io.vertx.sqlclient.Tuple;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Integration tests for {@link PgJobRepository} against a real PostgreSQL instance.
@@ -183,6 +189,69 @@ public class PgJobRepositoryIT {
                 true,
                 null,
                 null);
+    }
+
+    /** Creates an ENQUEUED delayed execution in the given scope, due at {@code scheduledAt}. */
+    private static JobExecution newScopedExecution(String queue, int priority, Instant scheduledAt, String scopeKey) {
+        return new JobExecution(
+                UUID.randomUUID(),
+                "logical-job-" + UUID.randomUUID(),
+                JobType.DELAYED,
+                "job.delayed.test",
+                queue,
+                JobState.ENQUEUED,
+                0,
+                5,
+                null,
+                priority,
+                null,
+                scheduledAt,
+                null,
+                null,
+                null,
+                null,
+                null,
+                ProgressSnapshot.EMPTY,
+                null,
+                null,
+                null,
+                scopeKey);
+    }
+
+    /** Creates a CRON execution in the given scope for one fire of {@code jobId}. */
+    private static JobExecution newScopedCronExecution(String jobId, Instant scheduledAt, String scopeKey) {
+        return new JobExecution(
+                UUID.randomUUID(),
+                jobId,
+                JobType.CRON,
+                "cron.handler.test",
+                "cron",
+                JobState.PROCESSING,
+                0,
+                3,
+                null,
+                0,
+                "node-test-" + UUID.randomUUID().toString().substring(0, 8),
+                scheduledAt,
+                null,
+                null,
+                null,
+                null,
+                null,
+                ProgressSnapshot.EMPTY,
+                null,
+                null,
+                null,
+                scopeKey);
+    }
+
+    private static Stream<Arguments> scopeKeys() {
+        return Stream.of(
+                Arguments.of(Named.of("plain", "acme")),
+                Arguments.of(Named.of("mixed case", "Acme-EU_West.1")),
+                Arguments.of(Named.of("supplementary characters", "\uD83D\uDE00-scope-\uD835\uDD4F")),
+                Arguments.of(Named.of("255 ASCII code points", "a".repeat(255))),
+                Arguments.of(Named.of("255 supplementary code points", "\uD83D\uDE00".repeat(255))));
     }
 
     // --- Tests ---
@@ -1173,5 +1242,166 @@ public class PgJobRepositoryIT {
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);
+    }
+
+    @ParameterizedTest
+    @MethodSource("scopeKeys")
+    @DisplayName("a saved execution reads back with exactly the scope key it was saved with")
+    void scopeKeyRoundTripsExactly(String scopeKey, VertxTestContext ctx) {
+        // Given: an execution in the scope
+        JobExecution exec = newScopedExecution("scope-round-trip-" + UUID.randomUUID(), 0, Instant.now(), scopeKey);
+
+        // When: it is saved and read with findById
+        repository
+                .save(exec)
+                .compose(repository::findById)
+                .onSuccess(opt -> ctx.verify(() -> {
+                    // Then: the scope key equals the input exactly
+                    assertTrue(opt.isPresent(), "findById should return the saved execution");
+                    assertEquals(scopeKey, opt.get().scopeKey());
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("retry, stale rescheduling and dead-node recovery keep the scope key")
+    void retryAndRecoveryPreserveScopeKey(VertxTestContext ctx) {
+        // Given: a claimed execution in acme
+        String queue = "scope-retry-" + UUID.randomUUID();
+        JobExecution exec = newScopedExecution(queue, 0, Instant.now().minusSeconds(5), "acme");
+        Instant due = Instant.now().minusSeconds(1);
+        List<String> scopeAfterEachStep = new ArrayList<>();
+
+        repository
+                .save(exec)
+                .compose(id -> repository.claimNextJob(queue, 1))
+                // When: it fails and is scheduled for retry
+                .compose(claimed -> {
+                    scopeAfterEachStep.add(claimed.get(0).scopeKey());
+                    return repository.failAndScheduleRetry(
+                            exec.id(), "boom", "java.lang.RuntimeException", ProgressSnapshot.EMPTY, due, 1);
+                })
+                .compose(failed -> repository.findById(exec.id()))
+                .compose(opt -> {
+                    scopeAfterEachStep.add(opt.orElseThrow().scopeKey());
+                    return repository.claimNextJob(queue, 1);
+                })
+                // When: it is found stale and rescheduled
+                .compose(claimed -> pool.preparedQuery(
+                                "UPDATE job_executions SET updated_at = NOW() - INTERVAL '2 minutes' WHERE id = $1")
+                        .execute(Tuple.of(exec.id())))
+                .compose(v -> repository.findStale(Duration.ofMinutes(1)))
+                .compose(stale -> {
+                    scopeAfterEachStep.add(stale.stream()
+                            .filter(e -> e.id().equals(exec.id()))
+                            .findFirst()
+                            .orElseThrow()
+                            .scopeKey());
+                    return repository.abandonAndScheduleRetry(
+                            exec.id(), "stale", "StaleHeartbeatException", ProgressSnapshot.EMPTY, due, 2);
+                })
+                .compose(abandoned -> repository.findById(exec.id()))
+                .compose(opt -> {
+                    scopeAfterEachStep.add(opt.orElseThrow().scopeKey());
+                    return repository.claimNextJob(queue, 1);
+                })
+                // When: it is reclaimed after a dead-node recovery
+                .compose(claimed -> repository.findByLockedBy(claimed.get(0).lockedBy()))
+                .compose(owned -> {
+                    scopeAfterEachStep.add(owned.stream()
+                            .filter(e -> e.id().equals(exec.id()))
+                            .findFirst()
+                            .orElseThrow()
+                            .scopeKey());
+                    return repository.abandonAndScheduleRetry(
+                            exec.id(), "node died", "DeadNodeException", ProgressSnapshot.EMPTY, due, 3);
+                })
+                .compose(abandoned -> repository.claimNextJob(queue, 1))
+                .compose(reclaimed -> {
+                    scopeAfterEachStep.add(reclaimed.get(0).scopeKey());
+                    return repository.findById(exec.id());
+                })
+                .onSuccess(opt -> ctx.verify(() -> {
+                    scopeAfterEachStep.add(opt.orElseThrow().scopeKey());
+                    // Then: the scope key is acme after each step
+                    assertEquals(List.of("acme", "acme", "acme", "acme", "acme", "acme", "acme"), scopeAfterEachStep);
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("claim order and cron fire deduplication ignore the scope")
+    void claimOrderIgnoresScope(VertxTestContext ctx) {
+        // Given: rows of mixed priority and schedule across three scopes, and two inserts of one cron fire
+        String queue = "scope-claim-order-" + UUID.randomUUID();
+        Instant now = Instant.now();
+        JobExecution highPriorityDefault = newScopedExecution(queue, 10, now.minusSeconds(30), "default");
+        JobExecution earlierGlobex = newScopedExecution(queue, 5, now.minusSeconds(120), "globex");
+        JobExecution laterAcme = newScopedExecution(queue, 5, now.minusSeconds(60), "acme");
+        JobExecution earliestAcme = newScopedExecution(queue, 0, now.minusSeconds(300), "acme");
+        JobExecution laterGlobex = newScopedExecution(queue, 0, now.minusSeconds(200), "globex");
+        String cronJobId = "cron-scope-" + UUID.randomUUID();
+        Instant fire = now.truncatedTo(ChronoUnit.MILLIS);
+        JobExecution acmeFire = newScopedCronExecution(cronJobId, fire, "acme");
+        JobExecution globexFire = newScopedCronExecution(cronJobId, fire, "globex");
+        List<UUID> expectedClaimOrder = List.of(
+                highPriorityDefault.id(), earlierGlobex.id(), laterAcme.id(), earliestAcme.id(), laterGlobex.id());
+        List<UUID> claimOrder = new ArrayList<>();
+
+        // When: the rows are claimed, and the cron fire is inserted twice
+        Future.all(
+                        repository.save(laterGlobex),
+                        repository.save(highPriorityDefault),
+                        repository.save(earliestAcme),
+                        repository.save(laterAcme),
+                        repository.save(earlierGlobex))
+                .compose(v -> repository.claimNextJob(queue, 5))
+                .compose(claimed -> {
+                    claimOrder.addAll(claimed.stream().map(JobExecution::id).toList());
+                    return repository.tryInsert(acmeFire);
+                })
+                .compose(first -> repository.tryInsert(globexFire).map(second -> List.of(first, second)))
+                .onSuccess(inserts -> ctx.verify(() -> {
+                    // Then: claim order is by priority then schedule regardless of scope
+                    assertEquals(expectedClaimOrder, claimOrder);
+                    // And: the first cron insert wins and the second, in another scope, returns empty
+                    assertTrue(inserts.get(0).isPresent(), "first cron insert must succeed");
+                    assertFalse(inserts.get(1).isPresent(), "second cron insert of the same fire must be empty");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("the transactional save and the cron insert write the scope key column")
+    void scopeKeyIsWrittenOnEveryInsertPath(VertxTestContext ctx) {
+        // Given: a delayed execution in acme and a cron execution in globex
+        JobExecution transactional = newScopedExecution("scope-insert-" + UUID.randomUUID(), 0, Instant.now(), "acme");
+        JobExecution cron = newScopedCronExecution(
+                "cron-scope-insert-" + UUID.randomUUID(), Instant.now().truncatedTo(ChronoUnit.MILLIS), "globex");
+
+        // When: one is saved through a caller-supplied transaction and the other through tryInsert
+        pool.withTransaction(connection -> repository.save(transactional, connection))
+                .compose(id -> repository.tryInsert(cron))
+                .compose(inserted -> storedScopeKeys(transactional.id(), cron.id()))
+                .onSuccess(stored -> ctx.verify(() -> {
+                    // Then: the column holds each scope key
+                    assertEquals(List.of("acme", "globex"), stored);
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    /** Reads {@code scope_key} straight from the table, so the proof does not depend on the row mapper. */
+    private static Future<List<String>> storedScopeKeys(UUID first, UUID second) {
+        return pool.preparedQuery("SELECT scope_key FROM job_executions WHERE id = $1")
+                .execute(Tuple.of(first))
+                .compose(firstRows -> pool.preparedQuery("SELECT scope_key FROM job_executions WHERE id = $1")
+                        .execute(Tuple.of(second))
+                        .map(secondRows -> List.of(
+                                firstRows.iterator().next().getString("scope_key"),
+                                secondRows.iterator().next().getString("scope_key"))));
     }
 }

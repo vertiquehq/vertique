@@ -6,6 +6,7 @@ package dev.vertique.core.scope;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -82,6 +83,53 @@ class ScopeKeyTest {
         assertEquals("default", ScopeKey.DEFAULT.value());
         assertEquals(new ScopeKey("system"), new ScopeKey("system"));
         assertNotEquals(ScopeKey.DEFAULT, new ScopeKey("system"));
+    }
+
+    @Test
+    @DisplayName("orDefault maps only null to the default key's text and never validates")
+    void orDefaultMapsOnlyNull() {
+        // Given: null, a valid key, and a text that is not a valid key
+        String valid = new String("acme");
+        String invalid = " ";
+
+        // When: orDefault is called with each
+        // Then: null gives the default, and the others come back unchanged without validation
+        assertAll(
+                () -> assertEquals("default", ScopeKey.orDefault(null)),
+                () -> assertSame(valid, ScopeKey.orDefault(valid)),
+                () -> assertSame(invalid, ScopeKey.orDefault(invalid)));
+    }
+
+    @Test
+    @DisplayName("requireValid returns a valid key and rejects null and invalid keys without repeating them")
+    void requireValidRejectsNullAndInvalidKeys() {
+        // Given: a valid key, null, and each invalid form of the constructor contract
+        String valid = new String("acme");
+        List<NamedCheck> checks = new ArrayList<>();
+        checks.add(named("accept:" + describe(valid), () -> assertSame(valid, ScopeKey.requireValid(valid))));
+        checks.add(named("reject:null", () -> {
+            // When: requireValid is called with null
+            IllegalArgumentException ex =
+                    assertThrows(IllegalArgumentException.class, () -> ScopeKey.requireValid(null));
+            // Then: it throws IllegalArgumentException, not NullPointerException, with a message
+            assertTrue(ex.getMessage() != null && !ex.getMessage().isBlank(), "message must explain the failure");
+        }));
+
+        for (String invalid : invalidKeys()) {
+            checks.add(named("reject:" + describe(invalid), () -> {
+                // When: requireValid is called with the invalid key
+                IllegalArgumentException ex =
+                        assertThrows(IllegalArgumentException.class, () -> ScopeKey.requireValid(invalid));
+                // Then: the message omits the key
+                String message = ex.getMessage() == null ? "" : ex.getMessage();
+                assertTrue(!message.contains(ECHO_SENTINEL), () -> "message must not echo sentinel: " + message);
+                if (invalid.length() > 1 && !invalid.isBlank()) {
+                    assertTrue(!message.contains(invalid), () -> "message must not echo input: " + message);
+                }
+            }));
+        }
+
+        assertAll(checks.toArray(org.junit.jupiter.api.function.Executable[]::new));
     }
 
     private static List<String> invalidKeys() {

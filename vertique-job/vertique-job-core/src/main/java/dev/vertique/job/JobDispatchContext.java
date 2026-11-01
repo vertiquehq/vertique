@@ -5,6 +5,8 @@ package dev.vertique.job;
 
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.eventbus.DispatchContextValue;
+import dev.vertique.core.scope.ScopeKey;
+import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -39,6 +41,11 @@ import java.util.UUID;
  * @param startedAt     when this execution was handed to the dispatcher
  * @param parameters    static parameters provided at scheduling time (immutable)
  * @param attributes    mutable runtime attributes set via {@link #withAttribute(String, Object)}
+ * @param scopeKey      the scope of the execution, a partition label recorded on the job row;
+ *                      {@code null} is read as {@link ScopeKey#DEFAULT}, so the accessor never
+ *                      returns {@code null}. It is independent of the ambient
+ *                      {@link dev.vertique.core.scope.ScopeContext} and is not part of
+ *                      {@link #toMdcContext()}.
  */
 @DispatchContextValue
 public record JobDispatchContext(
@@ -51,15 +58,60 @@ public record JobDispatchContext(
         Instant scheduledAt,
         Instant startedAt,
         Map<String, Object> parameters,
-        Map<String, Object> attributes)
+        Map<String, Object> attributes,
+        @Nullable String scopeKey)
         implements ContextValue {
 
     /**
-     * Compact constructor that defensively copies the maps to ensure immutability.
+     * Creates a dispatch context in the default scope.
+     *
+     * <p>This is the constructor shape that predates {@code scopeKey}; it passes {@code null}, which
+     * the canonical constructor reads as {@link ScopeKey#DEFAULT}.
+     *
+     * @param jobId         the logical job identifier (stable across retries)
+     * @param executionId   the unique execution identifier
+     * @param jobType       the scheduling mechanism that triggered this execution
+     * @param attemptNumber zero-based attempt counter (0 = first attempt)
+     * @param maxAttempts   maximum attempts allowed (inclusive)
+     * @param queue         the logical queue this execution belongs to
+     * @param scheduledAt   when this execution was scheduled
+     * @param startedAt     when this execution was handed to the dispatcher
+     * @param parameters    static parameters provided at scheduling time
+     * @param attributes    mutable runtime attributes
+     */
+    public JobDispatchContext(
+            String jobId,
+            java.util.UUID executionId,
+            JobType jobType,
+            int attemptNumber,
+            int maxAttempts,
+            String queue,
+            Instant scheduledAt,
+            Instant startedAt,
+            Map<String, Object> parameters,
+            Map<String, Object> attributes) {
+        this(
+                jobId,
+                executionId,
+                jobType,
+                attemptNumber,
+                maxAttempts,
+                queue,
+                scheduledAt,
+                startedAt,
+                parameters,
+                attributes,
+                null);
+    }
+
+    /**
+     * Compact constructor that defensively copies the maps to ensure immutability and reads a
+     * {@code null} scope as the default.
      */
     public JobDispatchContext {
         parameters = parameters != null ? Map.copyOf(parameters) : Map.of();
         attributes = attributes != null ? Map.copyOf(attributes) : Map.of();
+        scopeKey = ScopeKey.orDefault(scopeKey);
     }
 
     // --- Factory methods ---
@@ -83,7 +135,8 @@ public record JobDispatchContext(
                 execution.scheduledAt(),
                 startedAt,
                 execution.parameters(),
-                execution.attributes());
+                execution.attributes(),
+                execution.scopeKey());
     }
 
     // --- Derived views ---
@@ -124,6 +177,7 @@ public record JobDispatchContext(
                 scheduledAt,
                 startedAt,
                 parameters,
-                Map.copyOf(newAttrs));
+                Map.copyOf(newAttrs),
+                scopeKey);
     }
 }

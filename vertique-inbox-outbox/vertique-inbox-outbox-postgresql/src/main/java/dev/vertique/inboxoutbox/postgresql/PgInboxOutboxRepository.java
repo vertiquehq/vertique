@@ -172,8 +172,8 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
         // The claim keeps its scheduled_at predicate, so rows stored before this change stay correct.
         this.sqlOutboxInsert = "INSERT INTO " + outbox
                 + " (carrier_id, aggregate_type, aggregate_id, event_type, destination,"
-                + " destination_type, payload, headers, metadata, scheduled_at, available_at, max_attempts)"
-                + " VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, GREATEST(COALESCE($11, NOW()), $10), $12)"
+                + " destination_type, payload, headers, metadata, scheduled_at, available_at, max_attempts, scope_key)"
+                + " VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, GREATEST(COALESCE($11, NOW()), $10), $12, $13)"
                 + " RETURNING id";
 
         this.sqlOutboxClaimPrefix = "WITH eligible AS ("
@@ -320,7 +320,8 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
                         metadata.toJson(),
                         scheduledAt,
                         availableAt,
-                        entry.maxAttempts()))
+                        entry.maxAttempts(),
+                        entry.scopeKey()))
                 .map(rs -> {
                     Row row = rs.iterator().next();
                     return row.getLong("id");

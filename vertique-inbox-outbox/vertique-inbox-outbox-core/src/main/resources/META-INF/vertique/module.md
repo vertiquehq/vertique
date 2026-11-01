@@ -103,8 +103,32 @@ Lombok `@Builder` value object describing a single outbound side-effect.
 | `headers` | No | Additional outbound metadata; may carry adapter-specific snapshot data. A `null` map given to the builder reads back as an empty map. Keys and values must not be `null`, and keys must not start with the reserved `vertique-` prefix — `OutboxService.publish` fails for such an entry. See [Header model](#header-model) |
 | `scheduledAt` | No | Time after which the relay may publish |
 | `availableAt` | No | Internal retry scheduling override; applications normally omit |
+| `scopeKey` | No | Scope label stored with the row; defaults to `"default"` (`ScopeKey.DEFAULT.value()`). `OutboxService.publish` validates it as a core `ScopeKey`. See [Scope](#scope) |
 
 For `SERVICE` destinations, `destination` must be a stable service target id (not a raw event bus address). For `DELAYED_JOB` destinations, `destination` must be a durable delayed-job target id. For `KAFKA` destinations, `destination` is the Kafka topic name. For custom adapter destinations, the meaning of `destination` is defined by the adapter's `OutboxDestinationHandler`.
+
+#### Scope
+
+Every outbox row carries a `scopeKey`, the application's partition label for the entry (a tenant, project or workspace). Select it on the entry:
+
+```java
+OutboxEntry.builder()
+    .eventType("order.placed")
+    .destinationType(DestinationType.SERVICE)
+    .destination("orders/handle-order-placed")
+    .payload(new OrderPlacedEvent(orderId))
+    .scopeKey("acme")
+    .build();
+```
+
+- **Omitted means `default`.** An entry that never calls `scopeKey(...)` is stored in the `default` scope, and so is every row that existed before the column was added.
+- **An explicit `null` fails.** `OutboxService.publish` returns a failed future with an `IllegalArgumentException`, before any write, for a `null` key and for one that is not a valid core `ScopeKey` (blank, longer than 255 code points, or containing a control or format character). The message does not repeat the key. The entry itself holds the text as given and does not validate it.
+- **The ambient `ScopeContext` does not select it.** Publishing under a bound `ScopeContext` still stores `default` unless the entry names a scope. The context is captured into the durable `metadata` like any other durable context, independent of the row's scope.
+- **A scope is a label, not authorization.** Nothing checks the caller's right to a scope at publish, by id or under a service principal; the application authorizes access itself.
+- **Row scope and `ScopeContext` are independent.** A handler that partitions data by scope chooses one source, compares the other when both are present, fails on a mismatch, and authorizes access itself. Do not assume the two agree.
+- **`aggregateId` ordering is global across scopes.** Entries that share an `aggregateId` stay in order whatever their scope, so two scopes that reuse an id order against each other. Keep aggregate ids unique across scopes, for example `<scope>:<id>`.
+- **A custom `OutboxRepository` must persist `scopeKey`.** `OutboxRepository.insert` receives the entry; an implementation that drops `scopeKey` returns rows that read `default`.
+- **Inbox deduplication is not scoped.** `InboxService` keys on `(messageId, source)` only.
 
 #### Header model
 
@@ -140,6 +164,9 @@ Domain record representing a persisted outbox row. Carries all relay state field
 | `publishedAt` | `Instant` | When the row transitioned to `PUBLISHED` |
 | `lastError` | `String` | Last error message |
 | `errorType` | `String` | Last error type |
+| `scopeKey` | `String` | Scope label chosen when the entry was published; never `null` — a `null` component reads `default`. See [Scope](#scope) |
+
+The record is the canonical 23-component form with `scopeKey` last; a public 22-argument constructor without it remains and reads `default`.
 
 ### `OutboxEntryState`
 
@@ -163,6 +190,9 @@ Immutable record passed to `OutboxDestinationHandler.publish()` at relay time.
 | `destination` / `payload` / `scheduledAt` / `attempt` / `createdAt` | Delivery fields from the row |
 | `headers` | Application/transport headers only (`OutboxEntry.headers`) — no framework keys; an unmodifiable copy — see [Header model](#header-model) |
 | `metadata` | `OutboxMetadata`: durable propagation context (`context`) plus delivery control (`delivery.outbox`: `OutboxRelayControl`, relay control projected from the row columns; `delivery.delayedJob`: scheduling) |
+| `scopeKey` | Scope label read from the row; never `null` — a `null` component reads `default`. The relay does not bind it as the ambient `ScopeContext`. See [Scope](#scope) |
+
+The envelope is the canonical 12-component form with `scopeKey` last; a public 11-argument constructor without it remains and reads `default`.
 
 Framework relay control (`x-message-id`, `eventType`, `aggregate*`) is **not** merged into `headers`; it lives in `metadata.delivery.outbox`. Durable context lives in `metadata.context`, not headers.
 
@@ -264,6 +294,14 @@ The relay constructs this record from the registered `OutboxDestinationHandler` 
 ### `TransactionalMessageContext`
 
 Publish-side access to the application/transport headers for an outbound message (application-only). Framework durable context (correlation, trace, locale, …) is NOT carried here — it is captured from the ambient bound context into `OutboxMetadata.context` at publish. Outbox relay fields (message id, `eventType`, aggregate ids) are delivery control surfaced at relay time via `metadata.delivery.outbox`, not via this context.
+
+| Field | Description |
+|-------|-------------|
+| `messageId` / `eventType` / `aggregateType` / `aggregateId` | Row columns of the originating entry |
+| `headers` | Application/transport headers, an unmodifiable copy |
+| `scopeKey` | Scope label read from the row; never `null` — a `null` component reads `default`. Independent of the ambient `ScopeContext`. See [Scope](#scope) |
+
+The record is the canonical six-component form with `scopeKey` last; a public five-argument constructor without it remains and reads `default`.
 
 ### Exceptions
 

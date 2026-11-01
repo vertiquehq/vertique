@@ -9,6 +9,7 @@ import dev.vertique.core.context.DurableCarrierDescriptor;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.DurableTarget;
 import dev.vertique.core.exception.DurableEncodeRejectedException;
+import dev.vertique.core.scope.ScopeKey;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobRepository;
 import dev.vertique.job.JobState;
@@ -97,6 +98,12 @@ public class DelayedJobService {
     private final DelayedJobExceptionMapper exceptionMapper;
 
     /**
+     * The scope every enqueue is stored in, or {@code null} to store each job's own
+     * {@link DelayedJob#scopeKey()}. Set only on the instance returned by {@link #scopedTo(String)}.
+     */
+    private final String boundScopeKey;
+
+    /**
      * Creates a new delayed job service.
      *
      * @param repository      the job repository for standalone enqueueing
@@ -120,6 +127,32 @@ public class DelayedJobService {
         this.handlerAddresses = registrar.handlerAddresses();
         this.propagator = propagator;
         this.exceptionMapper = exceptionMapper;
+        this.boundScopeKey = null;
+    }
+
+    /** Creates the scoped view of {@code base}: the same dependencies and handler addresses, one bound scope. */
+    private DelayedJobService(DelayedJobService base, String boundScopeKey) {
+        this.repository = base.repository;
+        this.pgRepository = base.pgRepository;
+        this.handlerAddresses = base.handlerAddresses;
+        this.propagator = base.propagator;
+        this.exceptionMapper = base.exceptionMapper;
+        this.boundScopeKey = boundScopeKey;
+    }
+
+    /**
+     * INTERNAL framework seam — not an application contract and outside the maturity promise.
+     *
+     * <p>Returns a service that shares every dependency of this one and stores every job it enqueues in
+     * {@code scopeKey}, in place of {@link DelayedJob#scopeKey()}. Used by {@link DelayedJobClientFactory}
+     * to give a typed client its scope.
+     *
+     * @param scopeKey the scope every enqueue is stored in
+     * @return the scoped service
+     * @throws IllegalArgumentException if {@code scopeKey} is {@code null} or not a valid {@link ScopeKey}
+     */
+    DelayedJobService scopedTo(String scopeKey) {
+        return new DelayedJobService(this, ScopeKey.requireValid(scopeKey));
     }
 
     /**
@@ -133,7 +166,7 @@ public class DelayedJobService {
      *
      * @param job the job to enqueue
      * @return a future of the saved execution ID, or a failed future if the handler name is invalid
-     *         or unknown, or if a durable-context encoder rejects the enclosing capture operation
+     *         or unknown, if the scope key is {@code null} or invalid, or if a durable-context encoder rejects the enclosing capture operation
      *         (e.g. a durably-carried identity snapshot that would already be expired by
      *         {@link DelayedJob#runAt()}, F5 doomed-expiry detection)
      */
@@ -170,7 +203,7 @@ public class DelayedJobService {
      * @param job    the job to enqueue
      * @param client the SQL client (connection or transaction) to execute against
      * @return a future of the saved execution ID, or a failed future if the handler name is invalid
-     *         or unknown, or if a durable-context encoder rejects the enclosing capture operation
+     *         or unknown, if the scope key is {@code null} or invalid, or if a durable-context encoder rejects the enclosing capture operation
      *         (e.g. a durably-carried identity snapshot that would already be expired by
      *         {@link DelayedJob#runAt()}, F5 doomed-expiry detection)
      */
@@ -222,7 +255,7 @@ public class DelayedJobService {
      *
      * @param job the job to enqueue; {@link DelayedJob#metadata()} is persisted as-is
      * @return a future of the saved execution ID, or a failed future if the handler name is invalid or
-     *         unknown, or if the pre-merged metadata carries the identity-snapshot namespace
+     *         unknown, if the scope key is {@code null} or invalid, or if the pre-merged metadata carries the identity-snapshot namespace
      */
     public Future<UUID> enqueuePremerged(DelayedJob job) {
         try {
@@ -264,7 +297,7 @@ public class DelayedJobService {
      * @param job    the job to enqueue; {@link DelayedJob#metadata()} is persisted as-is
      * @param client the SQL client (connection or transaction) to execute against
      * @return a future of the saved execution ID, or a failed future if the handler name is invalid or
-     *         unknown, or if the pre-merged metadata carries the identity-snapshot namespace
+     *         unknown, if the scope key is {@code null} or invalid, or if the pre-merged metadata carries the identity-snapshot namespace
      */
     public Future<UUID> enqueuePremerged(DelayedJob job, SqlClient client) {
         try {
@@ -289,11 +322,12 @@ public class DelayedJobService {
     // --- Validation ---
 
     /**
-     * Validates the handler name and {@code maxAttempts} fields of the given job.
+     * Validates the handler name, {@code maxAttempts} and {@code scopeKey} fields of the given job.
      *
      * @param job the job to validate
-     * @throws IllegalArgumentException if the handler name is invalid, unknown, or maxAttempts is
-     *                                  out of the [1, 1000] range
+     * @throws IllegalArgumentException if the handler name is invalid, unknown, maxAttempts is
+     *                                  out of the [1, 1000] range, or the scope key is {@code null}
+     *                                  or not a valid {@link ScopeKey}
      */
     private void validateJob(DelayedJob job) {
         if (job.handler() == null || !VALID_HANDLER_NAME.matcher(job.handler()).matches()) {
@@ -307,6 +341,8 @@ public class DelayedJobService {
         if (job.maxAttempts() < 1 || job.maxAttempts() > 1000) {
             throw new IllegalArgumentException("maxAttempts must be between 1 and 1000, got: " + job.maxAttempts());
         }
+        // ScopeKey messages never repeat the key, so the failure text stays free of caller-supplied scope text.
+        ScopeKey.requireValid(job.scopeKey());
     }
 
     /**
@@ -457,6 +493,7 @@ public class DelayedJobService {
                 ProgressSnapshot.EMPTY,
                 Map.of(), // parameters
                 Map.of(), // attributes
-                metadata);
+                metadata,
+                boundScopeKey != null ? boundScopeKey : job.scopeKey());
     }
 }

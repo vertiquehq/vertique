@@ -3,6 +3,7 @@
 
 package dev.vertique.core.scope;
 
+import jakarta.annotation.Nullable;
 import java.util.Objects;
 
 /**
@@ -51,6 +52,39 @@ public record ScopeKey(String value) {
     public ScopeKey {
         Objects.requireNonNull(value, "value");
         validate(value);
+    }
+
+    /**
+     * Returns the supplied text, or the default key's text when it is {@code null}.
+     *
+     * <p>This is for a record field whose scope was never selected, so that the field is never
+     * {@code null}. It is not a way to choose a scope: a caller that names a scope passes it
+     * through {@link #requireValid(String)}, which rejects {@code null}. The text is returned as
+     * given and is not validated.
+     *
+     * @param value the scope text, or {@code null} when no scope was selected
+     * @return {@code value}, or {@code DEFAULT.value()} when {@code value} is {@code null}
+     */
+    public static String orDefault(@Nullable String value) {
+        return value != null ? value : DEFAULT.value();
+    }
+
+    /**
+     * Returns the supplied text if it is a valid scope key and rejects it otherwise.
+     *
+     * <p>Use it at an entry point that accepts a caller-chosen scope as text. The failure message
+     * never repeats the rejected text.
+     *
+     * @param value the scope text
+     * @return {@code value}, unchanged
+     * @throws IllegalArgumentException if {@code value} is {@code null} or is not a valid scope key
+     */
+    public static String requireValid(String value) {
+        if (value == null) {
+            throw new IllegalArgumentException("scope key must not be null");
+        }
+        validate(value);
+        return value;
     }
 
     private static void validate(String value) {

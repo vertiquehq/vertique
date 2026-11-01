@@ -603,7 +603,8 @@ public class OutboxRelay extends AbstractVerticle {
                 envelopeMetadata,
                 record.scheduledAt(),
                 record.attempt(),
-                record.createdAt());
+                record.createdAt(),
+                record.scopeKey());
     }
 
     /**

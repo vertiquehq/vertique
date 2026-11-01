@@ -37,20 +37,28 @@ import io.vertx.sqlclient.PoolOptions;
 import io.vertx.sqlclient.Tuple;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Integration tests for {@link PgInboxOutboxRepository} against a real PostgreSQL instance.
@@ -1430,6 +1438,155 @@ public class PgInboxOutboxRepositoryIT {
                 .onSuccess(result -> ctx.verify(() -> {
                     assertEquals(0, result.get("count"), "Old DEAD_LETTER entry should be deleted");
                     assertTrue((Integer) result.get("deleted") > 0, "cleanupDeadLetter must report deleted count");
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    // =========================================================================
+    // Outbox — scope
+    // =========================================================================
+
+    private static Stream<Arguments> scopeKeys() {
+        return Stream.of(
+                Arguments.of(Named.of("plain", "acme")),
+                Arguments.of(Named.of("mixed case", "Acme-EU_West.1")),
+                Arguments.of(Named.of("supplementary characters", "\uD83D\uDE00-scope-\uD835\uDD4F")),
+                Arguments.of(Named.of("255 ASCII code points", "a".repeat(255))),
+                Arguments.of(Named.of("255 supplementary code points", "\uD83D\uDE00".repeat(255))));
+    }
+
+    /** Builds a KAFKA entry in the given scope; a null {@code availableAt} leaves the row available now. */
+    private static OutboxEntry scopedEntry(String topic, String scopeKey, String aggregateId, Instant availableAt) {
+        return OutboxEntry.builder()
+                .destinationType(DestinationType.KAFKA)
+                .destination(topic)
+                .eventType("test.event")
+                .aggregateType(aggregateId == null ? null : "Agg")
+                .aggregateId(aggregateId)
+                .payload(new JsonObject().put("key", "value"))
+                .availableAt(availableAt)
+                .scopeKey(scopeKey)
+                .build();
+    }
+
+    /** Reads {@code scope_key} straight from the table, so the proof does not depend on the row mapper. */
+    private static Future<String> storedScopeKey(long id) {
+        return pool.preparedQuery("SELECT scope_key FROM outbox WHERE id = $1")
+                .execute(Tuple.of(id))
+                .map(rows -> rows.iterator().next().getString("scope_key"));
+    }
+
+    /** Claims one entry as the node and records its destination in {@code order}, or {@code (none)}. */
+    private Future<OutboxRecord> claimNext(String nodeId, List<String> order) {
+        return repository.claimBatch(1, nodeId, kafkaOnly()).map(records -> {
+            order.add(records.isEmpty() ? "(none)" : records.get(0).destination());
+            return records.isEmpty() ? null : records.get(0);
+        });
+    }
+
+    @ParameterizedTest
+    @MethodSource("scopeKeys")
+    @DisplayName("an inserted entry reads back, claimed and in its column, with exactly the scope key it had")
+    void scopeKeyRoundTripsExactly(String scopeKey, VertxTestContext ctx) {
+        // Given: an entry in the scope
+        OutboxEntry entry = scopedEntry("topic-scope-round-trip", scopeKey, null, null);
+
+        // When: it is inserted and claimed
+        pool.withTransaction(tx -> insert(entry, tx))
+                .compose(id -> repository
+                        .claimBatch(10, "node-scope-round-trip", kafkaOnly())
+                        .compose(records -> storedScopeKey(id)
+                                .map(stored -> Arrays.asList(records.get(0).scopeKey(), stored))))
+                .onSuccess(observed -> ctx.verify(() -> {
+                    // Then: the claimed record and the column both equal the input exactly
+                    assertEquals(Arrays.asList(scopeKey, scopeKey), observed);
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("retry and stale reclaim keep the scope key: every claim reports it")
+    void retryAndReclaimPreserveScopeKey(VertxTestContext ctx) {
+        // Given: a claimed entry in acme
+        String nodeId = "node-scope-retry-" + UUID.randomUUID().toString().substring(0, 8);
+        List<String> scopeAfterEachClaim = new ArrayList<>();
+
+        pool.withTransaction(tx -> insert(scopedEntry("topic-scope-retry", "acme", null, null), tx))
+                .compose(id -> repository
+                        .claimBatch(1, nodeId, kafkaOnly())
+                        // When: it is marked for retry and claimed
+                        .compose(claimed -> {
+                            scopeAfterEachClaim.add(claimed.get(0).scopeKey());
+                            return repository.markRetry(
+                                    id, nodeId, 1, Instant.now().minusSeconds(1), "err msg", "ERR_TYPE");
+                        })
+                        .compose(retried -> repository.claimBatch(1, nodeId, kafkaOnly()))
+                        // When: it is left to go stale and reclaimed
+                        .compose(claimed -> {
+                            scopeAfterEachClaim.add(claimed.get(0).scopeKey());
+                            return pool.preparedQuery(
+                                            "UPDATE outbox SET claimed_at = NOW() - INTERVAL '2 minutes' WHERE id = $1")
+                                    .execute(Tuple.of(id));
+                        })
+                        .compose(aged -> repository.reclaimStale(Duration.ofMinutes(1)))
+                        .compose(reclaimed -> repository.claimBatch(1, nodeId, kafkaOnly()))
+                        .compose(claimed -> {
+                            scopeAfterEachClaim.add(claimed.get(0).scopeKey());
+                            return storedScopeKey(id);
+                        }))
+                .onSuccess(stored -> ctx.verify(() -> {
+                    // Then: each claim reports acme, and so does the column
+                    assertEquals(List.of("acme", "acme", "acme"), scopeAfterEachClaim);
+                    assertEquals("acme", stored);
+                    ctx.completeNow();
+                }))
+                .onFailure(ctx::failNow);
+    }
+
+    @Test
+    @DisplayName("claim order is by availability and id whatever the scope, and a shared aggregate id stays ordered")
+    void claimOrderIgnoresScope(VertxTestContext ctx) {
+        // Given: rows in acme, globex and default, two of them sharing an aggregate id across scopes
+        Instant now = Instant.now();
+        Instant late = now.minusSeconds(300);
+        OutboxEntry sharedHead = scopedEntry("globex-head", "globex", "agg-shared", now.minusSeconds(600));
+        OutboxEntry acmeEarly = scopedEntry("acme-early", "acme", null, now.minusSeconds(3000));
+        OutboxEntry sharedSibling = scopedEntry("acme-sibling", "acme", "agg-shared", now.minusSeconds(3600));
+        OutboxEntry defaultLate = scopedEntry("default-late", "default", null, late);
+        OutboxEntry globexLate = scopedEntry("globex-late", "globex", null, late);
+        String nodeId = "node-scope-order-" + UUID.randomUUID().toString().substring(0, 8);
+        List<String> claimOrder = new ArrayList<>();
+        AtomicLong sharedHeadId = new AtomicLong();
+
+        // When: the rows are claimed one at a time, and the shared head is published once nothing else is left
+        pool.withTransaction(tx -> insert(sharedHead, tx)
+                        .compose(a -> insert(acmeEarly, tx))
+                        .compose(b -> insert(sharedSibling, tx))
+                        .compose(c -> insert(defaultLate, tx))
+                        .compose(d -> insert(globexLate, tx)))
+                .compose(inserted -> claimNext(nodeId, claimOrder))
+                .compose(first -> claimNext(nodeId, claimOrder))
+                .compose(head -> {
+                    sharedHeadId.set(head.id());
+                    return claimNext(nodeId, claimOrder);
+                })
+                .compose(third -> claimNext(nodeId, claimOrder))
+                .compose(fourth -> claimNext(nodeId, claimOrder))
+                .compose(blocked -> repository.markPublished(sharedHeadId.get(), nodeId))
+                .compose(published -> claimNext(nodeId, claimOrder))
+                .onSuccess(last -> ctx.verify(() -> {
+                    // Then: availability then id decide the order, and the older sibling waits for its head
+                    assertEquals(
+                            List.of(
+                                    "acme-early",
+                                    "globex-head",
+                                    "default-late",
+                                    "globex-late",
+                                    "(none)",
+                                    "acme-sibling"),
+                            claimOrder);
                     ctx.completeNow();
                 }))
                 .onFailure(ctx::failNow);

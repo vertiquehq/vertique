@@ -3,7 +3,9 @@
 
 package dev.vertique.job;
 
+import dev.vertique.core.scope.ScopeKey;
 import io.vertx.core.Future;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -35,6 +37,7 @@ public class DefaultJobContext implements JobContext {
     private final UUID executionId;
     private final int attemptNumber;
     private final JobType jobType;
+    private final String scopeKey;
     private final DefaultProgressReporter progressReporter;
     private final DefaultJobLogger jobLogger;
     private final ConcurrentHashMap<String, Object> metadata = new ConcurrentHashMap<>();
@@ -42,7 +45,7 @@ public class DefaultJobContext implements JobContext {
     private volatile boolean cancelled;
 
     /**
-     * Creates a new in-memory job context.
+     * Creates a new in-memory job context in the default scope.
      *
      * @param jobId         the logical job identifier
      * @param executionId   the unique execution identifier
@@ -50,10 +53,25 @@ public class DefaultJobContext implements JobContext {
      * @param jobType       the scheduling mechanism that triggered this execution
      */
     public DefaultJobContext(String jobId, UUID executionId, int attemptNumber, JobType jobType) {
+        this(jobId, executionId, attemptNumber, jobType, ScopeKey.DEFAULT.value());
+    }
+
+    /**
+     * Creates a new in-memory job context in the given scope.
+     *
+     * @param jobId         the logical job identifier
+     * @param executionId   the unique execution identifier
+     * @param attemptNumber the zero-based attempt counter
+     * @param jobType       the scheduling mechanism that triggered this execution
+     * @param scopeKey      the scope of the execution (must not be {@code null})
+     * @throws NullPointerException if {@code scopeKey} is {@code null}
+     */
+    public DefaultJobContext(String jobId, UUID executionId, int attemptNumber, JobType jobType, String scopeKey) {
         this.jobId = jobId;
         this.executionId = executionId;
         this.attemptNumber = attemptNumber;
         this.jobType = jobType;
+        this.scopeKey = Objects.requireNonNull(scopeKey, "scopeKey");
         this.progressReporter = new DefaultProgressReporter();
         this.jobLogger = new DefaultJobLogger();
     }
@@ -76,6 +94,11 @@ public class DefaultJobContext implements JobContext {
     @Override
     public JobType jobType() {
         return jobType;
+    }
+
+    @Override
+    public String scopeKey() {
+        return scopeKey;
     }
 
     @Override

@@ -5,6 +5,7 @@ package dev.vertique.job.delayed;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.scope.ScopeKey;
 import java.time.Instant;
 import lombok.Builder;
 import lombok.Getter;
@@ -101,4 +102,13 @@ public class DelayedJob {
      */
     @Builder.Default
     private final DurableMetadata metadata = DurableMetadata.empty();
+
+    /**
+     * The scope this job belongs to, a partition label stored with the execution. Omitted means
+     * {@link ScopeKey#DEFAULT}. The key is validated as a {@link ScopeKey} when the job is enqueued; a
+     * {@code null} or invalid key fails the enqueue. The scope is a label and grants no access; the ambient
+     * {@code ScopeContext} never selects it.
+     */
+    @Builder.Default
+    private final String scopeKey = ScopeKey.DEFAULT.value();
 }

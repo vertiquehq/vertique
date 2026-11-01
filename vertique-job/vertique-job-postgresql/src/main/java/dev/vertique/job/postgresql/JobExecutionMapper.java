@@ -47,6 +47,7 @@ final class JobExecutionMapper {
     static final String COL_CREATED_AT = "created_at";
     static final String COL_UPDATED_AT = "updated_at";
     static final String COL_METADATA = "metadata";
+    static final String COL_SCOPE_KEY = "scope_key";
 
     // --- Row mappers ---
 
@@ -89,7 +90,8 @@ final class JobExecutionMapper {
                 progress,
                 parameters,
                 null,
-                metadata);
+                metadata,
+                row.getString(COL_SCOPE_KEY));
     }
 
     // --- Internal helpers ---

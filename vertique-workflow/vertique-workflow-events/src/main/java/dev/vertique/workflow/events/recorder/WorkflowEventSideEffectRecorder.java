@@ -165,6 +165,7 @@ public final class WorkflowEventSideEffectRecorder implements WorkflowSideEffect
                 .eventType(eventIntent.eventType().name())
                 .payload(envelope)
                 .headers(intent.headers() == null ? Map.of() : intent.headers())
+                .scopeKey(eventIntent.scopeKey())
                 .build();
 
         return outboxService.publish(tx, entry).map(rowId -> RecorderResult.empty());
