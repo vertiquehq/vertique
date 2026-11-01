@@ -861,7 +861,7 @@ finished.
 
 - **Concurrency.** Up to `maxInFlight` records run at once, across all partitions of the consumer and in any
   order. There is no order of any kind: a later record of a partition, or of a key, can finish and even run before
-  an earlier one. Set `maxInFlight` to `1` when a consumer needs one record at a time. A record that waits for a
+  an earlier one. Set `maxInFlight` to `1` for a consumer that must never run two records at once. A record that waits for a
   retry, for the acknowledgment of its dead letter or for its dispatch gate holds no permit.
 - **The commit.** For each partition the consumer commits the offset after the longest run of records that have all
   finished, whatever finished in the meantime. A record that is running, waiting for a retry or waiting for its dead
@@ -1326,7 +1326,7 @@ default accepts every producer interface.
   backoff. Use `DEAD_LETTER` and reprocess.
 - **Relying on the order of records.** A `MANUAL` consumer runs records of a partition concurrently, up to
   `maxInFlight`, and promises no order, not even for one key. Set `maxInFlight` to `1` for a consumer that
-  needs it.
+  must never run two records at once.
 - **Dropping the context returned by `beforeDispatch`.** `KafkaDispatchContext` is immutable;
   `withFiltered(true)` has no effect unless the returned future carries the new instance.
 - **Retaining a `PayloadSource` across threads.** It is a no-copy view of the record buffer — copy

@@ -1458,8 +1458,8 @@ final class SourceScenario implements AutoCloseable {
 
     /**
      * Holds the answer of each {@code dispatchAs} call until the test releases it, and completes it from one Vert.x
-     * context that is not the consumer's. A source handles one record at a time, so the second call opens only once the
-     * first record is settled.
+     * context that is not the consumer's. A source runs records concurrently, so the second call opens as soon as the
+     * second record starts, while the first is still held.
      */
     final class Overlap {
 

@@ -27,9 +27,9 @@ import org.junit.jupiter.api.Test;
  *   <li>A binding that forces its strategies registers when the configuration is silent or states
  *       the forced values.</li>
  *   <li>A configuration that changes the commit strategy, the error strategy or the exhausted
- *       strategy, or that asks for more than one record in flight, fails registration with a
- *       {@link KafkaRegistrationException} that names the consumer and the option; a forcing binding
- *       that registers handles one record at a time.</li>
+ *       strategy fails registration with a {@link KafkaRegistrationException} that names the
+ *       consumer and the option; a forcing binding that registers keeps the configured
+ *       {@code maxInFlight} and {@code max.poll.records}.</li>
  *   <li>The same configurations on a non-forcing {@code SKIP} binding, on which each is legal, register as they always did.</li>
  * </ul>
  *
