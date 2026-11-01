@@ -101,23 +101,17 @@ final class SettlementRig {
     }
 
     /** One scheduled timer. */
-    static final class FakeTimer implements KafkaSettlement.Timer {
+    static final class FakeTimer {
 
         final long delayMs;
         final Runnable task;
         private final java.util.function.Consumer<Runnable> turn;
-        boolean cancelled;
         boolean fired;
 
         FakeTimer(long delayMs, Runnable task, java.util.function.Consumer<Runnable> turn) {
             this.delayMs = delayMs;
             this.task = task;
             this.turn = turn;
-        }
-
-        @Override
-        public void cancel() {
-            cancelled = true;
         }
 
         /** Fires the timer, as a clock that lets it fire at any later point would. */
@@ -193,10 +187,8 @@ final class SettlementRig {
         }
 
         @Override
-        public KafkaSettlement.Timer schedule(long delayMs, Runnable task) {
-            FakeTimer timer = new FakeTimer(delayMs, task, this::execute);
-            timers.add(timer);
-            return timer;
+        public void schedule(long delayMs, Runnable task) {
+            timers.add(new FakeTimer(delayMs, task, this::execute));
         }
 
         /**
@@ -314,11 +306,9 @@ final class SettlementRig {
                 .toList();
     }
 
-    /** The unfired, uncancelled timers. */
+    /** The unfired timers. */
     List<FakeTimer> pendingTimers() {
-        return port.timers.stream()
-                .filter(timer -> !timer.fired && !timer.cancelled)
-                .toList();
+        return port.timers.stream().filter(timer -> !timer.fired).toList();
     }
 
     /** The state of the client's pause for a partition after the calls so far. */

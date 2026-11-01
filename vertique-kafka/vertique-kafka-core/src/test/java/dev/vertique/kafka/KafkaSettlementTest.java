@@ -463,7 +463,6 @@ class KafkaSettlementTest {
             FakeTimer timer = rig.pendingTimers().get(0);
 
             rig.revoke(P0).assign(P0);
-            assertTrue(timer.cancelled, "the revocation cancels the timer");
             timer.fire();
 
             assertEquals(1, rig.started(P0, 0));

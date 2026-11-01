@@ -51,13 +51,6 @@ final class KafkaSettlement {
     /** How long a consumer waits before it asks a closed gate, or a refusing handler, again. */
     private static final long RECHECK_MS = 250L;
 
-    /** A pending timer. */
-    interface Timer {
-
-        /** Cancels the timer; a timer that has fired is not affected. */
-        void cancel();
-    }
-
     /** How a run of one record ended. */
     record Result(
             @Nullable KafkaTerminalOutcome outcome,
@@ -94,7 +87,7 @@ final class KafkaSettlement {
         Future<Void> resume(TopicPartition partition);
 
         /** Runs the task once after the delay. */
-        Timer schedule(long delayMs, Runnable task);
+        void schedule(long delayMs, Runnable task);
 
         /** Runs the task on the consumer's owner context, in order, and not before this call returns. */
         void execute(Runnable task);
@@ -143,7 +136,7 @@ final class KafkaSettlement {
     private boolean consumerRetentionHeld;
     private boolean intakeOpen = true;
     private boolean refused;
-    private @Nullable Timer recheck;
+    private boolean recheck;
 
     KafkaSettlement(Settings settings, Port port) {
         this.settings = settings;
@@ -185,9 +178,6 @@ final class KafkaSettlement {
 
     private void finish(KafkaPartitionLedger ledger) {
         commits.revoke(ledger);
-        for (Entry entry : ledger.entries()) {
-            cancelTimer(entry);
-        }
         retainedRecords -= ledger.size();
         // The queue may not be polled again for a long time, while the gate is closed or every permit is held, so the
         // ended assignment's entries leave it now, with their payloads.
@@ -340,7 +330,7 @@ final class KafkaSettlement {
                 cause.getMessage());
         ledger.move(entry, State.RETRY_WAIT);
         entry.cause = cause;
-        entry.timer = port.schedule(delayMs, () -> fireRetry(entry));
+        port.schedule(delayMs, () -> fireRetry(entry));
         updateBackoff(ledger);
         notifyCompleted(view, KafkaTerminalOutcome.RETRY_SCHEDULED);
     }
@@ -350,7 +340,6 @@ final class KafkaSettlement {
         if (ledger.ended() || entry.state != State.RETRY_WAIT) {
             return;
         }
-        entry.timer = null;
         entry.attempts++;
         ledger.move(entry, State.QUEUED);
         queue.add(entry);
@@ -377,7 +366,6 @@ final class KafkaSettlement {
         if (ledger.ended() || entry.state != State.DLQ_PENDING) {
             return;
         }
-        entry.timer = null;
         publishes++;
         Future<Void> publish;
         try {
@@ -407,17 +395,9 @@ final class KafkaSettlement {
                         entry.offset,
                         delayMs,
                         cause);
-                entry.timer = port.schedule(delayMs, () -> publish(entry));
+                port.schedule(delayMs, () -> publish(entry));
                 notifyCompleted(view, KafkaTerminalOutcome.DLQ_FAILED);
             }
-        }
-    }
-
-    private static void cancelTimer(Entry entry) {
-        Timer timer = entry.timer;
-        if (timer != null) {
-            entry.timer = null;
-            timer.cancel();
         }
     }
 
@@ -454,11 +434,12 @@ final class KafkaSettlement {
     }
 
     private void armRecheck() {
-        if (recheck != null || stopping) {
+        if (recheck || stopping) {
             return;
         }
-        recheck = port.schedule(RECHECK_MS, () -> {
-            recheck = null;
+        recheck = true;
+        port.schedule(RECHECK_MS, () -> {
+            recheck = false;
             refused = false;
             pump();
         });
@@ -526,10 +507,6 @@ final class KafkaSettlement {
             return;
         }
         stopping = true;
-        if (recheck != null) {
-            recheck.cancel();
-            recheck = null;
-        }
         holds.holdAll(KafkaHoldController.Reason.SHUTDOWN);
     }
 
@@ -565,10 +542,6 @@ final class KafkaSettlement {
         }
         ledgers.clear();
         queue.clear();
-        if (recheck != null) {
-            recheck.cancel();
-            recheck = null;
-        }
     }
 
     // --- State for tests and diagnostics ---

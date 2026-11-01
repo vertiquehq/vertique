@@ -722,9 +722,8 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         }
 
         @Override
-        public KafkaSettlement.Timer schedule(long delayMs, Runnable task) {
-            long id = vertx.setTimer(Math.max(1L, delayMs), timer -> task.run());
-            return () -> vertx.cancelTimer(id);
+        public void schedule(long delayMs, Runnable task) {
+            vertx.setTimer(Math.max(1L, delayMs), timer -> task.run());
         }
 
         @Override

@@ -70,10 +70,6 @@ final class KafkaPartitionLedger {
         @Nullable
         KafkaConsumerRecordView view;
 
-        /** The pending retry or publish timer. */
-        @Nullable
-        KafkaSettlement.Timer timer;
-
         Entry(KafkaPartitionLedger ledger, KafkaConsumerRecord<String, byte[]> record, long sequence) {
             this.ledger = ledger;
             this.offset = record.offset();
@@ -181,7 +177,6 @@ final class KafkaPartitionLedger {
         entry.record = null;
         entry.cause = null;
         entry.view = null;
-        entry.timer = null;
     }
 
     /**
@@ -210,7 +205,6 @@ final class KafkaPartitionLedger {
             entry.record = null;
             entry.cause = null;
             entry.view = null;
-            entry.timer = null;
         }
         entries.clear();
     }
