@@ -189,14 +189,16 @@ static KafkaConsumerBinding<?> orderBinding() {
 | `jsonProfile(JsonProfileId)` | `null` — framework default | JSON mapper profile for value deserialization |
 | `ignoreUndecodable(Runnable)` | off | Handler bindings: acknowledges a record that fails to decode, commits it when `MANUAL`, reports it `SKIP`, runs the callback, and skips the error strategy; a transient decode failure takes the error strategy |
 | `noHeaderContext()` | off | Handler bindings: installs no durable context from the record's headers for the handler |
-| `forceStrategies()` | off | Handler bindings: registration fails unless the resolved configuration keeps the binding's `commitStrategy` and `errorStrategy` and a `DEAD_LETTER` `retry.exhaustedStrategy`, and resolves `maxInFlight` to `1` |
+| `forceStrategies()` | off | Handler bindings, `commitStrategy(MANUAL)` required: registration fails unless the resolved configuration keeps the binding's `commitStrategy` and `errorStrategy` and a `DEAD_LETTER` `retry.exhaustedStrategy`, and resolves `maxInFlight` to `1` |
 
 Use the durable operation id (`@ServiceOperation` value) in `dispatchTo` for stable-target-eligible
 operations so the binding survives a method rename.
 
 A binding names a `handler` or a `dispatchTo` target, not both: `build()` throws
 `IllegalStateException`, naming the binding, when both are set. `build()` also throws it when
-`ignoreUndecodable`, `noHeaderContext` or `forceStrategies` is set and no `handler` is. A binding
+`ignoreUndecodable`, `noHeaderContext` or `forceStrategies` is set and no `handler` is, and when
+`forceStrategies` is set without `commitStrategy(CommitStrategy.MANUAL)`: the default `AUTO` could
+commit past an unsettled record when the consumer closes. A binding
 that names neither a handler nor a target builds, and the registrar refuses it at startup. A handler binding is registered as a handler-kind consumer
 (see Model 4): it receives the decoded `KafkaMessage<V>` with key, topic, partition, offset,
 timestamp and headers, runs with the record's durable context installed, and keeps the binding's
@@ -233,6 +235,16 @@ exactly as it did before them.
   settled, including a dead-letter publish still in flight, and the consumer stays paused through the
   backoff, so no later record is delivered, handled or committed ahead of it. A binding without
   `forceStrategies` leaves the record uncommitted and goes on.
+  The slot resumes the consumer only after a **confirmed disposition**: a retry scheduled behind a
+  confirmed seek, a published dead letter, a skip, or a confirmed seek back to the record. A throw
+  or an `Error` anywhere in the failure handling, including a dead-letter producer that throws when
+  it is built, counts as a failed publish and seeks back. A seek that cannot be confirmed is tried
+  once more; if that fails too, the consumer **stays paused**, the record uncommitted and the slot
+  held, and an error is logged. A seek fails when the consumer no longer owns the partition (it was
+  revoked in a rebalance) or the consumer is closed. When the partition is no longer owned, or is
+  revoked while the slot is held, the slot is released and the consumer resumes, because the record
+  is delivered to the partition's new owner. Any other held slot is not released: a stop reports
+  the record still pending, closes the consumer without committing it, and the next run delivers it.
 
 ### Model 3 — `@KafkaListener` routing interface
 
@@ -1111,7 +1123,7 @@ public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRe
 | `RETRY_SCHEDULED` | Consumer paused, offset not committed, Kafka will redeliver |
 | `DLQ_PUBLISHED` | Forwarded to the dead-letter topic |
 | `DLQ_FAILED` | The DLQ publish failed; the offset was not committed. A `forceStrategies` binding is paused, seeks back and resumes after a backoff |
-| `ERROR_HANDLER_FAILED` | The error handler's own future failed; the record's disposition is unknown |
+| `ERROR_HANDLER_FAILED` | The error handler's own future failed; the record's disposition is unknown. A `forceStrategies` binding then seeks back once more, and stays paused with the record uncommitted when that is not confirmed |
 
 > **Breaking change (core 0.3.0).** The separate consumer capture-hook SPI, its terminal and
 > raw-disposition records, and its `Set` multibinding are removed. Implement

@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -46,7 +47,9 @@ import lombok.extern.slf4j.Slf4j;
  * {@link ResolvedKafkaConsumerConfig#maxInFlight()} is reached, the consumer is paused. It is resumed once
  * the in-flight count drops below the threshold. An entry that forces its strategies keeps the slot
  * of a failed record until the error handling has settled, and a slot released while the entry waits
- * out a backoff does not resume the consumer: the end of the backoff does.
+ * out a backoff does not resume the consumer: the end of the backoff does. A held slot is released
+ * only after a confirmed disposition or a confirmed seek back; otherwise the consumer stays paused
+ * until the record's partition is revoked.
  *
  * <p>Error handling follows the configured {@link ErrorStrategy}:
  *
@@ -128,6 +131,25 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      * state in {@link #paused}. Never set for an entry that does not force its strategies.
      */
     private final AtomicBoolean backingOff = new AtomicBoolean(false);
+
+    /**
+     * The slot of a forced record whose seek back could not be confirmed, which keeps the consumer
+     * paused. Released when its partition is revoked. {@code null} otherwise.
+     */
+    private volatile @Nullable HeldSlot stalled;
+
+    /** The in-flight slot of a failed record of a forced entry, held until its failure is settled. */
+    private static final class HeldSlot {
+
+        final io.vertx.kafka.client.common.TopicPartition position;
+        final String positionKey;
+        final AtomicBoolean released = new AtomicBoolean(false);
+
+        HeldSlot(io.vertx.kafka.client.common.TopicPartition position, String positionKey) {
+            this.position = position;
+            this.positionKey = positionKey;
+        }
+    }
 
     // --- Collaborators (initialised in start()) ---
 
@@ -231,6 +253,9 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         consumer = KafkaConsumer.create(vertx, kafkaProps, String.class, byte[].class);
         consumer.handler(this::processRecord);
         consumer.exceptionHandler(cause -> log.error("[{}] Kafka consumer exception", entry.name(), cause));
+        if (entry.forceStrategies()) {
+            consumer.partitionsRevokedHandler(this::onPartitionsRevoked);
+        }
 
         // Collaborators require vertx, which is only available after injection by AbstractVerticle.
         // If building the dispatcher (which builds the router routing deserializer) throws, close the
@@ -377,7 +402,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         try {
             accepted = entry.filter() == null || entry.filter().accept(record.key(), headers);
         } catch (Exception e) {
-            handleFailure(record, rawBytes, headers, e, view, releaseUnlessForced());
+            handleFailure(record, rawBytes, headers, e, view, releaseUnlessForced(record));
             return;
         }
         if (!accepted) {
@@ -397,7 +422,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         try {
             dispatchRecord(record, rawBytes, headers, textHeaders, correlationId, view);
         } catch (Exception e) {
-            handleFailure(record, rawBytes, headers, e, view, releaseUnlessForced());
+            handleFailure(record, rawBytes, headers, e, view, releaseUnlessForced(record));
         }
     }
 
@@ -456,7 +481,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                 notifyCompleted(view, KafkaTerminalOutcome.SKIP);
                 return;
             }
-            handleFailure(record, rawBytes, headers, e, view, releaseUnlessForced());
+            handleFailure(record, rawBytes, headers, e, view, releaseUnlessForced(record));
             return;
         }
 
@@ -483,7 +508,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         interceptorChain.runOnRecordObservers(dispatchCtx);
         interceptorChain.runBeforeInterceptors(dispatchCtx).onComplete(interceptorResult -> {
             if (interceptorResult.failed()) {
-                handleFailure(record, rawBytes, headers, interceptorResult.cause(), view, releaseUnlessForced());
+                handleFailure(record, rawBytes, headers, interceptorResult.cause(), view, releaseUnlessForced(record));
                 return;
             }
 
@@ -541,8 +566,10 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
 
             dispatchFuture.onComplete(dispatchResult -> {
                 // A failed dispatch of a forced entry keeps its slot until the failure is settled.
-                boolean slotHeld = dispatchResult.failed() && entry.forceStrategies();
-                if (!slotHeld) {
+                HeldSlot held = null;
+                if (dispatchResult.failed()) {
+                    held = releaseUnlessForced(record);
+                } else {
                     decrementInFlight();
                 }
                 if (dispatchResult.succeeded()) {
@@ -556,21 +583,22 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                     });
                 } else {
                     Throwable cause = dispatchResult.cause();
+                    HeldSlot slot = held;
                     interceptorChain.runOnErrorObservers(ctx, cause);
                     interceptorChain
                             .runRecoverError(ctx, cause)
                             .onSuccess(v -> {
                                 // Error was recovered by an interceptor — commit and move on
                                 commitIfManual(record);
-                                if (slotHeld) {
-                                    decrementInFlight();
+                                if (slot != null) {
+                                    releaseSlot(slot);
                                 }
                                 notifyCompleted(view, KafkaTerminalOutcome.RECOVERED);
                             })
                             // Not recovered — proceed with normal error strategy; complete the
                             // record from the terminal-outcome future so observers run after all
                             // async work (DLQ publish, seek, scheduleResume) has settled.
-                            .onFailure(e -> handleFailure(record, rawBytes, headers, e, view, slotHeld));
+                            .onFailure(e -> handleFailure(record, rawBytes, headers, e, view, slot));
                 }
             });
         });
@@ -581,22 +609,49 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      * entry keeps the slot until the record's failure is settled, so no later record can be delivered,
      * handled or committed ahead of it.
      *
-     * @return {@code true} when the slot is still held and {@link #handleFailure} must release it
+     * @param record the failed record
+     * @return the held slot, which {@link #handleFailure} must release, or {@code null} when the slot
+     *     was released here
      */
-    private boolean releaseUnlessForced() {
+    private @Nullable HeldSlot releaseUnlessForced(KafkaConsumerRecord<String, byte[]> record) {
         if (entry.forceStrategies()) {
-            return true;
+            return new HeldSlot(
+                    new io.vertx.kafka.client.common.TopicPartition(record.topic(), record.partition()),
+                    KafkaErrorHandler.positionKey(record));
         }
         decrementInFlight();
-        return false;
+        return null;
+    }
+
+    /**
+     * Releases a held slot once. A second release, such as the revocation of its partition after the
+     * failure handling settled it, does nothing.
+     *
+     * @param slot the held slot
+     */
+    private void releaseSlot(HeldSlot slot) {
+        if (slot.released.compareAndSet(false, true)) {
+            if (stalled == slot) {
+                stalled = null;
+            }
+            decrementInFlight();
+        }
     }
 
     /**
      * Hands a failed record to the error strategy and completes it from the terminal-outcome future,
      * so observers run after all async work (DLQ publish, seek, scheduleResume) has settled.
      *
-     * @param slotHeld whether the record still holds its in-flight slot; the slot is released once
-     *     the error handling has settled, whether it succeeded or failed
+     * <p>An entry that forces its strategies holds the slot of a failed record. The slot is released,
+     * and the consumer may resume, only after a confirmed disposition: a retry scheduled behind a
+     * confirmed seek, a published dead letter, a skip, or a confirmed seek back to the record. Any
+     * other result, including a throw or an {@link Error} from the handler or a failed seek, tries the
+     * seek back once more and, failing that, keeps the consumer paused and the slot held. There is no
+     * other exit. A held slot whose partition is revoked is released, because the record is delivered
+     * to the partition's new owner.
+     *
+     * @param slot the held slot of a forced entry, released once the error handling has settled;
+     *     {@code null} when the slot was already released
      */
     private void handleFailure(
             KafkaConsumerRecord<String, byte[]> record,
@@ -604,31 +659,134 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
             KafkaRecordHeaders headers,
             Throwable cause,
             @Nullable KafkaConsumerRecordView view,
-            boolean slotHeld) {
+            @Nullable HeldSlot slot) {
+        if (slot == null) {
+            errorHandler
+                    .handleError(record, rawBytes, headers, cause, consumerControl())
+                    .onComplete(result -> {
+                        if (result.succeeded()) {
+                            notifyCompleted(view, result.result());
+                        } else {
+                            log.warn("[{}] Unexpected failure from handleError future", entry.name(), result.cause());
+                            // The error handler's own future failed — the record's disposition is unknown, but
+                            // the record must still complete exactly once.
+                            notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
+                        }
+                    });
+            return;
+        }
         Future<KafkaTerminalOutcome> settled;
-        if (slotHeld) {
-            try {
-                settled = errorHandler.handleError(record, rawBytes, headers, cause, consumerControl());
-            } catch (RuntimeException e) {
-                // A held slot must not outlive a handler that threw: it would stall the consumer for good.
-                settled = Future.failedFuture(e);
-            }
-        } else {
+        try {
             settled = errorHandler.handleError(record, rawBytes, headers, cause, consumerControl());
+        } catch (Throwable thrown) {
+            settled = Future.failedFuture(thrown);
         }
         settled.onComplete(result -> {
-            if (slotHeld) {
-                decrementInFlight();
-            }
             if (result.succeeded()) {
+                releaseSlot(slot);
                 notifyCompleted(view, result.result());
             } else {
-                log.warn("[{}] Unexpected failure from handleError future", entry.name(), result.cause());
-                // The error handler's own future failed — the record's disposition is unknown, but
-                // the record must still complete exactly once.
-                notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
+                seekBackOrHold(record, view, slot, result.cause());
             }
         });
+    }
+
+    /**
+     * Settles a forced record whose error handling failed or whose seek back could not be confirmed:
+     * tries the seek back once more, with the backoff, and resumes only when it is confirmed.
+     */
+    private void seekBackOrHold(
+            KafkaConsumerRecord<String, byte[]> record,
+            @Nullable KafkaConsumerRecordView view,
+            HeldSlot slot,
+            Throwable failure) {
+        log.error(
+                "[{}] Error handling of topic={} partition={} offset={} did not settle; seeking back to the record",
+                entry.name(),
+                record.topic(),
+                record.partition(),
+                record.offset(),
+                failure);
+        Future<KafkaTerminalOutcome> back;
+        try {
+            back = errorHandler.seekBack(record, consumerControl(), "its error handling did not settle");
+        } catch (Throwable thrown) {
+            back = Future.failedFuture(thrown);
+        }
+        back.onComplete(result -> {
+            if (result.succeeded()) {
+                releaseSlot(slot);
+                notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
+            } else {
+                holdOrReleaseRevoked(record, view, slot, result.cause());
+            }
+        });
+    }
+
+    /**
+     * Keeps a forced record's slot, and so the consumer paused and the record uncommitted, because no
+     * seek back could be confirmed. The one case in which this is not right is a partition this
+     * consumer no longer owns, because the record is then delivered to the new owner; that case is
+     * released, here or when the revocation arrives, whichever comes second.
+     */
+    private void holdOrReleaseRevoked(
+            KafkaConsumerRecord<String, byte[]> record,
+            @Nullable KafkaConsumerRecordView view,
+            HeldSlot slot,
+            Throwable seekFailure) {
+        backingOff.set(true);
+        stalled = slot;
+        Future<Set<io.vertx.kafka.client.common.TopicPartition>> assigned;
+        try {
+            assigned = consumer.assignment();
+        } catch (Throwable thrown) {
+            assigned = Future.failedFuture(thrown);
+        }
+        assigned.onComplete(result -> {
+            if (result.succeeded() && !result.result().contains(slot.position)) {
+                releaseRevoked(slot);
+            } else {
+                log.error(
+                        "[{}] Could not seek back to topic={} partition={} offset={}; the consumer stays paused and"
+                                + " the record uncommitted until its partition is revoked or the consumer restarts",
+                        entry.name(),
+                        record.topic(),
+                        record.partition(),
+                        record.offset(),
+                        seekFailure);
+            }
+            notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
+        });
+    }
+
+    /**
+     * Releases a held slot whose partition this consumer no longer owns: the record is delivered to
+     * the partition's new owner, so its retry state is dropped and the consumer resumes.
+     */
+    private void releaseRevoked(HeldSlot slot) {
+        if (slot.released.get()) {
+            return;
+        }
+        log.warn(
+                "[{}] Partition {} was revoked while one of its records was held; releasing it, the new owner"
+                        + " is delivered the record",
+                entry.name(),
+                slot.position);
+        errorHandler.forget(slot.positionKey);
+        backingOff.set(false);
+        releaseSlot(slot);
+    }
+
+    /**
+     * Releases the held slot of a revoked partition. Anything else about a rebalance stays as it was.
+     *
+     * @param revoked the partitions that were taken from this consumer
+     */
+    private void onPartitionsRevoked(Set<io.vertx.kafka.client.common.TopicPartition> revoked) {
+        HeldSlot slot = stalled;
+        if (slot != null && revoked.contains(slot.position)) {
+            releaseRevoked(slot);
+        }
     }
 
     /**

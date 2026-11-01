@@ -67,7 +67,7 @@ class KafkaConsumerBindingTargetTest {
         List<UnaryOperator<KafkaConsumerBinding.Builder<String>>> options = List.of(
                 builder -> builder.ignoreUndecodable(() -> {}),
                 KafkaConsumerBinding.Builder::noHeaderContext,
-                KafkaConsumerBinding.Builder::forceStrategies);
+                builder -> builder.commitStrategy(CommitStrategy.MANUAL).forceStrategies());
 
         for (UnaryOperator<KafkaConsumerBinding.Builder<String>> option : options) {
             // When / Then: the option beside a dispatchTo target, or alone, is refused and the refusal names the

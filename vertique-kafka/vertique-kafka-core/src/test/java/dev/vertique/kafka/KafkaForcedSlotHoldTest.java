@@ -5,11 +5,13 @@ package dev.vertique.kafka;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -43,9 +45,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -76,6 +83,14 @@ import org.mockito.invocation.Invocation;
  *   <li>A retry on a forcing binding pauses, seeks and resumes once, after the backoff; an entry
  *       that does not force its strategies still releases its slot before its error handling
  *       settles.</li>
+ *   <li>A fault at each step of the failure handling (a send that throws or throws an
+ *       {@link Error}, a pause that throws, a seek that throws, throws an {@link Error} or fails, a
+ *       fallback that fails too) never commits and never resumes before a seek back is confirmed; when
+ *       none can be confirmed the slot stays held and the consumer paused.</li>
+ *   <li>A held slot is released when its partition is revoked, so the consumer does not stay paused
+ *       for good; a stop with a held slot, through a registered forced {@code MANUAL} binding, commits
+ *       nothing.</li>
+ *   <li>A binding that forces its strategies on the default {@code AUTO} commit is refused.</li>
  * </ul>
  */
 @ExtendWith(VertxExtension.class)
@@ -194,12 +209,22 @@ class KafkaForcedSlotHoldTest {
                 force);
     }
 
-    @SuppressWarnings("unchecked")
     private static Rig wire(
             Vertx vertx,
             ConsumerEntry entry,
             List<KafkaConsumerInterceptor> interceptors,
             KafkaProducerFactory producer)
+            throws ReflectiveOperationException {
+        return wire(vertx, entry, interceptors, producer, 10_000L);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Rig wire(
+            Vertx vertx,
+            ConsumerEntry entry,
+            List<KafkaConsumerInterceptor> interceptors,
+            KafkaProducerFactory producer,
+            long drainTimeoutMs)
             throws ReflectiveOperationException {
         KafkaConsumerVerticle verticle = new KafkaConsumerVerticle(
                 entry,
@@ -210,13 +235,17 @@ class KafkaForcedSlotHoldTest {
                 KafkaTestSupport.eventBusClient(vertx),
                 KafkaTestSupport.noOpInboundExecutionContextScope(),
                 KafkaTestSupport.noOpEnvelopeBuilder(),
-                KafkaTestSupport.jsonSerdeRegistry());
+                KafkaTestSupport.jsonSerdeRegistry(),
+                drainTimeoutMs,
+                10_000L);
         verticle.init(vertx, vertx.getOrCreateContext());
 
         BrokerStub broker = new BrokerStub();
         KafkaConsumer<String, byte[]> consumer = mock(KafkaConsumer.class);
         when(consumer.commit(anyMap())).thenReturn(Future.succeededFuture(Map.of()));
         when(consumer.seek(any(), anyLong())).thenReturn(Future.succeededFuture());
+        when(consumer.assignment()).thenReturn(Future.succeededFuture(Set.of(POSITION)));
+        when(consumer.close()).thenReturn(Future.succeededFuture());
         doAnswer(invocation -> {
                     broker.paused.set(true);
                     return invocation.getMock();
@@ -540,5 +569,318 @@ class KafkaForcedSlotHoldTest {
         // Then: the record is committed and nothing else resumes the consumer
         assertEquals(List.of(committed(FAILED_OFFSET + 1)), committedOffsets(rig));
         assertEquals(1, rig.broker().resumes.get());
+    }
+
+    // --- Faults at each step of the failure handling ---
+
+    /** What one call of the consumer's seek does. */
+    enum Seek {
+        /** Answers with a future the test completes later. */
+        HELD,
+        /** Answers with a failed future, as a seek on an unassigned partition does. */
+        FAIL,
+        /** Throws an exception, as a seek on a closed consumer does. */
+        THROW,
+        /** Throws an {@link Error}. */
+        ERROR
+    }
+
+    /** How the dead-letter send behaves. */
+    enum Send {
+        FAILS,
+        THROWS,
+        THROWS_ERROR
+    }
+
+    /**
+     * One fault.
+     *
+     * @param label the row
+     * @param send how the send behaves
+     * @param pauseFault thrown by the consumer's pause when the failure is handled, or {@code null}
+     * @param seeks what each call of the seek does; the last entry repeats
+     * @param seekAttempts how many seeks are made before the test completes a held one
+     * @param confirmed whether a seek is confirmed in the end
+     */
+    record Fault(
+            String label,
+            Send send,
+            @Nullable Throwable pauseFault,
+            List<Seek> seeks,
+            int seekAttempts,
+            boolean confirmed) {}
+
+    private static List<Fault> faults() {
+        return List.of(
+                new Fault("a send that fails", Send.FAILS, null, List.of(Seek.HELD), 1, true),
+                new Fault("a send that throws", Send.THROWS, null, List.of(Seek.HELD), 1, true),
+                new Fault("a send that throws an Error", Send.THROWS_ERROR, null, List.of(Seek.HELD), 1, true),
+                new Fault(
+                        "a pause that throws",
+                        Send.FAILS,
+                        new IllegalStateException("pause"),
+                        List.of(Seek.HELD),
+                        1,
+                        true),
+                new Fault(
+                        "a pause that throws an Error",
+                        Send.FAILS,
+                        new LinkageError("pause"),
+                        List.of(Seek.HELD),
+                        1,
+                        true),
+                new Fault(
+                        "a first seek that fails, then a held one",
+                        Send.FAILS,
+                        null,
+                        List.of(Seek.FAIL, Seek.HELD),
+                        2,
+                        true),
+                new Fault("a seek that throws", Send.FAILS, null, List.of(Seek.THROW), 2, false),
+                new Fault("a seek that throws an Error", Send.FAILS, null, List.of(Seek.ERROR), 2, false),
+                new Fault("a seek that fails", Send.FAILS, null, List.of(Seek.FAIL), 2, false),
+                new Fault("a fallback that fails too", Send.THROWS, null, List.of(Seek.FAIL, Seek.THROW), 2, false),
+                new Fault(
+                        "a fallback that throws an Error", Send.FAILS, null, List.of(Seek.FAIL, Seek.ERROR), 2, false));
+    }
+
+    /** Scripts the seek of a rig and returns the futures it handed out for {@link Seek#HELD}. */
+    private static List<Promise<Void>> scriptSeeks(Rig rig, List<Seek> script, AtomicInteger attempts) {
+        List<Promise<Void>> held = new CopyOnWriteArrayList<>();
+        doAnswer(invocation -> {
+                    Seek next = script.get(Math.min(attempts.getAndIncrement(), script.size() - 1));
+                    switch (next) {
+                        case FAIL -> {
+                            return Future.failedFuture(new IllegalStateException("No current assignment"));
+                        }
+                        case THROW -> throw new IllegalStateException("This consumer has already been closed");
+                        case ERROR -> throw new LinkageError("seek");
+                        default -> {
+                            Promise<Void> promise = Promise.promise();
+                            held.add(promise);
+                            return promise.future();
+                        }
+                    }
+                })
+                .when(rig.consumer())
+                .seek(any(TopicPartition.class), anyLong());
+        return held;
+    }
+
+    private static void setPaused(Rig rig, boolean value) throws ReflectiveOperationException {
+        Field field = KafkaConsumerVerticle.class.getDeclaredField("paused");
+        field.setAccessible(true);
+        ((AtomicBoolean) field.get(rig.verticle())).set(value);
+    }
+
+    /**
+     * Builds a forcing rig whose retries are used up, whose handler fails the record and which sends the
+     * failed record to a dead-letter send that behaves as the fault says.
+     */
+    private static Rig faulty(Vertx vertx, Fault fault) throws ReflectiveOperationException {
+        KafkaProducerFactory producer = mock(KafkaProducerFactory.class);
+        switch (fault.send()) {
+            case FAILS ->
+                when(producer.sendForDlq(anyString(), any(), any(), any()))
+                        .thenReturn(Future.failedFuture(new RuntimeException("kafka-down")));
+            case THROWS ->
+                when(producer.sendForDlq(anyString(), any(), any(), any()))
+                        .thenThrow(new IllegalStateException("producer could not be built"));
+            case THROWS_ERROR ->
+                when(producer.sendForDlq(anyString(), any(), any(), any()))
+                        .thenThrow(new LinkageError("producer could not be built"));
+        }
+        AtomicReference<Runnable> beforeFailing = new AtomicReference<>(() -> {});
+        KafkaRecordHandler<Object> handler = message -> {
+            beforeFailing.get().run();
+            return Future.failedFuture(new RuntimeException("handler boom"));
+        };
+        Rig rig = wire(vertx, entry(true, ErrorStrategy.RETRY, handler, null), List.of(), producer);
+        useUpRetries(rig);
+        if (fault.pauseFault() != null) {
+            // The consumer is already paused when the record is taken in; this row needs the pause to be
+            // called again, and to throw, while the failure is handled.
+            beforeFailing.set(() -> {
+                try {
+                    setPaused(rig, false);
+                } catch (ReflectiveOperationException e) {
+                    throw new IllegalStateException(e);
+                }
+                doAnswer(invocation -> {
+                            throw fault.pauseFault();
+                        })
+                        .when(rig.consumer())
+                        .pause();
+            });
+        }
+        return rig;
+    }
+
+    @Test
+    @DisplayName(
+            "a fault at any step never commits or resumes before a seek back is confirmed, and else holds the slot")
+    void faultAtAnyStepNeverCommitsOrResumesBeforeASeekIsConfirmed(Vertx vertx) throws Exception {
+        for (Fault fault : faults()) {
+            String where = " with " + fault.label();
+            // Given: a forcing entry whose failed record goes to a dead-letter send and a seek, both scripted
+            Rig rig = faulty(vertx, fault);
+            AtomicInteger attempts = new AtomicInteger();
+            List<Promise<Void>> held = scriptSeeks(rig, fault.seeks(), attempts);
+
+            // When: the record fails
+            rig.process(record(FAILED_OFFSET, null));
+
+            // Then: before any seek is confirmed nothing is committed, nothing resumes, and the slot is held
+            assertEquals(fault.seekAttempts(), attempts.get(), "seek attempts" + where);
+            assertEquals(List.of(), committedOffsets(rig), "nothing may be committed" + where);
+            assertEquals(0, rig.broker().resumes.get(), "nothing may resume before a seek is confirmed" + where);
+            assertEquals(1, rig.inFlight(), "the slot must stay held until a seek is confirmed" + where);
+            assertTrue(
+                    rig.broker().paused.get() || fault.pauseFault() != null, "the consumer must stay paused" + where);
+
+            if (fault.confirmed()) {
+                // When: the seek is confirmed
+                held.get(held.size() - 1).complete();
+
+                // Then: the slot is released, the consumer still waits out the backoff and resumes once after it
+                assertEquals(0, rig.inFlight(), "the confirmed seek releases the slot" + where);
+                assertEquals(0, rig.broker().resumes.get(), "the backoff holds the consumer" + where);
+                verify(rig.consumer(), timeout(5_000).times(1)).resume();
+            } else {
+                // Then: no seek was confirmed, so the slot stays held and the consumer paused for good
+                verify(rig.consumer(), after(3 * BACKOFF_MS).never()).resume();
+                assertEquals(1, rig.inFlight(), "the slot must stay held" + where);
+                assertTrue(rig.broker().paused.get(), "the consumer must stay paused" + where);
+            }
+            assertEquals(List.of(), committedOffsets(rig), "nothing may ever be committed" + where);
+            verify(rig.producer(), times(1)).sendForDlq(anyString(), any(), any(), any());
+        }
+    }
+
+    @Test
+    @DisplayName("a held slot is released when its partition is revoked, and not before")
+    void heldSlotIsReleasedWhenItsPartitionIsRevoked(Vertx vertx) throws Exception {
+        // Given: a forcing entry whose seek back fails, on a partition the consumer no longer owns
+        Fault fault = new Fault("a seek that fails", Send.FAILS, null, List.of(Seek.FAIL), 2, false);
+        Rig lost = faulty(vertx, fault);
+        scriptSeeks(lost, fault.seeks(), new AtomicInteger());
+        when(lost.consumer().assignment()).thenReturn(Future.succeededFuture(Set.of()));
+
+        // When: the record fails
+        lost.process(record(FAILED_OFFSET, null));
+
+        // Then: the record goes to the new owner, so the slot is released, the consumer resumes, its counts
+        // are dropped and nothing is committed
+        assertEquals(0, lost.inFlight());
+        assertFalse(lost.broker().paused.get());
+        assertEquals(1, lost.broker().resumes.get());
+        assertEquals(List.of(), committedOffsets(lost));
+        assertTrue(
+                lost.errors().retryCounts.isEmpty() && lost.errors().dlqFailures.isEmpty());
+
+        // Given: the same fault on a partition the consumer still owns
+        Rig owned = faulty(vertx, fault);
+        scriptSeeks(owned, fault.seeks(), new AtomicInteger());
+        owned.process(record(FAILED_OFFSET, null));
+        assertEquals(1, owned.inFlight());
+
+        // When: another partition is revoked
+        Method revoked = KafkaConsumerVerticle.class.getDeclaredMethod("onPartitionsRevoked", Set.class);
+        revoked.setAccessible(true);
+        revoked.invoke(owned.verticle(), Set.of(new TopicPartition(TOPIC, PARTITION + 1)));
+
+        // Then: the slot is still held
+        assertEquals(1, owned.inFlight());
+        assertEquals(0, owned.broker().resumes.get());
+
+        // When: its own partition is revoked, twice
+        revoked.invoke(owned.verticle(), Set.of(POSITION));
+        revoked.invoke(owned.verticle(), Set.of(POSITION));
+
+        // Then: the slot is released once and the consumer resumes once, with nothing committed
+        assertEquals(0, owned.inFlight());
+        assertFalse(owned.broker().paused.get());
+        assertEquals(1, owned.broker().resumes.get());
+        assertEquals(List.of(), committedOffsets(owned));
+    }
+
+    @Test
+    @DisplayName("a stop with a held slot, through a registered forced MANUAL binding, commits nothing")
+    void stopWithAHeldSlotCommitsNothing(Vertx vertx) throws Exception {
+        // Given: a forced MANUAL source binding, registered as an application would, whose handler fails
+        KafkaConsumerBinding<KafkaForcedStrategiesTest.Payload> binding = KafkaConsumerBinding.builder(
+                        "forced", KafkaForcedStrategiesTest.Payload.class)
+                .topic(TOPIC)
+                .groupId("grp")
+                .commitStrategy(CommitStrategy.MANUAL)
+                .errorStrategy(ErrorStrategy.RETRY)
+                .handler(message -> Future.failedFuture(new RuntimeException("handler boom")))
+                .forceStrategies()
+                .build();
+        JsonObject retry = new JsonObject()
+                .put("retry", new JsonObject().put("maxRetries", 1).put("backoffMs", BACKOFF_MS));
+        ConsumerEntry registered = List.copyOf(KafkaForcedStrategiesTest.StrategyRig.register(binding, retry)
+                        .entries())
+                .get(0);
+        KafkaProducerFactory producer = producerAnswering(Future.failedFuture(new RuntimeException("kafka-down")));
+        Rig rig = wire(vertx, registered, List.of(), producer, 200L);
+        useUpRetries(rig);
+        scriptSeeks(rig, List.of(Seek.FAIL), new AtomicInteger());
+
+        // And: the record failed, its dead-letter send failed and no seek back could be confirmed
+        rig.process(record(FAILED_OFFSET, null));
+        assertEquals(1, rig.inFlight(), "the slot must be held");
+
+        // When: the verticle is stopped
+        Promise<Void> stopped = Promise.promise();
+        rig.verticle().stop(stopped);
+        ExecutionException failure = assertThrows(
+                ExecutionException.class,
+                () -> stopped.future().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS));
+
+        // Then: the stop reports the record still held, the consumer is closed with nothing committed, and the
+        // binding never auto-commits
+        assertTrue(failure.getCause() instanceof TimeoutException, "was: " + failure.getCause());
+        verify(rig.consumer(), times(1)).close();
+        assertEquals(List.of(), committedOffsets(rig), "a close must not commit past the held record");
+        assertEquals(CommitStrategy.MANUAL, registered.config().commitStrategy());
+        Field props = KafkaConsumerVerticle.class.getDeclaredField("kafkaProps");
+        props.setAccessible(true);
+        assertEquals("false", ((Map<?, ?>) props.get(rig.verticle())).get("enable.auto.commit"));
+    }
+
+    @Test
+    @DisplayName("a binding that forces its strategies on the default AUTO commit is refused")
+    void forcedBindingOnAutoCommitIsRefused() {
+        // Given: builders that force the strategies, with the default commit strategy, AUTO and MANUAL
+        record Row(String label, @Nullable CommitStrategy strategy, boolean refused) {}
+        List<Row> rows = List.of(
+                new Row("the default commit strategy", null, true),
+                new Row("AUTO", CommitStrategy.AUTO, true),
+                new Row("MANUAL", CommitStrategy.MANUAL, false));
+
+        for (Row row : rows) {
+            KafkaConsumerBinding.Builder<String> builder = KafkaConsumerBinding.builder("forced", String.class)
+                    .topic("forced.events")
+                    .groupId("forced-group")
+                    .handler(message -> Future.succeededFuture())
+                    .forceStrategies();
+            if (row.strategy() != null) {
+                builder.commitStrategy(row.strategy());
+            }
+
+            // When / Then: AUTO is refused, naming the binding and the option; MANUAL builds
+            if (row.refused()) {
+                IllegalStateException refusal = assertThrows(
+                        IllegalStateException.class, builder::build, "forced strategies on " + row.label());
+                assertTrue(
+                        refusal.getMessage().contains("forced")
+                                && refusal.getMessage().contains("forceStrategies")
+                                && refusal.getMessage().contains("MANUAL"),
+                        "the refusal must name the binding and the option, was: " + refusal.getMessage());
+            } else {
+                assertTrue(builder.build().forceStrategies(), "forced strategies on " + row.label());
+            }
+        }
     }
 }

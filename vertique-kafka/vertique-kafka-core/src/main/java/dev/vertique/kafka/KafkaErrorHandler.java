@@ -111,8 +111,10 @@ final class KafkaErrorHandler {
      * @param cause    the error that occurred
      * @param control  consumer control callbacks for pause/resume/seek/commit
      * @return a future that resolves with the terminal outcome after all async operations settle;
-     *         the future itself always succeeds — errors during DLQ publish are mapped to
-     *         {@link KafkaTerminalOutcome#DLQ_FAILED} rather than failing the future
+     *         errors during DLQ publish are mapped to {@link KafkaTerminalOutcome#DLQ_FAILED} rather
+     *         than failing the future. The one exception is an entry that forces its strategies: its
+     *         future fails when a seek back to the record could not be confirmed, because the record
+     *         is then neither settled nor redelivered
      */
     Future<KafkaTerminalOutcome> handleError(
             KafkaConsumerRecord<String, byte[]> record,
@@ -140,7 +142,7 @@ final class KafkaErrorHandler {
                 yield Future.succeededFuture(KafkaTerminalOutcome.SKIP);
             }
             case DEAD_LETTER ->
-                publishToDlq(record, rawBytes, headers, cause)
+                publish(record, rawBytes, headers, cause)
                         .map(v -> {
                             dlqFailures.remove(positionKey(record));
                             control.commitIfManual(record);
@@ -193,7 +195,7 @@ final class KafkaErrorHandler {
         }
         return switch (strategy) {
             case DEAD_LETTER ->
-                publishToDlq(record, rawBytes, headers, terminal)
+                publish(record, rawBytes, headers, terminal)
                         .map(v -> {
                             dlqFailures.remove(positionKey(record));
                             control.commitIfManual(record);
@@ -290,7 +292,7 @@ final class KafkaErrorHandler {
                     yield Future.succeededFuture(KafkaTerminalOutcome.SKIP);
                 }
                 case DEAD_LETTER ->
-                    publishToDlq(record, rawBytes, headers, cause)
+                    publish(record, rawBytes, headers, cause)
                             .map(v -> {
                                 retryCounts.remove(retryKey);
                                 dlqFailures.remove(retryKey);
@@ -337,6 +339,10 @@ final class KafkaErrorHandler {
                     return KafkaTerminalOutcome.RETRY_SCHEDULED;
                 })
                 .recover(seekCause -> {
+                    if (entry.forceStrategies()) {
+                        // Not a settled record: the caller keeps the slot and the consumer paused.
+                        return Future.failedFuture(seekCause);
+                    }
                     log.error(
                             "[{}] Failed to seek back to offset {} for retry — skipping record",
                             entry.name(),
@@ -351,15 +357,40 @@ final class KafkaErrorHandler {
     // --- Failed dead-letter publish ---
 
     /**
+     * Starts a dead-letter publish. An entry that forces its strategies treats a synchronous throw,
+     * including an {@link Error}, as a failed publish, so the record is sought back to like any other
+     * whose publish failed. Any other entry lets the throw propagate, as it always has.
+     *
+     * @param record the failed record
+     * @param rawBytes the raw record bytes
+     * @param headers the record's headers as received
+     * @param cause the error that caused the publish
+     * @return the publish future
+     */
+    private Future<Void> publish(
+            KafkaConsumerRecord<String, byte[]> record, byte[] rawBytes, KafkaRecordHeaders headers, Throwable cause) {
+        if (!entry.forceStrategies()) {
+            return publishToDlq(record, rawBytes, headers, cause);
+        }
+        try {
+            return publishToDlq(record, rawBytes, headers, cause);
+        } catch (Throwable thrown) {
+            return Future.failedFuture(thrown);
+        }
+    }
+
+    /**
      * Settles a record whose dead-letter publish failed. Its offset is not committed. An entry that
      * forces its strategies also pauses the consumer, seeks back to the record and resumes after a
      * backoff, as {@link #handleRetry} does, so the record is delivered again and a later record
-     * cannot commit past it; the backoff grows with the failures of that record. Any other entry
+     * cannot commit past it; the backoff grows with the failures of that record. When the seek
+     * cannot be confirmed the returned future fails, and the record is not settled. Any other entry
      * leaves the record uncommitted and goes on, as it always has.
      *
      * @param record the record whose publish failed
      * @param control consumer control callbacks for pause/seek/resume
-     * @return a future that resolves with {@link KafkaTerminalOutcome#DLQ_FAILED}
+     * @return a future that resolves with {@link KafkaTerminalOutcome#DLQ_FAILED}; on a forced entry
+     *     it fails when the seek back could not be confirmed
      */
     private Future<KafkaTerminalOutcome> dlqPublishFailed(
             KafkaConsumerRecord<String, byte[]> record, ConsumerControl control) {
@@ -367,39 +398,62 @@ final class KafkaErrorHandler {
         if (!entry.forceStrategies()) {
             return Future.succeededFuture(KafkaTerminalOutcome.DLQ_FAILED);
         }
-        RetryConfig retryConfig = entry.config().retryConfig();
-        if (retryConfig == null) {
-            retryConfig = RetryConfig.DEFAULT;
-        }
-        int failures = dlqFailures.merge(positionKey(record), 1, Integer::sum);
-        long delayMs = retryConfig.delayMs(failures - 1);
-        log.warn(
-                "[{}] Will deliver topic={} partition={} offset={} again in {}ms; its dead-letter publish failed",
-                entry.name(),
-                record.topic(),
-                record.partition(),
-                record.offset(),
-                delayMs);
-        control.pause();
-        return control.seekToOffset(record.topic(), record.partition(), record.offset())
-                .map(v -> {
-                    control.scheduleResume(delayMs);
-                    return KafkaTerminalOutcome.DLQ_FAILED;
-                })
-                .recover(seekCause -> {
-                    log.error(
-                            "[{}] Failed to seek back to offset {} after a failed dead-letter publish;"
-                                    + " resuming without redelivery",
-                            entry.name(),
-                            record.offset(),
-                            seekCause);
-                    dlqFailures.remove(positionKey(record));
-                    control.scheduleResume(0);
-                    return Future.succeededFuture(KafkaTerminalOutcome.DLQ_FAILED);
-                });
+        return seekBack(record, control, "its dead-letter publish failed");
     }
 
-    private static String positionKey(KafkaConsumerRecord<String, byte[]> record) {
+    /**
+     * Pauses the consumer, seeks back to the record and resumes after a backoff that grows with the
+     * failures of that record, so the record is delivered again. Only for an entry that forces its
+     * strategies. The returned future succeeds once the seek is confirmed; every throw, including an
+     * {@link Error}, and a failed seek fail it, and the record is then not settled.
+     *
+     * @param record the record to deliver again
+     * @param control consumer control callbacks for pause/seek/resume
+     * @param reason why the record is delivered again, for the log
+     * @return a future that resolves with {@link KafkaTerminalOutcome#DLQ_FAILED} once the seek is
+     *     confirmed and the resume is scheduled
+     */
+    Future<KafkaTerminalOutcome> seekBack(
+            KafkaConsumerRecord<String, byte[]> record, ConsumerControl control, String reason) {
+
+        try {
+            RetryConfig retryConfig = entry.config().retryConfig();
+            if (retryConfig == null) {
+                retryConfig = RetryConfig.DEFAULT;
+            }
+            int failures = dlqFailures.merge(positionKey(record), 1, Integer::sum);
+            long delayMs = retryConfig.delayMs(failures - 1);
+            log.warn(
+                    "[{}] Will deliver topic={} partition={} offset={} again in {}ms; {}",
+                    entry.name(),
+                    record.topic(),
+                    record.partition(),
+                    record.offset(),
+                    delayMs,
+                    reason);
+            control.pause();
+            return control.seekToOffset(record.topic(), record.partition(), record.offset())
+                    .map(v -> {
+                        control.scheduleResume(delayMs);
+                        return KafkaTerminalOutcome.DLQ_FAILED;
+                    });
+        } catch (Throwable thrown) {
+            return Future.failedFuture(thrown);
+        }
+    }
+
+    /**
+     * Forgets the retry and dead-letter failure counts of a record, for a record that this consumer
+     * will not be given again.
+     *
+     * @param positionKey the record's position as {@code topic:partition:offset}
+     */
+    void forget(String positionKey) {
+        retryCounts.remove(positionKey);
+        dlqFailures.remove(positionKey);
+    }
+
+    static String positionKey(KafkaConsumerRecord<String, byte[]> record) {
         return record.topic() + ":" + record.partition() + ":" + record.offset();
     }
 

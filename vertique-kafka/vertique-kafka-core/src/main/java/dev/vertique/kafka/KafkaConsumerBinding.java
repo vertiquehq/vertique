@@ -482,7 +482,9 @@ public class KafkaConsumerBinding<V> {
          * registration fails, naming the option, when a {@code maxInFlight} other than {@code 1} is
          * configured. Without that limit a later record
          * of a partition could commit past an earlier one whose retry or dead-letter publish is still
-         * pending. Applies to a binding with a {@link #handler(KafkaRecordHandler) handler}.
+         * pending. The binding also needs {@link CommitStrategy#MANUAL}: the default
+         * {@link CommitStrategy#AUTO} could commit past a record whose failure is still unsettled, when
+         * the consumer closes. Applies to a binding with a {@link #handler(KafkaRecordHandler) handler}.
          *
          * @return this builder
          */
@@ -497,7 +499,8 @@ public class KafkaConsumerBinding<V> {
          * @return the immutable binding
          * @throws IllegalStateException if the binding names both a {@link #handler handler} and a
          *     {@link #dispatchTo(Class, String) dispatchTo} target, or names no handler and sets
-         *     {@link #ignoreUndecodable}, {@link #noHeaderContext} or {@link #forceStrategies}
+         *     {@link #ignoreUndecodable}, {@link #noHeaderContext} or {@link #forceStrategies}, or
+         *     sets {@link #forceStrategies} without {@link CommitStrategy#MANUAL}
          */
         public KafkaConsumerBinding<V> build() {
             if (handler != null && targetService != null) {
@@ -508,6 +511,11 @@ public class KafkaConsumerBinding<V> {
                 throw new IllegalStateException("KafkaConsumerBinding '" + name
                         + "' sets ignoreUndecodable, noHeaderContext or forceStrategies, which apply to a handler"
                         + " only; name a handler");
+            }
+            if (forceStrategies && commitStrategy != CommitStrategy.MANUAL) {
+                throw new IllegalStateException("KafkaConsumerBinding '" + name
+                        + "' sets forceStrategies, which needs commitStrategy MANUAL but has " + commitStrategy
+                        + "; close-time auto-commit could pass a record whose failure is unsettled");
             }
             return new KafkaConsumerBinding<>(this);
         }
