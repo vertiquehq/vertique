@@ -482,26 +482,25 @@ final class KafkaSettlement {
         holds.holdAll(KafkaHoldController.Reason.SHUTDOWN);
     }
 
-    /** Whether no handler runs and no dead-letter publish or commit is outstanding. */
+    /**
+     * Whether no handler runs, no dead-letter publish or commit is outstanding, and the broker has acknowledged the
+     * watermark of every partition.
+     */
     boolean drained() {
-        return permits == 0 && publishes == 0 && commits.outstanding() == 0;
+        if (permits != 0 || publishes != 0 || commits.outstanding() != 0) {
+            return false;
+        }
+        for (KafkaPartitionLedger ledger : ledgers.values()) {
+            if (ledger.watermark() > ledger.lastAcked()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** The handlers that run and the dead-letter publishes outstanding. */
     int running() {
         return permits + publishes;
-    }
-
-    /** Whether no commit is outstanding. */
-    boolean committed() {
-        return commits.outstanding() == 0;
-    }
-
-    /** Submits the settled prefix of every partition as the final commit. */
-    void commitSettled() {
-        for (KafkaPartitionLedger ledger : ledgers.values()) {
-            commits.commit(ledger);
-        }
     }
 
     /**

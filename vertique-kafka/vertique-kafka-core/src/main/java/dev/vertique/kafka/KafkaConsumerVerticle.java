@@ -303,8 +303,8 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     /**
      * Stops the consumer verticle. A {@code MANUAL} consumer stops starting records and fetching, waits up to
      * {@value #SHUTDOWN_DRAIN_TIMEOUT_MS} milliseconds for the records that run, the dead-letter publishes and the
-     * commits that are outstanding, and commits the settled prefix of each partition; records that did not finish stay
-     * uncommitted for the next run. An {@code AUTO} consumer pauses its partitions and waits for its in-flight
+     * commits that are outstanding, and for the settled prefix of each partition to be committed; records that did not
+     * finish stay uncommitted for the next run. An {@code AUTO} consumer pauses its partitions and waits for its in-flight
      * dispatches. Either then closes the consumer for at most {@value #KAFKA_CLOSE_TIMEOUT_MS} milliseconds.
      *
      * @param stopPromise the promise to complete when the verticle has stopped
@@ -342,27 +342,17 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                                 entry.name(),
                                 shutdownDrainTimeoutMs,
                                 pending);
+                    } else if (drainTimedOut) {
+                        log.warn(
+                                "[{}] The final commit did not finish within {} ms; the records after it are read again",
+                                entry.name(),
+                                shutdownDrainTimeoutMs,
+                                drainResult.cause());
                     }
-                    if (settlement == null) {
-                        closeAfterDrain(stopPromise, drainTimedOut, pending);
-                        return;
+                    if (settlement != null) {
+                        settlement.finishStop();
                     }
-                    // The final commit is the settled prefix of each partition, never the client's position.
-                    settlement.commitSettled();
-                    Timeouts.awaitCondition(
-                                    vertx,
-                                    settlement::committed,
-                                    50L,
-                                    kafkaCloseTimeoutMs,
-                                    "Kafka consumer '" + entry.name() + "' final commit")
-                            .onFailure(cause -> log.warn(
-                                    "[{}] The final commit did not finish; the records after it are read again",
-                                    entry.name(),
-                                    cause))
-                            .onComplete(commitResult -> {
-                                settlement.finishStop();
-                                closeAfterDrain(stopPromise, drainTimedOut, pending);
-                            });
+                    closeAfterDrain(stopPromise, drainTimedOut, pending);
                 });
     }
 

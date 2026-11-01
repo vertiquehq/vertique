@@ -890,8 +890,6 @@ class KafkaSettlementTest {
             rig.run(P0, 0).succeed();
             assertTrue(rig.settlement.drained());
             assertEquals(1, rig.port.runs.size(), "finishing a record starts no other");
-
-            rig.settlement.commitSettled();
             assertEquals(List.of(1L), rig.committed(P0));
             rig.settlement.finishStop();
             assertEquals(0, rig.settlement.retainedRecords());
@@ -920,7 +918,6 @@ class KafkaSettlementTest {
             rig.settlement.beginStop();
             assertFalse(rig.settlement.drained());
             assertEquals(1, rig.settlement.running());
-            rig.settlement.commitSettled();
             rig.settlement.finishStop();
 
             assertEquals(List.of(), rig.committed(P0), "0 is unfinished, so nothing is committed");
@@ -940,6 +937,24 @@ class KafkaSettlementTest {
             rig.settlement.beginStop();
             assertFalse(rig.settlement.drained());
             rig.port.commits.get(0).result.complete();
+            assertTrue(rig.settlement.drained());
+        }
+
+        @Test
+        @DisplayName("a stop waits until the broker has acknowledged the watermark, also after a commit failed")
+        void stopWaitsForTheWatermarkToBeAcknowledged() {
+            SettlementRig rig = new SettlementRig(settings(1, ErrorStrategy.SKIP, false));
+            rig.port.autoComplete = false;
+            rig.assign(P0).add(P0, 0);
+            rig.run(P0, 0).succeed();
+            rig.settlement.beginStop();
+            rig.port.commits.get(0).result.fail("broker unavailable");
+            assertFalse(rig.settlement.drained(), "no commit is outstanding, but the watermark is not acknowledged");
+
+            rig.pendingTimers().get(0).fire();
+            rig.port.commits.get(1).result.complete();
+
+            assertEquals(List.of(1L, 1L), rig.committed(P0));
             assertTrue(rig.settlement.drained());
         }
     }

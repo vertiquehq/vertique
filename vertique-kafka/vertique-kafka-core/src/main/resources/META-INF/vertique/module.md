@@ -887,8 +887,8 @@ finished.
   nothing and keeps its permit until it does. A partition that returns to the same consumer starts afresh with
   its retries counted from zero, and the records after the committed offset run again.
 - **Stopping.** A stop starts no record and no retry, stops all fetching, waits for the running records, dead-letter
-  publishes and commits for a drain period, then commits the finished prefix of each partition and closes. A record
-  that did not finish stays uncommitted and runs again at the next start.
+  publishes and commits, and for the broker to acknowledge the finished prefix of each partition, for one drain
+  period, then closes. A record that did not finish stays uncommitted and runs again at the next start.
 
 ### A dispatch gate
 
