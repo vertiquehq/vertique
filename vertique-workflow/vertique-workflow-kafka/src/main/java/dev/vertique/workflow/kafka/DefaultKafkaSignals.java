@@ -47,35 +47,35 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
 
     @Override
     public KafkaSignals<T> topic(String topic) {
-        requireOpen();
+        requireNotBuilt();
         this.topic = requireText(topic, "topic");
         return this;
     }
 
     @Override
     public KafkaSignals<T> groupId(String groupId) {
-        requireOpen();
+        requireNotBuilt();
         this.groupId = requireText(groupId, "groupId");
         return this;
     }
 
     @Override
     public KafkaSignals<T> name(String name) {
-        requireOpen();
+        requireNotBuilt();
         this.name = requireText(name, "name");
         return this;
     }
 
     @Override
     public KafkaSignals<T> filter(KafkaRecordFilter filter) {
-        requireOpen();
+        requireNotBuilt();
         this.filter = Objects.requireNonNull(filter, "filter");
         return this;
     }
 
     @Override
     public KafkaSignals<T> dlqReplay() {
-        requireOpen();
+        requireNotBuilt();
         this.dlqReplay = true;
         return this;
     }
@@ -100,7 +100,7 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
                 .errorStrategy(ErrorStrategy.RETRY)
                 .forceStrategies()
                 .noHeaderContext()
-                .ignoreUndecodable(() -> reportOutcome(sourceName, Outcome.UNDECODABLE))
+                .ignoreUndecodable(() -> report(sourceName, Outcome.UNDECODABLE))
                 .handler(new KafkaSignalHandler<>(
                         sourceName, plan, delivery, dlqReplay, new KafkaCorrelationBaseline(correlationFactory)));
         KafkaRecordFilter given = filter;
@@ -117,11 +117,11 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
             try {
                 accepted = given.accept(key, headers);
             } catch (Exception e) {
-                reportOutcome(sourceName, Outcome.STAGE_FAILED);
+                report(sourceName, Outcome.STAGE_FAILED);
                 throw new KafkaTerminalFailure(errorTypeOf(e));
             }
             if (!accepted) {
-                reportOutcome(sourceName, Outcome.IGNORED);
+                report(sourceName, Outcome.IGNORED);
             }
             return accepted;
         };
@@ -138,11 +138,11 @@ final class DefaultKafkaSignals<T> extends AbstractSignalSourceBuilder<T, KafkaS
         return binary.substring(binary.lastIndexOf('.') + 1);
     }
 
-    private void reportOutcome(String sourceName, Outcome outcome) {
+    private void report(String sourceName, Outcome outcome) {
         delivery.report(new SignalSourceEvent(sourceName, TRANSPORT, null, null, null, outcome));
     }
 
-    private void requireOpen() {
+    private void requireNotBuilt() {
         if (built) {
             throw new IllegalStateException("the source is already built; a stage cannot follow build()");
         }
