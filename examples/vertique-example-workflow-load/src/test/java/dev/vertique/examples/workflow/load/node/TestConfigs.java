@@ -12,6 +12,7 @@ import dev.vertique.inboxoutbox.OutboxRelayConfig;
 import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import io.vertx.core.json.JsonObject;
 import java.util.Map;
 import java.util.Set;
 
@@ -47,7 +48,24 @@ final class TestConfigs {
                 db("load-node-1"),
                 flyway(FlywayMode.DISABLED),
                 executorObservers,
-                publishObservers);
+                publishObservers,
+                new JsonObject()
+                        .put("vertx", new JsonObject().put("options", new JsonObject().put("eventLoopPoolSize", 3))),
+                org.mockito.Mockito.mock(io.vertx.core.Vertx.class));
+    }
+
+    static EffectiveConfig effective(io.vertx.core.Vertx vertx) {
+        return new EffectiveConfig(
+                LoadConfig.defaults(),
+                WorkflowExecutorConfig.defaults(),
+                WorkflowRecordingConfig.defaults(),
+                OutboxRelayConfig.builder().build(),
+                db("load-node-1"),
+                flyway(FlywayMode.DISABLED),
+                Set.of(),
+                Set.of(),
+                new JsonObject(),
+                vertx);
     }
 
     static EffectiveConfig effective() {

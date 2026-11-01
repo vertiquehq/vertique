@@ -3,6 +3,8 @@
 
 package dev.vertique.examples.workflow.load.node;
 
+import dev.vertique.core.VertxConfig;
+import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.flyway.FlywayConfig;
 import dev.vertique.examples.workflow.load.config.LoadConfig;
@@ -12,10 +14,16 @@ import dev.vertique.workflow.config.WorkflowExecutorConfig;
 import dev.vertique.workflow.config.WorkflowIntakeConfig;
 import dev.vertique.workflow.config.WorkflowRecordingConfig;
 import dev.vertique.workflow.executor.WorkflowExecutorObserver;
+import io.vertx.core.Vertx;
+import io.vertx.core.VertxOptions;
+import io.vertx.core.internal.VertxInternal;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.lang.management.ManagementFactory;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
 
 /**
  * The configuration a node actually runs on, as the typed product configuration objects see it.
@@ -37,6 +45,8 @@ public final class EffectiveConfig {
     private final OutboxRelayConfig relay;
     private final DbPoolConfig db;
     private final FlywayConfig flyway;
+    private final VertxOptions vertxOptions;
+    private final Vertx vertx;
     private final int executorObservers;
     private final int outboxPublishObservers;
 
@@ -51,6 +61,8 @@ public final class EffectiveConfig {
      * @param flyway the typed {@code flyway} configuration
      * @param executorObservers the executor observers the graph binds
      * @param outboxPublishObservers the outbox publish observers the graph binds
+     * @param config the resolved application configuration, which holds the {@code vertx.options} section
+     * @param vertx the running Vert.x instance, whose thread pools are counted
      */
     @Inject
     public EffectiveConfig(
@@ -61,13 +73,17 @@ public final class EffectiveConfig {
             DbPoolConfig db,
             FlywayConfig flyway,
             Set<WorkflowExecutorObserver> executorObservers,
-            Set<OutboxPublishObserver> outboxPublishObservers) {
+            Set<OutboxPublishObserver> outboxPublishObservers,
+            @VertxConfig JsonObject config,
+            Vertx vertx) {
         this.load = load;
         this.executor = executor;
         this.recording = recording;
         this.relay = relay;
         this.db = db;
         this.flyway = flyway;
+        this.vertxOptions = new VertxOptions(JsonConfigPaths.navigateObject(config, "vertx", "options"));
+        this.vertx = vertx;
         this.executorObservers = executorObservers.size();
         this.outboxPublishObservers = outboxPublishObservers.size();
     }
@@ -87,7 +103,7 @@ public final class EffectiveConfig {
      * Renders the view.
      *
      * @return a JSON object with the sections {@code db}, {@code flyway}, {@code executor}, {@code recording},
-     *     {@code relay}, {@code load} and {@code observers}
+     *     {@code relay}, {@code load}, {@code vertx}, {@code jvm} and {@code observers}
      */
     public JsonObject toJson() {
         WorkflowIntakeConfig intake = recording.intake();
@@ -96,7 +112,10 @@ public final class EffectiveConfig {
                         "db",
                         new JsonObject()
                                 .put("applicationName", applicationName(db))
-                                .put("maxPoolSize", db.maxPoolSize()))
+                                .put("maxPoolSize", db.maxPoolSize())
+                                .put("connectionTimeoutMs", db.connectionTimeoutMs())
+                                .put("idleTimeoutMs", db.idleTimeoutMs())
+                                .put("eventLoopSize", db.eventLoopSize()))
                 .put("flyway", new JsonObject().put("mode", flyway.mode().name()))
                 .put(
                         "executor",
@@ -134,9 +153,53 @@ public final class EffectiveConfig {
                                 .put("handlerDelayMs", load.handlerDelayMs())
                                 .put("timerDelayMs", load.timerDelayMs()))
                 .put(
+                        "vertx",
+                        new JsonObject()
+                                .put("eventLoopPoolSize", vertxOptions.getEventLoopPoolSize())
+                                .put("workerPoolSize", vertxOptions.getWorkerPoolSize())
+                                .put("internalBlockingPoolSize", vertxOptions.getInternalBlockingPoolSize())
+                                .put("actual", actualVertx()))
+                .put(
+                        "jvm",
+                        new JsonObject()
+                                .put("maxHeapMb", Runtime.getRuntime().maxMemory() >> 20)
+                                .put("availableProcessors", Runtime.getRuntime().availableProcessors())
+                                .put(
+                                        "inputArguments",
+                                        new io.vertx.core.json.JsonArray(
+                                                new java.util.ArrayList<Object>(ManagementFactory.getRuntimeMXBean()
+                                                        .getInputArguments()))))
+                .put(
                         "observers",
                         new JsonObject()
                                 .put("executor", executorObservers)
                                 .put("outboxPublish", outboxPublishObservers));
+    }
+
+    /**
+     * Counts the threads the running Vert.x instance has: its event loops and the largest sizes of its worker pools.
+     * The configured values can differ from these when the launcher applies system properties or command-line options.
+     * A value is -1 when the instance is not the standard implementation.
+     */
+    private JsonObject actualVertx() {
+        int loops = -1;
+        int workers = -1;
+        int internal = -1;
+        if (vertx instanceof VertxInternal internalVertx) {
+            loops = 0;
+            for (Object ignored : internalVertx.eventLoopGroup()) {
+                loops++;
+            }
+            workers = largest(internalVertx.workerPool().executor());
+            internal = largest(internalVertx.internalWorkerPool().executor());
+        }
+        return new JsonObject()
+                .put("eventLoopPoolSize", loops)
+                .put("workerPoolSize", workers)
+                .put("internalBlockingPoolSize", internal);
+    }
+
+    private static int largest(ExecutorService executor) {
+        return executor instanceof ThreadPoolExecutor pool ? pool.getMaximumPoolSize() : -1;
     }
 }

@@ -1,0 +1,10 @@
+{
+  "name": "smoke-db-stall",
+  "set": "smoke",
+  "diagnostic": true,
+  "arm": "ON",
+  "nodes": 2,
+  "load": {"kind": "fixed", "ratePerSec": 40, "warmupSec": 5, "windowSec": 30},
+  "timeline": {"settleSec": 6, "recoverySec": 5, "drainDeadlineSec": 40},
+  "injections": [{"kind": "DB_TABLE_LOCK", "atSec": 18, "durationSec": 4}]
+}

@@ -5,6 +5,7 @@ package dev.vertique.examples.workflow.load.node;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 import dev.vertique.inboxoutbox.OutboxPublishObserver;
@@ -36,6 +37,52 @@ class EffectiveConfigTest {
         assertEquals("LISTEN_NOTIFY", relay.getString("strategy"));
         assertEquals(1_000L, relay.getLong("pollingIntervalMs"));
         assertEquals(20L, view.getJsonObject("load").getLong("handlerDelayMs"));
+    }
+
+    @Test
+    @DisplayName("the view reports the Vert.x thread pools and the JVM it runs in")
+    void reportsPoolsAndJvm() {
+        JsonObject view = TestConfigs.effective().toJson();
+
+        assertEquals(3, view.getJsonObject("vertx").getInteger("eventLoopPoolSize"));
+        assertEquals(
+                new io.vertx.core.VertxOptions().getWorkerPoolSize(),
+                view.getJsonObject("vertx").getInteger("workerPoolSize"));
+        assertEquals(
+                Runtime.getRuntime().availableProcessors(),
+                view.getJsonObject("jvm").getInteger("availableProcessors"));
+        assertEquals(
+                Runtime.getRuntime().maxMemory() >> 20,
+                view.getJsonObject("jvm").getLong("maxHeapMb"));
+    }
+
+    @Test
+    @DisplayName("the actual thread pools of a running Vert.x are counted, apart from the configured ones")
+    void reportsActualPools() {
+        io.vertx.core.Vertx vertx = io.vertx.core.Vertx.vertx(new io.vertx.core.VertxOptions()
+                .setEventLoopPoolSize(3)
+                .setWorkerPoolSize(5)
+                .setInternalBlockingPoolSize(2));
+        try {
+            JsonObject actual =
+                    TestConfigs.effective(vertx).toJson().getJsonObject("vertx").getJsonObject("actual");
+
+            assertEquals(3, actual.getInteger("eventLoopPoolSize"));
+            assertEquals(5, actual.getInteger("workerPoolSize"));
+            assertEquals(2, actual.getInteger("internalBlockingPoolSize"));
+        } finally {
+            vertx.close();
+        }
+    }
+
+    @Test
+    @DisplayName("the JVM input arguments and the connection settings are reported")
+    void reportsJvmArgumentsAndConnectionSettings() {
+        JsonObject view = TestConfigs.effective().toJson();
+
+        assertTrue(view.getJsonObject("jvm").getJsonArray("inputArguments") != null);
+        assertEquals(30_000, view.getJsonObject("db").getInteger("connectionTimeoutMs"));
+        assertEquals(0, view.getJsonObject("db").getInteger("eventLoopSize"));
     }
 
     @Test

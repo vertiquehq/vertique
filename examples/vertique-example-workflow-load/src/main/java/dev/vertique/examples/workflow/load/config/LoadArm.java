@@ -94,6 +94,33 @@ public enum LoadArm {
     }
 
     /**
+     * Returns the relay strategy of this arm.
+     *
+     * @return {@code LISTEN_NOTIFY} or {@code POLLING}
+     */
+    public RelayStrategy relayStrategy() {
+        return relayStrategy;
+    }
+
+    /**
+     * Returns the executor's polling interval in this arm.
+     *
+     * @return the interval in milliseconds
+     */
+    public long executorPollIntervalMs() {
+        return executorPollIntervalMs;
+    }
+
+    /**
+     * Returns the relay's polling interval in this arm.
+     *
+     * @return the interval in milliseconds
+     */
+    public long relayPollingIntervalMs() {
+        return relayPollingIntervalMs;
+    }
+
+    /**
      * Returns the configuration that every node of a run in this arm needs, as a partial configuration tree.
      *
      * @return {@code workflow.executor.pollIntervalMs}, {@code inboxOutbox.relay.strategy} and

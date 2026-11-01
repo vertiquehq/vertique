@@ -1,0 +1,10 @@
+{
+  "name": "smoke-triggers-on",
+  "set": "smoke",
+  "diagnostic": true,
+  "arm": "ON",
+  "nodes": 2,
+  "load": {"kind": "fixed", "ratePerSec": 300, "warmupSec": 3, "windowSec": 12},
+  "timeline": {"settleSec": 6, "recoverySec": 2, "drainDeadlineSec": 5},
+  "collector": {"lockWatch": true, "lockWatchIntervalMs": 50}
+}

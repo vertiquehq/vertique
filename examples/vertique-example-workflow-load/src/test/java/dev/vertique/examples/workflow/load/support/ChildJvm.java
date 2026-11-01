@@ -112,6 +112,15 @@ public final class ChildJvm implements AutoCloseable {
     }
 
     /**
+     * Returns the process id.
+     *
+     * @return the id of the child process
+     */
+    public long pid() {
+        return process.pid();
+    }
+
+    /**
      * Returns the name given at start.
      *
      * @return the label

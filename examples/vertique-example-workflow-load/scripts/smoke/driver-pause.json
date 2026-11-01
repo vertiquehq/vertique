@@ -1,0 +1,10 @@
+{
+  "name": "smoke-driver-pause",
+  "set": "smoke",
+  "diagnostic": true,
+  "arm": "ON",
+  "nodes": 2,
+  "load": {"kind": "fixed", "ratePerSec": 40, "warmupSec": 5, "windowSec": 20},
+  "timeline": {"settleSec": 6, "recoverySec": 5, "drainDeadlineSec": 40},
+  "injections": [{"kind": "DRIVER_PAUSE", "atSec": 12, "durationSec": 3}]
+}

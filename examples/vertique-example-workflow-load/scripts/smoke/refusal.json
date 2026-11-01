@@ -1,0 +1,13 @@
+{
+  "name": "smoke-refusal",
+  "set": "smoke",
+  "diagnostic": true,
+  "arm": "OFF",
+  "nodes": 2,
+  "load": {"kind": "fixed", "ratePerSec": 200, "warmupSec": 2, "windowSec": 12},
+  "timeline": {"settleSec": 6, "recoverySec": 25, "replayRatePerSec": 40, "drainDeadlineSec": 60},
+  "node": {
+    "executorConcurrency": 1,
+    "intake": {"enabled": true, "highMark": 60, "lowMark": 20, "sampleIntervalMs": 100}
+  }
+}

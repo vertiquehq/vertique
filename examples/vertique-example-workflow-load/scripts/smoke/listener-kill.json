@@ -1,0 +1,13 @@
+{
+  "name": "smoke-listener-kill",
+  "set": "smoke",
+  "diagnostic": true,
+  "arm": "ON",
+  "nodes": 2,
+  "load": {"kind": "fixed", "ratePerSec": 40, "warmupSec": 5, "windowSec": 20},
+  "timeline": {"settleSec": 6, "recoverySec": 6, "drainDeadlineSec": 40},
+  "injections": [
+    {"kind": "LISTENER_KILL", "atSec": 10, "durationSec": 1, "node": 1, "channel": "workflow"},
+    {"kind": "LISTENER_KILL", "atSec": 12, "durationSec": 1, "node": 2, "channel": "outbox"}
+  ]
+}
