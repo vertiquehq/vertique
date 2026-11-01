@@ -62,9 +62,15 @@ one that determines whether a record can be lost.
 | `CommitStrategy` | Semantics | Notes |
 |---|---|---|
 | `AUTO` (default) | At-most-once | Kafka auto-commits on an interval. A crash between commit and processing loses the record. Cannot be combined with `DEAD_LETTER` or `RETRY` |
-| `MANUAL` | At-least-once | Offsets commit only after a successful dispatch. Records may be reprocessed but are never lost. Required by `DEAD_LETTER` and `RETRY` |
+| `MANUAL` | At-least-once | Offsets commit only after a successful dispatch. Records may be reprocessed; none is lost after the partition's first committed offset. Required by `DEAD_LETTER` and `RETRY` |
 
 Handlers must therefore be idempotent under `MANUAL`.
+
+The at-least-once guarantee starts at a partition's **first committed offset**. The framework leaves
+`auto.offset.reset` at Kafka's default, `latest`, so a group's first-ever record that fails before
+any offset is committed can be lost if the consumer restarts or the partition moves. To read from the
+start of the topic instead, set `kafka.consumers.{name}.properties` `auto.offset.reset=earliest`; a
+new group then reads all retained history.
 
 ### Record headers the framework reads and writes
 
@@ -241,10 +247,12 @@ exactly as it did before them.
   it is built, counts as a failed publish and seeks back. A seek that cannot be confirmed is tried
   once more; if that fails too, the consumer **stays paused**, the record uncommitted and the slot
   held, and an error is logged. A seek fails when the consumer no longer owns the partition (it was
-  revoked in a rebalance) or the consumer is closed. When the partition is no longer owned, or is
-  revoked while the slot is held, the slot is released and the consumer resumes, because the record
-  is delivered to the partition's new owner. Any other held slot is not released: a stop reports
-  the record still pending, closes the consumer without committing it, and the next run delivers it.
+  revoked in a rebalance) or the consumer is closed. When the partition is no longer assigned at
+  that point, the slot is released and the consumer resumes, because the record is delivered to the
+  partition's new owner. Any other held slot is not released: a consumer stalled on an unconfirmed
+  seek does not poll, so it never sees a later rebalance and stays paused until it is restarted. A
+  stop reports the record still pending, closes the consumer without committing it, and the next
+  run delivers it. A stalled consumer needs a restart; watch for the error log.
 
 ### Model 3 — `@KafkaListener` routing interface
 

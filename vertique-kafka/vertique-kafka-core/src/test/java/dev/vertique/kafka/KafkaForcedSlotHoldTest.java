@@ -87,8 +87,8 @@ import org.mockito.invocation.Invocation;
  *       {@link Error}, a pause that throws, a seek that throws, throws an {@link Error} or fails, a
  *       fallback that fails too) never commits and never resumes before a seek back is confirmed; when
  *       none can be confirmed the slot stays held and the consumer paused.</li>
- *   <li>A held slot is released when its partition is revoked, so the consumer does not stay paused
- *       for good; a stop with a held slot, through a registered forced {@code MANUAL} binding, commits
+ *   <li>A held slot is released when its partition is no longer assigned, so the consumer does not
+ *       stay paused for good; a stop with a held slot, through a registered forced {@code MANUAL} binding, commits
  *       nothing.</li>
  *   <li>A binding that forces its strategies on the default {@code AUTO} commit is refused.</li>
  * </ul>
@@ -758,8 +758,8 @@ class KafkaForcedSlotHoldTest {
     }
 
     @Test
-    @DisplayName("a held slot is released when its partition is revoked, and not before")
-    void heldSlotIsReleasedWhenItsPartitionIsRevoked(Vertx vertx) throws Exception {
+    @DisplayName("a held slot is released when its partition is no longer assigned")
+    void heldSlotIsReleasedWhenItsPartitionIsNoLongerAssigned(Vertx vertx) throws Exception {
         // Given: a forcing entry whose seek back fails, on a partition the consumer no longer owns
         Fault fault = new Fault("a seek that fails", Send.FAILS, null, List.of(Seek.FAIL), 2, false);
         Rig lost = faulty(vertx, fault);
@@ -777,31 +777,6 @@ class KafkaForcedSlotHoldTest {
         assertEquals(List.of(), committedOffsets(lost));
         assertTrue(
                 lost.errors().retryCounts.isEmpty() && lost.errors().dlqFailures.isEmpty());
-
-        // Given: the same fault on a partition the consumer still owns
-        Rig owned = faulty(vertx, fault);
-        scriptSeeks(owned, fault.seeks(), new AtomicInteger());
-        owned.process(record(FAILED_OFFSET, null));
-        assertEquals(1, owned.inFlight());
-
-        // When: another partition is revoked
-        Method revoked = KafkaConsumerVerticle.class.getDeclaredMethod("onPartitionsRevoked", Set.class);
-        revoked.setAccessible(true);
-        revoked.invoke(owned.verticle(), Set.of(new TopicPartition(TOPIC, PARTITION + 1)));
-
-        // Then: the slot is still held
-        assertEquals(1, owned.inFlight());
-        assertEquals(0, owned.broker().resumes.get());
-
-        // When: its own partition is revoked, twice
-        revoked.invoke(owned.verticle(), Set.of(POSITION));
-        revoked.invoke(owned.verticle(), Set.of(POSITION));
-
-        // Then: the slot is released once and the consumer resumes once, with nothing committed
-        assertEquals(0, owned.inFlight());
-        assertFalse(owned.broker().paused.get());
-        assertEquals(1, owned.broker().resumes.get());
-        assertEquals(List.of(), committedOffsets(owned));
     }
 
     @Test

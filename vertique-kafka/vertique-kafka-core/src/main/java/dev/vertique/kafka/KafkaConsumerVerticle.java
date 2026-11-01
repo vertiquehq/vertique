@@ -48,8 +48,8 @@ import lombok.extern.slf4j.Slf4j;
  * the in-flight count drops below the threshold. An entry that forces its strategies keeps the slot
  * of a failed record until the error handling has settled, and a slot released while the entry waits
  * out a backoff does not resume the consumer: the end of the backoff does. A held slot is released
- * only after a confirmed disposition or a confirmed seek back; otherwise the consumer stays paused
- * until the record's partition is revoked.
+ * only after a confirmed disposition or a confirmed seek back, or when the record's partition is no
+ * longer assigned to this consumer; otherwise the consumer stays paused, and only a restart ends it.
  *
  * <p>Error handling follows the configured {@link ErrorStrategy}:
  *
@@ -131,12 +131,6 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      * state in {@link #paused}. Never set for an entry that does not force its strategies.
      */
     private final AtomicBoolean backingOff = new AtomicBoolean(false);
-
-    /**
-     * The slot of a forced record whose seek back could not be confirmed, which keeps the consumer
-     * paused. Released when its partition is revoked. {@code null} otherwise.
-     */
-    private volatile @Nullable HeldSlot stalled;
 
     /** The in-flight slot of a failed record of a forced entry, held until its failure is settled. */
     private static final class HeldSlot {
@@ -253,9 +247,6 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         consumer = KafkaConsumer.create(vertx, kafkaProps, String.class, byte[].class);
         consumer.handler(this::processRecord);
         consumer.exceptionHandler(cause -> log.error("[{}] Kafka consumer exception", entry.name(), cause));
-        if (entry.forceStrategies()) {
-            consumer.partitionsRevokedHandler(this::onPartitionsRevoked);
-        }
 
         // Collaborators require vertx, which is only available after injection by AbstractVerticle.
         // If building the dispatcher (which builds the router routing deserializer) throws, close the
@@ -624,16 +615,12 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     }
 
     /**
-     * Releases a held slot once. A second release, such as the revocation of its partition after the
-     * failure handling settled it, does nothing.
+     * Releases a held slot once. A second release does nothing.
      *
      * @param slot the held slot
      */
     private void releaseSlot(HeldSlot slot) {
         if (slot.released.compareAndSet(false, true)) {
-            if (stalled == slot) {
-                stalled = null;
-            }
             decrementInFlight();
         }
     }
@@ -647,8 +634,8 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      * confirmed seek, a published dead letter, a skip, or a confirmed seek back to the record. Any
      * other result, including a throw or an {@link Error} from the handler or a failed seek, tries the
      * seek back once more and, failing that, keeps the consumer paused and the slot held. There is no
-     * other exit. A held slot whose partition is revoked is released, because the record is delivered
-     * to the partition's new owner.
+     * other exit. A held slot whose partition is no longer assigned is released, because the record is
+     * delivered to the partition's new owner.
      *
      * @param slot the held slot of a forced entry, released once the error handling has settled;
      *     {@code null} when the slot was already released
@@ -718,7 +705,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                 releaseSlot(slot);
                 notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
             } else {
-                holdOrReleaseRevoked(record, view, slot, result.cause());
+                holdOrReleaseUnassigned(record, view, slot, result.cause());
             }
         });
     }
@@ -727,15 +714,15 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      * Keeps a forced record's slot, and so the consumer paused and the record uncommitted, because no
      * seek back could be confirmed. The one case in which this is not right is a partition this
      * consumer no longer owns, because the record is then delivered to the new owner; that case is
-     * released, here or when the revocation arrives, whichever comes second.
+     * released. A consumer that is stalled does not poll, so it never learns of a later rebalance and
+     * stays paused until it is restarted.
      */
-    private void holdOrReleaseRevoked(
+    private void holdOrReleaseUnassigned(
             KafkaConsumerRecord<String, byte[]> record,
             @Nullable KafkaConsumerRecordView view,
             HeldSlot slot,
             Throwable seekFailure) {
         backingOff.set(true);
-        stalled = slot;
         Future<Set<io.vertx.kafka.client.common.TopicPartition>> assigned;
         try {
             assigned = consumer.assignment();
@@ -744,11 +731,11 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         }
         assigned.onComplete(result -> {
             if (result.succeeded() && !result.result().contains(slot.position)) {
-                releaseRevoked(slot);
+                releaseUnassigned(slot);
             } else {
                 log.error(
                         "[{}] Could not seek back to topic={} partition={} offset={}; the consumer stays paused and"
-                                + " the record uncommitted until its partition is revoked or the consumer restarts",
+                                + " the record uncommitted until the consumer is restarted",
                         entry.name(),
                         record.topic(),
                         record.partition(),
@@ -763,30 +750,18 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      * Releases a held slot whose partition this consumer no longer owns: the record is delivered to
      * the partition's new owner, so its retry state is dropped and the consumer resumes.
      */
-    private void releaseRevoked(HeldSlot slot) {
+    private void releaseUnassigned(HeldSlot slot) {
         if (slot.released.get()) {
             return;
         }
         log.warn(
-                "[{}] Partition {} was revoked while one of its records was held; releasing it, the new owner"
+                "[{}] Partition {} is no longer assigned while one of its records was held; releasing it, the new owner"
                         + " is delivered the record",
                 entry.name(),
                 slot.position);
         errorHandler.forget(slot.positionKey);
         backingOff.set(false);
         releaseSlot(slot);
-    }
-
-    /**
-     * Releases the held slot of a revoked partition. Anything else about a rebalance stays as it was.
-     *
-     * @param revoked the partitions that were taken from this consumer
-     */
-    private void onPartitionsRevoked(Set<io.vertx.kafka.client.common.TopicPartition> revoked) {
-        HeldSlot slot = stalled;
-        if (slot != null && revoked.contains(slot.position)) {
-            releaseRevoked(slot);
-        }
     }
 
     /**
