@@ -15,8 +15,11 @@ import dev.vertique.codegen.test.fixtures.SourceFiles;
 import dev.vertique.codegen.workflow.signal.KafkaSignalListenerProcessor;
 import dev.vertique.workflow.kafka.KafkaSignalSource;
 import dev.vertique.workflow.kafka.WorkflowKafkaSignalsModule;
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import javax.annotation.processing.Processor;
@@ -162,6 +165,47 @@ class AnnotatedKafkaSignalSourceChainTest {
                 .filter(message -> message.contains("annotation processor that handles"))
                 .toList();
         assertEquals(List.of(), naming, "no diagnostic may name the processor to add");
+    }
+
+    @Test
+    @DisplayName("the example of the workflow-kafka module guide compiles as written")
+    void documentedExampleCompilesAsWritten() throws IOException {
+        // Given the first java block of the module guide that declares a @KafkaSignalListener, taken from the file as
+        // it is, with only the package and the imports the guide leaves out put in front of it
+        Path guide = Path.of(
+                        "..",
+                        "..",
+                        "vertique-workflow",
+                        "vertique-workflow-kafka",
+                        "src",
+                        "main",
+                        "resources",
+                        "META-INF",
+                        "vertique",
+                        "module.md")
+                .toAbsolutePath()
+                .normalize();
+        String text = Files.readString(guide);
+        int start = text.indexOf("```java\n@KafkaSignalListener");
+        assertTrue(start >= 0, "the guide must hold a @KafkaSignalListener example");
+        int bodyStart = start + "```java\n".length();
+        String example = text.substring(bodyStart, text.indexOf("```", bodyStart));
+        JavaFileObject listener = SourceFiles.inline(PACKAGE + ".CarrierSignals", """
+                package dev.vertique.examples;
+
+                import dev.vertique.workflow.kafka.KafkaSignalListener;
+                import dev.vertique.workflow.source.WorkflowSignalTarget;
+
+                %s""".formatted(example));
+
+        // When the signal listener processor and AutoWireProcessor compile it with the contract and message it names
+        var result = compileChain(listener);
+
+        // Then compilation succeeds and the source is generated
+        result.assertSuccess();
+        assertTrue(
+                KafkaSignalSource.class.isAssignableFrom(result.loadGeneratedClass(GENERATED_SOURCE_FQN)),
+                "the generated class is a KafkaSignalSource");
     }
 
     private static JavaFileObject listener(String keyTargetSignal) {

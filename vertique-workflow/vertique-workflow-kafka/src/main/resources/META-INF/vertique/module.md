@@ -95,7 +95,8 @@ The annotation has three attributes and no more: `name` (the consumer's name and
 ```java
 @KafkaSignalListener(name = "carrier-events", topic = "carrier.events", groupId = "logistics")
 public interface CarrierSignals {
-    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivered", key = "carrierRef")
+    @WorkflowSignalTarget(contract = OrdersContract.class, signal = "shipment-delivered", key = "carrierRef",
+            dedupBy = "eventId")
     @WorkflowSignalTarget(contract = OrdersContract.class, signal = "order-delivered", businessKey = "orderNumber",
             dedupBy = "eventId")
     void delivered(ShipmentDelivered event);
