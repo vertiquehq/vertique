@@ -80,6 +80,12 @@ modules `vertique-deploy` depends only on `vertique-core`, so the dependency add
 into definition registration through the core validator set. The workflow engine, tasks,
 PostgreSQL and definition modules never depend on it.
 
+`vertique-workflow-kafka` is the edge from workflows to Kafka: it consumes `vertique-workflow-services`
+(the source delivery bean and the shared source stages) and `vertique-kafka-core` (the consumer
+binding), and neither depends on it. It takes no compile dependency on the workflow engine or on
+PostgreSQL, which the build enforces, so a Kafka source records its signals through the generic
+operations of `vertique-workflow-core`.
+
 `vertique-rest-openapi-docs` is the opt-in runtime OpenAPI documentation module: it depends on
 `vertique-rest-jaxrs`, `vertique-rest-core`, `vertique-security-core`, `vertique-core`, and
 `vertique-json-schema`, while
