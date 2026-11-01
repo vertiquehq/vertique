@@ -318,7 +318,7 @@ class KafkaSignalFailureHandlingIT {
     }
 
     @Test
-    void intakeRefusalWaitsPastTheRetryBudgetAndNeverReachesTheDeadLetterTopic(Vertx vertx) {
+    void intakeRefusalHoldsTheRecordBackAndNeverReachesTheDeadLetterTopic(Vertx vertx) throws InterruptedException {
         try (SourceScenario scenario = SourceScenario.open(vertx, "intake-wait").intakeLimit(3, 1, 100)) {
             // Given a source with a single retry and a steady 50 ms wait, an order waiting for a delivery, and a node
             // that refuses intake because the executor is stopped while three orders are due
@@ -334,32 +334,27 @@ class KafkaSignalFailureHandlingIT {
             scenario.pauseExecutor();
             scenario.fillIntake();
 
-            // When the test produces a matching record and the node refuses it more often than the retry budget allows
+            // When the test produces a matching record and the node keeps refusing intake for longer than the retry
+            // budget would last
             Produced record = carriers.produce(scenario.delivered("1", order.key()));
-            assertThat(scenario.observer().await("carriers", Outcome.LIMITED, 4, SourceScenario.PROMPT))
-                    .isTrue();
+            Thread.sleep(3_000);
 
-            // Then the record has only been scheduled for redelivery, was not dead-lettered, and no command was
-            // recorded
-            assertThat(scenario.completions().outcomesOf(record))
-                    .isNotEmpty()
-                    .containsOnly(KafkaTerminalOutcome.RETRY_SCHEDULED);
+            // Then the consumer has held the record back: it was never attempted, so no retry was spent, nothing was
+            // reported, dead-lettered or recorded
+            assertThat(scenario.completions().outcomesOf(record)).isEmpty();
+            assertThat(scenario.observer().count("carriers", Outcome.LIMITED)).isZero();
             assertThat(carriers.dlq().read()).isEmpty();
             assertThat(scenario.commands(order)).isEmpty();
 
             // When the executor runs again and the node admits intake
             scenario.resumeExecutor();
 
-            // Then the same record is recorded once and committed, every earlier attempt was a scheduled redelivery,
-            // and the dead-letter topic stays empty
+            // Then the same record is recorded once and committed on its first attempt, and the dead-letter topic
+            // stays empty
             scenario.awaitDelivered(record, order);
             assertThat(scenario.commands(order)).hasSize(1);
             assertThat(carriers.committed(record)).isTrue();
-            List<KafkaTerminalOutcome> outcomes = scenario.completions().outcomesOf(record);
-            assertThat(outcomes).last().isEqualTo(KafkaTerminalOutcome.SUCCESS);
-            assertThat(outcomes.subList(0, outcomes.size() - 1))
-                    .hasSizeGreaterThan(1)
-                    .containsOnly(KafkaTerminalOutcome.RETRY_SCHEDULED);
+            assertThat(scenario.completions().outcomesOf(record)).containsExactly(KafkaTerminalOutcome.SUCCESS);
             assertThat(carriers.dlq().read()).isEmpty();
             assertThat(scenario.observer().count("carriers", Outcome.APPLIED)).isEqualTo(1);
         }

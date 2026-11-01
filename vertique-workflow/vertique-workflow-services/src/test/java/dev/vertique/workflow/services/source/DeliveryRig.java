@@ -124,6 +124,7 @@ final class DeliveryRig implements AutoCloseable {
     @SuppressWarnings("unchecked")
     private final TransactionalWorkflowOperations<SqlClient> operations = mock(TransactionalWorkflowOperations.class);
 
+    private final FakeInbox inbox = new FakeInbox();
     private final RecordingObserver recorder = new RecordingObserver();
     private final ObserverFailureReporter reporter = mock(ObserverFailureReporter.class);
     private final LogCapture logs = new LogCapture();
@@ -155,7 +156,18 @@ final class DeliveryRig implements AutoCloseable {
         }
         observers.addAll(others);
         this.delivery = new WorkflowSourceDelivery(
-                () -> operations, pool, vertx, DeliveryFixture.scopeOver(holder, initializers), observers, reporter);
+                () -> operations,
+                inbox,
+                pool,
+                vertx,
+                DeliveryFixture.scopeOver(holder, initializers),
+                observers,
+                reporter);
+    }
+
+    /** The inbox the delivery writes to. */
+    FakeInbox inbox() {
+        return inbox;
     }
 
     /** A rig whose only observer is the rig's own recorder, read through {@link #events()}. */

@@ -17,6 +17,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.deploy.DeployerModule;
 import dev.vertique.deploy.VerticleDeployer;
 import dev.vertique.deploy.VerticleDeployment;
+import dev.vertique.inboxoutbox.InboxService;
 import dev.vertique.kafka.KafkaConsumerBinding;
 import dev.vertique.kafka.KafkaConsumerDeploymentManager;
 import dev.vertique.kafka.KafkaModule;
@@ -57,10 +58,11 @@ import java.util.function.Function;
  * runs the workflow executor on PostgreSQL, the Kafka consumer runtime with its JSON serde, and
  * {@link WorkflowSourceModule}, which holds the delivery bean and the observer set.
  *
- * <p>The graph installs neither {@code WorkflowServicesModule} nor any outbox or inbox module: a signal source needs
- * none of them, and the graph compiling and delivering is the evidence. The test supplies only what a node leaves to
- * its application: the pool, the two workflow definitions, the sources, an observer of the delivery bean and an
- * interceptor of the consumer.
+ * <p>The graph installs neither {@code WorkflowServicesModule} nor the outbox: a signal source needs neither, and the
+ * graph compiling and delivering is the evidence. It needs an inbox, which makes the recording of each target
+ * idempotent; the test binds one over the {@code inbox} table of its database. The test supplies only what a node
+ * leaves to its application: the pool, the two workflow definitions, the sources, an observer of the delivery bean and
+ * an interceptor of the consumer.
  */
 @Singleton
 @Component(
@@ -117,6 +119,13 @@ interface SourceNode {
     /** What the production modules leave to the node: the clock, the plan validator and two recorders that keep nothing. */
     @Module
     abstract class Engine {
+
+        /** The inbox a node that runs a source installs; here over the table of the proofs' database. */
+        @Provides
+        @Singleton
+        static InboxService inboxService() {
+            return new TableInbox();
+        }
 
         @Provides
         @Singleton

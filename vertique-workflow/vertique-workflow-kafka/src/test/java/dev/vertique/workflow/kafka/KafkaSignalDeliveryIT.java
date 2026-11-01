@@ -95,6 +95,43 @@ class KafkaSignalDeliveryIT {
     }
 
     @Test
+    void ignoredRecordReplayedAfterTheWaitOpensIsStillIgnored(io.vertx.core.Vertx vertx) {
+        try (SourceScenario scenario = SourceScenario.open(vertx, "ignored")) {
+            // Given a source that deduplicates on the event id and ignores a no-match
+            Feed<ShipmentDelivered> carriers =
+                    scenario.carriers("carriers", source -> source.dedupBy(ShipmentDelivered::eventId)
+                            .signal(OrdersContract.class, SHIPMENT_DELIVERED)
+                            .key(ShipmentDelivered::carrierRef)
+                            .payload(SourceScenario::confirmation)
+                            .build());
+            scenario.start();
+            String ref = scenario.ref("PAY-77");
+
+            // When an event arrives before any instance waits for it, and is ignored
+            Produced early = carriers.produce(scenario.delivered("1", ref));
+            scenario.awaitSettled(early, java.time.Duration.ofSeconds(30));
+
+            // And: the instance then reaches its wait, and the same event is replayed at a new offset
+            Waiting order = scenario.waitingOrder("acme", ref);
+            Produced replay = carriers.produce(scenario.delivered("1", ref));
+            scenario.awaitSettled(replay, java.time.Duration.ofSeconds(30));
+
+            // Then the replay records nothing, though the wait matches it now
+            assertThat(scenario.commands(order)).isEmpty();
+            assertThat(scenario.observer().events())
+                    .extracting(event -> event.outcome())
+                    .containsExactly(
+                            dev.vertique.workflow.source.SignalSourceEvent.Outcome.NO_MATCH,
+                            dev.vertique.workflow.source.SignalSourceEvent.Outcome.DEDUPLICATED);
+
+            // And: a new event for the same reference does resume the instance
+            Produced fresh = carriers.produce(scenario.delivered("2", ref));
+            scenario.awaitDelivered(fresh, order);
+            assertThat(scenario.commands(order)).hasSize(1);
+        }
+    }
+
+    @Test
     void redeliveredOffsetRecordsOneCommandWhenTheSourceNamesNoDedupKey(io.vertx.core.Vertx vertx) {
         try (SourceScenario scenario = SourceScenario.open(vertx, "offset")) {
             // Given a source with a key and no dedupBy, and one waiting instance

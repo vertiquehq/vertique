@@ -7,6 +7,8 @@ import dev.vertique.context.InboundExecutionContextScope;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.extension.ObserverFailureReporter;
+import dev.vertique.inboxoutbox.InboxResult;
+import dev.vertique.inboxoutbox.InboxService;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.workflow.ops.CorrelatedSignal;
@@ -68,7 +70,11 @@ public final class WorkflowSourceDelivery {
 
     private static final String OBSERVER_CALLBACK = "onOutcome";
 
+    /** The inbox source of every row a signal source writes. */
+    static final String INBOX_SOURCE = "workflow-signal-sources";
+
     private final Provider<TransactionalWorkflowOperations<SqlClient>> operations;
+    private final InboxService inbox;
     private final Pool pool;
     private final Vertx vertx;
     private final InboundExecutionContextScope contextScope;
@@ -79,6 +85,7 @@ public final class WorkflowSourceDelivery {
      * Creates the delivery with its own observer failure reporter.
      *
      * @param operations the transactional workflow operations, resolved per recording
+     * @param inbox the inbox that makes the recording of one target idempotent
      * @param pool the pool whose transaction a recording runs in
      * @param vertx the Vert.x instance, for the calling context
      * @param contextScope installs the envelope's values on a delivery's context
@@ -86,12 +93,14 @@ public final class WorkflowSourceDelivery {
      */
     public WorkflowSourceDelivery(
             Provider<TransactionalWorkflowOperations<SqlClient>> operations,
+            InboxService inbox,
             Pool pool,
             Vertx vertx,
             InboundExecutionContextScope contextScope,
             Set<SignalSourceObserver> observers) {
         this(
                 operations,
+                inbox,
                 pool,
                 vertx,
                 contextScope,
@@ -103,6 +112,7 @@ public final class WorkflowSourceDelivery {
      * Creates the delivery with the given observer failure reporter, so a proof can observe it.
      *
      * @param operations the transactional workflow operations, resolved per recording
+     * @param inbox the inbox that makes the recording of one target idempotent
      * @param pool the pool whose transaction a recording runs in
      * @param vertx the Vert.x instance, for the calling context
      * @param contextScope installs the envelope's values on a delivery's context
@@ -111,12 +121,14 @@ public final class WorkflowSourceDelivery {
      */
     WorkflowSourceDelivery(
             Provider<TransactionalWorkflowOperations<SqlClient>> operations,
+            InboxService inbox,
             Pool pool,
             Vertx vertx,
             InboundExecutionContextScope contextScope,
             Set<SignalSourceObserver> observers,
             ObserverFailureReporter observerFailureReporter) {
         this.operations = Objects.requireNonNull(operations, "operations");
+        this.inbox = Objects.requireNonNull(inbox, "inbox");
         this.pool = Objects.requireNonNull(pool, "pool");
         this.vertx = Objects.requireNonNull(vertx, "vertx");
         this.contextScope = Objects.requireNonNull(contextScope, "contextScope");
@@ -131,8 +143,8 @@ public final class WorkflowSourceDelivery {
      * envelope's identity was contributed), {@code scope}; then, for each signal in the order written,
      * its key, its payload and its recording. A message an earlier stage excludes or refuses reaches no
      * later stage. Each signal is judged alone and reported once; the disposition is the most severe of
-     * them, {@link SourceDisposition.Fate#TERMINAL} over {@link SourceDisposition.Fate#RETRY} over
-     * {@link SourceDisposition.Fate#WAIT} over {@link SourceDisposition.Fate#DONE}.
+     * them, {@link SourceDisposition.Fate#WAIT} over {@link SourceDisposition.Fate#TERMINAL} over
+     * {@link SourceDisposition.Fate#RETRY} over {@link SourceDisposition.Fate#DONE}.
      *
      * <p>The disposition and the events carry the type of a failure, never its message, and nothing of
      * the message: no key, header or payload.
@@ -189,34 +201,62 @@ public final class WorkflowSourceDelivery {
     }
 
     /**
-     * Records one signal under the envelope's binding, in its own transaction, completing on a context
-     * the caller has already captured, so that one capture serves every stage of a message.
+     * Records one signal under the envelope's binding, in its own transaction, completing on a context the caller has
+     * already captured, so that one capture serves every stage of a message.
      *
-     * <p>The signal is recorded with the provenance the envelope builds for the signal's own dedup key,
-     * through {@code signalByBusinessKey} when {@code businessKey} is true and {@code signalByKey}
-     * otherwise.
+     * <p>The transaction first inserts the target's inbox row, and the signal is recorded in the same transaction. A
+     * target whose row already exists is done: nothing is recorded, and the receipt says duplicate. A delivery that
+     * fails rolls the transaction back with its row, so the next attempt runs normally.
+     *
+     * <p>The signal is recorded with the provenance the envelope builds for the signal's own dedup key, through
+     * {@code signalByBusinessKey} when {@code businessKey} is true and {@code signalByKey} otherwise.
      *
      * @param captured the context the caller delivers from
      * @param signal the signal to record
      * @param businessKey whether the signal addresses instances by business key rather than by key
      * @param envelope the resolved values to bind for the recording
+     * @param inboxId the identity of this target of the message, from
+     *     {@link dev.vertique.workflow.dedup.WorkflowDedupScopes#sourceInboxId}
      * @return a future that completes on {@code captured} with the receipt, or fails with what the
      *     operations failed with
      */
     Future<CorrelatedSignalReceipt> record(
-            ContextInternal captured, CorrelatedSignal signal, boolean businessKey, SourceEnvelope envelope) {
+            ContextInternal captured,
+            CorrelatedSignal signal,
+            boolean businessKey,
+            SourceEnvelope envelope,
+            String inboxId) {
         return runBound(
                 captured,
                 bindings(envelope),
                 envelope.transport(),
-                () -> pool.withTransaction(connection -> {
-                    CorrelatedSignal withProvenance =
-                            signal.withProvenance(envelope.provenance().apply(signal.dedupKey()));
-                    TransactionalWorkflowOperations<SqlClient> ops = operations.get();
-                    return businessKey
-                            ? ops.signalByBusinessKey(withProvenance, connection)
-                            : ops.signalByKey(withProvenance, connection);
-                }));
+                () -> pool.withTransaction(connection -> inbox.processOnce(inboxId, INBOX_SOURCE, connection, () -> {
+                            CorrelatedSignal withProvenance =
+                                    signal.withProvenance(envelope.provenance().apply(signal.dedupKey()));
+                            TransactionalWorkflowOperations<SqlClient> ops = operations.get();
+                            return businessKey
+                                    ? ops.signalByBusinessKey(withProvenance, connection)
+                                    : ops.signalByKey(withProvenance, connection);
+                        })
+                        .map(result -> result instanceof InboxResult.Processed<CorrelatedSignalReceipt> processed
+                                ? processed.value()
+                                : new CorrelatedSignalReceipt(CorrelatedSignalReceipt.Outcome.DUPLICATE, null))));
+    }
+
+    /**
+     * Writes the inbox row of a target that ended without recording a signal, in a transaction of its own, so a replay
+     * of the message ends the same way even if a wait would match by then. A crash before the row commits leaves the
+     * message to run again.
+     *
+     * @param captured the context the caller delivers from
+     * @param envelope the resolved values to bind
+     * @param inboxId the identity of the target
+     * @return a future that completes on {@code captured} once the row is committed or already there
+     */
+    Future<Void> recordIgnored(ContextInternal captured, SourceEnvelope envelope, String inboxId) {
+        return runBound(captured, bindings(envelope), envelope.transport(), () -> pool.withTransaction(connection ->
+                        inbox.processOnce(inboxId, INBOX_SOURCE, connection, () -> Future.<Void>succeededFuture()))
+                .mapEmpty());
     }
 
     /**

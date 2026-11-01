@@ -12,6 +12,7 @@ import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.workflow.actor.ActorText;
+import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.exception.WorkflowIntakeRefusedException;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowSignalActorException;
@@ -270,7 +271,9 @@ final class SignalSourceRun<T> {
         return keyStep(target)
                 .compose(key -> {
                     if (key.verdict() != null) {
-                        return Future.succeededFuture(conclude(target, key.verdict()));
+                        return isIgnored(key.verdict())
+                                ? ignored(target, key.verdict())
+                                : Future.succeededFuture(conclude(target, key.verdict()));
                     }
                     return payloadStep(target).compose(payload -> {
                         if (payload.verdict() != null) {
@@ -325,9 +328,32 @@ final class SignalSourceRun<T> {
     private Future<SourceDisposition> record(Target<T> target, @Nullable String key, @Nullable Object payload) {
         CorrelatedSignal signal = new CorrelatedSignal(
                 target.contract(), target.signalName(), key, payload, dedupKey, null, scopeKey, null);
-        return delivery.record(captured, signal, target.businessKey(), effective)
+        return delivery.record(captured, signal, target.businessKey(), effective, inboxId(target))
                 .transform(outcome -> Future.succeededFuture(judge(target, outcome.cause(), outcome.result())))
-                .map(verdict -> conclude(target, verdict));
+                .compose(verdict -> verdict.outcome() == Outcome.NO_MATCH && verdict.fate() == Fate.DONE
+                        ? ignored(target, verdict)
+                        : Future.succeededFuture(conclude(target, verdict)));
+    }
+
+    /** The identity of this target of the message in the inbox: the contract, the signal, the scope and the dedup key. */
+    private String inboxId(Target<T> target) {
+        return WorkflowDedupScopes.sourceInboxId(target.contractName(), target.signalName(), scopeKey, dedupKey);
+    }
+
+    /** Whether a verdict ended a target without a signal because there was nothing to address: a null or empty key. */
+    private static boolean isIgnored(Verdict verdict) {
+        return verdict.outcome() == Outcome.IGNORED && verdict.fate() == Fate.DONE;
+    }
+
+    /**
+     * Ends a target that recorded nothing and is done: an empty lookup, or a no-match under a policy that ignores it.
+     * The inbox row commits in a transaction of its own first, so a replay of the message ends the same way even when
+     * a wait would match by then. If the row cannot be written the target is retried, and the message runs again.
+     */
+    private Future<SourceDisposition> ignored(Target<T> target, Verdict verdict) {
+        return delivery.recordIgnored(captured, effective, inboxId(target))
+                .map(written -> conclude(target, verdict))
+                .recover(failure -> Future.succeededFuture(conclude(target, failedVerdict(failure))));
     }
 
     // --- judging a recording ---
@@ -453,11 +479,13 @@ final class SignalSourceRun<T> {
     }
 
     private static int rank(Fate fate) {
+        // A refused target outranks every failure: the message goes back unattempted, spends nothing, and its
+        // failed targets run again and decide once no target is refused.
         return switch (fate) {
             case DONE -> 0;
-            case WAIT -> 1;
-            case RETRY -> 2;
-            case TERMINAL -> 3;
+            case RETRY -> 1;
+            case TERMINAL -> 2;
+            case WAIT -> 3;
         };
     }
 

@@ -17,6 +17,7 @@ import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.context.InboundExecutionContextScope;
+import dev.vertique.inboxoutbox.InboxResult;
 import dev.vertique.inboxoutbox.InboxService;
 import dev.vertique.inboxoutbox.OutboxDestinationHandler;
 import dev.vertique.inboxoutbox.OutboxService;
@@ -37,6 +38,7 @@ import jakarta.inject.Singleton;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Dagger test components for the delivery bean. Each stub module provides only the collaborators
@@ -66,6 +68,21 @@ final class GraphFixture {
         @Singleton
         static InboundExecutionContextScope contextScope() {
             return DeliveryFixture.scopeOver(new DefaultContextHolder());
+        }
+    }
+
+    /** The inbox every node that runs a source needs: it runs the work of each first delivery and nothing else. */
+    @Module
+    abstract static class InboxStub {
+        @Provides
+        @Singleton
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        static InboxService inboxService() {
+            InboxService inbox = mock(InboxService.class);
+            when(inbox.processOnce(any(), any(), any(), any()))
+                    .thenAnswer(invocation ->
+                            ((Supplier<Future>) invocation.getArgument(3)).get().map(InboxResult.Processed::new));
+            return inbox;
         }
     }
 
@@ -127,7 +144,7 @@ final class GraphFixture {
 
     /** A node that only receives signals and installs the source module alone. */
     @Singleton
-    @Component(modules = {WorkflowSourceModule.class, SourceStubs.class})
+    @Component(modules = {WorkflowSourceModule.class, SourceStubs.class, InboxStub.class})
     interface SourceOnlyComponent {
         WorkflowSourceDelivery delivery();
 
@@ -144,7 +161,7 @@ final class GraphFixture {
 
     /** The source module plus an optional declaration for the bean. */
     @Singleton
-    @Component(modules = {WorkflowSourceModule.class, SourceStubs.class, OptionalDeliveryModule.class})
+    @Component(modules = {WorkflowSourceModule.class, SourceStubs.class, InboxStub.class, OptionalDeliveryModule.class})
     interface OptionalComponent {
         Optional<WorkflowSourceDelivery> optionalDelivery();
 
@@ -213,7 +230,8 @@ final class GraphFixture {
 
     /** The source module with one observer contributed. */
     @Singleton
-    @Component(modules = {WorkflowSourceModule.class, DeliveringStubs.class, ObserverContribution.class})
+    @Component(
+            modules = {WorkflowSourceModule.class, DeliveringStubs.class, InboxStub.class, ObserverContribution.class})
     interface ObservedComponent {
         WorkflowSourceDelivery delivery();
 
@@ -232,7 +250,7 @@ final class GraphFixture {
 
     /** The source module with no observer contributed. */
     @Singleton
-    @Component(modules = {WorkflowSourceModule.class, DeliveringStubs.class})
+    @Component(modules = {WorkflowSourceModule.class, DeliveringStubs.class, InboxStub.class})
     interface UnobservedComponent {
         WorkflowSourceDelivery delivery();
 

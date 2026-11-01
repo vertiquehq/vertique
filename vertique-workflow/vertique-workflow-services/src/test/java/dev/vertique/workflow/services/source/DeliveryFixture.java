@@ -244,7 +244,7 @@ final class DeliveryFixture {
         this.home = home;
         stubPool();
         stubOperations();
-        this.delivery = new WorkflowSourceDelivery(() -> operations, pool, vertx, scope, Set.of());
+        this.delivery = new WorkflowSourceDelivery(() -> operations, new FakeInbox(), pool, vertx, scope, Set.of());
     }
 
     /** Operations that record the call and succeed with {@link #RECEIPT} at once. */
@@ -316,7 +316,8 @@ final class DeliveryFixture {
     /** Delivers one signal from the caller and returns the future the bean produced. */
     Future<CorrelatedSignalReceipt> record(
             Caller caller, CorrelatedSignal signal, boolean businessKey, SourceEnvelope envelope) {
-        return caller.run(() -> delivery.record(delivery.capture(), signal, businessKey, envelope));
+        return caller.run(
+                () -> delivery.record(delivery.capture(), signal, businessKey, envelope, "inbox-" + signal.dedupKey()));
     }
 
     /** Runs two deliveries so that both are open together, then completes them in the opposite order. */

@@ -7,6 +7,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.Multibinds;
 import dev.vertique.context.InboundExecutionContextScope;
+import dev.vertique.inboxoutbox.InboxService;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.services.source.WorkflowSourceDelivery;
 import dev.vertique.workflow.source.SignalSourceObserver;
@@ -21,9 +22,10 @@ import java.util.Set;
  * Dagger module that provides the in-process delivery bean of a correlated signal source and the set
  * of its observers.
  *
- * <p>The module needs {@code TransactionalWorkflowOperations<SqlClient>}, {@link Pool}, {@link Vertx}
- * and {@link InboundExecutionContextScope}, and no outbox or inbox binding, so a node that only runs a
- * signal source installs this module alone. {@code WorkflowServicesModule} includes it.
+ * <p>The module needs {@code TransactionalWorkflowOperations<SqlClient>}, an {@link InboxService}, {@link Pool},
+ * {@link Vertx} and {@link InboundExecutionContextScope}, and no outbox binding. The inbox makes the recording of
+ * each target of a message idempotent, so every node that runs a signal source, a recording-only node included,
+ * installs the inbox module with its migration and its cleanup job. {@code WorkflowServicesModule} includes it.
  *
  * <p>The module adds no service operation and no event-bus address: only code in the application's JVM
  * can call the bean.
@@ -44,6 +46,7 @@ public abstract class WorkflowSourceModule {
      * Provides the delivery bean.
      *
      * @param operations the transactional workflow operations
+     * @param inbox the inbox that makes the recording of each target idempotent
      * @param pool the pool whose transaction a recording runs in
      * @param vertx the Vert.x instance
      * @param contextScope installs the envelope's values on a delivery's context
@@ -54,10 +57,11 @@ public abstract class WorkflowSourceModule {
     @Singleton
     static WorkflowSourceDelivery sourceDelivery(
             Provider<TransactionalWorkflowOperations<SqlClient>> operations,
+            InboxService inbox,
             Pool pool,
             Vertx vertx,
             InboundExecutionContextScope contextScope,
             Set<SignalSourceObserver> observers) {
-        return new WorkflowSourceDelivery(operations, pool, vertx, contextScope, observers);
+        return new WorkflowSourceDelivery(operations, inbox, pool, vertx, contextScope, observers);
     }
 }

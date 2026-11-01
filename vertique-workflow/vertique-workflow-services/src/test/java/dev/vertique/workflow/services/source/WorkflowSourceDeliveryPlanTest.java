@@ -173,11 +173,20 @@ class WorkflowSourceDeliveryPlanTest {
                 // When each delivers one message
                 SourceDisposition disposition = rig.deliver(plan, shipment(), envelope());
 
-                // Then it is DONE with one IGNORED event, and no operations call or transaction was made
+                // Then it is DONE with one IGNORED event, and no operations call was made
                 assertThat(disposition.fate()).as(row).isEqualTo(Fate.DONE);
                 assertThat(rig.outcomes()).as(row).containsExactly(Outcome.IGNORED);
                 assertThat(rig.calls()).as(row).isEmpty();
-                assertThat(rig.transactions()).as(row).isZero();
+
+                // and a message that no stage addressed to a workflow wrote nothing, while an empty key or lookup
+                // commits the inbox row of its target in one transaction of its own
+                if (row.equals("when rejects")) {
+                    assertThat(rig.transactions()).as(row).isZero();
+                    assertThat(rig.inbox().committed).as(row).isEmpty();
+                } else {
+                    assertThat(rig.transactions()).as(row).isEqualTo(1);
+                    assertThat(rig.inbox().committed).as(row).hasSize(1);
+                }
             }
         });
     }
@@ -380,22 +389,29 @@ class WorkflowSourceDeliveryPlanTest {
                         DeliveryRig.raising(new WorkflowIntakeRefusedException()),
                         DeliveryRig.raising(limit),
                         SignalNoMatch.IGNORE,
-                        Fate.RETRY,
+                        Fate.WAIT,
                         List.of(Outcome.LIMITED, Outcome.LIMITED)),
                 new Row(
                         "open-signal limit then intake refusal",
                         DeliveryRig.raising(limit),
                         DeliveryRig.raising(new WorkflowIntakeRefusedException()),
                         SignalNoMatch.IGNORE,
-                        Fate.RETRY,
+                        Fate.WAIT,
                         List.of(Outcome.LIMITED, Outcome.LIMITED)),
                 new Row(
                         "intake refusal then ambiguous",
                         DeliveryRig.raising(new WorkflowIntakeRefusedException()),
                         DeliveryRig.raising(new WorkflowSignalAmbiguousException("billing", INVOICE_SETTLED)),
                         SignalNoMatch.IGNORE,
-                        Fate.TERMINAL,
+                        Fate.WAIT,
                         List.of(Outcome.LIMITED, Outcome.AMBIGUOUS)),
+                new Row(
+                        "ambiguous then intake refusal",
+                        DeliveryRig.raising(new WorkflowSignalAmbiguousException("orders", SHIPMENT_DELIVERED)),
+                        DeliveryRig.raising(new WorkflowIntakeRefusedException()),
+                        SignalNoMatch.IGNORE,
+                        Fate.WAIT,
+                        List.of(Outcome.AMBIGUOUS, Outcome.LIMITED)),
                 new Row(
                         "applied then applied",
                         DeliveryRig.recorded(),
@@ -937,7 +953,7 @@ class WorkflowSourceDeliveryPlanTest {
 
             // When the no-match is delivered
             int mark = rig.logCount();
-            SourceDisposition noMatch = rig.deliver(asAlice, shipment(KEY), envelope());
+            SourceDisposition noMatch = rig.deliver(asAlice, shipment(KEY), envelope("one"));
 
             // Then one log record names alice, the contract, the signal and NO_MATCH
             assertThat(noMatch.fate()).isEqualTo(Fate.DONE);
@@ -950,7 +966,7 @@ class WorkflowSourceDeliveryPlanTest {
 
             // and the ambiguity writes one record naming AMBIGUOUS
             mark = rig.logCount();
-            SourceDisposition ambiguous = rig.deliver(asAlice, shipment(KEY), envelope());
+            SourceDisposition ambiguous = rig.deliver(asAlice, shipment(KEY), envelope("two"));
             assertThat(ambiguous.fate()).isEqualTo(Fate.TERMINAL);
             assertThat(rig.logsSince(mark).stream().filter(text -> text.contains("alice")))
                     .hasSize(1)
@@ -1653,8 +1669,8 @@ class WorkflowSourceDeliveryPlanTest {
             DeliveryRig rig, SignalSourcePlan<ShipmentDelivered> plan, Answer[] answers) {
         rig.operations(answers);
         return List.of(
-                rig.deliver(plan, shipment(KEY), envelope()).fate(),
-                rig.deliver(plan, shipment(KEY), envelope()).fate(),
-                rig.deliver(plan, shipment(KEY), envelope()).fate());
+                rig.deliver(plan, shipment(KEY), envelope("one")).fate(),
+                rig.deliver(plan, shipment(KEY), envelope("two")).fate(),
+                rig.deliver(plan, shipment(KEY), envelope("three")).fate());
     }
 }

@@ -43,6 +43,7 @@ final class ObserverFixture {
         TransactionalWorkflowOperations<SqlClient> operations = mock(TransactionalWorkflowOperations.class);
         WorkflowSourceDelivery delivery = new WorkflowSourceDelivery(
                 () -> operations,
+                new FakeInbox(),
                 mock(Pool.class),
                 mock(Vertx.class),
                 DeliveryFixture.scopeOver(new DefaultContextHolder()),

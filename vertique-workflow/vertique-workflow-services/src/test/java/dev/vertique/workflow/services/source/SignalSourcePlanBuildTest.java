@@ -307,7 +307,8 @@ class SignalSourcePlanBuildTest {
             rig.operations(
                     DeliveryRig.recorded(),
                     DeliveryRig.raising(new WorkflowSignalNoMatchException("billing", INVOICE_SETTLED)));
-            SourceDisposition retriedByDefault = rig.deliver(plan, message(body), envelope());
+            SourceDisposition retriedByDefault =
+                    rig.deliver(plan, message(new DeliveryConfirmed("PAY-78", "delivered")), envelope());
             assertThat(retriedByDefault.fate()).isEqualTo(Fate.RETRY);
         }
 

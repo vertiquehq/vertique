@@ -157,6 +157,18 @@ final class PlanFixture {
         return envelope(dedupKey -> KAFKA_PROVENANCE);
     }
 
+    /** An envelope as {@link #envelope()} with the given default dedup key, for a test that delivers several messages. */
+    static SourceEnvelope envelope(String defaultDedupKey) {
+        return new SourceEnvelope(
+                "kafka",
+                DeliveryFixture.security("kafka source: carriers"),
+                false,
+                CorrelationContext.generated("C-1"),
+                InvocationOrigin.of("kafka"),
+                defaultDedupKey,
+                dedupKey -> KAFKA_PROVENANCE);
+    }
+
     static SourceEnvelope envelope(Function<String, SignalProvenance> provenance) {
         return new SourceEnvelope(
                 "kafka",
