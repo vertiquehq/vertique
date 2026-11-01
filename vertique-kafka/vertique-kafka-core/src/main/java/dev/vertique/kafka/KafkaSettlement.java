@@ -172,7 +172,7 @@ final class KafkaSettlement {
                 finish(ledger);
             }
         }
-        reevaluateRetention();
+        evaluateRetention();
         pump();
     }
 
@@ -207,7 +207,7 @@ final class KafkaSettlement {
         Entry entry = ledger.register(record, nextSequence++);
         retainedRecords++;
         queue.add(entry);
-        evaluateRetention(ledger);
+        evaluateRetention();
         pump();
     }
 
@@ -303,7 +303,7 @@ final class KafkaSettlement {
         retainedRecords -= ledger.advance();
         commits.commit(ledger);
         updateBackoff(ledger);
-        evaluateRetention(ledger);
+        evaluateRetention();
         notifyCompleted(view, outcome);
     }
 
@@ -447,53 +447,25 @@ final class KafkaSettlement {
 
     // --- Retention ---
 
-    private void evaluateRetention(KafkaPartitionLedger ledger) {
-        if (ledger.ended()) {
-            return;
-        }
-        boolean held = ledger.retentionHeld();
-        if (!held && ledger.size() >= partitionRecords) {
-            ledger.retentionHeld(true);
-        } else if (held && ledger.size() <= partitionRecords / 2) {
-            ledger.retentionHeld(false);
-        }
-        boolean consumerHeld = consumerRetentionHeld;
-        if (!consumerHeld && retainedRecords >= consumerRecords) {
-            consumerRetentionHeld = true;
-        } else if (consumerHeld && retainedRecords <= consumerRecords / 2) {
-            consumerRetentionHeld = false;
-        }
-        if (consumerRetentionHeld != consumerHeld) {
-            reevaluateRetention();
-        } else {
-            applyRetention(ledger);
-        }
-    }
-
-    private void reevaluateRetention() {
-        for (KafkaPartitionLedger ledger : new ArrayList<>(ledgers.values())) {
-            boolean held = ledger.retentionHeld();
-            if (held && ledger.size() <= partitionRecords / 2) {
-                ledger.retentionHeld(false);
+    /**
+     * Stops fetching a partition while it, or the consumer, holds as many records as its bound, and fetches again once
+     * the count has fallen to half the bound. Every partition is evaluated, because the consumer's count can hold or
+     * release them all.
+     */
+    private void evaluateRetention() {
+        consumerRetentionHeld = retentionHeld(consumerRetentionHeld, retainedRecords, consumerRecords);
+        for (KafkaPartitionLedger ledger : ledgers.values()) {
+            ledger.retentionHeld(retentionHeld(ledger.retentionHeld(), ledger.size(), partitionRecords));
+            if (ledger.retentionHeld() || consumerRetentionHeld) {
+                holds.hold(ledger.partition(), KafkaHoldController.Reason.RETENTION);
+            } else {
+                holds.release(ledger.partition(), KafkaHoldController.Reason.RETENTION);
             }
         }
-        boolean consumerHeld = consumerRetentionHeld;
-        if (consumerHeld && retainedRecords <= consumerRecords / 2) {
-            consumerRetentionHeld = false;
-        } else if (!consumerHeld && retainedRecords >= consumerRecords) {
-            consumerRetentionHeld = true;
-        }
-        for (KafkaPartitionLedger ledger : ledgers.values()) {
-            applyRetention(ledger);
-        }
     }
 
-    private void applyRetention(KafkaPartitionLedger ledger) {
-        if (ledger.retentionHeld() || consumerRetentionHeld) {
-            holds.hold(ledger.partition(), KafkaHoldController.Reason.RETENTION);
-        } else {
-            holds.release(ledger.partition(), KafkaHoldController.Reason.RETENTION);
-        }
+    private static boolean retentionHeld(boolean held, long count, long bound) {
+        return held ? count > bound / 2 : count >= bound;
     }
 
     // --- Stop ---
