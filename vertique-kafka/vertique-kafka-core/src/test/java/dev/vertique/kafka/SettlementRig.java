@@ -105,12 +105,14 @@ final class SettlementRig {
 
         final long delayMs;
         final Runnable task;
+        private final java.util.function.Consumer<Runnable> turn;
         boolean cancelled;
         boolean fired;
 
-        FakeTimer(long delayMs, Runnable task) {
+        FakeTimer(long delayMs, Runnable task, java.util.function.Consumer<Runnable> turn) {
             this.delayMs = delayMs;
             this.task = task;
+            this.turn = turn;
         }
 
         @Override
@@ -121,7 +123,7 @@ final class SettlementRig {
         /** Fires the timer, as a clock that lets it fire at any later point would. */
         void fire() {
             fired = true;
-            task.run();
+            turn.accept(task);
         }
     }
 
@@ -134,6 +136,9 @@ final class SettlementRig {
         final List<PartitionCall> partitionCalls = new ArrayList<>();
         final List<FakeTimer> timers = new ArrayList<>();
         final List<KafkaTerminalOutcome> completions = new ArrayList<>();
+
+        private final java.util.ArrayDeque<Runnable> deferred = new java.util.ArrayDeque<>();
+        private boolean running;
 
         /** Whether commits, pauses and resumes are acknowledged at once. */
         boolean autoComplete = true;
@@ -189,14 +194,30 @@ final class SettlementRig {
 
         @Override
         public KafkaSettlement.Timer schedule(long delayMs, Runnable task) {
-            FakeTimer timer = new FakeTimer(delayMs, task);
+            FakeTimer timer = new FakeTimer(delayMs, task, this::execute);
             timers.add(timer);
             return timer;
         }
 
+        /**
+         * Defers the task: it runs after the task that is running returns, as the owner context runs it. A task that
+         * is submitted while none runs, such as a completion or a timer the test triggers, starts the turn.
+         */
         @Override
         public void execute(Runnable task) {
-            task.run();
+            deferred.add(task);
+            if (running) {
+                return;
+            }
+            running = true;
+            try {
+                for (Runnable next = deferred.poll(); next != null; next = deferred.poll()) {
+                    next.run();
+                }
+            } finally {
+                running = false;
+                deferred.clear();
+            }
         }
 
         @Override
@@ -247,19 +268,19 @@ final class SettlementRig {
     }
 
     SettlementRig assign(TopicPartition... partitions) {
-        settlement.assigned(List.of(partitions));
+        port.execute(() -> settlement.assigned(List.of(partitions)));
         return this;
     }
 
     SettlementRig revoke(TopicPartition... partitions) {
-        settlement.revoked(List.of(partitions));
+        port.execute(() -> settlement.revoked(List.of(partitions)));
         return this;
     }
 
     /** Registers records of one partition at the given offsets. */
     SettlementRig add(TopicPartition partition, long... offsets) {
         for (long offset : offsets) {
-            settlement.register(record(partition, offset));
+            port.execute(() -> settlement.register(record(partition, offset)));
         }
         return this;
     }

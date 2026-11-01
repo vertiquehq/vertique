@@ -70,8 +70,6 @@ final class KafkaPartitionLedger {
         @Nullable
         KafkaConsumerRecordView view;
 
-        boolean publishOutstanding;
-
         /** The pending retry or publish timer. */
         @Nullable
         KafkaSettlement.Timer timer;

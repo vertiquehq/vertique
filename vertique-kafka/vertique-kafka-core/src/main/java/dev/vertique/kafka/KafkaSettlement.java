@@ -125,12 +125,6 @@ final class KafkaSettlement {
             int retentionLimit,
             @Nullable KafkaDispatchGate gate) {}
 
-    private enum Lifecycle {
-        RUNNING,
-        STOPPING,
-        CLOSED
-    }
-
     private final Settings settings;
     private final Port port;
     private final KafkaHoldController holds;
@@ -141,7 +135,7 @@ final class KafkaSettlement {
     private final long partitionRecords;
     private final long consumerRecords;
 
-    private Lifecycle lifecycle = Lifecycle.RUNNING;
+    private boolean stopping;
     private long nextSequence;
     private int permits;
     private int publishes;
@@ -150,15 +144,13 @@ final class KafkaSettlement {
     private boolean intakeOpen = true;
     private boolean refused;
     private @Nullable Timer recheck;
-    private boolean pumping;
-    private boolean pumpAgain;
 
     KafkaSettlement(Settings settings, Port port) {
         this.settings = settings;
         this.port = port;
         this.holds = new KafkaHoldController(settings.name(), port);
         this.commits = new KafkaCommitController(settings.name(), port);
-        this.partitionRecords = Math.max(1, settings.retentionLimit());
+        this.partitionRecords = settings.retentionLimit();
         this.consumerRecords = 2 * partitionRecords;
     }
 
@@ -213,7 +205,7 @@ final class KafkaSettlement {
      */
     void register(KafkaConsumerRecord<String, byte[]> record) {
         KafkaPartitionLedger ledger = ledgers.get(new TopicPartition(record.topic(), record.partition()));
-        if (ledger == null || lifecycle == Lifecycle.CLOSED) {
+        if (ledger == null) {
             log.debug(
                     "[{}] Dropped a record of a partition that is not assigned: topic={} partition={} offset={}",
                     settings.name(),
@@ -231,51 +223,22 @@ final class KafkaSettlement {
 
     /** Starts queued records, oldest first, while a permit is free and the gate is open. */
     private void pump() {
-        if (pumping) {
-            pumpAgain = true;
-            return;
+        refreshGate();
+        while (!stopping && permits < settings.maxInFlight() && intakeOpen && !refused) {
+            Entry entry = queue.poll();
+            if (entry == null) {
+                break;
+            }
+            start(entry);
         }
-        pumping = true;
-        try {
-            do {
-                pumpAgain = false;
-                refreshGate();
-                while (lifecycle == Lifecycle.RUNNING && permits < settings.maxInFlight() && intakeOpen && !refused) {
-                    Entry entry = nextQueued();
-                    if (entry == null) {
-                        break;
-                    }
-                    start(entry);
-                }
-            } while (pumpAgain);
-        } finally {
-            pumping = false;
-        }
-    }
-
-    private @Nullable Entry nextQueued() {
-        Entry entry = queue.poll();
-        while (entry != null && (entry.state != State.QUEUED || entry.ledger.ended())) {
-            entry = queue.poll();
-        }
-        return entry;
     }
 
     private void start(Entry entry) {
         entry.ledger.move(entry, State.RUNNING);
         permits++;
-        KafkaConsumerRecord<String, byte[]> record = entry.record;
-        Future<Result> run;
-        try {
-            run = port.run(record, entry.attempts);
-            if (run == null) {
-                run = Future.failedFuture(new NullPointerException("the run of a record returned no future"));
-            }
-        } catch (Throwable thrown) {
-            run = Future.failedFuture(thrown);
-        }
-        run.onComplete(result -> port.execute(
-                () -> ran(entry, result.succeeded() ? result.result() : Result.failed(result.cause(), null))));
+        port.run(entry.record, entry.attempts)
+                .onComplete(result -> port.execute(
+                        () -> ran(entry, result.succeeded() ? result.result() : Result.failed(result.cause(), null))));
     }
 
     // --- Settle ---
@@ -411,11 +374,10 @@ final class KafkaSettlement {
 
     private void publish(Entry entry) {
         KafkaPartitionLedger ledger = entry.ledger;
-        if (ledger.ended() || entry.state != State.DLQ_PENDING || entry.publishOutstanding) {
+        if (ledger.ended() || entry.state != State.DLQ_PENDING) {
             return;
         }
         entry.timer = null;
-        entry.publishOutstanding = true;
         publishes++;
         Future<Void> publish;
         try {
@@ -428,7 +390,6 @@ final class KafkaSettlement {
 
     private void published(Entry entry, boolean succeeded, Throwable cause) {
         publishes--;
-        entry.publishOutstanding = false;
         KafkaPartitionLedger ledger = entry.ledger;
         if (!ledger.ended()) {
             KafkaConsumerRecordView view = entry.view;
@@ -463,7 +424,7 @@ final class KafkaSettlement {
     // --- Gate ---
 
     private void refreshGate() {
-        boolean open = lifecycle != Lifecycle.RUNNING || !refused && gateOpen();
+        boolean open = stopping || !refused && gateOpen();
         if (open == intakeOpen) {
             if (!open) {
                 armRecheck();
@@ -493,7 +454,7 @@ final class KafkaSettlement {
     }
 
     private void armRecheck() {
-        if (recheck != null || lifecycle != Lifecycle.RUNNING) {
+        if (recheck != null || stopping) {
             return;
         }
         recheck = port.schedule(RECHECK_MS, () -> {
@@ -561,10 +522,10 @@ final class KafkaSettlement {
      * returned are still registered, and runs, publishes and commits in flight finish.
      */
     void beginStop() {
-        if (lifecycle != Lifecycle.RUNNING) {
+        if (stopping) {
             return;
         }
-        lifecycle = Lifecycle.STOPPING;
+        stopping = true;
         if (recheck != null) {
             recheck.cancel();
             recheck = null;
@@ -599,7 +560,6 @@ final class KafkaSettlement {
      * commit never comes from the client's fetch position.
      */
     void finishStop() {
-        lifecycle = Lifecycle.CLOSED;
         for (KafkaPartitionLedger ledger : new ArrayList<>(ledgers.values())) {
             finish(ledger);
         }
